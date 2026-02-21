@@ -1,8 +1,4 @@
-/**
- * Toast context provider for issue #25.
- * Centralizes toast + browser notification delivery with preference-aware filtering.
- */
-
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import {
   type NotificationEventKey,
@@ -18,7 +14,6 @@ import {
   getBrowserNotificationPermission,
 } from '../utils/notifications';
 
-// ---- Toast item ----
 export type ToastLevel = 'success' | 'error' | 'info';
 
 export interface ToastItem {
@@ -27,7 +22,6 @@ export interface ToastItem {
   level: ToastLevel;
 }
 
-// ---- Context value ----
 export interface ToastContextValue {
   notify: (eventType: NotificationEventKey, message: string, level?: ToastLevel) => void;
   sendTestNotification: () => void;
@@ -35,7 +29,6 @@ export interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-// ---- Toast styling (matches Proposals.tsx) ----
 const TOAST_LEVEL_STYLES: Record<ToastLevel, string> = {
   success: 'bg-green-500/10 text-green-400 border-green-500/20',
   error: 'bg-red-500/10 text-red-400 border-red-500/20',
@@ -49,7 +42,6 @@ function nextToastId(): string {
   return `toast-${++toastIdCounter}`;
 }
 
-// ---- Provider ----
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const dismissTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -144,7 +136,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      {/* Toast container - matches app style (fixed top-right) */}
       <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
         <div className="flex flex-col gap-2 pointer-events-auto">
           {toasts.map((toast) => (
@@ -171,7 +162,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ---- Hook ----
 export function useToast(): ToastContextValue {
   const ctx = useContext(ToastContext);
   if (!ctx) {

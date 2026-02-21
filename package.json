@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "html2canvas": "^1.4.1",
+    "recharts": "^3.7.0"
+  },
+  "devDependencies": {
+    "@types/recharts": "^1.8.29"
+  }
+}

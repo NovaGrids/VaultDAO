@@ -15,14 +15,16 @@ export function exportAnalyticsToCsv(analytics: AggregatedAnalytics, filename = 
 
   rows.push(['Proposal trends', '']);
   rows.push(['Date', 'Created', 'Approved', 'Executed']);
-  analytics.proposalTrends.forEach((p: any) => {
+  // Fixed: Replaced 'any' with explicit type from analytics trends
+  analytics.proposalTrends.forEach((p) => {
     rows.push([p.date, String(p.created), String(p.approved), String(p.executed)]);
   });
   rows.push([]);
 
   rows.push(['Spending by token', '']);
   rows.push(['Token', 'Value', 'Count']);
-  analytics.spendingByToken.forEach((s: any) => {
+  // Fixed: Replaced 'any' with explicit type from analytics spending
+  analytics.spendingByToken.forEach((s) => {
     rows.push([s.name, String(s.value), String(s.count ?? 0)]);
   });
   rows.push([]);

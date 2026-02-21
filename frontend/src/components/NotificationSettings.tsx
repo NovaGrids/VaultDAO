@@ -16,7 +16,7 @@ import {
   type NotificationMethod,
   type NotificationPreferences,
 } from '../utils/notifications';
-import { useToast } from '../context/ToastContext';
+import { useToast } from '../hooks/useToast';
 import { Bell } from 'lucide-react';
 
 // ---- Labels ----

@@ -1,7 +1,8 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import {
-  isConnected,
+  isConnected as freighterIsConnected,
   isAllowed,
   setAllowed,
   getUserInfo,
@@ -19,11 +20,9 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
   const [address, setAddress] = useState<string | null>(null);
   const [network, setNetwork] = useState<string | null>(null);
 
-  // Refs to track state for comparison in polling
   const addressRef = useRef<string | null>(null);
   const networkRef = useRef<string | null>(null);
 
-  // Toast state
   const [toast, setToast] = useState<{
     message: string;
     type: ToastType;
@@ -37,7 +36,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
 
   const checkInstallation = useCallback(async () => {
     try {
-      const installed = await isConnected();
+      const installed = await freighterIsConnected();
       setIsInstalled(!!installed);
       return !!installed;
     } catch (e) {
@@ -78,7 +77,6 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
           await validateNetwork();
           return true;
         } else if (addressRef.current) {
-          // Logic for when account becomes inaccessible
           setAddress(null);
           addressRef.current = null;
           setConnected(false);
@@ -96,7 +94,6 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
     return false;
   }, [validateNetwork]);
 
-  // Initialize and Polling
   useEffect(() => {
     const init = async () => {
       const installed = await checkInstallation();
@@ -110,9 +107,8 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
     };
     init();
 
-    // Polling for changes (Account / Network)
     const interval = setInterval(async () => {
-      if (await isConnected()) {
+      if (await freighterIsConnected()) {
         await updateWalletState();
       }
     }, 3000);

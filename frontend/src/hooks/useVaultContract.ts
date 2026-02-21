@@ -9,7 +9,7 @@ import {
     scValToNative
 } from 'stellar-sdk';
 import { signTransaction } from '@stellar/freighter-api';
-import { useWallet } from '../context/WalletContext';
+import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
 
@@ -265,7 +265,7 @@ export const useVaultContract = () => {
 
             return response.hash;
 
-        } catch (e: any) {
+        } catch (e: unknown) {
             const parsed = parseError(e);
             throw parsed;
         } finally {

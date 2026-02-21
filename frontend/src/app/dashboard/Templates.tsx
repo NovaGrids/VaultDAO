@@ -1,5 +1,5 @@
 import React from 'react';
-import ProposalTemplates from '../../components/ProposalTemplates';
+import ProposalTemplates from '../../components/proposals/ProposalTemplates';
 import TemplateManager from '../../components/TemplateManager';
 
 const Templates: React.FC = () => {

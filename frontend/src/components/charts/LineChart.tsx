@@ -48,7 +48,7 @@ const LineChart: React.FC<LineChartProps> = ({
             dataKey={xKey}
             stroke="#9ca3af"
             tick={{ fill: '#9ca3af', fontSize: 11 }}
-            tickFormatter={(v: any) => (v && String(v).length > 10 ? String(v).slice(0, 7) : v)}
+            tickFormatter={(v: unknown) => (v && String(v).length > 10 ? String(v).slice(0, 7) : String(v))}
           />
           <YAxis stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
           <Tooltip
@@ -62,7 +62,7 @@ const LineChart: React.FC<LineChartProps> = ({
           />
           <Legend
             wrapperStyle={{ fontSize: 12 }}
-            formatter={(value: any) => <span className="text-gray-400">{value}</span>}
+            formatter={(value: string) => <span className="text-gray-400">{value}</span>}
           />
           {series.map((s) => (
             <Line

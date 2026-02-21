@@ -31,6 +31,17 @@ export interface PieChartProps {
   showCount?: boolean;
 }
 
+interface PieLabelProps {
+  name?: string;
+  percent?: number | string;
+}
+
+// Fixed: Define LegendEntry to match library expectations exactly
+interface LegendEntry {
+  value?: string;
+  payload?: Record<string, unknown>;
+}
+
 const PieChart: React.FC<PieChartProps> = ({
   data,
   height = 280,
@@ -59,8 +70,8 @@ const PieChart: React.FC<PieChartProps> = ({
             innerRadius={height * 0.2}
             outerRadius={height * 0.38}
             paddingAngle={2}
-            label={({ name, percent }: any) =>
-              `${name} ${percent}%`
+            label={(props: PieLabelProps) =>
+              `${props.name ?? ''} ${props.percent ?? 0}%`
             }
           >
             {withPct.map((_, i) => (
@@ -87,13 +98,17 @@ const PieChart: React.FC<PieChartProps> = ({
           />
           <Legend
             wrapperStyle={{ fontSize: 12 }}
-            formatter={(value: any, entry: any) => (
-              <span className="text-gray-400">
-                {value}
-                {(entry?.payload as { percent?: string } | undefined)?.percent != null &&
-                  ` (${(entry.payload as { percent: string }).percent}%)`}
-              </span>
-            )}
+            formatter={(value: string | undefined, entry: LegendEntry) => {
+              const displayValue = value ?? entry.value ?? '';
+              // Safely cast the specific payload part we need
+              const payload = entry?.payload as { percent?: string | number } | undefined;
+              return (
+                <span className="text-gray-400">
+                  {displayValue}
+                  {payload?.percent != null && ` (${payload.percent}%)`}
+                </span>
+              );
+            }}
           />
         </RechartsPieChart>
       </ResponsiveContainer>

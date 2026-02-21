@@ -1,10 +1,18 @@
 import React, { useState, useMemo } from 'react';
-import { useWallet } from '../../context/WalletContext';
+import { useWallet } from '../../context/WalletContextProps';
 import type { ActivityLike } from '../../types/analytics';
-import ExportModal, { type ExportDatasets } from '../../components/ExportModal';
+import ExportModal, { type ExportDatasets } from '../../components/modals/ExportModal';
 import { saveExportHistoryItem } from '../../utils/exportHistory';
 
-/** Generate mock activities for demo. */
+/** Define an interface for the export metadata */
+interface ExportMeta {
+  filename: string;
+  dataType: string;
+  format: string;
+  storedContent?: string;
+  mimeType?: string;
+}
+
 function getMockActivities(): ActivityLike[] {
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
@@ -92,7 +100,6 @@ const Activity: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-3xl font-bold">Activity</h2>
         <button
@@ -103,7 +110,6 @@ const Activity: React.FC = () => {
         </button>
       </div>
 
-      {/* Activity List / Table */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
         {activities.length === 0 ? (
           <div className="p-8 text-center text-gray-400">
@@ -152,7 +158,7 @@ const Activity: React.FC = () => {
         vaultAddress={address ?? 'G000000000000000000000000000000000'}
         initialDataType="activity"
         datasets={exportDatasets}
-        onExported={(meta) =>
+        onExported={(meta: ExportMeta) =>
           saveExportHistoryItem({
             filename: meta.filename,
             dataType: meta.dataType,
