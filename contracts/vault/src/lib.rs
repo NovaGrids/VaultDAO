@@ -186,6 +186,7 @@ impl VaultDAO {
     /// Approval requires `require_auth()` from a valid signer.
     /// When the threshold is reached, the status changes to `Approved`.
     /// If the amount exceeds the `timelock_threshold`, an `unlock_ledger` is calculated.
+    /// Supports delegation: if the signer has delegated their voting power, the delegate can approve.
     ///
     /// # Arguments
     /// * `signer` - The authorized address providing approval.
@@ -206,6 +207,9 @@ impl VaultDAO {
             return Err(VaultError::InsufficientRole);
         }
 
+        // Resolve delegation chain to find effective voter
+        let effective_voter = Self::resolve_delegation_chain(&env, &signer, 0)?;
+
         // Get proposal
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
@@ -222,13 +226,15 @@ impl VaultDAO {
             return Err(VaultError::ProposalExpired);
         }
 
-        // Prevent double-approval
-        if proposal.approvals.contains(&signer) {
+        // Prevent double-approval by the effective voter
+        // This ensures that if A delegates to B, and B approves, A cannot also approve
+        if proposal.approvals.contains(&effective_voter) {
             return Err(VaultError::AlreadyApproved);
         }
 
-        // Add approval
-        proposal.approvals.push_back(signer.clone());
+        // Add approval using the effective voter (not the original signer)
+        // This ensures delegation chains are properly tracked
+        proposal.approvals.push_back(effective_voter.clone());
 
         // Check if threshold met
         let approval_count = proposal.approvals.len();
@@ -250,7 +256,7 @@ impl VaultDAO {
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
 
-        // Emit event
+        // Emit event with the actual signer who called the function
         events::emit_proposal_approved(
             &env,
             proposal_id,
@@ -520,6 +526,225 @@ impl VaultDAO {
     // ========================================================================
     // View Functions
     // ========================================================================
+
+    // ========================================================================
+    // Delegation Management
+    // ========================================================================
+
+    /// Delegate voting power to another address
+    ///
+    /// Allows a signer to delegate their voting power to another signer.
+    /// Delegation can be temporary (with expiry) or permanent (expiry_ledger = 0).
+    ///
+    /// # Arguments
+    /// * `delegator` - The signer delegating their voting power (must authorize)
+    /// * `delegate` - The signer receiving the voting power
+    /// * `expiry_ledger` - Ledger when delegation expires (0 for permanent)
+    pub fn delegate_voting_power(
+        env: Env,
+        delegator: Address,
+        delegate: Address,
+        expiry_ledger: u64,
+    ) -> Result<u64, VaultError> {
+        // Verify identity
+        delegator.require_auth();
+
+        // Get config
+        let config = storage::get_config(&env)?;
+
+        // Validate delegator is a signer
+        if !config.signers.contains(&delegator) {
+            return Err(VaultError::DelegatorNotSigner);
+        }
+
+        // Validate delegate is a signer
+        if !config.signers.contains(&delegate) {
+            return Err(VaultError::DelegateNotSigner);
+        }
+
+        // Cannot delegate to self
+        if delegator == delegate {
+            return Err(VaultError::CannotDelegateToSelf);
+        }
+
+        // Check if delegator already has an active delegation
+        if let Some(existing_id) = storage::get_active_delegation(&env, &delegator) {
+            if let Ok(existing) = storage::get_delegation(&env, existing_id) {
+                if existing.is_active {
+                    let current_ledger = env.ledger().sequence() as u64;
+                    // Check if existing delegation is still valid
+                    if existing.expiry_ledger == 0 || current_ledger < existing.expiry_ledger {
+                        return Err(VaultError::DelegationAlreadyExists);
+                    }
+                }
+            }
+        }
+
+        // Check for circular delegation (max 3 levels)
+        Self::check_circular_delegation(&env, &delegate, &delegator, 0)?;
+
+        // Validate expiry
+        if expiry_ledger > 0 {
+            let current_ledger = env.ledger().sequence() as u64;
+            if expiry_ledger <= current_ledger {
+                return Err(VaultError::DelegationExpired);
+            }
+        }
+
+        // Create delegation
+        let delegation_id = storage::increment_delegation_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let delegation = crate::types::Delegation {
+            id: delegation_id,
+            delegator: delegator.clone(),
+            delegate: delegate.clone(),
+            expiry_ledger,
+            is_active: true,
+            created_at: current_ledger,
+        };
+
+        storage::set_delegation(&env, &delegation);
+        storage::set_active_delegation(&env, &delegator, delegation_id);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_delegation_created(&env, delegation_id, &delegator, &delegate, expiry_ledger);
+
+        Ok(delegation_id)
+    }
+
+    /// Revoke an active delegation
+    ///
+    /// Allows a delegator to revoke their delegation at any time.
+    ///
+    /// # Arguments
+    /// * `delegator` - The address that created the delegation (must authorize)
+    /// * `delegation_id` - ID of the delegation to revoke
+    pub fn revoke_delegation(
+        env: Env,
+        delegator: Address,
+        delegation_id: u64,
+    ) -> Result<(), VaultError> {
+        // Verify identity
+        delegator.require_auth();
+
+        // Get delegation
+        let mut delegation = storage::get_delegation(&env, delegation_id)?;
+
+        // Verify delegator owns this delegation
+        if delegation.delegator != delegator {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Mark as inactive
+        delegation.is_active = false;
+        storage::set_delegation(&env, &delegation);
+        storage::remove_active_delegation(&env, &delegator);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_delegation_revoked(&env, delegation_id, &delegator);
+
+        Ok(())
+    }
+
+    /// Get the effective voter for an address
+    ///
+    /// Resolves delegation chains to find who can actually vote on behalf of the original signer.
+    /// Returns the final delegate in the chain, or the original address if no active delegation.
+    ///
+    /// # Arguments
+    /// * `signer` - The original signer address
+    ///
+    /// # Returns
+    /// The address that can vote on behalf of the signer
+    pub fn get_effective_voter(env: Env, signer: Address) -> Result<Address, VaultError> {
+        Self::resolve_delegation_chain(&env, &signer, 0)
+    }
+
+    /// Internal: Resolve delegation chain with depth limit
+    ///
+    /// Follows the delegation chain up to 3 levels deep.
+    fn resolve_delegation_chain(
+        env: &Env,
+        signer: &Address,
+        depth: u32,
+    ) -> Result<Address, VaultError> {
+        // Max depth check (prevent infinite loops and excessive gas)
+        if depth >= 3 {
+            return Err(VaultError::DelegationChainTooDeep);
+        }
+
+        // Check if signer has an active delegation
+        if let Some(delegation_id) = storage::get_active_delegation(env, signer) {
+            if let Ok(delegation) = storage::get_delegation(env, delegation_id) {
+                if delegation.is_active {
+                    // Check expiry
+                    let current_ledger = env.ledger().sequence() as u64;
+                    if delegation.expiry_ledger == 0 || current_ledger < delegation.expiry_ledger {
+                        // Recursively resolve delegate's delegation
+                        return Self::resolve_delegation_chain(
+                            env,
+                            &delegation.delegate,
+                            depth + 1,
+                        );
+                    }
+                }
+            }
+        }
+
+        // No active delegation, return original signer
+        Ok(signer.clone())
+    }
+
+    /// Internal: Check for circular delegation
+    ///
+    /// Ensures that delegating to `delegate` won't create a circular chain back to `delegator`.
+    fn check_circular_delegation(
+        env: &Env,
+        delegate: &Address,
+        original_delegator: &Address,
+        depth: u32,
+    ) -> Result<(), VaultError> {
+        // Max depth check
+        if depth >= 3 {
+            return Ok(()); // Chain is too deep, but not circular
+        }
+
+        // Check if delegate has a delegation
+        if let Some(delegation_id) = storage::get_active_delegation(env, delegate) {
+            if let Ok(delegation) = storage::get_delegation(env, delegation_id) {
+                if delegation.is_active {
+                    // Check expiry
+                    let current_ledger = env.ledger().sequence() as u64;
+                    if delegation.expiry_ledger == 0 || current_ledger < delegation.expiry_ledger {
+                        // Check if delegate's delegate is the original delegator (circular!)
+                        if delegation.delegate == *original_delegator {
+                            return Err(VaultError::CircularDelegation);
+                        }
+                        // Recursively check delegate's delegate
+                        return Self::check_circular_delegation(
+                            env,
+                            &delegation.delegate,
+                            original_delegator,
+                            depth + 1,
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get delegation by ID
+    pub fn get_delegation(
+        env: Env,
+        delegation_id: u64,
+    ) -> Result<crate::types::Delegation, VaultError> {
+        storage::get_delegation(&env, delegation_id)
+    }
 
     // ========================================================================
     // Recurring Payments

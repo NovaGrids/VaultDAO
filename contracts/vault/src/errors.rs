@@ -70,4 +70,22 @@ pub enum VaultError {
     TransferFailed = 600,
     /// Insufficient vault balance
     InsufficientBalance = 601,
+
+    // Delegation errors (7xx)
+    /// Delegation does not exist
+    DelegationNotFound = 700,
+    /// Delegation has expired
+    DelegationExpired = 701,
+    /// Cannot delegate to self
+    CannotDelegateToSelf = 702,
+    /// Circular delegation detected
+    CircularDelegation = 703,
+    /// Delegation chain exceeds maximum depth
+    DelegationChainTooDeep = 704,
+    /// Delegator already has an active delegation
+    DelegationAlreadyExists = 705,
+    /// Cannot delegate: not a signer
+    DelegatorNotSigner = 706,
+    /// Cannot delegate to non-signer
+    DelegateNotSigner = 707,
 }

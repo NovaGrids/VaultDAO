@@ -121,3 +121,21 @@ pub struct RecurringPayment {
     /// Configured status (Active/Stopped)
     pub is_active: bool,
 }
+
+/// Delegation of voting power
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Delegation {
+    /// Unique delegation ID
+    pub id: u64,
+    /// Address delegating their voting power
+    pub delegator: Address,
+    /// Address receiving the voting power
+    pub delegate: Address,
+    /// Ledger when delegation expires (0 for permanent)
+    pub expiry_ledger: u64,
+    /// Whether delegation is currently active
+    pub is_active: bool,
+    /// Ledger when delegation was created
+    pub created_at: u64,
+}

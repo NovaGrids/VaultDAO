@@ -29,6 +29,12 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
+    /// Delegation by ID -> Delegation
+    Delegation(u64),
+    /// Active delegation for delegator -> u64 (delegation ID)
+    ActiveDelegation(Address),
+    /// Next delegation ID counter -> u64
+    NextDelegationId,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -214,4 +220,57 @@ pub fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// Delegations
+// ============================================================================
+
+pub fn get_next_delegation_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextDelegationId)
+        .unwrap_or(1)
+}
+
+pub fn increment_delegation_id(env: &Env) -> u64 {
+    let id = get_next_delegation_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDelegationId, &(id + 1));
+    id
+}
+
+pub fn set_delegation(env: &Env, delegation: &crate::types::Delegation) {
+    let key = DataKey::Delegation(delegation.id);
+    env.storage().persistent().set(&key, delegation);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_delegation(env: &Env, id: u64) -> Result<crate::types::Delegation, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Delegation(id))
+        .ok_or(VaultError::DelegationNotFound)
+}
+
+pub fn set_active_delegation(env: &Env, delegator: &Address, delegation_id: u64) {
+    let key = DataKey::ActiveDelegation(delegator.clone());
+    env.storage().persistent().set(&key, &delegation_id);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_active_delegation(env: &Env, delegator: &Address) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ActiveDelegation(delegator.clone()))
+}
+
+pub fn remove_active_delegation(env: &Env, delegator: &Address) {
+    let key = DataKey::ActiveDelegation(delegator.clone());
+    env.storage().persistent().remove(&key);
 }

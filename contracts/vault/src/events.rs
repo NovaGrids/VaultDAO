@@ -95,3 +95,25 @@ pub fn emit_signer_removed(env: &Env, signer: &Address, total_signers: u32) {
         (signer.clone(), total_signers),
     );
 }
+
+/// Emit when voting power is delegated
+pub fn emit_delegation_created(
+    env: &Env,
+    delegation_id: u64,
+    delegator: &Address,
+    delegate: &Address,
+    expiry_ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "delegation_created"), delegation_id),
+        (delegator.clone(), delegate.clone(), expiry_ledger),
+    );
+}
+
+/// Emit when delegation is revoked
+pub fn emit_delegation_revoked(env: &Env, delegation_id: u64, delegator: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "delegation_revoked"), delegation_id),
+        delegator.clone(),
+    );
+}
