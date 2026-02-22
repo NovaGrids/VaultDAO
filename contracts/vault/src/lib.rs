@@ -26,9 +26,6 @@ use types::{Config, Proposal, ProposalStatus, Role};
 #[contract]
 pub struct VaultDAO;
 
-/// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
-const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
-
 #[contractimpl]
 impl VaultDAO {
     // ========================================================================
