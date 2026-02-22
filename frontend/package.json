@@ -10,11 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@soroban-react/core": "^9.3.0",
+    "@stellar/freighter-api": "1.7.1",
+    "lucide-react": "^0.473.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.1.5",
-    "lucide-react": "^0.473.0",
-    "@stellar/freighter-api": "1.7.1",
     "stellar-sdk": "11.3.0"
   },
   "devDependencies": {

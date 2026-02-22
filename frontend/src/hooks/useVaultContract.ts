@@ -1,161 +1,176 @@
-import { useState } from 'react';
-import {
-    xdr,
-    Address,
-    Operation,
-    TransactionBuilder,
-    SorobanRpc,
-    nativeToScVal
-} from 'stellar-sdk';
-import { signTransaction } from '@stellar/freighter-api';
-import { useWallet } from '../context/WalletContext';
-import { parseError } from '../utils/errorParser';
+// frontend/src/hooks/useVaultContract.ts
 
-// Replace with your actual Contract ID
-const CONTRACT_ID = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
-const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
-const RPC_URL = "https://soroban-testnet.stellar.org";
+import { useCallback } from 'react';
+import { useSorobanReact } from '@soroban-react/core';
 
-const server = new SorobanRpc.Server(RPC_URL);
+// Define the Proposal type
+export interface Proposal {
+  id: number;
+  proposer: string;
+  recipient: string;
+  amount: bigint;
+  status: ProposalStatus;
+  description: string;
+  createdAt: number;
+  unlockTime?: number;
+}
+
+export const ProposalStatus = {
+  Pending: 0,
+  Approved: 1,
+  Executed: 2,
+  Rejected: 3,
+  Expired: 4,
+} as const;
+
+export type ProposalStatus = (typeof ProposalStatus)[keyof typeof ProposalStatus];
+
+type SorobanServer = NonNullable<ReturnType<typeof useSorobanReact>['server']>;
+type ContractDataKey = Parameters<SorobanServer['getContractData']>[1];
+
+const toObjectRecord = (value: unknown): Record<string, unknown> => {
+  if (typeof value === 'object' && value !== null) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+};
+
+const unwrapVal = (value: unknown): unknown => {
+  const record = toObjectRecord(value);
+  return record.val ?? value;
+};
+
+const normalizeStatus = (value: unknown): ProposalStatus => {
+  const parsed = Number(value);
+  switch (parsed) {
+    case ProposalStatus.Pending:
+    case ProposalStatus.Approved:
+    case ProposalStatus.Executed:
+    case ProposalStatus.Rejected:
+    case ProposalStatus.Expired:
+      return parsed;
+    default:
+      return ProposalStatus.Pending;
+  }
+};
+
+const toBigInt = (value: unknown): bigint => {
+  try {
+    return BigInt(String(value ?? 0));
+  } catch {
+    return 0n;
+  }
+};
+
+const parseProposal = (id: number, rawValue: unknown): Proposal => {
+  const value = toObjectRecord(unwrapVal(rawValue));
+
+  const proposer = String(value.proposer ?? value.from ?? '');
+  const recipient = String(value.recipient ?? value.to ?? '');
+  const amount = toBigInt(value.amount ?? value.value);
+  const status = normalizeStatus(value.status ?? value.state);
+  const createdAt = Number(value.created_at ?? value.createdAt ?? 0);
+  const unlockTime = value.unlock_ledger ?? value.unlockTime;
+  const description = String(value.memo ?? value.description ?? '');
+
+  return {
+    id,
+    proposer,
+    recipient,
+    amount,
+    status,
+    description,
+    createdAt,
+    unlockTime: unlockTime ? Number(unlockTime) : undefined,
+  };
+};
 
 export const useVaultContract = () => {
-    const { address, isConnected } = useWallet();
-    const [loading, setLoading] = useState(false);
+  const { server } = useSorobanReact();
 
-    const proposeTransfer = async (
-        recipient: string,
-        token: string,
-        amount: string, // passed as string to handle large numbers safely
-        memo: string
-    ) => {
-        if (!isConnected || !address) {
-            throw new Error("Wallet not connected");
+  const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined;
+
+  const getCounter = useCallback(async (): Promise<number> => {
+    if (!server || !contractAddress) {
+      return 0;
+    }
+
+    const counterKeys = ['NextProposalId', 'next_proposal_id', 'proposal_count'];
+    for (const key of counterKeys) {
+      try {
+        const typedKey = key as unknown as ContractDataKey;
+        const result = await server.getContractData(contractAddress, typedKey);
+        const val = unwrapVal(result);
+        const parsed = Number(String(val));
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          return parsed;
         }
+      } catch {
+        // Try next key.
+      }
+    }
+    return 0;
+  }, [contractAddress, server]);
 
-        setLoading(true);
+  const getProposalById = useCallback(
+    async (id: number): Promise<Proposal | null> => {
+      if (!server || !contractAddress) {
+        return null;
+      }
+
+      const keysToTry: ContractDataKey[] = [
+        `proposal_${id}` as unknown as ContractDataKey,
+        `Proposal(${id})` as unknown as ContractDataKey,
+        { Proposal: id } as unknown as ContractDataKey,
+        id as unknown as ContractDataKey,
+      ];
+
+      for (const key of keysToTry) {
         try {
-            // 1. Get latest ledger/account data
-            const account = await server.getAccount(address);
-
-            // 2. Build Transaction
-            const tx = new TransactionBuilder(account, { fee: "100" })
-                .setNetworkPassphrase(NETWORK_PASSPHRASE)
-                .setTimeout(30)
-                .addOperation(Operation.invokeHostFunction({
-                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
-                        new xdr.InvokeContractArgs({
-                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
-                            functionName: "propose_transfer",
-                            args: [
-                                new Address(address).toScVal(),
-                                new Address(recipient).toScVal(),
-                                new Address(token).toScVal(),
-                                nativeToScVal(BigInt(amount)),
-                                xdr.ScVal.scvSymbol(memo),
-                            ],
-                        })
-                    ),
-                    auth: [],
-                }))
-                .build();
-
-            // 3. Simulate Transaction (Check required Auth)
-            const simulation = await server.simulateTransaction(tx);
-            if (SorobanRpc.Api.isSimulationError(simulation)) {
-                throw new Error(`Simulation Failed: ${simulation.error}`);
-            }
-
-            // Assemble transaction with simulation data (resources/auth)
-            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
-
-            // 4. Sign with Freighter
-            const signedXdr = await signTransaction(preparedTx.toXDR(), {
-                network: "TESTNET",
-            });
-
-            // 5. Submit Transaction
-            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
-
-            if (response.status !== "PENDING") {
-                throw new Error("Transaction submission failed");
-            }
-
-            // 6. Poll for status (Simplified)
-            // Real app should loop check status
-            return response.hash;
-
-        } catch (e: any) {
-            // Parse Error
-            const parsed = parseError(e);
-            throw parsed;
-        } finally {
-            setLoading(false);
+          const result = await server.getContractData(contractAddress, key);
+          return parseProposal(id, result);
+        } catch {
+          // Try next key format.
         }
-    };
+      }
 
-    const rejectProposal = async (proposalId: number) => {
-        if (!isConnected || !address) {
-            throw new Error("Wallet not connected");
-        }
+      return null;
+    },
+    [contractAddress, server]
+  );
 
-        setLoading(true);
+  const getProposals = useCallback(async (): Promise<Proposal[]> => {
+    try {
+      if (!contractAddress) {
+        throw new Error('Contract address not configured');
+      }
+
+      if (!server) {
+        throw new Error('Soroban server not available');
+      }
+
+      const proposalCount = await getCounter();
+      const proposals: Proposal[] = [];
+
+      for (let i = 0; i < proposalCount; i++) {
         try {
-            // 1. Get latest ledger/account data
-            const account = await server.getAccount(address);
-
-            // 2. Build Transaction
-            const tx = new TransactionBuilder(account, { fee: "100" })
-                .setNetworkPassphrase(NETWORK_PASSPHRASE)
-                .setTimeout(30)
-                .addOperation(Operation.invokeHostFunction({
-                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
-                        new xdr.InvokeContractArgs({
-                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
-                            functionName: "reject_proposal",
-                            args: [
-                                new Address(address).toScVal(),
-                                nativeToScVal(BigInt(proposalId), { type: "u64" }),
-                            ],
-                        })
-                    ),
-                    auth: [],
-                }))
-                .build();
-
-            // 3. Simulate Transaction
-            const simulation = await server.simulateTransaction(tx);
-            if (SorobanRpc.Api.isSimulationError(simulation)) {
-                throw new Error(`Simulation Failed: ${simulation.error}`);
-            }
-
-            // Assemble transaction with simulation data
-            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
-
-            // 4. Sign with Freighter
-            const signedXdr = await signTransaction(preparedTx.toXDR(), {
-                network: "TESTNET",
-            });
-
-            // 5. Submit Transaction
-            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
-
-            if (response.status !== "PENDING") {
-                throw new Error("Transaction submission failed");
-            }
-
-            return response.hash;
-
-        } catch (e: any) {
-            const parsed = parseError(e);
-            throw parsed;
-        } finally {
-            setLoading(false);
+          const proposal = await getProposalById(i);
+          if (proposal) {
+            proposals.push(proposal);
+          }
+        } catch (error) {
+          console.error(`Error fetching proposal ${i}:`, error);
         }
-    };
+      }
 
-    return {
-        proposeTransfer,
-        rejectProposal,
-        loading
-    };
+      return proposals;
+    } catch (error) {
+      console.error('Error fetching proposals:', error);
+      throw new Error('Failed to fetch proposals from contract');
+    }
+  }, [contractAddress, getCounter, getProposalById, server]);
+
+  return {
+    getProposals,
+  };
 };

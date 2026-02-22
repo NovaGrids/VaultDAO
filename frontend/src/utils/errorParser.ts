@@ -3,18 +3,20 @@ export interface VaultError {
     message: string;
 }
 
-export const parseError = (error: any): VaultError => {
+export const parseError = (error: unknown): VaultError => {
     if (!error) {
         return { code: "UNKNOWN", message: "An unknown error occurred." };
     }
 
+    const e = (error as { message?: string; title?: string }) || {};
+
     // Handle Freighter/Wallet errors
-    if (error.title === "Freighter Error") {
+    if (e.title === "Freighter Error") {
         return { code: "WALLET_ERROR", message: "Transaction rejected by wallet." };
     }
 
     // Handle Simulation Errors
-    const simulatedLog = error?.message || "";
+    const simulatedLog = e.message || "";
 
     if (simulatedLog.includes("Error(Contract, #1)")) {
         return { code: "NOT_INITIALIZED", message: "Contract not initialized." };
@@ -41,6 +43,6 @@ export const parseError = (error: any): VaultError => {
 
     return {
         code: "RPC_ERROR",
-        message: error.message || "Failed to submit transaction."
+        message: e.message || "Failed to submit transaction."
     };
 };
