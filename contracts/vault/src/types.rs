@@ -4,6 +4,9 @@
 
 use soroban_sdk::{contracttype, Address, Symbol, Vec};
 
+/// Maximum number of dependencies a proposal can have
+pub const MAX_DEPENDENCIES: u32 = 10;
+
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -100,6 +103,8 @@ pub struct Proposal {
     pub expires_at: u64,
     /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
     pub unlock_ledger: u64,
+    /// Proposal IDs that must be executed before this one
+    pub depends_on: Vec<u64>,
 }
 
 /// Recurring payment schedule

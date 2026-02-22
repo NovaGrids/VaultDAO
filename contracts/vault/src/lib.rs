@@ -12,7 +12,7 @@ mod test;
 mod token;
 mod types;
 
-pub use types::InitConfig;
+pub use types::{InitConfig, MAX_DEPENDENCIES};
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
@@ -103,6 +103,7 @@ impl VaultDAO {
     /// * `token_addr` - The contract ID of the Stellar Asset Contract (SAC) or custom token.
     /// * `amount` - The transaction amount (in stroops/smallest unit).
     /// * `memo` - A descriptive symbol for the transaction.
+    /// * `depends_on` - Optional vector of proposal IDs that must execute first.
     ///
     /// # Returns
     /// The unique ID of the newly created proposal.
@@ -113,6 +114,7 @@ impl VaultDAO {
         token_addr: Address,
         amount: i128,
         memo: Symbol,
+        depends_on: Vec<u64>,
     ) -> Result<u64, VaultError> {
         // Verify identity
         proposer.require_auth();
@@ -130,6 +132,9 @@ impl VaultDAO {
         if amount <= 0 {
             return Err(VaultError::InvalidAmount);
         }
+
+        // Validate dependencies
+        Self::validate_dependencies(&env, &depends_on)?;
 
         // Check per-proposal spending limit
         if amount > config.spending_limit {
@@ -170,9 +175,17 @@ impl VaultDAO {
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
+            depends_on: depends_on.clone(),
         };
 
         storage::set_proposal(&env, &proposal);
+
+        // Check for circular dependencies after setting the proposal
+        // (we need the proposal ID to check)
+        if !depends_on.is_empty() {
+            Self::check_circular_dependency(&env, proposal_id, &depends_on)?;
+        }
+
         storage::extend_instance_ttl(&env);
 
         // Emit event
@@ -269,6 +282,7 @@ impl VaultDAO {
     /// 2. The required approvals threshold has been met.
     /// 3. Any applicable timelock has expired.
     /// 4. The vault has sufficient balance of the target token.
+    /// 5. All dependencies have been executed.
     ///
     /// # Arguments
     /// * `executor` - The address triggering the final transfer (must authorize).
@@ -304,6 +318,9 @@ impl VaultDAO {
         if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
             return Err(VaultError::TimelockNotExpired);
         }
+
+        // Check dependencies are executed
+        Self::check_dependencies_executed(&env, &proposal.depends_on)?;
 
         // Check vault balance
         let balance = token::balance(&env, &proposal.token);
@@ -518,6 +535,109 @@ impl VaultDAO {
     }
 
     // ========================================================================
+    // Dependency Validation (Private Helpers)
+    // ========================================================================
+
+    /// Validate dependencies when creating a proposal
+    fn validate_dependencies(env: &Env, depends_on: &Vec<u64>) -> Result<(), VaultError> {
+        // Check max dependencies limit
+        if depends_on.len() > MAX_DEPENDENCIES {
+            return Err(VaultError::TooManyDependencies);
+        }
+
+        // Check each dependency
+        let mut visited = Vec::new(env);
+        for i in 0..depends_on.len() {
+            let dep_id = depends_on.get(i).unwrap();
+
+            // Check self-reference
+            // Note: We can't check self-reference here because we don't have the proposal ID yet
+            // The check will be done in the caller if needed
+
+            // Check dependency exists
+            if let Err(_) = storage::get_proposal(env, dep_id) {
+                return Err(VaultError::DependencyNotFound);
+            }
+
+            // Check for circular dependencies
+            visited.push_back(dep_id);
+        }
+
+        // Additional circular dependency check is done after proposal creation
+        // because we need the new proposal's ID
+
+        Ok(())
+    }
+
+    /// Check if all dependencies have been executed
+    fn check_dependencies_executed(env: &Env, depends_on: &Vec<u64>) -> Result<(), VaultError> {
+        for i in 0..depends_on.len() {
+            let dep_id = depends_on.get(i).unwrap();
+
+            // Check dependency exists
+            let dep_proposal = match storage::get_proposal(env, dep_id) {
+                Ok(p) => p,
+                Err(_) => return Err(VaultError::DependencyNotFound),
+            };
+
+            // Check dependency is executed
+            if dep_proposal.status != ProposalStatus::Executed {
+                return Err(VaultError::DependencyNotExecuted);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check for circular dependencies (for a new or existing proposal)
+    fn check_circular_dependency(env: &Env, proposal_id: u64, depends_on: &Vec<u64>) -> Result<(), VaultError> {
+        // Use iterative DFS to detect cycles
+        let mut visited = Vec::new(env);
+        let mut to_visit = Vec::new(env);
+
+        // Add all direct dependencies to start
+        for i in 0..depends_on.len() {
+            to_visit.push_back(depends_on.get(i).unwrap());
+        }
+
+        // Iterate through the to_visit list
+        let mut idx: u32 = 0;
+        while idx < to_visit.len() {
+            let current_id = to_visit.get(idx).unwrap();
+            idx += 1;
+
+            // If we found our own proposal ID in the dependency chain, it's circular
+            if current_id == proposal_id {
+                return Err(VaultError::CircularDependency);
+            }
+
+            // Skip if already visited
+            let mut already_visited = false;
+            for i in 0..visited.len() {
+                if visited.get(i).unwrap() == current_id {
+                    already_visited = true;
+                    break;
+                }
+            }
+            if already_visited {
+                continue;
+            }
+
+            visited.push_back(current_id);
+
+            // Get the proposal and add its dependencies to to_visit
+            if let Ok(proposal) = storage::get_proposal(env, current_id) {
+                for i in 0..proposal.depends_on.len() {
+                    let dep = proposal.depends_on.get(i).unwrap();
+                    to_visit.push_back(dep);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // ========================================================================
     // View Functions
     // ========================================================================
 
@@ -632,6 +752,37 @@ impl VaultDAO {
     /// Get proposal by ID
     pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, VaultError> {
         storage::get_proposal(&env, proposal_id)
+    }
+
+    /// Get all proposals that can be executed (dependencies satisfied and approved)
+    /// Returns a vector of proposal IDs that are ready to execute
+    pub fn get_executable_proposals(env: Env) -> Result<Vec<u64>, VaultError> {
+        // Ensure initialized
+        let _ = storage::get_config(&env)?;
+        let next_id = storage::get_next_proposal_id(&env);
+        let mut executable = Vec::new(&env);
+
+        for id in 1..next_id {
+            if let Ok(proposal) = storage::get_proposal(&env, id) {
+                if proposal.status == ProposalStatus::Approved {
+                    // Check if all dependencies are executed
+                    let deps_satisfied = Self::check_dependencies_executed(&env, &proposal.depends_on);
+                    if deps_satisfied.is_ok() {
+                        // Also check timelock and expiration
+                        let current_ledger = env.ledger().sequence() as u64;
+                        let timelock_ok = proposal.unlock_ledger == 0 
+                            || current_ledger >= proposal.unlock_ledger;
+                        let not_expired = current_ledger <= proposal.expires_at;
+                        
+                        if timelock_ok && not_expired {
+                            executable.push_back(id);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(executable)
     }
 
     /// Get role for an address

@@ -70,4 +70,16 @@ pub enum VaultError {
     TransferFailed = 600,
     /// Insufficient vault balance
     InsufficientBalance = 601,
+
+    // Dependency errors (7xx)
+    /// Dependency not found
+    DependencyNotFound = 700,
+    /// Dependency not yet executed
+    DependencyNotExecuted = 701,
+    /// Circular dependency detected
+    CircularDependency = 702,
+    /// Too many dependencies
+    TooManyDependencies = 703,
+    /// Self-referential dependency
+    SelfDependency = 704,
 }
