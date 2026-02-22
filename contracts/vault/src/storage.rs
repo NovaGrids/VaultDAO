@@ -2,7 +2,7 @@
 //!
 //! Storage keys and helper functions for persistent state.
 
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env, Symbol};
 
 use crate::errors::VaultError;
 use crate::types::{Config, Proposal, Role};
@@ -23,6 +23,8 @@ pub enum DataKey {
     NextProposalId,
     /// Priority queue index (Priority, u64) -> Vec<u64>
     PriorityQueue(u32),
+    /// Tag index (tag symbol) -> Vec<u64>
+    TagIndex(Symbol),
     /// Daily spending tracker (day number) -> i128
     DailySpent(u64),
     /// Weekly spending tracker (week number) -> i128
@@ -247,6 +249,52 @@ pub fn remove_from_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
 
 pub fn get_proposals_by_priority(env: &Env, priority: u32) -> soroban_sdk::Vec<u64> {
     let key = DataKey::PriorityQueue(priority);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env))
+}
+
+// ============================================================================
+// Tag Index Management
+// ============================================================================
+
+pub fn add_to_tag_index(env: &Env, tag: &Symbol, proposal_id: u64) {
+    let key = DataKey::TagIndex(tag.clone());
+    let mut index: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+
+    if !index.contains(proposal_id) {
+        index.push_back(proposal_id);
+        env.storage().persistent().set(&key, &index);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    }
+}
+
+pub fn remove_from_tag_index(env: &Env, tag: &Symbol, proposal_id: u64) {
+    let key = DataKey::TagIndex(tag.clone());
+    if let Some(mut index) = env
+        .storage()
+        .persistent()
+        .get::<_, soroban_sdk::Vec<u64>>(&key)
+    {
+        if let Some(idx) = index.iter().position(|id| id == proposal_id) {
+            index.remove(idx as u32);
+            env.storage().persistent().set(&key, &index);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        }
+    }
+}
+
+pub fn get_proposals_by_tag(env: &Env, tag: &Symbol) -> soroban_sdk::Vec<u64> {
+    let key = DataKey::TagIndex(tag.clone());
     env.storage()
         .persistent()
         .get(&key)

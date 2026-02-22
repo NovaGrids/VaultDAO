@@ -1081,6 +1081,412 @@ fn test_admin_can_add_attachment() {
 }
 
 #[test]
+fn test_metadata_management() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "meta"),
+        &Priority::Normal,
+    );
+
+    let key1 = Symbol::new(&env, "dept");
+    let val1 = Symbol::new(&env, "ops");
+    client.set_proposal_metadata(&signer1, &proposal_id, &key1, &val1);
+
+    let metadata = client.get_proposal_metadata(&proposal_id);
+    assert_eq!(metadata.get(key1.clone()), Some(val1.clone()));
+
+    // Admin can also mutate metadata.
+    let val2 = Symbol::new(&env, "fin");
+    client.set_proposal_metadata(&admin, &proposal_id, &key1, &val2);
+    let metadata = client.get_proposal_metadata(&proposal_id);
+    assert_eq!(metadata.get(key1.clone()), Some(val2));
+
+    // Remove existing key -> true.
+    let removed = client.remove_proposal_metadata(&admin, &proposal_id, &key1);
+    assert!(removed);
+    let metadata = client.get_proposal_metadata(&proposal_id);
+    assert_eq!(metadata.get(key1.clone()), None);
+
+    // Remove non-existing key -> false.
+    let removed = client.remove_proposal_metadata(&admin, &proposal_id, &key1);
+    assert!(!removed);
+
+    // Clear all keys.
+    client.set_proposal_metadata(
+        &signer1,
+        &proposal_id,
+        &Symbol::new(&env, "type"),
+        &Symbol::new(&env, "ops"),
+    );
+    client.set_proposal_metadata(
+        &signer1,
+        &proposal_id,
+        &Symbol::new(&env, "region"),
+        &Symbol::new(&env, "na"),
+    );
+    client.clear_proposal_metadata(&signer1, &proposal_id);
+
+    let metadata = client.get_proposal_metadata(&proposal_id);
+    assert_eq!(metadata.len(), 0);
+}
+
+#[test]
+fn test_metadata_permissions_and_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "meta"),
+        &Priority::Normal,
+    );
+
+    // Unauthorized caller cannot mutate metadata.
+    let res = client.try_set_proposal_metadata(
+        &outsider,
+        &proposal_id,
+        &Symbol::new(&env, "dept"),
+        &Symbol::new(&env, "ops"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+
+    // Once proposal is no longer pending, metadata is immutable.
+    client.approve_proposal(&signer1, &proposal_id);
+
+    let res = client.try_set_proposal_metadata(
+        &signer1,
+        &proposal_id,
+        &Symbol::new(&env, "dept"),
+        &Symbol::new(&env, "ops"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
+}
+
+#[test]
+fn test_metadata_validation_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "meta"),
+        &Priority::Normal,
+    );
+
+    let keys = [
+        "k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", "k11", "k12", "k13",
+        "k14", "k15", "k16",
+    ];
+    let value = Symbol::new(&env, "v");
+
+    for i in 0..MAX_METADATA_FIELDS {
+        let key = Symbol::new(&env, keys[i as usize]);
+        client.set_proposal_metadata(&signer1, &proposal_id, &key, &value);
+    }
+
+    // Updating an existing key at max capacity is allowed.
+    let existing_key = Symbol::new(&env, "k0");
+    client.set_proposal_metadata(
+        &admin,
+        &proposal_id,
+        &existing_key,
+        &Symbol::new(&env, "v2"),
+    );
+
+    // Adding a new key beyond max capacity is rejected.
+    let overflow_key = Symbol::new(&env, keys[MAX_METADATA_FIELDS as usize]);
+    let res = client.try_set_proposal_metadata(
+        &signer1,
+        &proposal_id,
+        &overflow_key,
+        &Symbol::new(&env, "x"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::MetadataLimitExceeded)));
+}
+
+#[test]
+fn test_metadata_remove_clear_permissions_and_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "meta"),
+        &Priority::Normal,
+    );
+
+    let key = Symbol::new(&env, "dept");
+    let value = Symbol::new(&env, "ops");
+    client.set_proposal_metadata(&signer1, &proposal_id, &key, &value);
+
+    // Unauthorized callers cannot remove/clear metadata.
+    let res = client.try_remove_proposal_metadata(&outsider, &proposal_id, &key);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+
+    let res = client.try_clear_proposal_metadata(&outsider, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+
+    // Once proposal is approved, remove/clear operations are blocked.
+    client.approve_proposal(&signer1, &proposal_id);
+
+    let res = client.try_remove_proposal_metadata(&admin, &proposal_id, &key);
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
+
+    let res = client.try_clear_proposal_metadata(&admin, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
+}
+
+#[test]
+fn test_tag_based_filtering() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id_1 = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "p1"),
+        &Priority::Normal,
+    );
+    let proposal_id_2 = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "p2"),
+        &Priority::Normal,
+    );
+
+    let team_tag = Symbol::new(&env, "team");
+    let urgent_tag = Symbol::new(&env, "urgent");
+
+    client.add_proposal_tag(&signer1, &proposal_id_1, &team_tag);
+    client.add_proposal_tag(&signer1, &proposal_id_1, &urgent_tag);
+    client.add_proposal_tag(&signer1, &proposal_id_2, &team_tag);
+
+    let team_ids = client.get_proposals_by_tag(&team_tag);
+    assert_eq!(team_ids.len(), 2);
+    assert!(team_ids.contains(proposal_id_1));
+    assert!(team_ids.contains(proposal_id_2));
+
+    let urgent_ids = client.get_proposals_by_tag(&urgent_tag);
+    assert_eq!(urgent_ids.len(), 1);
+    assert!(urgent_ids.contains(proposal_id_1));
+
+    // Duplicate tag add should fail.
+    let res = client.try_add_proposal_tag(&signer1, &proposal_id_1, &team_tag);
+    assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
+
+    // Removing tag updates index.
+    let removed = client.remove_proposal_tag(&admin, &proposal_id_1, &urgent_tag);
+    assert!(removed);
+    let urgent_ids = client.get_proposals_by_tag(&urgent_tag);
+    assert_eq!(urgent_ids.len(), 0);
+
+    // Clearing tags removes all indexes for proposal 1.
+    client.clear_proposal_tags(&signer1, &proposal_id_1);
+    let team_ids = client.get_proposals_by_tag(&team_tag);
+    assert_eq!(team_ids.len(), 1);
+    assert!(team_ids.contains(proposal_id_2));
+    assert!(!team_ids.contains(proposal_id_1));
+}
+
+#[test]
+fn test_tag_permissions_and_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "tag"),
+        &Priority::Normal,
+    );
+
+    let tag = Symbol::new(&env, "ops");
+
+    // Unauthorized caller cannot mutate tags.
+    let res = client.try_add_proposal_tag(&outsider, &proposal_id, &tag);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+
+    // Once proposal is not pending, tags are immutable.
+    client.approve_proposal(&signer1, &proposal_id);
+    let res = client.try_add_proposal_tag(&signer1, &proposal_id, &tag);
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
+}
+
+#[test]
 fn test_fixed_threshold_strategy() {
     let env = Env::default();
     env.mock_all_auths();

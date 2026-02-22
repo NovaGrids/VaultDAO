@@ -15,7 +15,7 @@ mod types;
 pub use types::InitConfig;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, Map, Symbol, Vec};
 #[allow(unused_imports)]
 use types::{
     AmountTier, Config, Priority, Proposal, ProposalStatus, Role, ThresholdStrategy,
@@ -31,6 +31,8 @@ pub struct VaultDAO;
 
 /// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
+/// Maximum number of metadata fields allowed per proposal.
+const MAX_METADATA_FIELDS: u32 = 16;
 
 /// Calculate required threshold based on strategy
 fn calculate_required_threshold(env: &Env, config: &Config, proposal: &Proposal) -> u32 {
@@ -203,6 +205,8 @@ impl VaultDAO {
             token: token_addr,
             amount,
             memo,
+            metadata: Map::new(&env),
+            tags: Vec::new(&env),
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             status: ProposalStatus::Pending,
@@ -463,6 +467,238 @@ impl VaultDAO {
         events::emit_proposal_rejected(&env, proposal_id, &rejector);
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Metadata Management
+    // ========================================================================
+
+    /// Set a metadata key/value pair on a proposal.
+    ///
+    /// Only the proposer or an admin can mutate metadata.
+    /// Metadata can only be modified while proposal is pending.
+    /// New metadata fields are capped by `MAX_METADATA_FIELDS`.
+    pub fn set_proposal_metadata(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        key: Symbol,
+        value: Symbol,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let key_exists = proposal.metadata.get(key.clone()).is_some();
+        if !key_exists && proposal.metadata.len() >= MAX_METADATA_FIELDS {
+            return Err(VaultError::MetadataLimitExceeded);
+        }
+
+        proposal.metadata.set(key, value);
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Remove a metadata key from a proposal.
+    ///
+    /// Only the proposer or an admin can mutate metadata.
+    /// Metadata can only be modified while proposal is pending.
+    /// Returns `true` if a key existed and was removed.
+    pub fn remove_proposal_metadata(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        key: Symbol,
+    ) -> Result<bool, VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let existed = proposal.metadata.get(key.clone()).is_some();
+        if existed {
+            proposal.metadata.remove(key);
+            storage::set_proposal(&env, &proposal);
+            storage::extend_instance_ttl(&env);
+        }
+
+        Ok(existed)
+    }
+
+    /// Clear all metadata from a proposal.
+    ///
+    /// Only the proposer or an admin can mutate metadata.
+    /// Metadata can only be modified while proposal is pending.
+    pub fn clear_proposal_metadata(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        proposal.metadata = Map::new(&env);
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get all metadata for a proposal.
+    pub fn get_proposal_metadata(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<Map<Symbol, Symbol>, VaultError> {
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        Ok(proposal.metadata)
+    }
+
+    // ========================================================================
+    // Tag Management
+    // ========================================================================
+
+    /// Add a tag to a proposal.
+    ///
+    /// Only the proposer or an admin can mutate tags.
+    /// Tags can only be modified while proposal is pending.
+    pub fn add_proposal_tag(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        tag: Symbol,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        if proposal.tags.contains(&tag) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        proposal.tags.push_back(tag.clone());
+        storage::set_proposal(&env, &proposal);
+        storage::add_to_tag_index(&env, &tag, proposal_id);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Remove a tag from a proposal.
+    ///
+    /// Only the proposer or an admin can mutate tags.
+    /// Tags can only be modified while proposal is pending.
+    /// Returns `true` if the tag existed and was removed.
+    pub fn remove_proposal_tag(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        tag: Symbol,
+    ) -> Result<bool, VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let mut removed = false;
+        for i in 0..proposal.tags.len() {
+            if proposal.tags.get(i).unwrap() == tag {
+                proposal.tags.remove(i);
+                removed = true;
+                break;
+            }
+        }
+
+        if removed {
+            storage::set_proposal(&env, &proposal);
+            storage::remove_from_tag_index(&env, &tag, proposal_id);
+            storage::extend_instance_ttl(&env);
+        }
+
+        Ok(removed)
+    }
+
+    /// Clear all tags from a proposal.
+    ///
+    /// Only the proposer or an admin can mutate tags.
+    /// Tags can only be modified while proposal is pending.
+    pub fn clear_proposal_tags(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        for existing_tag in proposal.tags.iter() {
+            storage::remove_from_tag_index(&env, &existing_tag, proposal_id);
+        }
+
+        proposal.tags = Vec::new(&env);
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get all proposal IDs matching a tag.
+    pub fn get_proposals_by_tag(env: Env, tag: Symbol) -> Vec<u64> {
+        storage::get_proposals_by_tag(&env, &tag)
     }
 
     // ========================================================================

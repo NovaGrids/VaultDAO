@@ -36,6 +36,8 @@ pub enum VaultError {
     ProposalNotApproved = 304,
     /// Proposal has already been executed
     ProposalAlreadyExecuted = 305,
+    /// Proposal metadata has reached its maximum number of fields
+    MetadataLimitExceeded = 306,
 
     // Spending limit errors (4xx)
     /// Amount exceeds per-proposal spending limit

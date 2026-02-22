@@ -2,7 +2,7 @@
 //!
 //! Core data structures for the multisig treasury contract.
 
-use soroban_sdk::{contracttype, Address, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Map, Symbol, Vec};
 
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
@@ -141,6 +141,10 @@ pub struct Proposal {
     pub amount: i128,
     /// Optional memo/description
     pub memo: Symbol,
+    /// Arbitrary proposal metadata (key/value custom fields)
+    pub metadata: Map<Symbol, Symbol>,
+    /// Proposal tags for categorization and filtering
+    pub tags: Vec<Symbol>,
     /// Addresses that have approved
     pub approvals: Vec<Address>,
     /// Addresses that have abstained
