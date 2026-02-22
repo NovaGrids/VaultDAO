@@ -21,6 +21,8 @@ pub enum DataKey {
     Proposal(u64),
     /// Next proposal ID counter -> u64
     NextProposalId,
+    /// Priority queue index (Priority, u64) -> Vec<u64>
+    PriorityQueue(u32),
     /// Daily spending tracker (day number) -> i128
     DailySpent(u64),
     /// Weekly spending tracker (week number) -> i128
@@ -36,6 +38,8 @@ pub const DAY_IN_LEDGERS: u32 = 17_280; // ~24 hours
 pub const PROPOSAL_TTL: u32 = DAY_IN_LEDGERS * 7; // 7 days
 pub const INSTANCE_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
+pub const PERSISTENT_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
+pub const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
 
 // ============================================================================
 // Initialization
@@ -204,6 +208,49 @@ pub fn get_recurring_payment(
         .persistent()
         .get(&DataKey::Recurring(id))
         .ok_or(VaultError::ProposalNotFound) // Reuse code or add new
+}
+
+// ============================================================================
+// Priority Queue Management
+// ============================================================================
+
+pub fn add_to_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
+    let key = DataKey::PriorityQueue(priority);
+    let mut queue: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+    queue.push_back(proposal_id);
+    env.storage().persistent().set(&key, &queue);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn remove_from_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
+    let key = DataKey::PriorityQueue(priority);
+    if let Some(mut queue) = env
+        .storage()
+        .persistent()
+        .get::<_, soroban_sdk::Vec<u64>>(&key)
+    {
+        if let Some(idx) = queue.iter().position(|id| id == proposal_id) {
+            queue.remove(idx as u32);
+            env.storage().persistent().set(&key, &queue);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        }
+    }
+}
+
+pub fn get_proposals_by_priority(env: &Env, priority: u32) -> soroban_sdk::Vec<u64> {
+    let key = DataKey::PriorityQueue(priority);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env))
 }
 
 // ============================================================================

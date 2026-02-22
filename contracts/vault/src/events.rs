@@ -40,6 +40,19 @@ pub fn emit_proposal_approved(
     );
 }
 
+/// Emit when a signer abstains from a proposal
+pub fn emit_proposal_abstained(
+    env: &Env,
+    proposal_id: u64,
+    abstainer: &Address,
+    abstention_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_abstained"), proposal_id),
+        (abstainer.clone(), abstention_count),
+    );
+}
+
 /// Emit when a proposal reaches threshold and is ready for execution
 pub fn emit_proposal_ready(env: &Env, proposal_id: u64) {
     env.events()

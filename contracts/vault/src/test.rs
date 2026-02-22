@@ -43,9 +43,14 @@ fn test_multisig_approval() {
     client.set_role(&admin, &signer2, &Role::Treasurer);
 
     // 1. Propose transfer
-    let conditions = Vec::new(&env);
-    let proposal_id =
-        client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"), &conditions, &ConditionLogic::And);
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+    );
 
     // 2. First approval (signer1)
     client.approve_proposal(&signer1, &proposal_id);
@@ -90,9 +95,14 @@ fn test_unauthorized_proposal() {
     client.initialize(&admin, &config);
 
     // Member tries to propose
-    let conditions = Vec::new(&env);
-    let res =
-        client.try_propose_transfer(&member, &member, &token, &100, &Symbol::new(&env, "fail"), &conditions, &ConditionLogic::And);
+    let res = client.try_propose_transfer(
+        &member,
+        &member,
+        &token,
+        &100,
+        &Symbol::new(&env, "fail"),
+        &Priority::Normal,
+    );
 
     assert!(res.is_err());
     assert_eq!(res.err(), Some(Ok(VaultError::InsufficientRole)));
@@ -133,9 +143,14 @@ fn test_timelock_violation() {
     client.set_role(&admin, &signer1, &Role::Treasurer);
 
     // 1. Propose large transfer (600 > 500)
-    let conditions = Vec::new(&env);
-    let proposal_id =
-        client.propose_transfer(&signer1, &user, &token, &600, &Symbol::new(&env, "large"), &conditions, &ConditionLogic::And);
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &600,
+        &Symbol::new(&env, "large"),
+        &Priority::Normal,
+    );
 
     // 2. Approve -> Should trigger timelock
     client.approve_proposal(&signer1, &proposal_id);
@@ -160,7 +175,7 @@ fn test_timelock_violation() {
 }
 
 #[test]
-fn test_condition_balance_above() {
+fn test_priority_levels() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -168,11 +183,13 @@ fn test_condition_balance_above() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = Address::generate(&env);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
     let config = InitConfig {
         signers,
@@ -180,48 +197,76 @@ fn test_condition_balance_above() {
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
-        timelock_threshold: 5000,
+        timelock_threshold: 500,
         timelock_delay: 100,
     };
     client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Create condition: balance must be > 500
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::BalanceAbove(500));
-
-    let proposal_id = client.propose_transfer(
-        &admin,
+    // Create proposals with different priorities
+    let low_id = client.propose_transfer(
+        &signer1,
         &user,
-        &token.address(),
+        &token,
         &100,
-        &Symbol::new(&env, "cond"),
-        &conditions,
-        &ConditionLogic::And,
+        &Symbol::new(&env, "low"),
+        &Priority::Low,
+    );
+    let normal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "normal"),
+        &Priority::Normal,
+    );
+    let high_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "high"),
+        &Priority::High,
+    );
+    let critical_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "critical"),
+        &Priority::Critical,
     );
 
-    client.approve_proposal(&admin, &proposal_id);
+    // Verify priorities
+    let low_proposal = client.get_proposal(&low_id);
+    assert_eq!(low_proposal.priority, Priority::Low);
 
-    // Try execute with balance = 0 (condition requires > 500)
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::ConditionsNotMet)));
+    let normal_proposal = client.get_proposal(&normal_id);
+    assert_eq!(normal_proposal.priority, Priority::Normal);
+
+    let high_proposal = client.get_proposal(&high_id);
+    assert_eq!(high_proposal.priority, Priority::High);
+
+    let critical_proposal = client.get_proposal(&critical_id);
+    assert_eq!(critical_proposal.priority, Priority::Critical);
 }
 
 #[test]
-fn test_condition_date_after() {
+fn test_get_proposals_by_priority() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = Address::generate(&env);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
     let config = InitConfig {
         signers,
@@ -229,55 +274,57 @@ fn test_condition_date_after() {
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
-        timelock_threshold: 5000,
+        timelock_threshold: 500,
         timelock_delay: 100,
     };
     client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Create condition: execute only after ledger 200
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::DateAfter(200));
-
-    let proposal_id = client.propose_transfer(
-        &admin,
+    // Create multiple critical proposals
+    let critical_id1 = client.propose_transfer(
+        &signer1,
         &user,
-        &token.address(),
+        &token,
         &100,
-        &Symbol::new(&env, "date"),
-        &conditions,
-        &ConditionLogic::And,
+        &Symbol::new(&env, "c1"),
+        &Priority::Critical,
+    );
+    let critical_id2 = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "c2"),
+        &Priority::Critical,
     );
 
-    client.approve_proposal(&admin, &proposal_id);
+    // Get critical proposals
+    let critical_proposals = client.get_proposals_by_priority(&Priority::Critical);
+    assert_eq!(critical_proposals.len(), 2);
+    assert!(critical_proposals.contains(critical_id1));
+    assert!(critical_proposals.contains(critical_id2));
 
-    // Try execute at ledger 100 (should fail)
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::ConditionsNotMet)));
-
-    // Advance to ledger 201
-    env.ledger().set_sequence_number(201);
-
-    // Now should pass condition check (but fail on balance/transfer)
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_ne!(res.err(), Some(Ok(VaultError::ConditionsNotMet)));
+    // Get low proposals (should be empty)
+    let low_proposals = client.get_proposals_by_priority(&Priority::Low);
+    assert_eq!(low_proposals.len(), 0);
 }
 
 #[test]
-fn test_condition_and_logic() {
+fn test_change_priority() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = Address::generate(&env);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
     let config = InitConfig {
         signers,
@@ -285,54 +332,58 @@ fn test_condition_and_logic() {
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
-        timelock_threshold: 5000,
+        timelock_threshold: 500,
         timelock_delay: 100,
     };
     client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Multiple conditions with AND logic
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::BalanceAbove(500));
-    conditions.push_back(Condition::DateAfter(150));
-
+    // Create a low priority proposal
     let proposal_id = client.propose_transfer(
-        &admin,
+        &signer1,
         &user,
-        &token.address(),
+        &token,
         &100,
-        &Symbol::new(&env, "and"),
-        &conditions,
-        &ConditionLogic::And,
+        &Symbol::new(&env, "test"),
+        &Priority::Low,
     );
 
-    client.approve_proposal(&admin, &proposal_id);
+    // Verify initial priority
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.priority, Priority::Low);
 
-    // At ledger 100, date condition fails
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::ConditionsNotMet)));
+    // Change to critical
+    client.change_priority(&admin, &proposal_id, &Priority::Critical);
 
-    // Advance to ledger 151 (date passes, but balance still fails)
-    env.ledger().set_sequence_number(151);
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::ConditionsNotMet)));
+    // Verify updated priority
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.priority, Priority::Critical);
+
+    // Verify it's in the critical queue
+    let critical_proposals = client.get_proposals_by_priority(&Priority::Critical);
+    assert!(critical_proposals.contains(proposal_id));
+
+    // Verify it's not in the low queue
+    let low_proposals = client.get_proposals_by_priority(&Priority::Low);
+    assert!(!low_proposals.contains(proposal_id));
 }
 
 #[test]
-fn test_condition_or_logic() {
+fn test_change_priority_unauthorized() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = Address::generate(&env);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
     let config = InitConfig {
         signers,
@@ -340,37 +391,29 @@ fn test_condition_or_logic() {
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
-        timelock_threshold: 5000,
+        timelock_threshold: 500,
         timelock_delay: 100,
     };
     client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Multiple conditions with OR logic
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::BalanceAbove(500));
-    conditions.push_back(Condition::DateAfter(50)); // This is already true
-
+    // Create a proposal
     let proposal_id = client.propose_transfer(
-        &admin,
+        &signer1,
         &user,
-        &token.address(),
+        &token,
         &100,
-        &Symbol::new(&env, "or"),
-        &conditions,
-        &ConditionLogic::Or,
+        &Symbol::new(&env, "test"),
+        &Priority::Low,
     );
 
-    client.approve_proposal(&admin, &proposal_id);
-
-    // At ledger 100, DateAfter(50) is true, so OR passes
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    // Should not fail on ConditionsNotMet (will fail on balance/transfer instead)
-    assert_ne!(res.err(), Some(Ok(VaultError::ConditionsNotMet)));
+    // Try to change priority as non-admin
+    let res = client.try_change_priority(&signer1, &proposal_id, &Priority::Critical);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
 
 #[test]
-fn test_no_conditions() {
+fn test_priority_queue_cleanup_on_execution() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -378,11 +421,13 @@ fn test_no_conditions() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = Address::generate(&env);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
     let config = InitConfig {
         signers,
@@ -390,28 +435,284 @@ fn test_no_conditions() {
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
-        timelock_threshold: 5000,
+        timelock_threshold: 500,
         timelock_delay: 100,
     };
     client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Empty conditions
-    let conditions = Vec::new(&env);
-
+    // Create a critical proposal
     let proposal_id = client.propose_transfer(
-        &admin,
+        &signer1,
         &user,
-        &token.address(),
+        &token,
         &100,
-        &Symbol::new(&env, "none"),
-        &conditions,
-        &ConditionLogic::And,
+        &Symbol::new(&env, "test"),
+        &Priority::Critical,
     );
 
-    client.approve_proposal(&admin, &proposal_id);
+    // Verify it's in the critical queue
+    let critical_proposals = client.get_proposals_by_priority(&Priority::Critical);
+    assert!(critical_proposals.contains(proposal_id));
 
-    // Should not fail on conditions (will fail on balance/transfer)
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_ne!(res.err(), Some(Ok(VaultError::ConditionsNotMet)));
+    // Reject it (while still pending)
+    client.reject_proposal(&admin, &proposal_id);
+
+    // Verify it's removed from the critical queue
+    let critical_proposals = client.get_proposals_by_priority(&Priority::Critical);
+    assert!(!critical_proposals.contains(proposal_id));
+}
+
+#[test]
+fn test_abstention_basic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+    );
+
+    // Signer2 abstains
+    client.abstain_from_proposal(&signer2, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.abstentions.len(), 1);
+    assert!(proposal.abstentions.contains(signer2));
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+}
+
+#[test]
+fn test_abstention_does_not_count_toward_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+    signers.push_back(signer3.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+    client.set_role(&admin, &signer3, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+    );
+
+    // Signer2 abstains
+    client.abstain_from_proposal(&signer2, &proposal_id);
+
+    // Only 1 approval so far (proposer auto-approves in some systems, but not here)
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+
+    // Signer1 approves
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Still pending (need 2 approvals, abstention doesn't count)
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+
+    // Signer3 approves
+    client.approve_proposal(&signer3, &proposal_id);
+
+    // Now approved (2 approvals reached)
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_cannot_vote_after_abstaining() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+    );
+
+    // Signer1 abstains
+    client.abstain_from_proposal(&signer1, &proposal_id);
+
+    // Try to approve after abstaining
+    let res = client.try_approve_proposal(&signer1, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
+}
+
+#[test]
+fn test_cannot_abstain_after_voting() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+    );
+
+    // Signer1 approves
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Try to abstain after voting
+    let res = client.try_abstain_from_proposal(&signer1, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
+}
+
+#[test]
+fn test_cannot_abstain_twice() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+    );
+
+    // Signer1 abstains
+    client.abstain_from_proposal(&signer1, &proposal_id);
+
+    // Try to abstain again
+    let res = client.try_abstain_from_proposal(&signer1, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
 }

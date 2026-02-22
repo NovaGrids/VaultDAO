@@ -1,9 +1,12 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import type { ToastItem } from '../components/ToastContainer';
+import ToastContainer from '../components/ToastContainer';
+import type { ToastType } from '../components/Toast';
+export type { ToastType } from '../components/Toast';
 import {
   type NotificationEventKey,
   loadNotificationPreferences,
-  shouldNotify,
   isInDoNotDisturbWindow,
   enqueueDigestEvent,
   getDigestSummary,
@@ -12,28 +15,16 @@ import {
   markDigestSentNow,
   sendBrowserNotification,
   getBrowserNotificationPermission,
+  shouldNotify as checkShouldNotify,
 } from '../utils/notifications';
 
-export type ToastLevel = 'success' | 'error' | 'info';
-
-export interface ToastItem {
-  id: string;
-  message: string;
-  level: ToastLevel;
-}
-
 export interface ToastContextValue {
-  notify: (eventType: NotificationEventKey, message: string, level?: ToastLevel) => void;
+  showToast: (message: string, type?: ToastType) => void;
+  notify: (eventType: NotificationEventKey, message: string, level?: ToastType) => void;
   sendTestNotification: () => void;
 }
 
-const ToastContext = createContext<ToastContextValue | null>(null);
-
-const TOAST_LEVEL_STYLES: Record<ToastLevel, string> = {
-  success: 'bg-green-500/10 text-green-400 border-green-500/20',
-  error: 'bg-red-500/10 text-red-400 border-red-500/20',
-  info: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-};
+export const ToastContext = createContext<ToastContextValue | null>(null);
 
 const AUTO_DISMISS_MS = 5000;
 
@@ -56,9 +47,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const showToast = useCallback(
-    (message: string, level: ToastLevel = 'info') => {
+    (message: string, type: ToastType = 'info') => {
       const id = nextToastId();
-      setToasts((prev) => [...prev, { id, message, level }]);
+      setToasts((prev) => [...prev, { id, message, type }]);
 
       const timer = setTimeout(() => dismissToast(id), AUTO_DISMISS_MS);
       dismissTimersRef.current.set(id, timer);
@@ -67,7 +58,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 
   const notify = useCallback(
-    (eventType: NotificationEventKey, message: string, level: ToastLevel = 'info') => {
+    (eventType: NotificationEventKey, message: string, level: ToastType = 'info') => {
       const prefs = loadNotificationPreferences();
 
       if (prefs.frequency === 'off') return;
@@ -101,12 +92,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       const now = new Date();
       if (isInDoNotDisturbWindow(prefs.dnd, now)) return;
 
-      if (shouldNotify(eventType, 'toast', now)) {
+      if (checkShouldNotify(eventType, 'toast', now)) {
         showToast(message, level);
       }
 
       if (
-        shouldNotify(eventType, 'browser', now) &&
+        checkShouldNotify(eventType, 'browser', now) &&
         getBrowserNotificationPermission() === 'granted'
       ) {
         sendBrowserNotification('VaultDAO', { body: message });
@@ -131,33 +122,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     }
   }, [showToast]);
 
-  const value: ToastContextValue = { notify, sendTestNotification };
+  const value: ToastContextValue = { showToast, notify, sendTestNotification };
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
-        <div className="flex flex-col gap-2 pointer-events-auto">
-          {toasts.map((toast) => (
-            <div
-              key={toast.id}
-              className={`px-6 py-4 rounded-lg shadow-lg border ${TOAST_LEVEL_STYLES[toast.level]}`}
-            >
-              <div className="flex items-center gap-3">
-                <span>{toast.message}</span>
-                <button
-                  type="button"
-                  onClick={() => dismissToast(toast.id)}
-                  className="text-gray-400 hover:text-white"
-                  aria-label="Close"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </ToastContext.Provider>
   );
 }

@@ -57,6 +57,17 @@ pub enum Role {
     Admin = 2,
 }
 
+/// Priority levels for proposals.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Priority {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    Critical = 3,
+}
+
 /// The lifecycle states of a proposal.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,8 +127,12 @@ pub struct Proposal {
     pub memo: Symbol,
     /// Addresses that have approved
     pub approvals: Vec<Address>,
+    /// Addresses that have abstained
+    pub abstentions: Vec<Address>,
     /// Current status
     pub status: ProposalStatus,
+    /// Priority level
+    pub priority: Priority,
     /// Ledger sequence when created
     pub created_at: u64,
     /// Ledger sequence when proposal expires
