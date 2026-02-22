@@ -156,7 +156,6 @@ fn test_timelock_violation() {
     assert_ne!(res.err(), Some(Ok(VaultError::TimelockNotExpired)));
 }
 
-
 #[test]
 fn test_whitelist_mode() {
     let env = Env::default();
@@ -303,12 +302,12 @@ fn test_list_management() {
     assert!(!client.is_whitelisted(&address1));
     client.add_to_whitelist(&admin, &address1);
     assert!(client.is_whitelisted(&address1));
-    
+
     // Try to add again - should fail
     let result = client.try_add_to_whitelist(&admin, &address1);
     assert!(result.is_err());
     assert_eq!(result.err(), Some(Ok(VaultError::AddressAlreadyOnList)));
-    
+
     client.remove_from_whitelist(&admin, &address1);
     assert!(!client.is_whitelisted(&address1));
 
@@ -316,7 +315,7 @@ fn test_list_management() {
     assert!(!client.is_blacklisted(&address2));
     client.add_to_blacklist(&admin, &address2);
     assert!(client.is_blacklisted(&address2));
-    
+
     client.remove_from_blacklist(&admin, &address2);
     assert!(!client.is_blacklisted(&address2));
 
