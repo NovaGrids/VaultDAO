@@ -9,6 +9,7 @@ import Activity from './app/dashboard/Activity';
 import Analytics from './app/dashboard/Analytics';
 import Settings from './app/dashboard/Settings';
 import Templates from './app/dashboard/Templates';
+import RecurringPayments from './app/dashboard/RecurringPayments';
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
           <Route path="activity" element={<Activity />} />
           <Route path="templates" element={<Templates />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="recurring-payments" element={<RecurringPayments />} />
           <Route path="settings" element={<Settings />} />
         </Route>
 

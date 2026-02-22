@@ -15,6 +15,7 @@ import {
   Activity as ActivityIcon,
   BarChart3,
   Files,
+  RefreshCw,
 } from "lucide-react";
 // Fixed Import: Pointing to the actual hook location
 import { useWallet } from "../../hooks/useWallet"; 
@@ -33,6 +34,7 @@ const DashboardLayout: React.FC = () => {
   const navItems = [
     { label: 'Overview', path: '/dashboard', icon: LayoutDashboard },
     { label: 'Proposals', path: '/dashboard/proposals', icon: FileText },
+    { label: 'Recurring Payments', path: '/dashboard/recurring-payments', icon: RefreshCw },
     { label: 'Activity', path: '/dashboard/activity', icon: ActivityIcon },
     { label: 'Templates', path: '/dashboard/templates', icon: Files },
     { label: 'Analytics', path: '/dashboard/analytics', icon: BarChart3 },

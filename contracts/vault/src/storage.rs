@@ -269,7 +269,6 @@ pub fn extend_instance_ttl(env: &Env) {
 // Velocity Checking (Sliding Window)
 // ============================================================================
 
-
 pub fn check_and_update_velocity(env: &Env, addr: &Address, config: &VelocityConfig) -> bool {
     let now = env.ledger().timestamp();
     let key = DataKey::VelocityHistory(addr.clone());

@@ -69,6 +69,18 @@
                     },
                     {
                       "key": {
+                        "symbol": "threshold_strategy"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "Fixed"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "timelock_delay"
                       },
                       "val": {
@@ -441,6 +453,14 @@
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "attachments"
+                      },
+                      "val": {
+                        "vec": []
                       }
                     },
                     {
@@ -843,6 +863,18 @@
                               },
                               "val": {
                                 "u32": 2
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "threshold_strategy"
+                              },
+                              "val": {
+                                "vec": [
+                                  {
+                                    "symbol": "Fixed"
+                                  }
+                                ]
                               }
                             },
                             {
