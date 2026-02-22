@@ -5,6 +5,7 @@ import {
   type ExportHistoryItem,
 } from '../../utils/exportHistory';
 import { Download, Trash2, FileText } from 'lucide-react';
+import RoleManagement from '../../components/RoleManagement';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -68,6 +69,12 @@ const Settings: React.FC = () => {
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-bold">Settings</h2>
+
+      {/* Role Management Section */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <h3 className="text-lg font-semibold mb-4">Role Management</h3>
+        <RoleManagement />
+      </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <h3 className="text-lg font-semibold mb-4">Export history</h3>

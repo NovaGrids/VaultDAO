@@ -3,9 +3,24 @@ import React from 'react';
 export type ProposalStatus = 'Pending' | 'Approved' | 'Rejected' | 'Executed' | 'Expired';
 
 interface StatusBadgeProps {
-  status: ProposalStatus;
+  status: ProposalStatus | number;
   className?: string;
 }
+
+// Map numeric status to string status
+const statusToString = (status: ProposalStatus | number): ProposalStatus => {
+  if (typeof status === 'string') return status;
+  
+  const statusMap: Record<number, ProposalStatus> = {
+    0: 'Pending',
+    1: 'Approved',
+    2: 'Executed',
+    3: 'Rejected',
+    4: 'Expired',
+  };
+  
+  return statusMap[status] || 'Pending';
+};
 
 const colorMap: Record<ProposalStatus, string> = {
   Pending: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
@@ -16,11 +31,13 @@ const colorMap: Record<ProposalStatus, string> = {
 };
 
 const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => {
+  const statusString = statusToString(status);
+  
   return (
     <span
-      className={`px-3 py-1 rounded-full text-xs font-medium border ${colorMap[status]} ${className} transition-colors duration-200`}
+      className={`px-3 py-1 rounded-full text-xs font-medium border ${colorMap[statusString]} ${className} transition-colors duration-200`}
     >
-      {status}
+      {statusString}
     </span>
   );
 };

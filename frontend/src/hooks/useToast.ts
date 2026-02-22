@@ -1,23 +1,22 @@
-import { createContext, useContext } from 'react';
-import * as Notifications from '../utils/notifications';
-
-export type ToastLevel = 'success' | 'error' | 'info';
-
-export interface ToastContextValue {
-  notify: (eventType: Notifications.NotificationEventKey, message: string, level?: ToastLevel) => void;
-  sendTestNotification: () => void;
-}
-
-// We define the context here so it can be exported without the Provider
-export const ToastContext = createContext<ToastContextValue | null>(null);
+import { useContext } from 'react';
+import { ToastContext, type ToastContextValue } from '../context/ToastContext';
 
 /**
- * Hook to use the toast context
+ * Hook to access the toast notification system
+ * 
+ * @returns ToastContextValue with showToast, notify, and sendTestNotification methods
+ * @throws Error if used outside of ToastProvider
+ * 
+ * @example
+ * const { showToast } = useToast();
+ * showToast('Operation successful!', 'success');
  */
-export function useToast() {
+export function useToast(): ToastContextValue {
   const context = useContext(ToastContext);
   if (!context) {
     throw new Error('useToast must be used within a ToastProvider');
   }
   return context;
 }
+
+export type { ToastType } from '../context/ToastContext';
