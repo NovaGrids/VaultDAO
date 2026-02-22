@@ -82,4 +82,14 @@ pub enum VaultError {
     TooManyDependencies = 703,
     /// Self-referential dependency
     SelfDependency = 704,
+
+    // Amendment errors (8xx)
+    /// Cannot amend executed proposal
+    AmendmentOnExecuted = 800,
+    /// Cannot amend rejected proposal
+    AmendmentOnRejected = 801,
+    /// Cannot amend expired proposal
+    AmendmentOnExpired = 802,
+    /// Amendment not allowed
+    AmendmentNotAllowed = 803,
 }

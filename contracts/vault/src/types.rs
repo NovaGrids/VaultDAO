@@ -126,3 +126,25 @@ pub struct RecurringPayment {
     /// Configured status (Active/Stopped)
     pub is_active: bool,
 }
+
+/// Represents a single amendment to a proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Amendment {
+    /// Old recipient address
+    pub old_recipient: Address,
+    /// New recipient address
+    pub new_recipient: Address,
+    /// Old amount
+    pub old_amount: i128,
+    /// New amount
+    pub new_amount: i128,
+    /// Old memo
+    pub old_memo: Symbol,
+    /// New memo
+    pub new_memo: Symbol,
+    /// Ledger sequence when amendment was made
+    pub amended_at: u64,
+    /// Address that made the amendment
+    pub amended_by: Address,
+}

@@ -430,3 +430,201 @@ fn test_circular_dependency() {
     // Let's verify the basic case works (non-circular) passes:
     assert!(proposal2_id > proposal1_id);
 }
+
+// ========================================================================
+// Amendment Tests
+// ========================================================================
+
+#[test]
+fn test_amend_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // 1. Create proposal
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "original"),
+        &Vec::new(&env),
+    );
+
+    // 2. Approve proposal
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // 3. Verify proposal is approved
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+    assert_eq!(proposal.amount, 100);
+
+    // 4. Try to amend (should succeed since we now allow amending approved proposals)
+    let new_user = Address::generate(&env);
+    client.amend_proposal(
+        &signer1,
+        &proposal_id,
+        &new_user,
+        &200,
+        &Symbol::new(&env, "amended"),
+    );
+
+    // 5. Verify proposal is now pending (status and approvals reset)
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+    assert_eq!(proposal.amount, 200);
+}
+
+#[test]
+fn test_amend_proposal_approval_reset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // 1. Create proposal
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "original"),
+        &Vec::new(&env),
+    );
+
+    // 2. Approve with both signers
+    client.approve_proposal(&signer1, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
+
+    // Verify approved
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+
+    // 3. Amend the proposal (as proposer)
+    let new_user = Address::generate(&env);
+    client.amend_proposal(
+        &signer1,
+        &proposal_id,
+        &new_user,
+        &200,
+        &Symbol::new(&env, "amended"),
+    );
+
+    // 4. Verify proposal is now pending (approvals reset)
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+    assert_eq!(proposal.amount, 200);
+    assert_eq!(proposal.approvals.len(), 0); // Approvals reset
+
+    // 5. Re-approve with both signers
+    client.approve_proposal(&signer1, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
+
+    // Verify approved again
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_amend_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+    };
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // 1. Create proposal by signer1
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "original"),
+        &Vec::new(&env),
+    );
+
+    // 2. Try to amend as signer2 (not proposer or admin - should fail)
+    let res = client.try_amend_proposal(
+        &signer2,
+        &proposal_id,
+        &user,
+        &200,
+        &Symbol::new(&env, "amended"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+}

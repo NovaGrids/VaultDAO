@@ -2,10 +2,10 @@
 //!
 //! Storage keys and helper functions for persistent state.
 
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 use crate::errors::VaultError;
-use crate::types::{Config, Proposal, Role};
+use crate::types::{Amendment, Config, Proposal, Role};
 
 /// Storage key definitions
 #[contracttype]
@@ -29,6 +29,8 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
+    /// Amendment history by proposal ID -> Vec<Amendment>
+    AmendmentHistory(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -214,4 +216,25 @@ pub fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// Amendment History
+// ============================================================================
+
+pub fn get_amendment_history(env: &Env, proposal_id: u64) -> Vec<Amendment> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AmendmentHistory(proposal_id))
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn add_amendment(env: &Env, proposal_id: u64, amendment: Amendment) {
+    let mut history = get_amendment_history(env, proposal_id);
+    history.push_back(amendment);
+    let key = DataKey::AmendmentHistory(proposal_id);
+    env.storage().persistent().set(&key, &history);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }

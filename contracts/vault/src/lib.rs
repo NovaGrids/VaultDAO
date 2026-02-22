@@ -16,7 +16,7 @@ pub use types::{InitConfig, MAX_DEPENDENCIES};
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{Config, Proposal, ProposalStatus, Role};
+use types::{Amendment, Config, Proposal, ProposalStatus, Role};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -376,6 +376,84 @@ impl VaultDAO {
         // Note: Daily spending is NOT refunded to prevent gaming
 
         events::emit_proposal_rejected(&env, proposal_id, &rejector);
+
+        Ok(())
+    }
+
+    /// Amend a pending or approved proposal
+    ///
+    /// Allows the proposer to modify amount, recipient, or memo.
+    /// Resets all approvals and requires re-approval.
+    /// Only the proposer or Admin can amend.
+    pub fn amend_proposal(
+        env: Env,
+        amendor: Address,
+        proposal_id: u64,
+        new_recipient: Address,
+        new_amount: i128,
+        new_memo: Symbol,
+    ) -> Result<(), VaultError> {
+        amendor.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Check authorization: only proposer or admin can amend
+        let role = storage::get_role(&env, &amendor);
+        if role != Role::Admin && amendor != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Can only amend pending or approved proposals (not executed/rejected/expired)
+        if proposal.status != ProposalStatus::Pending 
+            && proposal.status != ProposalStatus::Approved {
+            return Err(VaultError::AmendmentNotAllowed);
+        }
+
+        // Validate new amount
+        if new_amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Check spending limits with new amount
+        let config = storage::get_config(&env)?;
+        if new_amount > config.spending_limit {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        // Create amendment record
+        let amendment = Amendment {
+            old_recipient: proposal.recipient.clone(),
+            new_recipient: new_recipient.clone(),
+            old_amount: proposal.amount,
+            new_amount,
+            old_memo: proposal.memo,
+            new_memo: new_memo.clone(),
+            amended_at: env.ledger().sequence() as u64,
+            amended_by: amendor.clone(),
+        };
+
+        // Store amendment history
+        storage::add_amendment(&env, proposal_id, amendment);
+
+        // Update proposal with new values
+        proposal.recipient = new_recipient;
+        proposal.amount = new_amount;
+        proposal.memo = new_memo;
+
+        // Reset status and approvals - requires re-approval
+        proposal.status = ProposalStatus::Pending;
+        proposal.approvals = Vec::new(&env);
+
+        storage::set_proposal(&env, &proposal);
+
+        // Emit amendment event
+        events::emit_proposal_amended(
+            &env,
+            proposal_id,
+            &amendor,
+            proposal.amount,
+            new_amount,
+        );
 
         Ok(())
     }

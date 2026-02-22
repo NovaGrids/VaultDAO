@@ -95,3 +95,17 @@ pub fn emit_signer_removed(env: &Env, signer: &Address, total_signers: u32) {
         (signer.clone(), total_signers),
     );
 }
+
+/// Emit when a proposal is amended
+pub fn emit_proposal_amended(
+    env: &Env,
+    proposal_id: u64,
+    amended_by: &Address,
+    old_amount: i128,
+    new_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_amended"), proposal_id),
+        (amended_by.clone(), old_amount, new_amount),
+    );
+}
