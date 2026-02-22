@@ -16,7 +16,11 @@ pub use types::InitConfig;
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{Config, Priority, Proposal, ProposalStatus, Role};
+#[allow(unused_imports)]
+use types::{
+    AmountTier, Config, Priority, Proposal, ProposalStatus, Role, ThresholdStrategy,
+    TimeBasedThreshold,
+};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -28,45 +32,34 @@ pub struct VaultDAO;
 /// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
-/// Evaluate proposal execution conditions
-fn evaluate_conditions(
-    _env: &Env,
-    proposal: &Proposal,
-    balance: i128,
-    current_ledger: u64,
-) -> bool {
-    if proposal.conditions.is_empty() {
-        return true;
-    }
-
-    match proposal.condition_logic {
-        ConditionLogic::And => {
-            for cond in proposal.conditions.iter() {
-                let met = match cond {
-                    Condition::BalanceAbove(threshold) => balance > threshold,
-                    Condition::BalanceBelow(threshold) => balance < threshold,
-                    Condition::DateAfter(ledger) => current_ledger > ledger,
-                    Condition::DateBefore(ledger) => current_ledger < ledger,
-                };
-                if !met {
-                    return false;
-                }
-            }
-            true
+/// Calculate required threshold based on strategy
+fn calculate_required_threshold(env: &Env, config: &Config, proposal: &Proposal) -> u32 {
+    match &config.threshold_strategy {
+        ThresholdStrategy::Fixed => config.threshold,
+        ThresholdStrategy::Percentage(pct) => {
+            let signers_count = config.signers.len();
+            let required = (signers_count * pct).div_ceil(100);
+            required.max(1).min(signers_count)
         }
-        ConditionLogic::Or => {
-            for cond in proposal.conditions.iter() {
-                let met = match cond {
-                    Condition::BalanceAbove(threshold) => balance > threshold,
-                    Condition::BalanceBelow(threshold) => balance < threshold,
-                    Condition::DateAfter(ledger) => current_ledger > ledger,
-                    Condition::DateBefore(ledger) => current_ledger < ledger,
-                };
-                if met {
-                    return true;
+        ThresholdStrategy::AmountBased(tiers) => {
+            let mut required = config.threshold;
+            for tier in tiers.iter() {
+                if proposal.amount >= tier.amount {
+                    required = tier.approvals;
+                } else {
+                    break;
                 }
             }
-            false
+            required.min(config.signers.len())
+        }
+        ThresholdStrategy::TimeBased(time_config) => {
+            let current_ledger = env.ledger().sequence() as u64;
+            let elapsed = current_ledger.saturating_sub(proposal.created_at);
+            if elapsed >= time_config.reduction_delay {
+                time_config.reduced_threshold
+            } else {
+                time_config.initial_threshold
+            }
         }
     }
 }
@@ -117,6 +110,7 @@ impl VaultDAO {
             weekly_limit: config.weekly_limit,
             timelock_threshold: config.timelock_threshold,
             timelock_delay: config.timelock_delay,
+            threshold_strategy: config.threshold_strategy,
         };
 
         // Store state
@@ -213,6 +207,7 @@ impl VaultDAO {
             abstentions: Vec::new(&env),
             status: ProposalStatus::Pending,
             priority: priority.clone(),
+            attachments: Vec::new(&env),
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
@@ -284,9 +279,11 @@ impl VaultDAO {
         // Add approval
         proposal.approvals.push_back(signer.clone());
 
-        // Check if threshold met
+        // Check if threshold met using dynamic strategy
         let approval_count = proposal.approvals.len();
-        if approval_count >= config.threshold {
+        let required_threshold = calculate_required_threshold(&env, &config, &proposal);
+
+        if approval_count >= required_threshold {
             proposal.status = ProposalStatus::Approved;
 
             // Check for Timelock
@@ -475,6 +472,108 @@ impl VaultDAO {
         events::emit_proposal_rejected(&env, proposal_id, &rejector);
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Attachment Management
+    // ========================================================================
+
+    /// Add an IPFS attachment to a proposal
+    ///
+    /// Only proposer or admin can add attachments to pending proposals.
+    pub fn add_attachment(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        ipfs_hash: soroban_sdk::String,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        // Validate IPFS hash length (CIDv0: 46 chars, CIDv1: variable, max ~100)
+        if ipfs_hash.len() < 10 || ipfs_hash.len() > 100 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Only proposer or admin can add attachments
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Can only add to pending proposals
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Check if attachment already exists
+        if proposal.attachments.contains(&ipfs_hash) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        proposal.attachments.push_back(ipfs_hash.clone());
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_attachment_added(&env, proposal_id, &ipfs_hash, &caller);
+
+        Ok(())
+    }
+
+    /// Remove an IPFS attachment from a proposal
+    ///
+    /// Only proposer or admin can remove attachments from pending proposals.
+    pub fn remove_attachment(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        ipfs_hash: soroban_sdk::String,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Only proposer or admin can remove attachments
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Can only remove from pending proposals
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Find and remove attachment
+        let mut found = false;
+        for i in 0..proposal.attachments.len() {
+            if proposal.attachments.get(i).unwrap() == ipfs_hash {
+                proposal.attachments.remove(i);
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            return Err(VaultError::SignerNotFound);
+        }
+
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_attachment_removed(&env, proposal_id, &ipfs_hash, &caller);
+
+        Ok(())
+    }
+
+    /// Verify an attachment exists on a proposal
+    pub fn verify_attachment(env: Env, proposal_id: u64, ipfs_hash: soroban_sdk::String) -> bool {
+        if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+            proposal.attachments.contains(&ipfs_hash)
+        } else {
+            false
+        }
     }
 
     // ========================================================================
