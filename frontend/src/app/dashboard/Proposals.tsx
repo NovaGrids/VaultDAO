@@ -101,7 +101,7 @@ const Proposals: React.FC = () => {
   }, []);
 
   const filteredProposals = useMemo(() => {
-    let filtered = proposals.filter((p) => {
+    const filtered = proposals.filter((p) => {
       const searchLower = activeFilters.search.toLowerCase();
       const matchesSearch =
         !activeFilters.search ||
@@ -146,8 +146,9 @@ const Proposals: React.FC = () => {
       await rejectProposal(Number(rejectingId));
       setProposals(prev => prev.map(p => p.id === rejectingId ? { ...p, status: 'Rejected' } : p));
       notify('proposal_rejected', `Proposal #${rejectingId} rejected`, 'success');
-    } catch (err: any) {
-      notify('proposal_rejected', err.message || 'Failed to reject', 'error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to reject';
+      notify('proposal_rejected', message, 'error');
     } finally {
       setShowRejectModal(false);
       setRejectingId(null);
