@@ -8,8 +8,7 @@ import {
   getUserInfo,
   getNetwork,
 } from "@stellar/freighter-api";
-import Toast from "../components/UI/Toast";
-import type { ToastType } from "../components/UI/Toast";
+import { useToast } from "./ToastContext";
 import { WalletContext } from "./WalletContextProps";
 
 export const WalletProvider: React.FC<{ children: ReactNode }> = ({
@@ -23,16 +22,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
   const addressRef = useRef<string | null>(null);
   const networkRef = useRef<string | null>(null);
 
-  const [toast, setToast] = useState<{
-    message: string;
-    type: ToastType;
-  } | null>(null);
-
-  const showToast = useCallback((message: string, type: ToastType = "info") => {
-    setToast({ message, type });
-  }, []);
-
-  const clearToast = useCallback(() => setToast(null), []);
+  const { showToast } = useToast();
 
   const checkInstallation = useCallback(async () => {
     try {
@@ -172,9 +162,6 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
       }}
     >
       {children}
-      {toast && (
-        <Toast message={toast.message} type={toast.type} onClose={clearToast} />
-      )}
     </WalletContext.Provider>
   );
 };

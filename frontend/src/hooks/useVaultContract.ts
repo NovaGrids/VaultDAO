@@ -329,5 +329,48 @@ export const useVaultContract = () => {
         }
     };
 
-    return { proposeTransfer, rejectProposal, executeProposal, getDashboardStats, getVaultEvents, loading };
+    const getProposalSignatures = useCallback(async (_proposalId: number) => {
+        try {
+            // Mock data - replace with actual contract call
+            return [
+                { address: 'GB2R...4M1P', signed: true, timestamp: new Date().toISOString(), verified: true },
+                { address: 'GC3X...8K2L', signed: true, timestamp: new Date().toISOString(), verified: true },
+                { address: 'GD5Y...9M3N', signed: false },
+                { address: 'GE7Z...1P4Q', signed: false },
+                { address: 'GF9A...2R5S', signed: false },
+            ];
+        } catch (e) {
+            console.error('Failed to fetch signatures:', e);
+            return [];
+        }
+    }, []);
+
+    const remindSigner = useCallback(async (address: string) => {
+        // Mock notification - integrate with notification system
+        console.log(`Reminder sent to ${address}`);
+        return true;
+    }, []);
+
+    const exportSignatures = useCallback((signatures: unknown[]) => {
+        const data = { signatures, exportedAt: new Date().toISOString() };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `proposal-signatures.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }, []);
+
+    return { 
+        proposeTransfer, 
+        rejectProposal, 
+        executeProposal, 
+        getDashboardStats, 
+        getVaultEvents, 
+        getProposalSignatures,
+        remindSigner,
+        exportSignatures,
+        loading 
+    };
 };
