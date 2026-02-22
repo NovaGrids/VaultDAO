@@ -182,6 +182,16 @@
                 },
                 {
                   "symbol": "test"
+                },
+                {
+                  "vec": []
+                },
+                {
+                  "vec": [
+                    {
+                      "symbol": "And"
+                    }
+                  ]
                 }
               ]
             }
@@ -356,6 +366,26 @@
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "condition_logic"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "And"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "conditions"
+                      },
+                      "val": {
+                        "vec": []
                       }
                     },
                     {

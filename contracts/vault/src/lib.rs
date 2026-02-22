@@ -16,7 +16,7 @@ pub use types::InitConfig;
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{Config, Proposal, ProposalStatus, Role};
+use types::{Condition, ConditionLogic, Config, Proposal, ProposalStatus, Role};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -27,6 +27,44 @@ pub struct VaultDAO;
 
 /// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
+
+/// Evaluate proposal execution conditions
+fn evaluate_conditions(_env: &Env, proposal: &Proposal, balance: i128, current_ledger: u64) -> bool {
+    if proposal.conditions.is_empty() {
+        return true;
+    }
+
+    match proposal.condition_logic {
+        ConditionLogic::And => {
+            for cond in proposal.conditions.iter() {
+                let met = match cond {
+                    Condition::BalanceAbove(threshold) => balance > threshold,
+                    Condition::BalanceBelow(threshold) => balance < threshold,
+                    Condition::DateAfter(ledger) => current_ledger > ledger,
+                    Condition::DateBefore(ledger) => current_ledger < ledger,
+                };
+                if !met {
+                    return false;
+                }
+            }
+            true
+        }
+        ConditionLogic::Or => {
+            for cond in proposal.conditions.iter() {
+                let met = match cond {
+                    Condition::BalanceAbove(threshold) => balance > threshold,
+                    Condition::BalanceBelow(threshold) => balance < threshold,
+                    Condition::DateAfter(ledger) => current_ledger > ledger,
+                    Condition::DateBefore(ledger) => current_ledger < ledger,
+                };
+                if met {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
 
 #[contractimpl]
 impl VaultDAO {
@@ -113,6 +151,8 @@ impl VaultDAO {
         token_addr: Address,
         amount: i128,
         memo: Symbol,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
     ) -> Result<u64, VaultError> {
         // Verify identity
         proposer.require_auth();
@@ -170,6 +210,8 @@ impl VaultDAO {
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
+            conditions,
+            condition_logic,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -307,6 +349,13 @@ impl VaultDAO {
 
         // Check vault balance
         let balance = token::balance(&env, &proposal.token);
+
+        // Evaluate conditions (before balance check to allow conditional logic)
+        if !evaluate_conditions(&env, &proposal, balance, current_ledger) {
+            return Err(VaultError::ConditionsNotMet);
+        }
+
+        // Check sufficient balance for transfer
         if balance < proposal.amount {
             return Err(VaultError::InsufficientBalance);
         }

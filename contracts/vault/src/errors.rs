@@ -70,4 +70,8 @@ pub enum VaultError {
     TransferFailed = 600,
     /// Insufficient vault balance
     InsufficientBalance = 601,
+
+    // Condition errors (7xx)
+    /// Execution conditions not met
+    ConditionsNotMet = 700,
 }
