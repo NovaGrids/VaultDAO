@@ -170,6 +170,7 @@ impl VaultDAO {
             abstentions: Vec::new(&env),
             status: ProposalStatus::Pending,
             priority: priority.clone(),
+            attachments: Vec::new(&env),
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
@@ -423,6 +424,108 @@ impl VaultDAO {
         events::emit_proposal_rejected(&env, proposal_id, &rejector);
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Attachment Management
+    // ========================================================================
+
+    /// Add an IPFS attachment to a proposal
+    ///
+    /// Only proposer or admin can add attachments to pending proposals.
+    pub fn add_attachment(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        ipfs_hash: soroban_sdk::String,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        // Validate IPFS hash length (CIDv0: 46 chars, CIDv1: variable, max ~100)
+        if ipfs_hash.len() < 10 || ipfs_hash.len() > 100 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Only proposer or admin can add attachments
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Can only add to pending proposals
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Check if attachment already exists
+        if proposal.attachments.contains(&ipfs_hash) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        proposal.attachments.push_back(ipfs_hash.clone());
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_attachment_added(&env, proposal_id, &ipfs_hash, &caller);
+
+        Ok(())
+    }
+
+    /// Remove an IPFS attachment from a proposal
+    ///
+    /// Only proposer or admin can remove attachments from pending proposals.
+    pub fn remove_attachment(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        ipfs_hash: soroban_sdk::String,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Only proposer or admin can remove attachments
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Can only remove from pending proposals
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Find and remove attachment
+        let mut found = false;
+        for i in 0..proposal.attachments.len() {
+            if proposal.attachments.get(i).unwrap() == ipfs_hash {
+                proposal.attachments.remove(i);
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            return Err(VaultError::SignerNotFound);
+        }
+
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_attachment_removed(&env, proposal_id, &ipfs_hash, &caller);
+
+        Ok(())
+    }
+
+    /// Verify an attachment exists on a proposal
+    pub fn verify_attachment(env: Env, proposal_id: u64, ipfs_hash: soroban_sdk::String) -> bool {
+        if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+            proposal.attachments.contains(&ipfs_hash)
+        } else {
+            false
+        }
     }
 
     // ========================================================================

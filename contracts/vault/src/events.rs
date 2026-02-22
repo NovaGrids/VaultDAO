@@ -53,6 +53,32 @@ pub fn emit_proposal_abstained(
     );
 }
 
+/// Emit when an attachment is added to a proposal
+pub fn emit_attachment_added(
+    env: &Env,
+    proposal_id: u64,
+    ipfs_hash: &soroban_sdk::String,
+    adder: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "attachment_added"), proposal_id),
+        (ipfs_hash.clone(), adder.clone()),
+    );
+}
+
+/// Emit when an attachment is removed from a proposal
+pub fn emit_attachment_removed(
+    env: &Env,
+    proposal_id: u64,
+    ipfs_hash: &soroban_sdk::String,
+    remover: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "attachment_removed"), proposal_id),
+        (ipfs_hash.clone(), remover.clone()),
+    );
+}
+
 /// Emit when a proposal reaches threshold and is ready for execution
 pub fn emit_proposal_ready(env: &Env, proposal_id: u64) {
     env.events()

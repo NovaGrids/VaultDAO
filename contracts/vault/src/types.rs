@@ -109,6 +109,8 @@ pub struct Proposal {
     pub status: ProposalStatus,
     /// Priority level
     pub priority: Priority,
+    /// IPFS hashes for attachments (invoices, receipts, documents)
+    pub attachments: Vec<soroban_sdk::String>,
     /// Ledger sequence when created
     pub created_at: u64,
     /// Ledger sequence when proposal expires
