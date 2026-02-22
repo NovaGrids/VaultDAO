@@ -16,7 +16,7 @@ pub use types::InitConfig;
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{Config, Priority, Proposal, ProposalStatus, Role};
+use types::{Condition, ConditionLogic, Config, Priority, Proposal, ProposalStatus, Role};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -157,6 +157,8 @@ impl VaultDAO {
         amount: i128,
         memo: Symbol,
         priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
     ) -> Result<u64, VaultError> {
         // Verify identity
         proposer.require_auth();
