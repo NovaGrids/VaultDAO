@@ -314,7 +314,7 @@ fn test_update_expiration_config() {
 
 #[test]
 fn test_update_expiration_config_validation() {
-    let (env, client, admin, _signer1, _user, _token) = setup_test_env();
+    let (_env, client, admin, _signer1, _user, _token) = setup_test_env();
     
     // Try to set expiration period too short (< 720 ledgers = 1 hour)
     let res = client.try_update_expiration_config(&admin, &500, &1000);
