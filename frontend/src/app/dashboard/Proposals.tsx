@@ -9,6 +9,10 @@ import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
+import type { TokenBalance } from '../../components/TokenBalanceCard';
+import type { TokenInfo } from '../../constants/tokens';
+import { DEFAULT_TOKENS, getTokenIcon, formatTokenBalance } from '../../constants/tokens';
+import { useWallet } from '../../context/WalletContextProps';
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
@@ -33,12 +37,24 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
+// Token badge for proposal cards
+const TokenBadge = ({ tokenSymbol }: { tokenSymbol: string }) => {
+  const icon = getTokenIcon(tokenSymbol);
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-700 text-xs text-gray-300">
+      <span>{icon}</span>
+      <span>{tokenSymbol}</span>
+    </span>
+  );
+};
+
 export interface Proposal {
   id: string;
   proposer: string;
   recipient: string;
   amount: string;
   token: string;
+  tokenSymbol?: string;
   memo: string;
   status: string;
   approvals: number;
@@ -48,7 +64,8 @@ export interface Proposal {
 
 const Proposals: React.FC = () => {
   const { notify } = useToast();
-  const { rejectProposal } = useVaultContract();
+  const { rejectProposal, getTokenBalances, addCustomToken ,loading: contractLoading, proposeTransfer} = useVaultContract();
+  const { isConnected, address } = useWallet();
 
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(false);
@@ -56,6 +73,11 @@ const Proposals: React.FC = () => {
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
+  const [selectedTokenFilter, setSelectedTokenFilter] = useState<string>('all');
+  const [showTokenFilterDropdown, setShowTokenFilterDropdown] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [activeFilters, setActiveFilters] = useState<FilterState>({
     search: '',
@@ -71,6 +93,32 @@ const Proposals: React.FC = () => {
     amount: '',
     memo: '',
   });
+  const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
+
+  // Fetch token balances
+  useEffect(() => {
+    const fetchBalances = async () => {
+      try {
+        const balances = await getTokenBalances();
+        setTokenBalances(balances.map(b => ({ ...b, isLoading: false })));
+      } catch (error) {
+        console.error('Failed to fetch token balances:', error);
+        // Set default tokens with zero balances
+        setTokenBalances(DEFAULT_TOKENS.map(token => ({
+          token,
+          balance: '0',
+          isLoading: false,
+        })));
+      }
+    };
+    fetchBalances();
+  }, [getTokenBalances]);
+
+  // Get unique tokens from proposals for filtering
+  const availableTokens = useMemo(() => {
+    const tokens = new Set(proposals.map(p => p.tokenSymbol || p.token));
+    return ['all', ...Array.from(tokens)];
+  }, [proposals]);
 
   useEffect(() => {
     const fetchProposals = async () => {
@@ -82,12 +130,39 @@ const Proposals: React.FC = () => {
             proposer: '0x123...456',
             recipient: '0xabc...def',
             amount: '100',
-            token: 'ETH',
+            token: 'NATIVE',
+            tokenSymbol: 'XLM',
             memo: 'Liquidity Pool Expansion',
             status: 'Pending',
             approvals: 1,
             threshold: 2,
             createdAt: new Date().toISOString()
+          },
+          {
+            id: '2',
+            proposer: '0x789...012',
+            recipient: '0xdef...abc',
+            amount: '500',
+            token: 'CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL',
+            tokenSymbol: 'USDC',
+            memo: 'Marketing Campaign Budget',
+            status: 'Approved',
+            approvals: 3,
+            threshold: 3,
+            createdAt: new Date(Date.now() - 86400000).toISOString()
+          },
+          {
+            id: '3',
+            proposer: '0x345...678',
+            recipient: '0xghi...jkl',
+            amount: '250',
+            token: 'NATIVE',
+            tokenSymbol: 'XLM',
+            memo: 'Community Rewards Distribution',
+            status: 'Executed',
+            approvals: 3,
+            threshold: 3,
+            createdAt: new Date(Date.now() - 172800000).toISOString()
           }
         ];
         setProposals(mockData);
@@ -100,8 +175,14 @@ const Proposals: React.FC = () => {
     fetchProposals();
   }, []);
 
+  // Filter proposals by token and other filters
   const filteredProposals = useMemo(() => {
     const filtered = proposals.filter((p) => {
+      // Token filter
+      const matchesToken = selectedTokenFilter === 'all' || 
+        (p.tokenSymbol || p.token) === selectedTokenFilter;
+
+      // Search filter
       const searchLower = activeFilters.search.toLowerCase();
       const matchesSearch =
         !activeFilters.search ||
@@ -109,20 +190,23 @@ const Proposals: React.FC = () => {
         p.recipient.toLowerCase().includes(searchLower) ||
         p.memo.toLowerCase().includes(searchLower);
 
+      // Status filter
       const matchesStatus =
         activeFilters.statuses.length === 0 || activeFilters.statuses.includes(p.status);
 
+      // Amount filter
       const amount = parseFloat(p.amount.replace(/,/g, ''));
       const min = activeFilters.amountRange.min ? parseFloat(activeFilters.amountRange.min) : -Infinity;
       const max = activeFilters.amountRange.max ? parseFloat(activeFilters.amountRange.max) : Infinity;
       const matchesAmount = amount >= min && amount <= max;
 
+      // Date filter
       const proposalDate = new Date(p.createdAt).getTime();
       const from = activeFilters.dateRange.from ? new Date(activeFilters.dateRange.from).getTime() : -Infinity;
       const to = activeFilters.dateRange.to ? new Date(activeFilters.dateRange.to).setHours(23, 59, 59, 999) : Infinity;
       const matchesDate = proposalDate >= from && proposalDate <= to;
 
-      return matchesSearch && matchesStatus && matchesAmount && matchesDate;
+      return matchesToken && matchesSearch && matchesStatus && matchesAmount && matchesDate;
     });
 
     return [...filtered].sort((a, b) => {
@@ -138,7 +222,7 @@ const Proposals: React.FC = () => {
         default: return dateB - dateA;
       }
     });
-  }, [proposals, activeFilters]);
+  }, [proposals, activeFilters, selectedTokenFilter]);
 
   const handleRejectConfirm = async () => {
     if (!rejectingId) return;
@@ -152,6 +236,61 @@ const Proposals: React.FC = () => {
     } finally {
       setShowRejectModal(false);
       setRejectingId(null);
+    }
+  };
+
+  const handleTokenSelect = (token: TokenInfo) => {
+    setNewProposalForm(prev => ({ ...prev, token: token.address }));
+    setSelectedToken(token);
+  };
+
+  // Find the selected token balance
+  const selectedTokenBalance = useMemo(() => {
+    if (!selectedToken) return null;
+    return tokenBalances.find(tb => tb.token.address === selectedToken.address);
+  }, [tokenBalances, selectedToken]);
+
+  // Compute amount error
+  const amountError = useMemo(() => {
+    if (newProposalForm.amount && selectedTokenBalance) {
+      const amount = parseFloat(newProposalForm.amount);
+      const balance = parseFloat(selectedTokenBalance.balance);
+      
+      if (isNaN(amount)) {
+        return 'Please enter a valid amount';
+      } else if (amount <= 0) {
+        return 'Amount must be greater than 0';
+      } else if (amount > balance) {
+        return `Insufficient balance. Available: ${formatTokenBalance(balance, selectedTokenBalance.token.decimals)} ${selectedTokenBalance.token.symbol}`;
+      }
+    }
+    return null;
+  }, [newProposalForm.amount, selectedTokenBalance]);
+
+  // Initialize selected token when tokenBalances load
+  useEffect(() => {
+    if (!selectedToken && tokenBalances.length > 0) {
+      const xlmToken = tokenBalances.find(tb => tb.token.address === 'NATIVE');
+      if (xlmToken) {
+        setSelectedToken(xlmToken.token);
+      } else {
+        setSelectedToken(tokenBalances[0].token);
+      }
+    }
+  }, [selectedToken, tokenBalances]);
+
+  const handleAddCustomToken = async (address: string): Promise<TokenInfo | null> => {
+    try {
+      const tokenInfo = await addCustomToken(address);
+      if (tokenInfo) {
+        // Refresh token balances
+        const balances = await getTokenBalances();
+        setTokenBalances(balances.map(b => ({ ...b, isLoading: false })));
+      }
+      return tokenInfo;
+    } catch (error) {
+      console.error('Failed to add custom token:', error);
+      throw error;
     }
   };
 
