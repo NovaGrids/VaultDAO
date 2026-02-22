@@ -1,4 +1,7 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+// frontend/src/App.tsx
+
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import DashboardLayout from './components/Layout/DashboardLayout';
 import Overview from './app/dashboard/Overview';
 import Proposals from './app/dashboard/Proposals';
@@ -9,10 +12,9 @@ import Templates from './app/dashboard/Templates';
 
 function App() {
   return (
-    <Router>
+    <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
         <Route path="/dashboard" element={<DashboardLayout />}>
           <Route index element={<Overview />} />
           <Route path="proposals" element={<Proposals />} />
@@ -25,7 +27,7 @@ function App() {
         {/* Toast Demo Route */}
         {/* <Route path="/toast-demo" element={<ToastDemo />} /> */}
       </Routes>
-    </Router>
+    </BrowserRouter>
   );
 }
 
