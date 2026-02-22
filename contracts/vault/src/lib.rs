@@ -29,7 +29,12 @@ pub struct VaultDAO;
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
 /// Evaluate proposal execution conditions
-fn evaluate_conditions(_env: &Env, proposal: &Proposal, balance: i128, current_ledger: u64) -> bool {
+fn evaluate_conditions(
+    _env: &Env,
+    proposal: &Proposal,
+    balance: i128,
+    current_ledger: u64,
+) -> bool {
     if proposal.conditions.is_empty() {
         return true;
     }
