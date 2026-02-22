@@ -51,6 +51,16 @@ pub enum VaultError {
     /// Recurring payment interval too short
     IntervalTooShort = 405,
 
+    // Expiration errors (7xx)
+    /// Proposal has not expired yet
+    ProposalNotExpired = 700,
+    /// Grace period has not expired yet
+    GracePeriodNotExpired = 701,
+    /// Invalid expiration period
+    InvalidExpirationPeriod = 702,
+    /// Invalid grace period
+    InvalidGracePeriod = 703,
+
     // Configuration errors (5xx)
     /// Threshold must be at least 1
     ThresholdTooLow = 500,

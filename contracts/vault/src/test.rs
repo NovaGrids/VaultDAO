@@ -35,6 +35,8 @@ fn test_multisig_approval() {
         weekly_limit: 10000,
         timelock_threshold: 500,
         timelock_delay: 100,
+        expiration_period: 120_960, // ~7 days
+        grace_period: 17_280, // ~1 day
     };
     client.initialize(&admin, &config);
 
@@ -85,6 +87,8 @@ fn test_unauthorized_proposal() {
         weekly_limit: 10000,
         timelock_threshold: 500,
         timelock_delay: 100,
+        expiration_period: 120_960,
+        grace_period: 17_280,
     };
     client.initialize(&admin, &config);
 
@@ -125,6 +129,8 @@ fn test_timelock_violation() {
         weekly_limit: 10000,
         timelock_threshold: 500,
         timelock_delay: 200,
+        expiration_period: 120_960,
+        grace_period: 17_280,
     };
     client.initialize(&admin, &config);
 

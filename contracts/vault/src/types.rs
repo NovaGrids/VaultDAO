@@ -22,6 +22,10 @@ pub struct InitConfig {
     pub timelock_threshold: i128,
     /// Delay in ledgers for timelocked proposals
     pub timelock_delay: u64,
+    /// Expiration period in ledgers for proposals (default: ~7 days)
+    pub expiration_period: u64,
+    /// Grace period in ledgers before expired proposals can be cleaned up
+    pub grace_period: u64,
 }
 
 /// Vault configuration
@@ -42,6 +46,10 @@ pub struct Config {
     pub timelock_threshold: i128,
     /// Delay in ledgers for timelocked proposals
     pub timelock_delay: u64,
+    /// Expiration period in ledgers for proposals (default: ~7 days)
+    pub expiration_period: u64,
+    /// Grace period in ledgers before expired proposals can be cleaned up
+    pub grace_period: u64,
 }
 
 /// Permissions assigned to vault participants.

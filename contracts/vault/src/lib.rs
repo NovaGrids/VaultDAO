@@ -9,6 +9,7 @@ mod errors;
 mod events;
 mod storage;
 mod test;
+mod test_expiration;
 mod token;
 mod types;
 
@@ -74,6 +75,8 @@ impl VaultDAO {
             weekly_limit: config.weekly_limit,
             timelock_threshold: config.timelock_threshold,
             timelock_delay: config.timelock_delay,
+            expiration_period: config.expiration_period,
+            grace_period: config.grace_period,
         };
 
         // Store state
@@ -168,7 +171,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             status: ProposalStatus::Pending,
             created_at: current_ledger,
-            expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+            expires_at: current_ledger + config.expiration_period,
             unlock_ledger: 0,
         };
 
@@ -509,6 +512,133 @@ impl VaultDAO {
         }
 
         config.threshold = threshold;
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Proposal Expiration & Cleanup
+    // ========================================================================
+
+    /// Mark a proposal as expired if it has passed its expiration time
+    ///
+    /// Can be called by anyone. Updates proposal status to Expired.
+    pub fn mark_proposal_expired(env: Env, proposal_id: u64) -> Result<(), VaultError> {
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Only mark pending or approved proposals as expired
+        if proposal.status != ProposalStatus::Pending
+            && proposal.status != ProposalStatus::Approved
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger <= proposal.expires_at {
+            return Err(VaultError::ProposalNotExpired);
+        }
+
+        proposal.status = ProposalStatus::Expired;
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_proposal_expired(&env, proposal_id, current_ledger);
+
+        Ok(())
+    }
+
+    /// Clean up a single expired proposal after grace period
+    ///
+    /// Removes the proposal from storage to reclaim rent.
+    /// Can only be called after grace period has passed.
+    pub fn cleanup_expired_proposal(env: Env, proposal_id: u64) -> Result<(), VaultError> {
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Must be expired
+        if proposal.status != ProposalStatus::Expired {
+            return Err(VaultError::ProposalNotExpired);
+        }
+
+        let config = storage::get_config(&env)?;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Check grace period
+        let grace_end = proposal.expires_at + config.grace_period;
+        if current_ledger < grace_end {
+            return Err(VaultError::GracePeriodNotExpired);
+        }
+
+        // Remove from storage
+        storage::remove_proposal(&env, proposal_id);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Batch cleanup of multiple expired proposals
+    ///
+    /// Efficiently removes multiple expired proposals that have passed grace period.
+    /// Returns the number of proposals cleaned up.
+    pub fn cleanup_expired_proposals(env: Env, proposal_ids: Vec<u64>) -> Result<u32, VaultError> {
+        let config = storage::get_config(&env)?;
+        let current_ledger = env.ledger().sequence() as u64;
+        let mut cleaned_count: u32 = 0;
+
+        for i in 0..proposal_ids.len() {
+            let proposal_id = proposal_ids.get(i).unwrap();
+
+            // Try to get proposal, skip if not found
+            if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                // Check if expired and past grace period
+                if proposal.status == ProposalStatus::Expired {
+                    let grace_end = proposal.expires_at + config.grace_period;
+                    if current_ledger >= grace_end {
+                        storage::remove_proposal(&env, proposal_id);
+                        cleaned_count += 1;
+                    }
+                }
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        // Emit cleanup event
+        events::emit_proposals_cleaned(&env, cleaned_count, cleaned_count);
+
+        Ok(cleaned_count)
+    }
+
+    /// Update expiration configuration
+    ///
+    /// Only Admin can update expiration settings.
+    pub fn update_expiration_config(
+        env: Env,
+        admin: Address,
+        expiration_period: u64,
+        grace_period: u64,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Validate periods (minimum 1 hour = 720 ledgers)
+        if expiration_period < 720 {
+            return Err(VaultError::InvalidExpirationPeriod);
+        }
+        if grace_period < 720 {
+            return Err(VaultError::InvalidGracePeriod);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.expiration_period = expiration_period;
+        config.grace_period = grace_period;
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
 

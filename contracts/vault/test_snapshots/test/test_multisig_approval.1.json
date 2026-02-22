@@ -32,6 +32,22 @@
                     },
                     {
                       "key": {
+                        "symbol": "expiration_period"
+                      },
+                      "val": {
+                        "u64": 120960
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "grace_period"
+                      },
+                      "val": {
+                        "u64": 17280
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "signers"
                       },
                       "val": {
@@ -664,6 +680,22 @@
                                   "hi": 0,
                                   "lo": 5000
                                 }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "expiration_period"
+                              },
+                              "val": {
+                                "u64": 120960
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "grace_period"
+                              },
+                              "val": {
+                                "u64": 17280
                               }
                             },
                             {

@@ -206,6 +206,11 @@ pub fn get_recurring_payment(
         .ok_or(VaultError::ProposalNotFound) // Reuse code or add new
 }
 
+pub fn remove_proposal(env: &Env, id: u64) {
+    let key = DataKey::Proposal(id);
+    env.storage().persistent().remove(&key);
+}
+
 // ============================================================================
 // TTL Management
 // ============================================================================

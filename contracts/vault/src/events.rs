@@ -95,3 +95,19 @@ pub fn emit_signer_removed(env: &Env, signer: &Address, total_signers: u32) {
         (signer.clone(), total_signers),
     );
 }
+
+/// Emit when a proposal expires
+pub fn emit_proposal_expired(env: &Env, proposal_id: u64, current_ledger: u64) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_expired"), proposal_id),
+        current_ledger,
+    );
+}
+
+/// Emit when expired proposals are cleaned up
+pub fn emit_proposals_cleaned(env: &Env, count: u32, reclaimed_storage: u32) {
+    env.events().publish(
+        (Symbol::new(env, "proposals_cleaned"),),
+        (count, reclaimed_storage),
+    );
+}
