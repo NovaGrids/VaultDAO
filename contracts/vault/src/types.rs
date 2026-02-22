@@ -22,6 +22,8 @@ pub struct InitConfig {
     pub timelock_threshold: i128,
     /// Delay in ledgers for timelocked proposals
     pub timelock_delay: u64,
+    /// Threshold strategy configuration
+    pub threshold_strategy: ThresholdStrategy,
 }
 
 /// Vault configuration
@@ -42,6 +44,44 @@ pub struct Config {
     pub timelock_threshold: i128,
     /// Delay in ledgers for timelocked proposals
     pub timelock_delay: u64,
+    /// Threshold strategy configuration
+    pub threshold_strategy: ThresholdStrategy,
+}
+
+/// Threshold strategy for dynamic approval requirements
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum ThresholdStrategy {
+    /// Fixed threshold (original behavior)
+    Fixed,
+    /// Percentage-based: threshold = ceil(signers * percentage / 100)
+    Percentage(u32),
+    /// Amount-based tiers: (amount_threshold, required_approvals)
+    AmountBased(Vec<AmountTier>),
+    /// Time-based: threshold reduces after time passes
+    TimeBased(TimeBasedThreshold),
+}
+
+/// Amount-based threshold tier
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AmountTier {
+    /// Amount threshold for this tier
+    pub amount: i128,
+    /// Required approvals for this tier
+    pub approvals: u32,
+}
+
+/// Time-based threshold configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TimeBasedThreshold {
+    /// Initial threshold
+    pub initial_threshold: u32,
+    /// Reduced threshold after delay
+    pub reduced_threshold: u32,
+    /// Ledgers to wait before reduction
+    pub reduction_delay: u64,
 }
 
 /// Permissions assigned to vault participants.
@@ -133,6 +173,8 @@ pub struct Proposal {
     pub status: ProposalStatus,
     /// Priority level
     pub priority: Priority,
+    /// IPFS hashes for attachments (invoices, receipts, documents)
+    pub attachments: Vec<soroban_sdk::String>,
     /// Ledger sequence when created
     pub created_at: u64,
     /// Ledger sequence when proposal expires

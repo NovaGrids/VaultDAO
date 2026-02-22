@@ -12,17 +12,59 @@ import { signTransaction } from '@stellar/freighter-api';
 import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
+import type { TokenInfo } from '../constants/tokens';
+import { 
+    DEFAULT_TOKENS, 
+    XLM_TOKEN, 
+    getAllTrackedTokens, 
+    addCustomToken as addCustomTokenToStorage,
+    isValidStellarAddress
+} from '../constants/tokens';
 
 const CONTRACT_ID = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 const RPC_URL = "https://soroban-testnet.stellar.org";
 const EVENTS_PAGE_SIZE = 20;
 
+// Recurring Payment Types
+export interface RecurringPayment {
+    id: string;
+    recipient: string;
+    token: string;
+    amount: string;
+    memo: string;
+    interval: number; // in seconds
+    nextPaymentTime: number; // timestamp
+    totalPayments: number;
+    status: 'active' | 'paused' | 'cancelled';
+    createdAt: number;
+    creator: string;
+}
+
+export interface RecurringPaymentHistory {
+    id: string;
+    paymentId: string;
+    executedAt: number;
+    transactionHash: string;
+    amount: string;
+    success: boolean;
+}
+
+export interface CreateRecurringPaymentParams {
+    recipient: string;
+    token: string;
+    amount: string;
+    memo: string;
+    interval: number; // in seconds
+}
+
 const server = new SorobanRpc.Server(RPC_URL);
 
 interface StellarBalance {
     asset_type: string;
     balance: string;
+    asset_code?: string;
+    asset_issuer?: string;
 }
 
 /** Known contract event names (topic[0] symbol) */
@@ -329,38 +371,202 @@ export const useVaultContract = () => {
         }
     };
 
-    const getProposalSignatures = useCallback(async (_proposalId: number) => {
+    /**
+     * Get balance for a specific token from the vault
+     */
+    const getTokenBalance = useCallback(async (tokenAddress: string): Promise<string> => {
         try {
-            // Mock data - replace with actual contract call
-            return [
-                { address: 'GB2R...4M1P', signed: true, timestamp: new Date().toISOString(), verified: true },
-                { address: 'GC3X...8K2L', signed: true, timestamp: new Date().toISOString(), verified: true },
-                { address: 'GD5Y...9M3N', signed: false },
-                { address: 'GE7Z...1P4Q', signed: false },
-                { address: 'GF9A...2R5S', signed: false },
-            ];
+            // For native XLM, get the native balance
+            if (tokenAddress === 'NATIVE') {
+                const accountInfo = await server.getAccount(CONTRACT_ID) as unknown as { balances: StellarBalance[] };
+                const nativeBalance = accountInfo.balances.find((b: StellarBalance) => b.asset_type === 'native');
+                return nativeBalance ? nativeBalance.balance : "0";
+            }
+
+            // For other tokens, we would query the token contract balance
+            // This is a simplified version - in production, you'd call the token contract's balance function
+            const accountInfo = await server.getAccount(CONTRACT_ID) as unknown as { balances: StellarBalance[] };
+            const tokenBalance = accountInfo.balances.find((b: StellarBalance) => 
+                b.asset_type !== 'native' && b.asset_code === tokenAddress
+            );
+            return tokenBalance ? tokenBalance.balance : "0";
         } catch (e) {
-            console.error('Failed to fetch signatures:', e);
-            return [];
+            console.error(`Failed to fetch token balance for ${tokenAddress}:`, e);
+            return "0";
         }
     }, []);
 
-    const remindSigner = useCallback(async (address: string) => {
-        // Mock notification - integrate with notification system
-        console.log(`Reminder sent to ${address}`);
-        return true;
+    /**
+     * Get balances for all tracked tokens
+     */
+    const getTokenBalances = useCallback(async () => {
+        const trackedTokens = getAllTrackedTokens();
+
+        // Fetch balances in parallel
+        const balancePromises = trackedTokens.map(async (token) => {
+            try {
+                const balance = await getTokenBalance(token.address);
+                return { token, balance, isLoading: false };
+            } catch (e) {
+                console.error(`Error fetching balance for ${token.symbol}:`, e);
+                return { token, balance: "0", isLoading: false };
+            }
+        });
+
+        const results = await Promise.all(balancePromises);
+        return results;
+    }, [getTokenBalance]);
+
+    /**
+     * Get token info from contract address
+     */
+    const getTokenInfo = useCallback(async (tokenAddress: string): Promise<TokenInfo | null> => {
+        // Check if it's native XLM
+        if (tokenAddress === 'NATIVE') {
+            return XLM_TOKEN;
+        }
+
+        // Check if it's in our default list
+        const defaultToken = DEFAULT_TOKENS.find(t => t.address === tokenAddress);
+        if (defaultToken) {
+            return defaultToken;
+        }
+
+        // Try to fetch token info from the contract
+        try {
+            // In a real implementation, you would call the token contract's name(), symbol(), decimals() functions
+            // For now, we'll return a basic token info
+            if (!isValidStellarAddress(tokenAddress)) {
+                throw new Error('Invalid token address');
+            }
+
+            // Simulated token info - in production, query the contract
+            return {
+                address: tokenAddress,
+                symbol: 'UNKNOWN',
+                name: 'Unknown Token',
+                decimals: 7,
+                icon: '🪙',
+                isNative: false,
+            };
+        } catch (e) {
+            console.error(`Failed to fetch token info for ${tokenAddress}:`, e);
+            return null;
+        }
     }, []);
 
-    const exportSignatures = useCallback((signatures: unknown[]) => {
-        const data = { signatures, exportedAt: new Date().toISOString() };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `proposal-signatures.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }, []);
+    /**
+     * Add a custom token to the tracked list
+     */
+    const addCustomToken = useCallback(async (tokenAddress: string): Promise<TokenInfo | null> => {
+        if (!isValidStellarAddress(tokenAddress)) {
+            throw new Error('Invalid Stellar token address');
+        }
+
+        // Check if already tracked
+        const trackedTokens = getAllTrackedTokens();
+        const existing = trackedTokens.find(t => t.address === tokenAddress);
+        if (existing) {
+            return existing;
+        }
+
+        // Get token info
+        const tokenInfo = await getTokenInfo(tokenAddress);
+        if (!tokenInfo) {
+            throw new Error('Could not fetch token information');
+        }
+
+        // Save to localStorage
+        addCustomTokenToStorage(tokenInfo);
+
+        return tokenInfo;
+    }, [getTokenInfo]);
+
+    /**
+     * Get total portfolio value in USD (mock implementation)
+     */
+    const getPortfolioValue = useCallback(async (): Promise<{ total: number; change24h: number }> => {
+        try {
+            const balances = await getTokenBalances();
+            
+            // Mock USD prices - in production, you'd fetch from a price oracle or API
+            const mockPrices: Record<string, number> = {
+                'XLM': 0.12,
+                'USDC': 1.00,
+                'ARST': 0.001,
+                'BRL': 0.20,
+            };
+
+            let total = 0;
+            for (const { token, balance } of balances) {
+                const price = mockPrices[token.symbol] || 0;
+                const amount = parseFloat(balance) || 0;
+                total += price * amount;
+            }
+
+            // Mock 24h change
+            const change24h = (Math.random() - 0.5) * 10; // -5% to +5%
+
+            return { total, change24h };
+        } catch (e) {
+            console.error('Failed to calculate portfolio value:', e);
+            return { total: 0, change24h: 0 };
+        }
+    }, [getTokenBalances]);
+    const getProposalSignatures = useCallback(async (_proposalId: number) => {
+    const getAllRoles = async (): Promise<Array<{ address: string; role: number }>> => {
+        // Mock implementation - in production, this would query contract storage
+        // or use events to build the role registry
+        try {
+            // This is a placeholder. In a real implementation, you would:
+            // 1. Query contract storage for all role assignments
+            // 2. Or parse role_assigned events from getVaultEvents
+            const mockRoles = [
+                { address: address || '', role: 2 }, // Current user as admin for testing
+            ];
+            return mockRoles;
+        } catch (e) {
+            console.error('Failed to fetch roles:', e);
+            return [];
+        }
+    };
+
+    const setRole = async (targetAddress: string, role: number) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "set_role",
+                            args: [
+                                new Address(address).toScVal(),
+                                new Address(targetAddress).toScVal(),
+                                nativeToScVal(role, { type: "u32" }),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     return { 
         proposeTransfer, 
@@ -368,9 +574,43 @@ export const useVaultContract = () => {
         executeProposal, 
         getDashboardStats, 
         getVaultEvents, 
+        getTokenBalance,
+        getTokenBalances,
+        getTokenInfo,
+        addCustomToken,
+        getPortfolioValue,
         getProposalSignatures,
         remindSigner,
         exportSignatures,
         loading 
+    const getUserRole = async (): Promise<number> => {
+        if (!isConnected || !address) return 0;
+        try {
+            // Mock implementation - returns admin role for testing
+            // In production, this would call the get_role contract function
+            return 2; // Admin role for testing
+        } catch (e) {
+            console.error('Failed to fetch user role:', e);
+            return 0; // Default to Member
+        }
     };
+
+    const getVaultBalance = async (tokenAddress?: string): Promise<string> => {
+        try {
+            const contractAddress = tokenAddress || CONTRACT_ID;
+            const accountInfo = await server.getAccount(contractAddress) as unknown as { balances: StellarBalance[] };
+            const nativeBalance = accountInfo.balances.find((b: StellarBalance) => b.asset_type === 'native');
+            
+            if (!nativeBalance) return '0';
+            
+            // Convert to stroops (1 XLM = 10,000,000 stroops)
+            const stroops = Math.floor(parseFloat(nativeBalance.balance) * 10_000_000);
+            return stroops.toString();
+        } catch (e) {
+            console.error('Failed to fetch vault balance:', e);
+            return '0';
+        }
+    };
+
+    return { proposeTransfer, rejectProposal, executeProposal, getDashboardStats, getVaultEvents, getAllRoles, setRole, getUserRole, getVaultBalance, loading };
 };
