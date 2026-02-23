@@ -63,18 +63,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "threshold_strategy"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "symbol": "Fixed"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "timelock_delay"
                       },
                       "val": {
@@ -267,18 +255,6 @@
                               },
                               "val": {
                                 "u32": 1
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "threshold_strategy"
-                              },
-                              "val": {
-                                "vec": [
-                                  {
-                                    "symbol": "Fixed"
-                                  }
-                                ]
                               }
                             },
                             {

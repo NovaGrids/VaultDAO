@@ -9,9 +9,6 @@ import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
-import type { TokenBalance } from '../../components/TokenBalanceCard';
-import type { TokenInfo } from '../../constants/tokens';
-import { DEFAULT_TOKENS, formatTokenBalance } from '../../constants/tokens';
 import { useWallet } from '../../context/WalletContextProps';
 
 const CopyButton = ({ text }: { text: string }) => (
@@ -64,7 +61,7 @@ const Proposals: React.FC = () => {
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
+  // const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
 
   const [activeFilters, setActiveFilters] = useState<FilterState>({
     search: '',
@@ -80,7 +77,7 @@ const Proposals: React.FC = () => {
     amount: '',
     memo: '',
   });
-  const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
+  // const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
 
   // Fetch token balances
   useEffect(() => {
@@ -454,11 +451,6 @@ const Proposals: React.FC = () => {
           loading={loading}
           selectedTemplateName={null}
           formData={newProposalForm}
-          tokenBalances={tokenBalances}
-          selectedToken={selectedToken}
-          amountError={amountError}
-          onTokenSelect={handleTokenSelect}
-          onAddCustomToken={handleAddCustomToken}
           onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
           onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
           onOpenTemplateSelector={() => { }}

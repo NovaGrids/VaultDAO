@@ -22,10 +22,10 @@ const ROLE_PERMISSIONS = {
 };
 
 const RoleManagement: React.FC = () => {
-  const { getAllRoles, setRole, getUserRole, loading } = useVaultContract();
-  const { showToast } = useToast();
+  const { getAllRoles, assignRole, getUserRole, loading } = useVaultContract();
+  const { notify } = useToast();
   const [currentUserRole, setCurrentUserRole] = useState<number>(0);
-  const [roleAssignments, setRoleAssignments] = useState<RoleAssignment[]>([]);
+  const [roleAssignments, assignRoleAssignments] = useState<RoleAssignment[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [selectedRole, setSelectedRole] = useState<number>(0);
@@ -61,13 +61,13 @@ const RoleManagement: React.FC = () => {
 
   const handleAssignRole = () => {
     if (!validateStellarAddress(newAddress)) {
-      showToast('Invalid Stellar address format', 'error');
+      notify("config_updated", "Invalid Stellar address format", "error");
       return;
     }
 
     const existing = roleAssignments.find(r => r.address === newAddress);
     if (existing) {
-      showToast('Address already has a role. Use Change Role instead.', 'warning');
+      notify("config_updated", "Address already has a role. Use Change Role instead.", "info");
       return;
     }
 
@@ -118,8 +118,8 @@ const RoleManagement: React.FC = () => {
       }
 
       await loadData();
-    } catch (error: any) {
-      showToast(error.message || 'Failed to update role', 'error');
+    } catch (error: unknown) {
+      notify("config_updated", error instanceof Error ? error.message : "Failed to update role", "error");
     } finally {
       setConfirmModal({ isOpen: false, type: 'assign' });
     }

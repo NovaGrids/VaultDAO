@@ -426,7 +426,7 @@ export const useVaultContract = () => {
         }
 
         try {
-            const account = await server.getAccount(address);
+            const account = await server.getAccount(CONTRACT_ID);
             const tx = new TransactionBuilder(account, { fee: "100" })
                 .setNetworkPassphrase(NETWORK_PASSPHRASE)
                 .setTimeout(30)

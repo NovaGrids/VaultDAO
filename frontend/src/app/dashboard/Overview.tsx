@@ -2,13 +2,13 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { LayoutDashboard, FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
-import TokenBalanceCard, { type TokenBalance } from '../../components/TokenBalanceCard';
+import TokenBalanceCard from '../../components/TokenBalanceCard';
 import DashboardBuilder from '../../components/DashboardBuilder';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
 import { loadDashboardLayout } from '../../utils/dashboardTemplates';
 import type { TokenInfo } from '../../constants/tokens';
-import { DEFAULT_TOKENS, isValidStellarAddress } from '../../constants/tokens';
+import { isValidStellarAddress } from '../../constants/tokens';
 import { formatTokenAmount } from '../../utils/formatters';
 
 interface DashboardStats {
@@ -20,16 +20,11 @@ interface DashboardStats {
     threshold: string;
 }
 
-interface PortfolioValue {
-    total: number;
-    change24h: number;
-}
-
 const Overview: React.FC = () => {
     const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, getVaultBalance, loading } = useVaultContract();
     const [stats, setStats] = useState<DashboardStats | null>(null);
-    const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
-    const [portfolioValue, setPortfolioValue] = useState<PortfolioValue | null>(null);
+    const [tokenBalances, setTokenBalances] = useState<any[]>([]);
+    const [portfolioValue, setPortfolioValue] = useState<any>(null);
     const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
     const [showAddTokenModal, setShowAddTokenModal] = useState(false);
     const [newTokenAddress, setNewTokenAddress] = useState('');
@@ -108,12 +103,7 @@ const Overview: React.FC = () => {
             setPortfolioValue({ total: parseFloat(portfolio), change24h: 0 });
         } catch (error) {
             console.error('Failed to fetch token balances', error);
-            // Set default tokens with zero balances on error
-            setTokenBalances(DEFAULT_TOKENS.map(token => ({
-                token,
-                balance: '0',
-                isLoading: false,
-            })));
+            setTokenBalances([]);
         } finally {
             setIsLoadingBalances(false);
         }

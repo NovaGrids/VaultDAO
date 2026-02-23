@@ -40,8 +40,6 @@ pub const DAY_IN_LEDGERS: u32 = 17_280; // ~24 hours
 pub const PROPOSAL_TTL: u32 = DAY_IN_LEDGERS * 7; // 7 days
 pub const INSTANCE_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
-pub const PERSISTENT_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
-pub const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
 
 // ============================================================================
 // Initialization
@@ -213,49 +211,6 @@ pub fn get_recurring_payment(
 }
 
 // ============================================================================
-// Priority Queue Management
-// ============================================================================
-
-pub fn add_to_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
-    let key = DataKey::PriorityQueue(priority);
-    let mut queue: soroban_sdk::Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(soroban_sdk::Vec::new(env));
-    queue.push_back(proposal_id);
-    env.storage().persistent().set(&key, &queue);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-}
-
-pub fn remove_from_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
-    let key = DataKey::PriorityQueue(priority);
-    if let Some(mut queue) = env
-        .storage()
-        .persistent()
-        .get::<_, soroban_sdk::Vec<u64>>(&key)
-    {
-        if let Some(idx) = queue.iter().position(|id| id == proposal_id) {
-            queue.remove(idx as u32);
-            env.storage().persistent().set(&key, &queue);
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-        }
-    }
-}
-
-pub fn get_proposals_by_priority(env: &Env, priority: u32) -> soroban_sdk::Vec<u64> {
-    let key = DataKey::PriorityQueue(priority);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(soroban_sdk::Vec::new(env))
-}
-
-// ============================================================================
 // TTL Management
 // ============================================================================
 
@@ -263,6 +218,63 @@ pub fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// Recipient Lists
+// ============================================================================
+
+pub fn get_list_mode(env: &Env) -> crate::types::ListMode {
+    env.storage()
+        .instance()
+        .get(&DataKey::ListMode)
+        .unwrap_or(crate::types::ListMode::Disabled)
+}
+
+pub fn set_list_mode(env: &Env, mode: crate::types::ListMode) {
+    env.storage().instance().set(&DataKey::ListMode, &mode);
+}
+
+pub fn is_whitelisted(env: &Env, addr: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Whitelist(addr.clone()))
+        .unwrap_or(false)
+}
+
+pub fn add_to_whitelist(env: &Env, addr: &Address) {
+    let key = DataKey::Whitelist(addr.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn remove_from_whitelist(env: &Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Whitelist(addr.clone()));
+}
+
+pub fn is_blacklisted(env: &Env, addr: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Blacklist(addr.clone()))
+        .unwrap_or(false)
+}
+
+pub fn add_to_blacklist(env: &Env, addr: &Address) {
+    let key = DataKey::Blacklist(addr.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn remove_from_blacklist(env: &Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Blacklist(addr.clone()));
 }
 
 // ============================================================================
