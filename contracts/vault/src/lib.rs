@@ -25,6 +25,7 @@ use types::{
     NotificationPreferences, PriceImpact, Priority, Proposal, ProposalStatus, Reputation, Role,
     SwapProposal, ThresholdStrategy, YieldPosition,
 };
+};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -403,15 +404,15 @@ impl VaultDAO {
             return Err(VaultError::TimelockNotExpired);
         }
 
+        // Evaluate execution conditions (if any) before balance check
+        if !proposal.conditions.is_empty() {
+            Self::evaluate_conditions(&env, &proposal)?;
+        }
+
         // Check vault balance (account for insurance amount that is also held in vault)
         let balance = token::balance(&env, &proposal.token);
         if balance < proposal.amount + proposal.insurance_amount {
             return Err(VaultError::InsufficientBalance);
-        }
-
-        // Evaluate execution conditions (if any)
-        if !proposal.conditions.is_empty() {
-            Self::evaluate_conditions(&env, &proposal)?;
         }
 
         // Execute transfer
@@ -1275,7 +1276,15 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
+        // IPFS CID v0 is 46 chars; reject obviously invalid hashes
+        if attachment.len() < 10 {
+            return Err(VaultError::InvalidAmount);
+        }
+
         let mut attachments = storage::get_attachments(&env, proposal_id);
+        if attachments.contains(attachment.clone()) {
+            return Err(VaultError::AlreadyApproved); // duplicate attachment
+        }
         attachments.push_back(attachment);
         storage::set_attachments(&env, proposal_id, &attachments);
         storage::extend_instance_ttl(&env);
@@ -1387,13 +1396,9 @@ impl VaultDAO {
         match &config.threshold_strategy {
             ThresholdStrategy::Fixed => config.threshold,
             ThresholdStrategy::Percentage(pct) => {
-                let signers = config.signers.len();
-                let calc = (signers * pct).div_ceil(100);
-                if calc < 1 {
-                    1
-                } else {
-                    calc
-                }
+<<<<<<< HEAD
+                let signers = config.signers.len() as u64;
+                (signers * (*pct as u64)).div_ceil(100).max(1) as u32
             }
             ThresholdStrategy::AmountBased(tiers) => {
                 // Find the highest tier whose amount is <= proposal amount

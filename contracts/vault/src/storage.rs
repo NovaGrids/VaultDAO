@@ -139,10 +139,13 @@ pub fn set_role(env: &Env, addr: &Address, role: Role) {
 // ============================================================================
 
 pub fn get_proposal(env: &Env, id: u64) -> Result<Proposal, VaultError> {
-    env.storage()
+    let mut proposal: Proposal = env
+        .storage()
         .persistent()
         .get(&DataKey::Proposal(id))
-        .ok_or(VaultError::ProposalNotFound)
+        .ok_or(VaultError::ProposalNotFound)?;
+    proposal.attachments = get_attachments(env, id);
+    Ok(proposal)
 }
 
 pub fn set_proposal(env: &Env, proposal: &Proposal) {

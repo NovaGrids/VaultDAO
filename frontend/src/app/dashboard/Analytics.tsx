@@ -247,7 +247,7 @@ const Analytics: React.FC = () => {
           </div>
 
           {/* Stats cards */}
-          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex items-center gap-3">
               <div className="p-2 rounded-lg bg-purple-500/20">
                 <BarChart3 size={20} className="text-purple-400" />
