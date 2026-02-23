@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { ArrowUpRight, Clock, SearchX, Check, Loader2 } from 'lucide-react';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
 import NewProposalModal from '../../components/modals/NewProposalModal';
@@ -10,6 +10,9 @@ import ProposalFilters, { type FilterState } from '../../components/proposals/Pr
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../context/WalletContextProps';
+import { useWebSocket } from '../../context/WebSocketProvider';
+import LiveUpdates, { useOptimisticUpdate } from '../../components/LiveUpdates';
+import PresenceIndicator from '../../components/PresenceIndicator';
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
@@ -53,6 +56,8 @@ const Proposals: React.FC = () => {
   const { notify } = useToast();
   const { rejectProposal, approveProposal, getTokenBalances, addCustomToken } = useVaultContract();
   const { address } = useWallet();
+  const { sendMessage, isConnected: wsConnected } = useWebSocket();
+  const { pendingUpdates, addOptimistic, confirmOptimistic, rollbackOptimistic } = useOptimisticUpdate();
 
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(false);
@@ -215,12 +220,43 @@ const Proposals: React.FC = () => {
   }, [proposals, activeFilters]);
 
   const handleRejectConfirm = async () => {
-    if (!rejectingId) return;
+    if (!rejectingId || !address) return;
+    
+    const optimisticId = `reject-${rejectingId}-${Date.now()}`;
+    const optimisticProposal = proposals.find(p => p.id === rejectingId);
+    
+    // Optimistic update
+    if (optimisticProposal) {
+      addOptimistic(optimisticId, { ...optimisticProposal, status: 'Rejected' });
+      setProposals(prev => prev.map(p => p.id === rejectingId ? { ...p, status: 'Rejected' } : p));
+    }
+    
     try {
       await rejectProposal(Number(rejectingId));
-      setProposals(prev => prev.map(p => p.id === rejectingId ? { ...p, status: 'Rejected' } : p));
+      
+      // Confirm optimistic update
+      confirmOptimistic(optimisticId);
+      
+      // Broadcast to other users via WebSocket
+      if (wsConnected) {
+        sendMessage({
+          type: 'proposal_rejected',
+          proposalId: rejectingId,
+          rejector: address,
+        });
+      }
+      
       notify('proposal_rejected', `Proposal #${rejectingId} rejected`, 'success');
     } catch (err: unknown) {
+      // Rollback optimistic update
+      rollbackOptimistic(optimisticId);
+      
+      if (optimisticProposal) {
+        setProposals(prev => prev.map(p => 
+          p.id === rejectingId ? optimisticProposal : p
+        ));
+      }
+      
       const errorMessage = err instanceof Error ? err.message : 'Failed to reject';
       notify('proposal_rejected', errorMessage, 'error');
     } finally {
@@ -236,9 +272,18 @@ const Proposals: React.FC = () => {
       return;
     }
 
+    const optimisticId = `approve-${proposalId}-${Date.now()}`;
     setApprovingIds(prev => new Set(prev).add(proposalId));
-    try {
-      await approveProposal(Number(proposalId));
+    
+    // Optimistic update
+    const optimisticProposal = proposals.find(p => p.id === proposalId);
+    if (optimisticProposal) {
+      addOptimistic(optimisticId, {
+        ...optimisticProposal,
+        approvals: optimisticProposal.approvals + 1,
+        approvedBy: [...optimisticProposal.approvedBy, address],
+      });
+      
       setProposals(prev => prev.map(p => {
         if (p.id === proposalId) {
           const newApprovals = p.approvals + 1;
@@ -252,8 +297,35 @@ const Proposals: React.FC = () => {
         }
         return p;
       }));
+    }
+    
+    try {
+      await approveProposal(Number(proposalId));
+      
+      // Confirm optimistic update
+      confirmOptimistic(optimisticId);
+      
+      // Broadcast to other users via WebSocket
+      if (wsConnected) {
+        sendMessage({
+          type: 'approval_added',
+          proposalId,
+          approver: address,
+        });
+      }
+      
       notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
     } catch (err: unknown) {
+      // Rollback optimistic update
+      rollbackOptimistic(optimisticId);
+      
+      // Revert local state
+      if (optimisticProposal) {
+        setProposals(prev => prev.map(p => 
+          p.id === proposalId ? optimisticProposal : p
+        ));
+      }
+      
       const errorMessage = err instanceof Error ? err.message : 'Failed to approve proposal';
       notify('proposal_rejected', errorMessage, 'error');
     } finally {
@@ -320,14 +392,33 @@ const Proposals: React.FC = () => {
     }
   };
 
+  // Callback to refresh proposals when real-time updates occur
+  const handleProposalUpdate = useCallback((proposalId: string) => {
+    // In a real app, you'd fetch the updated proposal from the backend
+    console.log('Proposal updated:', proposalId);
+  }, []);
+
   return (
-    <div className="min-h-screen bg-gray-900 p-6 text-white">
+    <div className="min-h-screen bg-gray-900 p-4 md:p-6 text-white">
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">Proposals</h1>
-          <button onClick={() => setShowNewProposalModal(true)} className="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition">
-            New Proposal
-          </button>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+          <h1 className="text-2xl md:text-3xl font-bold">Proposals</h1>
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="hidden lg:block">
+              <PresenceIndicator showConnectionStatus />
+            </div>
+            <button 
+              onClick={() => setShowNewProposalModal(true)} 
+              className="flex-1 sm:flex-initial bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition min-h-[44px]"
+            >
+              New Proposal
+            </button>
+          </div>
+        </div>
+
+        {/* Live Updates Section */}
+        <div className="mb-6">
+          <LiveUpdates onProposalUpdate={handleProposalUpdate} showToasts={false} />
         </div>
 
         <ProposalFilters proposalCount={filteredProposals.length} onFilterChange={setActiveFilters} />

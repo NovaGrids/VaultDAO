@@ -21,6 +21,7 @@ import {
 import { useWallet } from "../../hooks/useWallet"; 
 import CopyButton from '../CopyButton';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
+import PresenceIndicator from '../PresenceIndicator';
 
 const DashboardLayout: React.FC = () => {
   const { isConnected, address, network, connect, disconnect } = useWallet();
@@ -130,6 +131,9 @@ const DashboardLayout: React.FC = () => {
             <p className="text-gray-400 text-sm font-medium">Welcome back to VaultDAO</p>
           </div>
           <div className="flex items-center space-x-4">
+            {/* Real-time connection status */}
+            <PresenceIndicator showConnectionStatus compact />
+            
             {isConnected && address ? (
               <div className="relative">
                 <button 
