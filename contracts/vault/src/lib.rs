@@ -25,7 +25,6 @@ use types::{
     NotificationPreferences, PriceImpact, Priority, Proposal, ProposalStatus, Reputation, Role,
     SwapProposal, ThresholdStrategy, YieldPosition,
 };
-};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -1396,7 +1395,6 @@ impl VaultDAO {
         match &config.threshold_strategy {
             ThresholdStrategy::Fixed => config.threshold,
             ThresholdStrategy::Percentage(pct) => {
-<<<<<<< HEAD
                 let signers = config.signers.len() as u64;
                 (signers * (*pct as u64)).div_ceil(100).max(1) as u32
             }
