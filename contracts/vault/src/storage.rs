@@ -2,10 +2,10 @@
 //!
 //! Storage keys and helper functions for persistent state.
 
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 use crate::errors::VaultError;
-use crate::types::{Config, Proposal, Role};
+use crate::types::{Config, Proposal, Role, VelocityConfig};
 
 /// Storage key definitions
 #[contracttype]
@@ -31,16 +31,8 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
-    /// Execution snapshot by proposal ID -> ExecutionSnapshot
-    ExecutionSnapshot(u64),
-}
-
-/// Snapshot used to rollback proposal execution failures.
-#[contracttype]
-#[derive(Clone)]
-pub struct ExecutionSnapshot {
-    pub proposal: Proposal,
-    pub was_in_priority_queue: bool,
+    /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
+    VelocityHistory(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -48,8 +40,6 @@ pub const DAY_IN_LEDGERS: u32 = 17_280; // ~24 hours
 pub const PROPOSAL_TTL: u32 = DAY_IN_LEDGERS * 7; // 7 days
 pub const INSTANCE_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
-pub const PERSISTENT_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
-pub const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
 
 // ============================================================================
 // Initialization
@@ -226,46 +216,154 @@ pub fn get_recurring_payment(
 }
 
 // ============================================================================
-// Priority Queue Management
+// TTL Management
 // ============================================================================
 
-pub fn add_to_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
-    let key = DataKey::PriorityQueue(priority);
-    let mut queue: soroban_sdk::Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(soroban_sdk::Vec::new(env));
-    queue.push_back(proposal_id);
-    env.storage().persistent().set(&key, &queue);
+pub fn extend_instance_ttl(env: &Env) {
     env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
-pub fn remove_from_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
-    let key = DataKey::PriorityQueue(priority);
-    if let Some(mut queue) = env
-        .storage()
+// ============================================================================
+// Recipient Lists
+// ============================================================================
+
+pub fn get_list_mode(env: &Env) -> crate::types::ListMode {
+    env.storage()
+        .instance()
+        .get(&DataKey::ListMode)
+        .unwrap_or(crate::types::ListMode::Disabled)
+}
+
+pub fn set_list_mode(env: &Env, mode: crate::types::ListMode) {
+    env.storage().instance().set(&DataKey::ListMode, &mode);
+}
+
+pub fn is_whitelisted(env: &Env, addr: &Address) -> bool {
+    env.storage()
         .persistent()
-        .get::<_, soroban_sdk::Vec<u64>>(&key)
-    {
-        if let Some(idx) = queue.iter().position(|id| id == proposal_id) {
-            queue.remove(idx as u32);
-            env.storage().persistent().set(&key, &queue);
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        .get(&DataKey::Whitelist(addr.clone()))
+        .unwrap_or(false)
+}
+
+pub fn add_to_whitelist(env: &Env, addr: &Address) {
+    let key = DataKey::Whitelist(addr.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn remove_from_whitelist(env: &Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Whitelist(addr.clone()));
+}
+
+pub fn is_blacklisted(env: &Env, addr: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Blacklist(addr.clone()))
+        .unwrap_or(false)
+}
+
+pub fn add_to_blacklist(env: &Env, addr: &Address) {
+    let key = DataKey::Blacklist(addr.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn remove_from_blacklist(env: &Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Blacklist(addr.clone()));
+}
+
+// ============================================================================
+// Velocity Checking (Sliding Window)
+// ============================================================================
+
+pub fn check_and_update_velocity(env: &Env, addr: &Address, config: &VelocityConfig) -> bool {
+    let now = env.ledger().timestamp();
+    let key = DataKey::VelocityHistory(addr.clone());
+
+    let history: Vec<u64> = env.storage().temporary().get(&key).unwrap_or(Vec::new(env));
+
+    // Change window_secs to window here:
+    let window_start = now.saturating_sub(config.window);
+
+    let mut updated_history: Vec<u64> = Vec::new(env);
+    for ts in history.iter() {
+        if ts > window_start {
+            updated_history.push_back(ts);
         }
     }
+
+    if updated_history.len() >= config.limit {
+        return false;
+    }
+
+    updated_history.push_back(now);
+    env.storage().temporary().set(&key, &updated_history);
+
+    // TTL extension for temporary storage
+    env.storage().temporary().extend_ttl(&key, 17280, 17280);
+
+    true
 }
 
-pub fn get_proposals_by_priority(env: &Env, priority: u32) -> soroban_sdk::Vec<u64> {
-    let key = DataKey::PriorityQueue(priority);
+// ============================================================================
+// Comments
+// ============================================================================
+
+pub fn get_next_comment_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextCommentId)
+        .unwrap_or(1)
+}
+
+pub fn increment_comment_id(env: &Env) -> u64 {
+    let id = get_next_comment_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextCommentId, &(id + 1));
+    id
+}
+
+pub fn set_comment(env: &Env, comment: &Comment) {
+    let key = DataKey::Comment(comment.id);
+    env.storage().persistent().set(&key, comment);
     env.storage()
         .persistent()
-        .get(&key)
-        .unwrap_or(soroban_sdk::Vec::new(env))
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_comment(env: &Env, id: u64) -> Result<Comment, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Comment(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn get_proposal_comments(env: &Env, proposal_id: u64) -> SdkVec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ProposalComments(proposal_id))
+        .unwrap_or_else(|| SdkVec::new(env))
+}
+
+pub fn add_comment_to_proposal(env: &Env, proposal_id: u64, comment_id: u64) {
+    let mut comments = get_proposal_comments(env, proposal_id);
+    comments.push_back(comment_id);
+    let key = DataKey::ProposalComments(proposal_id);
+    env.storage().persistent().set(&key, &comments);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
 pub fn is_in_priority_queue(env: &Env, priority: u32, proposal_id: u64) -> bool {
@@ -297,11 +395,52 @@ pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
 }
 
 // ============================================================================
-// TTL Management
+// Comments
 // ============================================================================
 
-pub fn extend_instance_ttl(env: &Env) {
+pub fn get_next_comment_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+        .get(&DataKey::NextCommentId)
+        .unwrap_or(1)
+}
+
+pub fn increment_comment_id(env: &Env) -> u64 {
+    let id = get_next_comment_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextCommentId, &(id + 1));
+    id
+}
+
+pub fn set_comment(env: &Env, comment: &Comment) {
+    let key = DataKey::Comment(comment.id);
+    env.storage().persistent().set(&key, comment);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_comment(env: &Env, id: u64) -> Result<Comment, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Comment(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn get_proposal_comments(env: &Env, proposal_id: u64) -> SdkVec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ProposalComments(proposal_id))
+        .unwrap_or_else(|| SdkVec::new(env))
+}
+
+pub fn add_comment_to_proposal(env: &Env, proposal_id: u64, comment_id: u64) {
+    let mut comments = get_proposal_comments(env, proposal_id);
+    comments.push_back(comment_id);
+    let key = DataKey::ProposalComments(proposal_id);
+    env.storage().persistent().set(&key, &comments);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }

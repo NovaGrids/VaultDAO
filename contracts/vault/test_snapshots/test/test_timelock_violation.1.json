@@ -52,7 +52,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 2000
+                          "lo": 1000
                         }
                       }
                     },
@@ -62,18 +62,6 @@
                       },
                       "val": {
                         "u32": 1
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "threshold_strategy"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "symbol": "Fixed"
-                          }
-                        ]
                       }
                     },
                     {
@@ -93,6 +81,31 @@
                           "hi": 0,
                           "lo": 500
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "velocity_limit"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "limit"
+                            },
+                            "val": {
+                              "u32": 100
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "window"
+                            },
+                            "val": {
+                              "u64": 3600
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -166,15 +179,6 @@
                 },
                 {
                   "symbol": "large"
-                },
-                {
-                  "u32": 1
-                },
-                {
-                  "vec": []
-                },
-                {
-                  "u32": 0
                 }
               ]
             }
@@ -274,55 +278,6 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "PriorityQueue"
-                },
-                {
-                  "u32": 1
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-                "key": {
-                  "vec": [
-                    {
-                      "symbol": "PriorityQueue"
-                    },
-                    {
-                      "u32": 1
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "vec": [
-                    {
-                      "u64": 1
-                    }
-                  ]
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          518500
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-            "key": {
-              "vec": [
-                {
                   "symbol": "Proposal"
                 },
                 {
@@ -355,14 +310,6 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "abstentions"
-                      },
-                      "val": {
-                        "vec": []
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "amount"
                       },
                       "val": {
@@ -382,30 +329,6 @@
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                           }
                         ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "attachments"
-                      },
-                      "val": {
-                        "vec": []
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "condition_logic"
-                      },
-                      "val": {
-                        "u32": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "conditions"
-                      },
-                      "val": {
-                        "vec": []
                       }
                     },
                     {
@@ -438,14 +361,6 @@
                       },
                       "val": {
                         "symbol": "large"
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "priority"
-                      },
-                      "val": {
-                        "u32": 1
                       }
                     },
                     {
@@ -594,6 +509,55 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "VelocityHistory"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                }
+              ]
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "VelocityHistory"
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
+                },
+                "durability": "temporary",
+                "val": {
+                  "vec": [
+                    {
+                      "u64": 0
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          17380
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
                   "symbol": "WeeklySpent"
                 },
                 {
@@ -701,7 +665,7 @@
                               "val": {
                                 "i128": {
                                   "hi": 0,
-                                  "lo": 2000
+                                  "lo": 1000
                                 }
                               }
                             },
@@ -711,18 +675,6 @@
                               },
                               "val": {
                                 "u32": 1
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "threshold_strategy"
-                              },
-                              "val": {
-                                "vec": [
-                                  {
-                                    "symbol": "Fixed"
-                                  }
-                                ]
                               }
                             },
                             {
@@ -742,6 +694,31 @@
                                   "hi": 0,
                                   "lo": 500
                                 }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "velocity_limit"
+                              },
+                              "val": {
+                                "map": [
+                                  {
+                                    "key": {
+                                      "symbol": "limit"
+                                    },
+                                    "val": {
+                                      "u32": 100
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "window"
+                                    },
+                                    "val": {
+                                      "u64": 3600
+                                    }
+                                  }
+                                ]
                               }
                             },
                             {

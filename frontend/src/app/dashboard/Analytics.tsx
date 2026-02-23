@@ -5,6 +5,7 @@ import { exportAnalyticsToCsv, exportChartAsImage } from '../../utils/exportAnal
 import LineChart from '../../components/charts/LineChart';
 import PieChart from '../../components/charts/PieChart';
 import HeatMap from '../../components/charts/HeatMap';
+import SpendingAnalytics from '../../components/SpendingAnalytics';
 import {
   TrendingUp,
   PieChart as PieIcon,
@@ -78,6 +79,7 @@ const TIME_RANGES: { value: AnalyticsTimeRange; label: string }[] = [
 const Analytics: React.FC = () => {
   const [timeRange, setTimeRange] = useState<AnalyticsTimeRange>('30d');
   const [loading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'spending'>('overview');
   const proposalChartRef = useRef<HTMLDivElement>(null);
   const spendingChartRef = useRef<HTMLDivElement>(null);
   const treasuryChartRef = useRef<HTMLDivElement>(null);
@@ -89,6 +91,16 @@ const Analytics: React.FC = () => {
     () => (loading ? null : aggregateAnalytics(activities, timeRange)),
     [activities, timeRange, loading]
   );
+
+  const transactions = useMemo(() => {
+    return activities
+      .filter(a => a.type === 'proposal_executed')
+      .map(a => ({
+        amount: Number(a.details?.amount || 0),
+        timestamp: a.timestamp,
+        recipient: String(a.details?.recipient || 'unknown')
+      }));
+  }, [activities]);
 
   const insights = useMemo(() => {
     if (!analytics) return [];
@@ -179,13 +191,45 @@ const Analytics: React.FC = () => {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-gray-700">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'overview'
+              ? 'text-purple-400 border-b-2 border-purple-400'
+              : 'text-gray-400 hover:text-gray-300'
+          }`}
+        >
+          Overview
+        </button>
+        <button
+          onClick={() => setActiveTab('spending')}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'spending'
+              ? 'text-purple-400 border-b-2 border-purple-400'
+              : 'text-gray-400 hover:text-gray-300'
+          }`}
+        >
+          Spending Analytics
+        </button>
+      </div>
+
       {loading && (
         <div className="flex justify-center py-12">
           <div className="animate-spin rounded-full h-10 w-10 border-2 border-purple-500 border-t-transparent" />
         </div>
       )}
 
-      {!loading && analytics && (
+      {!loading && analytics && activeTab === 'spending' && (
+        <SpendingAnalytics
+          transactions={transactions}
+          currentBalance={analytics.totalVolume}
+          monthlyBudget={50000}
+        />
+      )}
+
+      {!loading && analytics && activeTab === 'overview' && (
         <>
           {/* Insights */}
           <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">

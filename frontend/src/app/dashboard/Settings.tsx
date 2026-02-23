@@ -4,13 +4,9 @@ import {
   clearExportHistory,
   type ExportHistoryItem,
 } from '../../utils/exportHistory';
-import { Download, Trash2, FileText, Copy, Plus } from 'lucide-react';
+import { Download, Trash2, FileText, Shield } from 'lucide-react';
+import RecipientListManagement from '../../components/RecipientListManagement';
 import RoleManagement from '../../components/RoleManagement';
-import VaultCloner from '../../components/VaultCloner';
-import DeployVault from '../../components/DeployVault';
-import type { VaultTemplate } from '../../utils/vaultTemplates';
-
-type VaultConfig = Omit<VaultTemplate['config'], 'signers'>;
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -61,33 +57,7 @@ function reDownloadItem(item: ExportItemWithContent): void {
 
 const Settings: React.FC = () => {
   const [history, setHistory] = useState<ExportHistoryItem[]>(() => getExportHistory());
-  const [showCloner, setShowCloner] = useState(false);
-  const [showDeployVault, setShowDeployVault] = useState(false);
-
-  // Mock current vault config - in real app, fetch from contract
-  const currentVaultConfig = {
-    signers: ['GXXXXXXX...', 'GYYYYYYY...', 'GZZZZZZZ...'],
-    threshold: 2,
-    spendingLimit: '10000000000',
-    dailyLimit: '50000000000',
-    weeklyLimit: '200000000000',
-    timelockThreshold: '20000000000',
-    timelockDelay: 17280,
-  };
-
-  const handleCloneVault = async (config: VaultTemplate['config'], signers: string[]) => {
-    // Mock deployment - in real app, call contract deployment
-    console.log('Cloning vault with config:', config, 'signers:', signers);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    return 'CNEWVAULT' + Math.random().toString(36).substring(7).toUpperCase();
-  };
-
-  const handleDeployVault = async (config: VaultConfig, signers: string[]) => {
-    // Mock deployment - in real app, call contract deployment
-    console.log('Deploying vault with config:', config, 'signers:', signers);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    return 'CNEWVAULT' + Math.random().toString(36).substring(7).toUpperCase();
-  };
+  const [showRecipientLists, setShowRecipientLists] = useState(false);
 
   const handleClearHistory = () => {
     clearExportHistory();
@@ -174,49 +144,30 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <h3 className="text-lg font-semibold mb-4">Vault Management</h3>
-        <p className="text-gray-400 text-sm mb-4">
-          Clone this vault or deploy a new vault from templates.
-        </p>
-
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Shield className="text-blue-400" size={24} />
+            <h3 className="text-lg font-semibold">Recipient Lists</h3>
+          </div>
           <button
-            onClick={() => setShowCloner(true)}
-            className="flex-1 min-h-[44px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium touch-manipulation"
+            onClick={() => setShowRecipientLists(!showRecipientLists)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            <Copy size={18} />
-            Clone This Vault
-          </button>
-          <button
-            onClick={() => setShowDeployVault(true)}
-            className="flex-1 min-h-[44px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium touch-manipulation"
-          >
-            <Plus size={18} />
-            Deploy New Vault
+            {showRecipientLists ? 'Hide' : 'Manage Lists'}
           </button>
         </div>
+        <p className="text-gray-400 text-sm mb-4">
+          Control which addresses can receive funds through whitelist or blacklist modes.
+        </p>
+        {showRecipientLists && <RecipientListManagement />}
       </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <p className="text-gray-400">Configuration options will appear here.</p>
       </div>
-
-      {showCloner && (
-        <VaultCloner
-          currentConfig={currentVaultConfig}
-          onClone={handleCloneVault}
-          onClose={() => setShowCloner(false)}
-        />
-      )}
-
-      {showDeployVault && (
-        <DeployVault
-          onDeploy={handleDeployVault}
-          onClose={() => setShowDeployVault(false)}
-        />
-      )}
     </div>
   );
 };
+
 
 export default Settings;

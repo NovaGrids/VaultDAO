@@ -63,18 +63,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "threshold_strategy"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "symbol": "Fixed"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "timelock_delay"
                       },
                       "val": {
@@ -90,6 +78,31 @@
                           "hi": 0,
                           "lo": 500
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "velocity_limit"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "limit"
+                            },
+                            "val": {
+                              "u32": 100
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "window"
+                            },
+                            "val": {
+                              "u64": 3600
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -246,18 +259,6 @@
                             },
                             {
                               "key": {
-                                "symbol": "threshold_strategy"
-                              },
-                              "val": {
-                                "vec": [
-                                  {
-                                    "symbol": "Fixed"
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "key": {
                                 "symbol": "timelock_delay"
                               },
                               "val": {
@@ -273,6 +274,31 @@
                                   "hi": 0,
                                   "lo": 500
                                 }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "velocity_limit"
+                              },
+                              "val": {
+                                "map": [
+                                  {
+                                    "key": {
+                                      "symbol": "limit"
+                                    },
+                                    "val": {
+                                      "u32": 100
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "window"
+                                    },
+                                    "val": {
+                                      "u64": 3600
+                                    }
+                                  }
+                                ]
                               }
                             },
                             {
