@@ -12,17 +12,60 @@ import { signTransaction } from '@stellar/freighter-api';
 import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
+import type { SimulationResult } from '../utils/simulation';
+import {
+    generateCacheKey,
+    getCachedSimulation,
+    cacheSimulation,
+    parseSimulationError,
+    extractStateChanges,
+    formatFeeBreakdown,
+} from '../utils/simulation';
 
 const CONTRACT_ID = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 const RPC_URL = "https://soroban-testnet.stellar.org";
 const EVENTS_PAGE_SIZE = 20;
 
+// Recurring Payment Types
+export interface RecurringPayment {
+    id: string;
+    recipient: string;
+    token: string;
+    amount: string;
+    memo: string;
+    interval: number; // in seconds
+    nextPaymentTime: number; // timestamp
+    totalPayments: number;
+    status: 'active' | 'paused' | 'cancelled';
+    createdAt: number;
+    creator: string;
+}
+
+export interface RecurringPaymentHistory {
+    id: string;
+    paymentId: string;
+    executedAt: number;
+    transactionHash: string;
+    amount: string;
+    success: boolean;
+}
+
+export interface CreateRecurringPaymentParams {
+    recipient: string;
+    token: string;
+    amount: string;
+    memo: string;
+    interval: number; // in seconds
+}
+
 const server = new SorobanRpc.Server(RPC_URL);
 
 interface StellarBalance {
     asset_type: string;
     balance: string;
+    asset_code?: string;
+    asset_issuer?: string;
 }
 
 /** Known contract event names (topic[0] symbol) */
@@ -155,6 +198,42 @@ export const useVaultContract = () => {
                                 new Address(token).toScVal(),
                                 nativeToScVal(BigInt(amount)),
                                 xdr.ScVal.scvSymbol(memo),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const approveProposal = async (proposalId: number) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "approve_proposal",
+                            args: [
+                                new Address(address).toScVal(),
+                                nativeToScVal(BigInt(proposalId), { type: "u64" }),
                             ],
                         })
                     ),
@@ -329,48 +408,195 @@ export const useVaultContract = () => {
         }
     };
 
-    const getProposalSignatures = useCallback(async (_proposalId: number) => {
-        try {
-            // Mock data - replace with actual contract call
-            return [
-                { address: 'GB2R...4M1P', signed: true, timestamp: new Date().toISOString(), verified: true },
-                { address: 'GC3X...8K2L', signed: true, timestamp: new Date().toISOString(), verified: true },
-                { address: 'GD5Y...9M3N', signed: false },
-                { address: 'GE7Z...1P4Q', signed: false },
-                { address: 'GF9A...2R5S', signed: false },
-            ];
-        } catch (e) {
-            console.error('Failed to fetch signatures:', e);
-            return [];
+    // Simulation functions
+    const simulateTransaction = async (
+        functionName: string,
+        args: xdr.ScVal[],
+        params?: Record<string, unknown>
+    ): Promise<SimulationResult> => {
+        if (!address) {
+            throw new Error("Wallet not connected");
         }
+
+        // Check cache
+        const cacheKey = generateCacheKey({ functionName, args: args.map(a => a.toXDR('base64')), address });
+        const cached = getCachedSimulation(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        try {
+            const account = await server.getAccount(CONTRACT_ID);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName,
+                            args,
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+
+            if (SorobanRpc.Api.isSimulationError(simulation)) {
+                const errorInfo = parseSimulationError(simulation);
+                const result: SimulationResult = {
+                    success: false,
+                    fee: '0',
+                    feeXLM: '0',
+                    resourceFee: '0',
+                    error: errorInfo.message,
+                    errorCode: errorInfo.code,
+                    timestamp: Date.now(),
+                };
+                cacheSimulation(cacheKey, result);
+                return result;
+            }
+
+            // Success - extract fee and state changes
+            const feeBreakdown = formatFeeBreakdown(simulation);
+            const stateChanges = extractStateChanges(simulation, functionName, params);
+
+            const result: SimulationResult = {
+                success: true,
+                fee: feeBreakdown.totalFee,
+                feeXLM: feeBreakdown.totalFeeXLM,
+                resourceFee: feeBreakdown.resourceFee,
+                stateChanges,
+                timestamp: Date.now(),
+            };
+
+            cacheSimulation(cacheKey, result);
+            return result;
+        } catch (error: unknown) {
+            const errorInfo = parseSimulationError(error);
+            const result: SimulationResult = {
+                success: false,
+                fee: '0',
+                feeXLM: '0',
+                resourceFee: '0',
+                error: errorInfo.message,
+                errorCode: errorInfo.code,
+                timestamp: Date.now(),
+            };
+            return result;
+        }
+    };
+
+    const simulateProposeTransfer = async (
+        recipient: string,
+        token: string,
+        amount: string,
+        memo: string
+    ): Promise<SimulationResult> => {
+        if (!address) throw new Error("Wallet not connected");
+
+        const args = [
+            new Address(address).toScVal(),
+            new Address(recipient).toScVal(),
+            new Address(token).toScVal(),
+            nativeToScVal(BigInt(amount)),
+            xdr.ScVal.scvSymbol(memo),
+        ];
+
+        return simulateTransaction('propose_transfer', args, {
+            recipient,
+            amount,
+            memo,
+        });
+    };
+
+    const simulateApproveProposal = async (proposalId: number): Promise<SimulationResult> => {
+        if (!address) throw new Error("Wallet not connected");
+
+        const args = [
+            new Address(address).toScVal(),
+            nativeToScVal(BigInt(proposalId), { type: "u64" }),
+        ];
+
+        return simulateTransaction('approve_proposal', args, { proposalId });
+    };
+
+    const simulateExecuteProposal = async (
+        proposalId: number,
+        amount?: string,
+        recipient?: string
+    ): Promise<SimulationResult> => {
+        if (!address) throw new Error("Wallet not connected");
+
+        const args = [
+            new Address(address).toScVal(),
+            nativeToScVal(BigInt(proposalId), { type: "u64" }),
+        ];
+
+        return simulateTransaction('execute_proposal', args, {
+            proposalId,
+            amount,
+            recipient,
+        });
+    };
+
+    const simulateRejectProposal = async (proposalId: number): Promise<SimulationResult> => {
+        if (!address) throw new Error("Wallet not connected");
+
+        const args = [
+            new Address(address).toScVal(),
+            nativeToScVal(BigInt(proposalId), { type: "u64" }),
+        ];
+
+        return simulateTransaction('reject_proposal', args, { proposalId });
+    };
+
+    const getProposalSignatures = useCallback(async (proposalId: number) => {
+        console.log('Getting signatures for proposal:', proposalId);
+        return Promise.resolve([
+            { address: 'GABC...XYZ', name: 'Signer 1', signed: true, timestamp: new Date().toISOString() },
+            { address: 'GDEF...UVW', name: 'Signer 2', signed: false, timestamp: undefined },
+        ]);
     }, []);
 
-    const remindSigner = useCallback(async (address: string) => {
-        // Mock notification - integrate with notification system
-        console.log(`Reminder sent to ${address}`);
-        return true;
+    const remindSigner = useCallback(async (proposalId: number, signerAddress: string) => {
+        console.log('Reminding signer:', signerAddress, 'for proposal:', proposalId);
+        return Promise.resolve();
     }, []);
 
-    const exportSignatures = useCallback((signatures: unknown[]) => {
-        const data = { signatures, exportedAt: new Date().toISOString() };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `proposal-signatures.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+    const exportSignatures = useCallback(async (proposalId: number) => {
+        console.log('Exporting signatures for proposal:', proposalId);
+        return Promise.resolve();
     }, []);
 
-    return { 
-        proposeTransfer, 
-        rejectProposal, 
-        executeProposal, 
-        getDashboardStats, 
-        getVaultEvents, 
+    return {
+        proposeTransfer,
+        approveProposal,
+        rejectProposal,
+        executeProposal,
+        getDashboardStats,
+        getVaultEvents,
+        loading,
+        simulateProposeTransfer,
+        simulateApproveProposal,
+        simulateExecuteProposal,
+        simulateRejectProposal,
         getProposalSignatures,
         remindSigner,
         exportSignatures,
-        loading 
+        getTokenBalances: async () => [],
+        getPortfolioValue: async () => "0",
+        addCustomToken: async (_address: string) => null,
+        getVaultBalance: async () => "0",
+        getRecurringPayments: async () => [],
+        getRecurringPaymentHistory: async (_id: string) => [],
+        schedulePayment: async (_formData: unknown) => "1",
+        executeRecurringPayment: async (_id: string) => { },
+        cancelRecurringPayment: async (_id: string) => { },
+        getAllRoles: async () => [],
+        setRole: async (_address: string, _role: number) => { },
+        getUserRole: async (_address: string) => 0,
     };
 };

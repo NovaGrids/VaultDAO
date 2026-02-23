@@ -92,4 +92,34 @@ pub enum VaultError {
     AmendmentOnExpired = 802,
     /// Amendment not allowed
     AmendmentNotAllowed = 803,
+    VelocityLimitExceeded = 120,
+    // Condition errors (7xx)
+    /// Execution conditions not met
+    ConditionsNotMet = 700,
+    /// Balance condition not satisfied
+    BalanceConditionFailed = 701,
+    /// Date condition not satisfied
+    DateConditionFailed = 702,
+
+    // Recipient list errors (8xx)
+    AddressAlreadyOnList = 800,
+    AddressNotOnList = 801,
+    RecipientNotWhitelisted = 802,
+    RecipientBlacklisted = 803,
+
+    // Comment errors (9xx)
+    CommentTooLong = 900,
+    NotCommentAuthor = 901,
+
+    // Batch errors (10xx)
+    /// Batch size exceeds the maximum allowed limit
+    BatchTooLarge = 1000,
+
+    // Insurance errors (11xx)
+    /// Insufficient insurance stake for the proposal amount
+    InsuranceInsufficient = 1100,
+
+    // Reputation errors (12xx)
+    /// Caller's reputation score is too low to perform this action
+    ReputationTooLow = 1200,
 }

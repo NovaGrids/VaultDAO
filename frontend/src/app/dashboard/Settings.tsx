@@ -4,7 +4,9 @@ import {
   clearExportHistory,
   type ExportHistoryItem,
 } from '../../utils/exportHistory';
-import { Download, Trash2, FileText } from 'lucide-react';
+import { Download, Trash2, FileText, Shield } from 'lucide-react';
+import RecipientListManagement from '../../components/RecipientListManagement';
+import RoleManagement from '../../components/RoleManagement';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -55,6 +57,7 @@ function reDownloadItem(item: ExportItemWithContent): void {
 
 const Settings: React.FC = () => {
   const [history, setHistory] = useState<ExportHistoryItem[]>(() => getExportHistory());
+  const [showRecipientLists, setShowRecipientLists] = useState(false);
 
   const handleClearHistory = () => {
     clearExportHistory();
@@ -68,6 +71,12 @@ const Settings: React.FC = () => {
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-bold">Settings</h2>
+
+      {/* Role Management Section */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <h3 className="text-lg font-semibold mb-4">Role Management</h3>
+        <RoleManagement />
+      </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <h3 className="text-lg font-semibold mb-4">Export history</h3>
@@ -135,10 +144,30 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Shield className="text-blue-400" size={24} />
+            <h3 className="text-lg font-semibold">Recipient Lists</h3>
+          </div>
+          <button
+            onClick={() => setShowRecipientLists(!showRecipientLists)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            {showRecipientLists ? 'Hide' : 'Manage Lists'}
+          </button>
+        </div>
+        <p className="text-gray-400 text-sm mb-4">
+          Control which addresses can receive funds through whitelist or blacklist modes.
+        </p>
+        {showRecipientLists && <RecipientListManagement />}
+      </div>
+
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <p className="text-gray-400">Configuration options will appear here.</p>
       </div>
     </div>
   );
 };
+
 
 export default Settings;

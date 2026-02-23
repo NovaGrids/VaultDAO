@@ -12,6 +12,18 @@ export const NOTIFICATION_EVENTS = [
   'signer_updated',
   'config_updated',
   'spending_limit_warning',
+  'audit_error',
+  'audit_tamper',
+  'audit_fetch_error',
+  'no_data',
+  'preview_ready',
+  'preview_error',
+  'report_downloaded',
+  'report_error',
+  'export_success',
+  'export_error',
+  'approval_failed',
+  'approval_success',
 ] as const;
 
 export type NotificationEventKey = (typeof NOTIFICATION_EVENTS)[number];
