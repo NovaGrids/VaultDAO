@@ -1,4 +1,5 @@
 import React from 'react';
+import { Clock, CheckCircle, XCircle, PlayCircle, AlertCircle } from 'lucide-react';
 
 export type ProposalStatus = 'Pending' | 'Approved' | 'Rejected' | 'Executed' | 'Expired';
 
@@ -30,14 +31,25 @@ const colorMap: Record<ProposalStatus, string> = {
   Expired: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
 };
 
+const iconMap: Record<ProposalStatus, React.ReactNode> = {
+  Pending: <Clock size={12} aria-hidden="true" />,
+  Approved: <CheckCircle size={12} aria-hidden="true" />,
+  Rejected: <XCircle size={12} aria-hidden="true" />,
+  Executed: <PlayCircle size={12} aria-hidden="true" />,
+  Expired: <AlertCircle size={12} aria-hidden="true" />,
+};
+
 const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => {
   const statusString = statusToString(status);
   
   return (
     <span
-      className={`px-3 py-1 rounded-full text-xs font-medium border ${colorMap[statusString]} ${className} transition-colors duration-200`}
+      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border ${colorMap[statusString]} ${className} transition-colors duration-200`}
+      role="status"
+      aria-label={`Status: ${statusString}`}
     >
-      {statusString}
+      {iconMap[statusString]}
+      <span>{statusString}</span>
     </span>
   );
 };
