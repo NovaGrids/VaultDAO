@@ -32,6 +32,39 @@
                     },
                     {
                       "key": {
+                        "symbol": "retry_config"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "enabled"
+                            },
+                            "val": {
+                              "bool": false
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "initial_backoff_ledgers"
+                            },
+                            "val": {
+                              "u64": 0
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "max_retries"
+                            },
+                            "val": {
+                              "u32": 0
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "signers"
                       },
                       "val": {
@@ -236,6 +269,39 @@
                                   "hi": 0,
                                   "lo": 5000
                                 }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "retry_config"
+                              },
+                              "val": {
+                                "map": [
+                                  {
+                                    "key": {
+                                      "symbol": "enabled"
+                                    },
+                                    "val": {
+                                      "bool": false
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "initial_backoff_ledgers"
+                                    },
+                                    "val": {
+                                      "u64": 0
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "max_retries"
+                                    },
+                                    "val": {
+                                      "u32": 0
+                                    }
+                                  }
+                                ]
                               }
                             },
                             {

@@ -18,8 +18,8 @@ use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
     AmountTier, Comment, Condition, ConditionLogic, Config, InsuranceConfig, ListMode,
-    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, Role,
-    ThresholdStrategy,
+    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
+    RetryState, Role, ThresholdStrategy,
 };
 
 /// The main contract structure for VaultDAO.
@@ -89,6 +89,7 @@ impl VaultDAO {
             timelock_delay: config.timelock_delay,
             velocity_limit: config.velocity_limit,
             threshold_strategy: config.threshold_strategy,
+            retry_config: config.retry_config,
         };
 
         // Store state
@@ -397,56 +398,113 @@ impl VaultDAO {
             return Err(VaultError::TimelockNotExpired);
         }
 
-        // Check vault balance (account for insurance amount that is also held in vault)
-        let balance = token::balance(&env, &proposal.token);
-        if balance < proposal.amount + proposal.insurance_amount {
-            return Err(VaultError::InsufficientBalance);
+        // Enforce retry constraints if this is a retry attempt
+        let config = storage::get_config(&env)?;
+        if let Some(retry_state) = storage::get_retry_state(&env, proposal_id) {
+            if retry_state.retry_count > 0 {
+                // Check if max retries exhausted
+                if config.retry_config.enabled
+                    && retry_state.retry_count >= config.retry_config.max_retries
+                {
+                    return Err(VaultError::MaxRetriesExceeded);
+                }
+                // Check backoff period
+                if current_ledger < retry_state.next_retry_ledger {
+                    return Err(VaultError::RetryBackoffNotElapsed);
+                }
+            }
         }
 
-        // Evaluate execution conditions (if any)
-        if !proposal.conditions.is_empty() {
-            Self::evaluate_conditions(&env, &proposal)?;
+        // Attempt execution — retryable failures are handled below
+        let exec_result =
+            Self::try_execute_transfer(&env, &executor, &mut proposal, current_ledger);
+
+        match exec_result {
+            Ok(()) => {
+                // Update proposal status
+                proposal.status = ProposalStatus::Executed;
+                storage::set_proposal(&env, &proposal);
+                storage::extend_instance_ttl(&env);
+
+                // Emit execution event (rich: includes token and ledger)
+                events::emit_proposal_executed(
+                    &env,
+                    proposal_id,
+                    &executor,
+                    &proposal.recipient,
+                    &proposal.token,
+                    proposal.amount,
+                    current_ledger,
+                );
+
+                // Update reputation: proposer +10, each approver +5
+                Self::update_reputation_on_execution(&env, &proposal);
+
+                Ok(())
+            }
+            Err(err) if Self::is_retryable_error(&err) => {
+                // Check if retry is configured (config already loaded above)
+                if !config.retry_config.enabled {
+                    return Err(err);
+                }
+
+                // Schedule retry and return Ok — Soroban rolls back state on Err,
+                // so we must return Ok to persist the retry state. The proposal
+                // remains in Approved status, signaling that execution is pending.
+                Self::schedule_retry(&env, proposal_id, &config.retry_config, current_ledger, &err)?;
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Explicitly retry a previously failed proposal execution.
+    ///
+    /// This is used when a proposal execution failed with a retryable error
+    /// and a retry was automatically scheduled. The caller can invoke this
+    /// after the backoff period has elapsed.
+    ///
+    /// # Arguments
+    /// * `executor` - The address triggering the retry (must authorize).
+    /// * `proposal_id` - ID of the proposal to retry.
+    pub fn retry_execution(
+        env: Env,
+        executor: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        executor.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.retry_config.enabled {
+            return Err(VaultError::RetryNotEnabled);
         }
 
-        // Execute transfer
-        token::transfer(&env, &proposal.token, &proposal.recipient, proposal.amount);
+        let retry_state = storage::get_retry_state(&env, proposal_id)
+            .unwrap_or(RetryState {
+                retry_count: 0,
+                next_retry_ledger: 0,
+                last_retry_ledger: 0,
+            });
 
-        // Return insurance to proposer on success
-        if proposal.insurance_amount > 0 {
-            token::transfer(
-                &env,
-                &proposal.token,
-                &proposal.proposer,
-                proposal.insurance_amount,
-            );
-            events::emit_insurance_returned(
-                &env,
-                proposal_id,
-                &proposal.proposer,
-                proposal.insurance_amount,
-            );
+        if retry_state.retry_count >= config.retry_config.max_retries {
+            return Err(VaultError::MaxRetriesExceeded);
         }
 
-        // Update proposal status
-        proposal.status = ProposalStatus::Executed;
-        storage::set_proposal(&env, &proposal);
-        storage::extend_instance_ttl(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+        if retry_state.retry_count > 0 && current_ledger < retry_state.next_retry_ledger {
+            return Err(VaultError::RetryBackoffNotElapsed);
+        }
 
-        // Emit execution event (rich: includes token and ledger)
-        events::emit_proposal_executed(
-            &env,
-            proposal_id,
-            &executor,
-            &proposal.recipient,
-            &proposal.token,
-            proposal.amount,
-            current_ledger,
-        );
+        // Emit retry attempt event
+        events::emit_retry_attempted(&env, proposal_id, retry_state.retry_count + 1, &executor);
 
-        // Update reputation: proposer +10, each approver +5
-        Self::update_reputation_on_execution(&env, &proposal);
+        // Delegate to execute_proposal for the actual attempt
+        Self::execute_proposal(env, executor, proposal_id)
+    }
 
-        Ok(())
+    /// Get the current retry state for a proposal.
+    pub fn get_retry_state(env: Env, proposal_id: u64) -> Option<RetryState> {
+        storage::get_retry_state(&env, proposal_id)
     }
 
     /// Reject a pending proposal.
@@ -1452,7 +1510,7 @@ impl VaultDAO {
         if all_passed {
             Ok(())
         } else {
-            Err(VaultError::ProposalNotApproved) // repurpose for "conditions not met"
+            Err(VaultError::ConditionsNotMet)
         }
     }
 
@@ -1546,5 +1604,102 @@ impl VaultDAO {
                 Symbol::new(env, "rejected"),
             );
         }
+    }
+
+    // ========================================================================
+    // Retry Helpers (Issue: feature/execution-retry)
+    // ========================================================================
+
+    /// Attempt the actual transfer and insurance return.
+    /// Separated from execute_proposal to allow retry handling of failures.
+    fn try_execute_transfer(
+        env: &Env,
+        _executor: &Address,
+        proposal: &mut Proposal,
+        _current_ledger: u64,
+    ) -> Result<(), VaultError> {
+        // Evaluate execution conditions first (cheaper than token calls)
+        if !proposal.conditions.is_empty() {
+            Self::evaluate_conditions(env, proposal)?;
+        }
+
+        // Check vault balance (account for insurance amount that is also held in vault)
+        let balance = token::balance(env, &proposal.token);
+        if balance < proposal.amount + proposal.insurance_amount {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        // Execute transfer
+        token::transfer(env, &proposal.token, &proposal.recipient, proposal.amount);
+
+        // Return insurance to proposer on success
+        if proposal.insurance_amount > 0 {
+            token::transfer(
+                env,
+                &proposal.token,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+            events::emit_insurance_returned(
+                env,
+                proposal.id,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Determine if an error is eligible for automatic retry.
+    fn is_retryable_error(err: &VaultError) -> bool {
+        matches!(
+            err,
+            VaultError::InsufficientBalance | VaultError::ConditionsNotMet
+        )
+    }
+
+    /// Schedule a retry with exponential backoff, or fail if retries exhausted.
+    /// Returns Ok(()) on successful scheduling (state is persisted).
+    /// Returns Err(MaxRetriesExceeded) if no more retries are available.
+    fn schedule_retry(
+        env: &Env,
+        proposal_id: u64,
+        retry_config: &RetryConfig,
+        current_ledger: u64,
+        err: &VaultError,
+    ) -> Result<(), VaultError> {
+        let mut retry_state = storage::get_retry_state(env, proposal_id).unwrap_or(RetryState {
+            retry_count: 0,
+            next_retry_ledger: 0,
+            last_retry_ledger: 0,
+        });
+
+        if retry_state.retry_count >= retry_config.max_retries {
+            events::emit_retries_exhausted(env, proposal_id, retry_state.retry_count);
+            return Err(VaultError::MaxRetriesExceeded);
+        }
+
+        // Increment retry count
+        retry_state.retry_count += 1;
+        retry_state.last_retry_ledger = current_ledger;
+
+        // Exponential backoff: initial_backoff * 2^(retry_count - 1)
+        let backoff_multiplier = 1u64 << (retry_state.retry_count - 1).min(10);
+        let backoff = retry_config.initial_backoff_ledgers * backoff_multiplier;
+        retry_state.next_retry_ledger = current_ledger + backoff;
+
+        storage::set_retry_state(env, proposal_id, &retry_state);
+        storage::extend_instance_ttl(env);
+
+        events::emit_retry_scheduled(
+            env,
+            proposal_id,
+            retry_state.retry_count,
+            retry_state.next_retry_ledger,
+            *err as u32,
+        );
+
+        Ok(())
     }
 }

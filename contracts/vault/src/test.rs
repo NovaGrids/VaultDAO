@@ -3,9 +3,11 @@
 use super::*;
 use crate::types::TimeBasedThreshold;
 use crate::types::VelocityConfig;
+use crate::types::RetryConfig;
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
+    token::StellarAssetClient,
     Env, Symbol, Vec,
 };
 
@@ -42,6 +44,11 @@ fn test_multisig_approval() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
 
@@ -106,6 +113,11 @@ fn test_unauthorized_proposal() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
 
@@ -157,6 +169,11 @@ fn test_timelock_violation() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -217,6 +234,11 @@ fn test_priority_levels() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -311,6 +333,11 @@ fn test_get_proposals_by_priority() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -379,6 +406,11 @@ fn test_change_priority_unauthorized() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -430,6 +462,11 @@ fn test_comment_functionality() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -510,6 +547,11 @@ fn test_blacklist_mode() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -584,6 +626,11 @@ fn test_abstention_does_not_count_toward_threshold() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -646,6 +693,11 @@ fn test_list_management() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
 
@@ -700,6 +752,11 @@ fn test_cannot_abstain_after_voting() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -754,6 +811,11 @@ fn test_cannot_abstain_twice() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -809,6 +871,11 @@ fn test_velocity_limit_enforcement() {
             window: 60,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer, &Role::Treasurer);
@@ -884,6 +951,11 @@ fn test_verify_attachment() {
             window: 3600,
         }, // Added missing field
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -940,6 +1012,11 @@ fn test_remove_attachment() {
             window: 3600,
         }, // Added missing field
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -997,6 +1074,11 @@ fn test_attachment_unauthorized() {
             window: 3600,
         }, // Added missing field
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1050,6 +1132,11 @@ fn test_attachment_duplicate() {
             window: 3600,
         }, // Added missing field
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1103,6 +1190,11 @@ fn test_attachment_invalid_hash() {
             window: 3600,
         }, // Added missing field
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1152,6 +1244,11 @@ fn test_admin_can_add_attachment() {
             window: 3600,
         }, // Added missing field
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1207,6 +1304,11 @@ fn test_fixed_threshold_strategy() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1268,6 +1370,11 @@ fn test_percentage_threshold_strategy() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Percentage(67),
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1346,6 +1453,11 @@ fn test_amount_based_threshold_strategy() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1453,6 +1565,11 @@ fn test_time_based_threshold_strategy() {
             reduced_threshold: 2,
             reduction_delay: 100,
         }),
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1518,6 +1635,11 @@ fn test_condition_balance_above() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1575,6 +1697,11 @@ fn test_condition_date_after() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1640,6 +1767,11 @@ fn test_condition_multiple_and_logic() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1709,6 +1841,11 @@ fn test_condition_multiple_or_logic() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1773,6 +1910,11 @@ fn test_condition_no_conditions() {
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1795,6 +1937,433 @@ fn test_condition_no_conditions() {
 
     // Execution should succeed with no conditions
     client.execute_proposal(&admin, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+}
+
+// ============================================================================
+// Retry Logic Tests (Issue: feature/execution-retry)
+// ============================================================================
+
+/// Helper to set up a vault with retry config and a registered token
+fn setup_retry_test(env: &Env, retry_config: RetryConfig) -> (
+    VaultDAOClient<'static>,
+    Address, // contract_id
+    Address, // admin
+    Address, // signer1
+    Address, // user (recipient)
+    Address, // token address
+) {
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+
+    let admin = Address::generate(env);
+    let signer1 = Address::generate(env);
+    let user = Address::generate(env);
+
+    // Register a real token contract so token::balance works
+    let token_admin = Address::generate(env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    let mut signers = Vec::new(env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Leak the client to get 'static lifetime for test convenience
+    let client = unsafe { core::mem::transmute::<VaultDAOClient<'_>, VaultDAOClient<'static>>(client) };
+    (client, contract_id, admin, signer1, user, token)
+}
+
+#[test]
+fn test_retry_schedules_on_retryable_failure() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let (client, _contract_id, admin, signer1, user, token) = setup_retry_test(
+        &env,
+        RetryConfig {
+            enabled: true,
+            max_retries: 3,
+            initial_backoff_ledgers: 10,
+        },
+    );
+
+    // Create and approve a proposal (vault has 0 balance -> InsufficientBalance)
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "retry_test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // First execution attempt: returns Ok but schedules retry (proposal stays Approved)
+    // In Soroban, state changes only persist on Ok, so retry must return Ok.
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+
+    // Verify retry state was created
+    let retry_state = client.get_retry_state(&proposal_id);
+    assert!(retry_state.is_some());
+    let state = retry_state.unwrap();
+    assert_eq!(state.retry_count, 1);
+    assert_eq!(state.next_retry_ledger, 110); // 100 + 10 * 2^0
+    assert_eq!(state.last_retry_ledger, 100);
+
+    // Proposal should still be Approved (not Executed — retry was scheduled)
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_retry_backoff_enforced() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let (client, _contract_id, admin, signer1, user, token) = setup_retry_test(
+        &env,
+        RetryConfig {
+            enabled: true,
+            max_retries: 3,
+            initial_backoff_ledgers: 10,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "backoff"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // First attempt: returns Ok, schedules retry at ledger 110
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+
+    // Try again at ledger 105 — should be blocked by backoff
+    env.ledger().set_sequence_number(105);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::RetryBackoffNotElapsed)));
+
+    // Try again at ledger 110 — backoff elapsed, should attempt (and schedule retry again)
+    env.ledger().set_sequence_number(110);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+
+    // Verify retry count incremented and backoff doubled
+    let state = client.get_retry_state(&proposal_id).unwrap();
+    assert_eq!(state.retry_count, 2);
+    assert_eq!(state.next_retry_ledger, 130); // 110 + 10 * 2^1
+}
+
+#[test]
+fn test_retry_max_retries_exhausted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let (client, _contract_id, admin, signer1, user, token) = setup_retry_test(
+        &env,
+        RetryConfig {
+            enabled: true,
+            max_retries: 2,
+            initial_backoff_ledgers: 10,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "exhaust"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Retry 1: returns Ok, schedules retry
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+
+    // Retry 2 (after backoff): returns Ok, schedules retry
+    env.ledger().set_sequence_number(110);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+
+    // Retry 3 — max retries (2) already reached, should get MaxRetriesExceeded
+    env.ledger().set_sequence_number(140);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::MaxRetriesExceeded)));
+}
+
+#[test]
+fn test_retry_exponential_backoff_increases() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let (client, _contract_id, admin, signer1, user, token) = setup_retry_test(
+        &env,
+        RetryConfig {
+            enabled: true,
+            max_retries: 5,
+            initial_backoff_ledgers: 10,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "backoff2"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Retry 1: backoff = 10 * 2^0 = 10
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+    let state = client.get_retry_state(&proposal_id).unwrap();
+    assert_eq!(state.retry_count, 1);
+    assert_eq!(state.next_retry_ledger, 110); // 100 + 10
+
+    // Retry 2: backoff = 10 * 2^1 = 20
+    env.ledger().set_sequence_number(110);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+    let state = client.get_retry_state(&proposal_id).unwrap();
+    assert_eq!(state.retry_count, 2);
+    assert_eq!(state.next_retry_ledger, 130); // 110 + 20
+
+    // Retry 3: backoff = 10 * 2^2 = 40
+    env.ledger().set_sequence_number(130);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+    let state = client.get_retry_state(&proposal_id).unwrap();
+    assert_eq!(state.retry_count, 3);
+    assert_eq!(state.next_retry_ledger, 170); // 130 + 40
+}
+
+#[test]
+fn test_retry_not_enabled_passes_through_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let (client, _contract_id, admin, signer1, user, token) = setup_retry_test(
+        &env,
+        RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "noretry"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Should just return InsufficientBalance without scheduling retry
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::InsufficientBalance)));
+
+    // No retry state should be created
+    let retry_state = client.get_retry_state(&proposal_id);
+    assert!(retry_state.is_none());
+}
+
+#[test]
+fn test_retry_execution_function() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let (client, _contract_id, admin, signer1, user, token) = setup_retry_test(
+        &env,
+        RetryConfig {
+            enabled: true,
+            max_retries: 3,
+            initial_backoff_ledgers: 10,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "retry_fn"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // First execution: returns Ok, retry scheduled
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+
+    // Verify retry state exists
+    assert_eq!(client.get_retry_state(&proposal_id).unwrap().retry_count, 1);
+
+    // Use retry_execution before backoff — should fail
+    env.ledger().set_sequence_number(105);
+    let result = client.try_retry_execution(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::RetryBackoffNotElapsed)));
+}
+
+#[test]
+fn test_retry_disabled_rejects_retry_execution() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let (client, _contract_id, admin, signer1, user, token) = setup_retry_test(
+        &env,
+        RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "nope"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // retry_execution should fail when retry is disabled
+    let result = client.try_retry_execution(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::RetryNotEnabled)));
+}
+
+#[test]
+fn test_retry_succeeds_after_balance_funded() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    // Register real token
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let sac = StellarAssetClient::new(&env, &token);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: true,
+            max_retries: 3,
+            initial_backoff_ledgers: 10,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "fund_retry"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // First attempt: returns Ok, retry scheduled (no balance)
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_ok());
+    assert_eq!(client.get_retry_state(&proposal_id).unwrap().retry_count, 1);
+
+    // Fund the vault
+    sac.mint(&contract_id, &500);
+
+    // After backoff, retry should succeed
+    env.ledger().set_sequence_number(110);
+    client.execute_proposal(&admin, &proposal_id);
+
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Executed);
 }

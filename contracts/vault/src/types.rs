@@ -25,6 +25,8 @@ pub struct InitConfig {
     pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
+    /// Retry configuration for failed executions
+    pub retry_config: RetryConfig,
 }
 
 /// Vault configuration
@@ -48,6 +50,8 @@ pub struct Config {
     pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
+    /// Retry configuration for failed executions
+    pub retry_config: RetryConfig,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -296,6 +300,34 @@ pub struct InsuranceConfig {
     pub min_insurance_bps: u32,
     /// Percentage of insurance slashed on rejection (0-100)
     pub slash_percentage: u32,
+}
+
+// ============================================================================
+// Execution Retry (Issue: feature/execution-retry)
+// ============================================================================
+
+/// Configuration for automatic retry of failed proposal executions
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RetryConfig {
+    /// Whether retry logic is enabled
+    pub enabled: bool,
+    /// Maximum number of retry attempts allowed per proposal
+    pub max_retries: u32,
+    /// Initial backoff period in ledgers before first retry (~5 sec/ledger)
+    pub initial_backoff_ledgers: u64,
+}
+
+/// Tracks retry state for a specific proposal execution
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RetryState {
+    /// Number of retry attempts made so far
+    pub retry_count: u32,
+    /// Earliest ledger when next retry is allowed (exponential backoff)
+    pub next_retry_ledger: u64,
+    /// Ledger of the last retry attempt
+    pub last_retry_ledger: u64,
 }
 
 // ============================================================================

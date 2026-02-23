@@ -101,4 +101,12 @@ pub enum VaultError {
     // Reputation errors (12xx)
     /// Caller's reputation score is too low to perform this action
     ReputationTooLow = 1200,
+
+    // Retry errors (13xx)
+    /// Maximum retry attempts exhausted for this proposal
+    MaxRetriesExceeded = 1300,
+    /// Retry backoff period has not elapsed yet
+    RetryBackoffNotElapsed = 1301,
+    /// Retry is not enabled in vault configuration
+    RetryNotEnabled = 1302,
 }

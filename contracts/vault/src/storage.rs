@@ -7,7 +7,7 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, InsuranceConfig, ListMode, NotificationPreferences, Proposal, Reputation,
-    Role, VelocityConfig,
+    RetryState, Role, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -56,6 +56,8 @@ pub enum DataKey {
     InsuranceConfig,
     /// Per-user notification preferences -> NotificationPreferences
     NotificationPrefs(Address),
+    /// Retry state per proposal -> RetryState
+    RetryState(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -527,4 +529,22 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// Retry State (Issue: feature/execution-retry)
+// ============================================================================
+
+pub fn get_retry_state(env: &Env, proposal_id: u64) -> Option<RetryState> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RetryState(proposal_id))
+}
+
+pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
+    let key = DataKey::RetryState(proposal_id);
+    env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
