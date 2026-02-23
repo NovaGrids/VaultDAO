@@ -10,10 +10,13 @@ import Analytics from './app/dashboard/Analytics';
 import Settings from './app/dashboard/Settings';
 import Templates from './app/dashboard/Templates';
 import RecurringPayments from './app/dashboard/RecurringPayments';
+import SkipLinks from './components/SkipLinks';
+import KeyboardShortcuts from './components/KeyboardShortcuts';
 
 function App() {
   return (
     <BrowserRouter>
+      <SkipLinks />
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardLayout />}>
@@ -29,6 +32,7 @@ function App() {
         {/* Toast Demo Route */}
         {/* <Route path="/toast-demo" element={<ToastDemo />} /> */}
       </Routes>
+      <KeyboardShortcuts />
     </BrowserRouter>
   );
 }

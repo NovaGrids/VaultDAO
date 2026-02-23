@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 
 interface ConfirmationModalProps {
     isOpen: boolean;
@@ -26,6 +28,23 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
     isDestructive = false,
 }) => {
     const [reason, setReason] = useState('');
+    const containerRef = useFocusTrap(isOpen);
+
+    useKeyboardNavigation({
+        onEscape: onCancel,
+        enabled: isOpen,
+    });
+
+    useEffect(() => {
+        if (isOpen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+        return () => {
+            document.body.style.overflow = '';
+        };
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
@@ -40,18 +59,30 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
-            <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-title"
+            aria-describedby="modal-description"
+        >
+            <div 
+                ref={containerRef}
+                className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-md max-h-[90vh] overflow-y-auto"
+            >
                 {/* Header */}
                 <div className="p-6 border-b border-gray-700">
-                    <h3 className={`text-xl font-bold ${isDestructive ? 'text-red-400' : 'text-white'}`}>
+                    <h3 
+                        id="modal-title"
+                        className={`text-xl font-bold ${isDestructive ? 'text-red-400' : 'text-white'}`}
+                    >
                         {title}
                     </h3>
                 </div>
 
                 {/* Content */}
                 <div className="p-6 space-y-4">
-                    <p className="text-gray-300">{message}</p>
+                    <p id="modal-description" className="text-gray-300">{message}</p>
 
                     {showReasonInput && (
                         <div>
@@ -65,6 +96,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
                                 placeholder={reasonPlaceholder}
                                 className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
                                 rows={3}
+                                aria-label="Reason for action"
                             />
                         </div>
                     )}
@@ -74,17 +106,19 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
                 <div className="p-6 border-t border-gray-700 flex flex-col sm:flex-row gap-3 sm:justify-end">
                     <button
                         onClick={handleCancel}
-                        className="w-full sm:w-auto px-6 py-3 sm:py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors min-h-[44px] sm:min-h-0"
+                        className="w-full sm:w-auto px-6 py-3 sm:py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors min-h-[44px] sm:min-h-0 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        aria-label={cancelText}
                     >
                         {cancelText}
                     </button>
                     <button
                         onClick={handleConfirm}
-                        className={`w-full sm:w-auto px-6 py-3 sm:py-2 rounded-lg font-medium transition-colors min-h-[44px] sm:min-h-0 ${
+                        className={`w-full sm:w-auto px-6 py-3 sm:py-2 rounded-lg font-medium transition-colors min-h-[44px] sm:min-h-0 focus:outline-none focus:ring-2 ${
                             isDestructive
-                                ? 'bg-red-600 hover:bg-red-700 text-white'
-                                : 'bg-purple-600 hover:bg-purple-700 text-white'
+                                ? 'bg-red-600 hover:bg-red-700 text-white focus:ring-red-500'
+                                : 'bg-purple-600 hover:bg-purple-700 text-white focus:ring-purple-500'
                         }`}
+                        aria-label={confirmText}
                     >
                         {confirmText}
                     </button>

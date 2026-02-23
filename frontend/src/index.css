@@ -6,6 +6,61 @@
   body {
     @apply bg-gray-900 text-white;
   }
+
+  /* Screen reader only content */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Skip links */
+  .skip-links {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+  }
+
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    padding: 1rem 1.5rem;
+    background: #7c3aed;
+    color: white;
+    text-decoration: none;
+    font-weight: 600;
+    border-radius: 0 0 0.5rem 0;
+    transition: left 0.2s;
+  }
+
+  .skip-link:focus {
+    left: 0;
+    outline: 3px solid #a78bfa;
+    outline-offset: 2px;
+  }
+
+  /* Focus visible styles */
+  *:focus-visible {
+    outline: 2px solid #a78bfa;
+    outline-offset: 2px;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid #a78bfa;
+    outline-offset: 2px;
+  }
 }
 
 /* Custom Scrollbar Styling */
@@ -114,4 +169,111 @@
     user-select: none;
     border-radius: 0.5rem;
   }
+}
+
+/* High Contrast Mode */
+.high-contrast {
+  --bg-primary: #000000;
+  --bg-secondary: #1a1a1a;
+  --text-primary: #ffffff;
+  --text-secondary: #e0e0e0;
+  --border-color: #ffffff;
+  --focus-color: #ffff00;
+}
+
+.high-contrast body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.high-contrast .bg-gray-900 {
+  background: var(--bg-primary) !important;
+}
+
+.high-contrast .bg-gray-800 {
+  background: var(--bg-secondary) !important;
+}
+
+.high-contrast .text-gray-400,
+.high-contrast .text-gray-300 {
+  color: var(--text-secondary) !important;
+}
+
+.high-contrast .border-gray-700,
+.high-contrast .border-gray-600 {
+  border-color: var(--border-color) !important;
+}
+
+.high-contrast *:focus-visible {
+  outline: 3px solid var(--focus-color) !important;
+  outline-offset: 3px;
+}
+
+/* Reduced Motion */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Touch target minimum size (44x44px) */
+@media (pointer: coarse) {
+  button,
+  a,
+  input[type="checkbox"],
+  input[type="radio"],
+  select {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Ensure text can scale up to 200% */
+html {
+  font-size: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Improve focus indicators for keyboard navigation */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Accessible form error states */
+.input-error {
+  border-color: #ef4444 !important;
+}
+
+.input-error:focus {
+  outline-color: #ef4444 !important;
+  ring-color: #ef4444 !important;
+}
+
+/* Accessible status indicators with patterns (not just color) */
+.status-success::before {
+  content: '✓ ';
+}
+
+.status-error::before {
+  content: '✗ ';
+}
+
+.status-warning::before {
+  content: '⚠ ';
+}
+
+.status-pending::before {
+  content: '⏳ ';
 }
