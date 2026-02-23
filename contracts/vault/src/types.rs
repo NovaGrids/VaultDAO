@@ -24,6 +24,8 @@ pub struct InitConfig {
     pub timelock_delay: u64,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
+    /// Addresses that can veto proposals
+    pub veto_addresses: Vec<Address>,
 }
 
 /// Vault configuration
@@ -46,6 +48,8 @@ pub struct Config {
     pub timelock_delay: u64,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
+    /// Addresses that can veto proposals
+    pub veto_addresses: Vec<Address>,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -123,6 +127,8 @@ pub enum ProposalStatus {
     Rejected = 3,
     /// Reached expiration ledger without hitting the approval threshold.
     Expired = 4,
+    /// Blocked by a designated veto address.
+    Vetoed = 5,
 }
 
 /// Execution condition types

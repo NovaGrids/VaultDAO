@@ -168,6 +168,7 @@ impl VaultDAO {
             timelock_threshold: config.timelock_threshold,
             timelock_delay: config.timelock_delay,
             threshold_strategy: config.threshold_strategy,
+            veto_addresses: config.veto_addresses,
         };
 
         // Store state
@@ -452,6 +453,9 @@ impl VaultDAO {
         if proposal.status == ProposalStatus::Executed {
             return Err(VaultError::ProposalAlreadyExecuted);
         }
+        if proposal.status == ProposalStatus::Vetoed {
+            return Err(VaultError::ProposalNotApproved);
+        }
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
@@ -495,6 +499,32 @@ impl VaultDAO {
             &proposal.recipient,
             proposal.amount,
         );
+
+        Ok(())
+    }
+
+    /// Veto a proposal (security council/emergency control)
+    ///
+    /// Any configured veto address can veto a `Pending` or `Approved` proposal.
+    /// A veto is final and prevents execution.
+    pub fn veto_proposal(env: Env, caller: Address, proposal_id: u64) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        if !storage::is_veto_address(&env, &caller)? {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Pending && proposal.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        proposal.status = ProposalStatus::Vetoed;
+        storage::set_proposal(&env, &proposal);
+        storage::remove_from_priority_queue(&env, proposal.priority as u32, proposal_id);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_proposal_vetoed(&env, proposal_id, &caller);
 
         Ok(())
     }
@@ -928,6 +958,7 @@ impl VaultDAO {
 
         if proposal.status == ProposalStatus::Executed
             || proposal.status == ProposalStatus::Rejected
+            || proposal.status == ProposalStatus::Vetoed
         {
             return Err(VaultError::ProposalNotPending);
         }

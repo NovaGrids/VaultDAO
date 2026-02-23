@@ -107,6 +107,14 @@ pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address) {
     );
 }
 
+/// Emit when a proposal is vetoed
+pub fn emit_proposal_vetoed(env: &Env, proposal_id: u64, vetoer: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_vetoed"), proposal_id),
+        vetoer.clone(),
+    );
+}
+
 /// Emit when a role is assigned
 pub fn emit_role_assigned(env: &Env, addr: &Address, role: u32) {
     env.events()

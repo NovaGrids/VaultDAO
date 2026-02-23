@@ -37,6 +37,7 @@ fn test_multisig_approval() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
 
@@ -96,6 +97,7 @@ fn test_unauthorized_proposal() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
 
@@ -145,6 +147,7 @@ fn test_timelock_violation() {
         timelock_threshold: 500,
         timelock_delay: 200,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
 
@@ -210,6 +213,7 @@ fn test_priority_levels() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -296,6 +300,7 @@ fn test_get_proposals_by_priority() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -359,6 +364,7 @@ fn test_change_priority() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -421,6 +427,7 @@ fn test_change_priority_unauthorized() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -468,6 +475,7 @@ fn test_priority_queue_cleanup_on_execution() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -524,6 +532,7 @@ fn test_abstention_basic() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -579,6 +588,7 @@ fn test_abstention_does_not_count_toward_threshold() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -644,6 +654,7 @@ fn test_cannot_vote_after_abstaining() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -693,6 +704,7 @@ fn test_cannot_abstain_after_voting() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -742,6 +754,7 @@ fn test_cannot_abstain_twice() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -791,6 +804,7 @@ fn test_add_attachment() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -843,6 +857,7 @@ fn test_verify_attachment() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -898,6 +913,7 @@ fn test_remove_attachment() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -956,6 +972,7 @@ fn test_attachment_unauthorized() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1006,6 +1023,7 @@ fn test_attachment_duplicate() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1057,6 +1075,7 @@ fn test_attachment_invalid_hash() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1104,6 +1123,7 @@ fn test_admin_can_add_attachment() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1157,6 +1177,7 @@ fn test_fixed_threshold_strategy() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1213,6 +1234,7 @@ fn test_percentage_threshold_strategy() {
         timelock_threshold: 500,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Percentage(67),
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1286,6 +1308,7 @@ fn test_amount_based_threshold_strategy() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1386,6 +1409,7 @@ fn test_time_based_threshold_strategy() {
             reduced_threshold: 2,
             reduction_delay: 100,
         }),
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1446,6 +1470,7 @@ fn test_condition_balance_above() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1498,6 +1523,7 @@ fn test_condition_date_after() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1558,6 +1584,7 @@ fn test_condition_multiple_and_logic() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1622,6 +1649,7 @@ fn test_condition_multiple_or_logic() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1681,6 +1709,7 @@ fn test_condition_no_conditions() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1705,3 +1734,170 @@ fn test_condition_no_conditions() {
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
 }
+
+#[test]
+fn test_veto_pending_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let vetoer = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let mut veto_addresses = Vec::new(&env);
+    veto_addresses.push_back(vetoer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "veto"),
+        &Priority::High,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+    );
+
+    client.veto_proposal(&vetoer, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Vetoed);
+
+    let high_proposals = client.get_proposals_by_priority(&Priority::High);
+    assert!(!high_proposals.contains(proposal_id));
+}
+
+#[test]
+fn test_veto_requires_veto_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let not_vetoer = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "veto"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+    );
+
+    let res = client.try_veto_proposal(&not_vetoer, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
+fn test_veto_blocks_execution_of_approved_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let vetoer = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let mut veto_addresses = Vec::new(&env);
+    veto_addresses.push_back(vetoer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "veto"),
+        &Priority::Critical,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        ProposalStatus::Approved
+    );
+
+    client.veto_proposal(&vetoer, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Vetoed);
+
+    let res = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotApproved)));
+}
+
+

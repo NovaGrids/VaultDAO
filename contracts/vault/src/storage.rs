@@ -68,6 +68,11 @@ pub fn set_config(env: &Env, config: &Config) {
     env.storage().instance().set(&DataKey::Config, config);
 }
 
+pub fn is_veto_address(env: &Env, addr: &Address) -> Result<bool, VaultError> {
+    let config = get_config(env)?;
+    Ok(config.veto_addresses.contains(addr))
+}
+
 // ============================================================================
 // Roles
 // ============================================================================
