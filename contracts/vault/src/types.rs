@@ -127,6 +127,33 @@ pub enum ProposalStatus {
     Expired = 4,
 }
 
+/// Execution condition types
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Condition {
+    /// Execute only if vault balance is above threshold
+    BalanceAbove(i128),
+    /// Execute only if vault balance is below threshold
+    BalanceBelow(i128),
+    /// Execute only after specific ledger
+    DateAfter(u64),
+    /// Execute only before specific ledger
+    DateBefore(u64),
+    /// Custom condition (reserved for future use)
+    Custom(Symbol),
+}
+
+/// Logic operator for combining multiple conditions
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ConditionLogic {
+    /// All conditions must be met
+    And = 0,
+    /// At least one condition must be met
+    Or = 1,
+}
+
 /// Transfer proposal
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -159,6 +186,10 @@ pub struct Proposal {
     pub expires_at: u64,
     /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
     pub unlock_ledger: u64,
+    /// Execution conditions (empty = no conditions)
+    pub conditions: Vec<Condition>,
+    /// Logic for combining conditions (default: And)
+    pub condition_logic: ConditionLogic,
 }
 
 /// Recurring payment schedule

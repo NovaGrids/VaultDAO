@@ -222,6 +222,12 @@
                 },
                 {
                   "u32": 1
+                },
+                {
+                  "vec": []
+                },
+                {
+                  "u32": 0
                 }
               ]
             }
@@ -458,6 +464,22 @@
                     {
                       "key": {
                         "symbol": "attachments"
+                      },
+                      "val": {
+                        "vec": []
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "condition_logic"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "conditions"
                       },
                       "val": {
                         "vec": []

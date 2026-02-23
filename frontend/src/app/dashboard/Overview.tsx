@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { LayoutDashboard, FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X } from 'lucide-react';
+import { LayoutDashboard, FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
 import TokenBalanceCard, { type TokenBalance } from '../../components/TokenBalanceCard';
+import DashboardBuilder from '../../components/DashboardBuilder';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
+import { loadDashboardLayout } from '../../utils/dashboardTemplates';
 import type { TokenInfo } from '../../constants/tokens';
 import { DEFAULT_TOKENS, isValidStellarAddress } from '../../constants/tokens';
 import { formatTokenAmount } from '../../utils/formatters';
@@ -24,7 +26,7 @@ interface PortfolioValue {
 }
 
 const Overview: React.FC = () => {
-    const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, loading } = useVaultContract();
+    const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, getVaultBalance, loading } = useVaultContract();
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
     const [portfolioValue, setPortfolioValue] = useState<PortfolioValue | null>(null);
@@ -34,6 +36,12 @@ const Overview: React.FC = () => {
     const [isAddingToken, setIsAddingToken] = useState(false);
     const [addError, setAddError] = useState<string | null>(null);
     const [isLoadingBalances, setIsLoadingBalances] = useState(true);
+    const [balance, setBalance] = useState<string>('0');
+    const [balanceLoading, setBalanceLoading] = useState(false);
+    const [balanceError, setBalanceError] = useState<string | null>(null);
+    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const [showAdvancedDashboard, setShowAdvancedDashboard] = useState(false);
+    const [savedLayout, setSavedLayout] = useState<any>(null);
 
     const quickActionTemplates = (() => {
         const mostUsed = getMostUsedTemplates(3);
@@ -72,6 +80,13 @@ const Overview: React.FC = () => {
         };
         fetchData();
         fetchBalance();
+        
+        // Load saved dashboard layout
+        const layout = loadDashboardLayout();
+        if (layout) {
+            setSavedLayout(layout);
+        }
+        
         return () => {
             isMounted = false;
         };
@@ -169,12 +184,31 @@ const Overview: React.FC = () => {
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Treasury Overview</h2>
-                <div className="text-sm text-gray-400 flex items-center gap-2 bg-gray-800 px-4 py-2 rounded-lg border border-gray-700">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    <span>Network: Testnet</span>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setShowAdvancedDashboard(!showAdvancedDashboard)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors"
+                    >
+                        <Grid3x3 className="h-4 w-4" />
+                        <span>{showAdvancedDashboard ? 'Classic View' : 'Advanced Dashboard'}</span>
+                    </button>
+                    <div className="text-sm text-gray-400 flex items-center gap-2 bg-gray-800 px-4 py-2 rounded-lg border border-gray-700">
+                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                        <span>Network: Testnet</span>
+                    </div>
                 </div>
             </div>
 
+            {/* Advanced Dashboard */}
+            {showAdvancedDashboard && (
+                <DashboardBuilder
+                    initialWidgets={savedLayout?.widgets || []}
+                />
+            )}
+
+            {/* Classic Dashboard */}
+            {!showAdvancedDashboard && (
+            <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="md:col-span-2 lg:col-span-1">
                     <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-xl border border-purple-500 p-6 h-full">
@@ -391,6 +425,8 @@ const Overview: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            )}
+            </>
             )}
         </div>
     );

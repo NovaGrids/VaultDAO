@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ArrowUpRight, Clock, SearchX } from 'lucide-react';
+import { ArrowUpRight, Clock, SearchX, Check, Loader2 } from 'lucide-react';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
 import NewProposalModal from '../../components/modals/NewProposalModal';
 import ProposalDetailModal from '../../components/modals/ProposalDetailModal';
@@ -11,7 +11,7 @@ import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import type { TokenBalance } from '../../components/TokenBalanceCard';
 import type { TokenInfo } from '../../constants/tokens';
-import { DEFAULT_TOKENS, getTokenIcon, formatTokenBalance } from '../../constants/tokens';
+import { DEFAULT_TOKENS, formatTokenBalance } from '../../constants/tokens';
 import { useWallet } from '../../context/WalletContextProps';
 
 const CopyButton = ({ text }: { text: string }) => (
@@ -37,17 +37,6 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
-// Token badge for proposal cards
-const TokenBadge = ({ tokenSymbol }: { tokenSymbol: string }) => {
-  const icon = getTokenIcon(tokenSymbol);
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-700 text-xs text-gray-300">
-      <span>{icon}</span>
-      <span>{tokenSymbol}</span>
-    </span>
-  );
-};
-
 export interface Proposal {
   id: string;
   proposer: string;
@@ -59,25 +48,23 @@ export interface Proposal {
   status: string;
   approvals: number;
   threshold: number;
+  approvedBy: string[];
   createdAt: string;
 }
 
 const Proposals: React.FC = () => {
   const { notify } = useToast();
-  const { rejectProposal, getTokenBalances, addCustomToken ,loading: contractLoading, proposeTransfer} = useVaultContract();
-  const { isConnected, address } = useWallet();
+  const { rejectProposal, getTokenBalances, addCustomToken } = useVaultContract();
+  useWallet();
 
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(false);
+  const [approvingIds, setApprovingIds] = useState<Set<string>>(new Set());
   const [showNewProposalModal, setShowNewProposalModal] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
-  const [selectedTokenFilter, setSelectedTokenFilter] = useState<string>('all');
-  const [showTokenFilterDropdown, setShowTokenFilterDropdown] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [activeFilters, setActiveFilters] = useState<FilterState>({
     search: '',
@@ -114,12 +101,6 @@ const Proposals: React.FC = () => {
     fetchBalances();
   }, [getTokenBalances]);
 
-  // Get unique tokens from proposals for filtering
-  const availableTokens = useMemo(() => {
-    const tokens = new Set(proposals.map(p => p.tokenSymbol || p.token));
-    return ['all', ...Array.from(tokens)];
-  }, [proposals]);
-
   useEffect(() => {
     const fetchProposals = async () => {
       setLoading(true);
@@ -135,7 +116,21 @@ const Proposals: React.FC = () => {
             memo: 'Liquidity Pool Expansion',
             status: 'Pending',
             approvals: 1,
-            threshold: 2,
+            threshold: 3,
+            approvedBy: ['0x123...456'],
+            createdAt: new Date().toISOString()
+          },
+          {
+            id: '2',
+            proposer: '0x789...012',
+            recipient: '0xdef...ghi',
+            amount: '250',
+            token: 'USDC',
+            memo: 'Marketing Campaign',
+            status: 'Pending',
+            approvals: 2,
+            threshold: 3,
+            approvedBy: ['0x789...012', '0xaaa...bbb'],
             createdAt: new Date().toISOString()
           },
           {
@@ -178,10 +173,6 @@ const Proposals: React.FC = () => {
   // Filter proposals by token and other filters
   const filteredProposals = useMemo(() => {
     const filtered = proposals.filter((p) => {
-      // Token filter
-      const matchesToken = selectedTokenFilter === 'all' || 
-        (p.tokenSymbol || p.token) === selectedTokenFilter;
-
       // Search filter
       const searchLower = activeFilters.search.toLowerCase();
       const matchesSearch =
@@ -206,7 +197,7 @@ const Proposals: React.FC = () => {
       const to = activeFilters.dateRange.to ? new Date(activeFilters.dateRange.to).setHours(23, 59, 59, 999) : Infinity;
       const matchesDate = proposalDate >= from && proposalDate <= to;
 
-      return matchesToken && matchesSearch && matchesStatus && matchesAmount && matchesDate;
+      return matchesSearch && matchesStatus && matchesAmount && matchesDate;
     });
 
     return [...filtered].sort((a, b) => {
@@ -222,7 +213,7 @@ const Proposals: React.FC = () => {
         default: return dateB - dateA;
       }
     });
-  }, [proposals, activeFilters, selectedTokenFilter]);
+  }, [proposals, activeFilters]);
 
   const handleRejectConfirm = async () => {
     if (!rejectingId) return;
@@ -239,6 +230,38 @@ const Proposals: React.FC = () => {
     }
   };
 
+  const handleApprove = async (proposalId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!address) {
+      notify('proposal_rejected', 'Wallet not connected', 'error');
+      return;
+    }
+    
+    setApprovingIds(prev => new Set(prev).add(proposalId));
+    try {
+      await approveProposal(Number(proposalId));
+      setProposals(prev => prev.map(p => {
+        if (p.id === proposalId) {
+          const newApprovals = p.approvals + 1;
+          const newApprovedBy = [...p.approvedBy, address];
+          return {
+            ...p,
+            approvals: newApprovals,
+            approvedBy: newApprovedBy,
+            status: newApprovals >= p.threshold ? 'Approved' : p.status
+          };
+        }
+        return p;
+      }));
+      notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
+    } catch (err: any) {
+      notify('proposal_rejected', err.message || 'Failed to approve proposal', 'error');
+    } finally {
+      setApprovingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(proposalId);
+        return newSet;
+      });
   const handleTokenSelect = (token: TokenInfo) => {
     setNewProposalForm(prev => ({ ...prev, token: token.address }));
     setSelectedToken(token);
@@ -308,36 +331,111 @@ const Proposals: React.FC = () => {
 
         <div className="mt-6 grid grid-cols-1 gap-4">
           {filteredProposals.length > 0 ? (
-            filteredProposals.map((prop) => (
-              <div key={prop.id} onClick={() => setSelectedProposal(prop)} className="bg-gray-800/50 p-5 rounded-2xl border border-gray-700 hover:border-purple-500/50 cursor-pointer transition-all hover:scale-[1.01] group">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <div className="flex items-center gap-4 flex-1">
-                    <div className="p-3 bg-gray-900 rounded-xl text-purple-400 group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                      <ArrowUpRight size={20} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-white font-bold">Proposal #{prop.id}</h4>
-                        <CopyButton text={prop.recipient} />
+            filteredProposals.map((prop) => {
+              const isApproving = approvingIds.has(prop.id);
+              const hasUserApproved = address ? prop.approvedBy.includes(address) : false;
+              const progressPercent = (prop.approvals / prop.threshold) * 100;
+              
+              return (
+                <div key={prop.id} onClick={() => setSelectedProposal(prop)} className="bg-gray-800/50 p-5 rounded-2xl border border-gray-700 hover:border-purple-500/50 cursor-pointer transition-all hover:scale-[1.01] group">
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      <div className="flex items-center gap-4 flex-1">
+                        <div className="p-3 bg-gray-900 rounded-xl text-purple-400 group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                          <ArrowUpRight size={20} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-white font-bold">Proposal #{prop.id}</h4>
+                            <CopyButton text={prop.recipient} />
+                          </div>
+                          <p className="text-sm text-gray-400 truncate max-w-[200px] sm:max-w-md">{prop.memo}</p>
+                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                            <span className="flex items-center gap-1"><Clock size={12} /> {new Date(prop.createdAt).toLocaleDateString()}</span>
+                            <span>• {prop.amount} {prop.token}</span>
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-sm text-gray-400 truncate max-w-[200px] sm:max-w-md">{prop.memo}</p>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                        <span className="flex items-center gap-1"><Clock size={12} /> {new Date(prop.createdAt).toLocaleDateString()}</span>
-                        <span>• {prop.amount} {prop.token}</span>
+                      <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                        <StatusBadge status={prop.status} />
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                    <StatusBadge status={prop.status} />
+
                     {prop.status === 'Pending' && (
-                      <button onClick={(e) => { e.stopPropagation(); setRejectingId(prop.id); setShowRejectModal(true); }} className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white px-3 py-1 rounded-lg text-xs transition-colors">
-                        Reject
-                      </button>
+                      <div className="flex flex-col gap-3 pt-3 border-t border-gray-700/50">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm text-gray-400">
+                                Approvals: <span className="text-white font-semibold">{prop.approvals}/{prop.threshold}</span>
+                              </span>
+                              {prop.approvals >= prop.threshold && (
+                                <span className="text-xs text-green-400 font-medium">Ready to Execute</span>
+                              )}
+                            </div>
+                            <div className="w-full bg-gray-700/30 rounded-full h-2 overflow-hidden">
+                              <div 
+                                className="bg-gradient-to-r from-purple-500 to-purple-600 h-full rounded-full transition-all duration-500"
+                                style={{ width: `${Math.min(progressPercent, 100)}%` }}
+                              />
+                            </div>
+                            {prop.approvedBy.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {prop.approvedBy.map((approver, idx) => (
+                                  <span 
+                                    key={idx} 
+                                    className={`text-xs px-2 py-1 rounded-full ${
+                                      approver === address 
+                                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' 
+                                        : 'bg-gray-700/50 text-gray-400'
+                                    }`}
+                                  >
+                                    {approver.slice(0, 6)}...{approver.slice(-4)}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2 w-full sm:w-auto">
+                            {address && !hasUserApproved && (
+                              <button 
+                                onClick={(e) => handleApprove(prop.id, e)}
+                                disabled={isApproving}
+                                className="flex-1 sm:flex-initial bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                              >
+                                {isApproving ? (
+                                  <>
+                                    <Loader2 size={16} className="animate-spin" />
+                                    Approving...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check size={16} />
+                                    Approve
+                                  </>
+                                )}
+                              </button>
+                            )}
+                            {hasUserApproved && (
+                              <div className="flex-1 sm:flex-initial bg-green-500/10 text-green-400 px-4 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border border-green-500/30">
+                                <Check size={16} />
+                                Approved
+                              </div>
+                            )}
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setRejectingId(prop.id); setShowRejectModal(true); }} 
+                              className="flex-1 sm:flex-initial bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="flex flex-col items-center justify-center py-12 px-4 bg-gray-800/20 rounded-3xl border border-dashed border-gray-700">
               <SearchX size={48} className="text-gray-600 mb-4" />
@@ -349,8 +447,13 @@ const Proposals: React.FC = () => {
         <NewProposalModal
           isOpen={showNewProposalModal}
           loading={loading}
-          selectedTemplateName={null} // Added required prop
+          selectedTemplateName={null}
           formData={newProposalForm}
+          tokenBalances={tokenBalances}
+          selectedToken={selectedToken}
+          amountError={amountError}
+          onTokenSelect={handleTokenSelect}
+          onAddCustomToken={handleAddCustomToken}
           onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
           onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
           onOpenTemplateSelector={() => { }}

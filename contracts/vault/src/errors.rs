@@ -72,4 +72,11 @@ pub enum VaultError {
     InsufficientBalance = 601,
 
     VelocityLimitExceeded = 120,
+    // Condition errors (7xx)
+    /// Execution conditions not met
+    ConditionsNotMet = 700,
+    /// Balance condition not satisfied
+    BalanceConditionFailed = 701,
+    /// Date condition not satisfied
+    DateConditionFailed = 702,
 }

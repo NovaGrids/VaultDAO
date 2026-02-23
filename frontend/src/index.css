@@ -62,4 +62,56 @@
   .animate-slide-out-right {
     animation: slideOutRight 0.3s ease-in forwards;
   }
+
+  /* React Grid Layout Styles */
+  .react-grid-layout {
+    position: relative;
+    transition: height 200ms ease;
+  }
+
+  .react-grid-item {
+    transition: all 200ms ease;
+    transition-property: left, top, width, height;
+  }
+
+  .react-grid-item img {
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .react-grid-item > .react-resizable-handle {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+  }
+
+  .react-grid-item > .react-resizable-handle::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 5px;
+    height: 5px;
+    border-right: 2px solid rgba(139, 92, 246, 0.4);
+    border-bottom: 2px solid rgba(139, 92, 246, 0.4);
+  }
+
+  .react-resizable-hide > .react-resizable-handle {
+    display: none;
+  }
+
+  .react-grid-item > .react-resizable-handle.react-resizable-handle-se {
+    bottom: 0;
+    right: 0;
+    cursor: se-resize;
+  }
+
+  .react-grid-item.react-grid-placeholder {
+    background: rgba(139, 92, 246, 0.2);
+    opacity: 0.2;
+    transition-duration: 100ms;
+    z-index: 2;
+    user-select: none;
+    border-radius: 0.5rem;
+  }
 }

@@ -71,6 +71,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   onOpenTemplateSelector,
   onSaveAsTemplate,
   onAddCustomToken,
+  submitError,
 }) => {
   // Find the selected token from balances
   const selectedTokenBalance = React.useMemo(() => {
@@ -83,18 +84,6 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
     onTokenSelect(token);
   };
 
-  const handleAmountChange = (value: string) => {
-    // Only allow numbers and decimal point
-    const sanitized = value.replace(/[^0-9.]/g, '');
-    // Prevent multiple decimal points
-    const parts = sanitized.split('.');
-    const formatted = parts.length > 2 
-      ? `${parts[0]}.${parts.slice(1).join('')}`
-      : sanitized;
-    
-    onFieldChange('amount', formatted);
-  };
-
   // Set max amount
   const handleSetMax = () => {
     if (selectedTokenBalance) {
@@ -102,8 +91,6 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
     }
   };
 
-  submitError,
-}) => {
   const [touched, setTouched] = useState<Record<keyof NewProposalFormData, boolean>>({
     recipient: false,
     token: false,
@@ -197,33 +184,6 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
       parseFloat(formData.amount) > 0
     );
   }, [formData]);
-
-  // Handle backdrop click
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && !loading) {
-      onClose();
-    }
-  };
-
-  // Handle form submission
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Touch all fields to show validation
-    setTouched({
-      recipient: true,
-      token: true,
-      amount: true,
-      memo: true,
-    });
-    
-    const errors = getValidationErrors(formData);
-    setValidationErrors(errors);
-    
-    if (Object.keys(errors).length === 0) {
-      onSubmit(e);
-    }
-  };
 
   // Handle escape key
   useEffect(() => {

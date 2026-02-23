@@ -217,6 +217,42 @@ export const useVaultContract = () => {
         }
     };
 
+    const approveProposal = async (proposalId: number) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "approve_proposal",
+                            args: [
+                                new Address(address).toScVal(),
+                                nativeToScVal(BigInt(proposalId), { type: "u64" }),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const rejectProposal = async (proposalId: number) => {
         if (!isConnected || !address) throw new Error("Wallet not connected");
         setLoading(true);
@@ -371,6 +407,7 @@ export const useVaultContract = () => {
         }
     };
 
+    return { proposeTransfer, approveProposal, rejectProposal, executeProposal, getDashboardStats, getVaultEvents, loading };
     /**
      * Get balance for a specific token from the vault
      */
@@ -513,7 +550,7 @@ export const useVaultContract = () => {
             return { total: 0, change24h: 0 };
         }
     }, [getTokenBalances]);
-    const getProposalSignatures = useCallback(async (_proposalId: number) => {
+
     const getAllRoles = async (): Promise<Array<{ address: string; role: number }>> => {
         // Mock implementation - in production, this would query contract storage
         // or use events to build the role registry
@@ -568,21 +605,6 @@ export const useVaultContract = () => {
         }
     };
 
-    return { 
-        proposeTransfer, 
-        rejectProposal, 
-        executeProposal, 
-        getDashboardStats, 
-        getVaultEvents, 
-        getTokenBalance,
-        getTokenBalances,
-        getTokenInfo,
-        addCustomToken,
-        getPortfolioValue,
-        getProposalSignatures,
-        remindSigner,
-        exportSignatures,
-        loading 
     const getUserRole = async (): Promise<number> => {
         if (!isConnected || !address) return 0;
         try {
@@ -612,5 +634,39 @@ export const useVaultContract = () => {
         }
     };
 
-    return { proposeTransfer, rejectProposal, executeProposal, getDashboardStats, getVaultEvents, getAllRoles, setRole, getUserRole, getVaultBalance, loading };
+    // Stub functions for incomplete features
+    const getRecurringPayments = async () => [];
+    const getRecurringPaymentHistory = async (_paymentId: string) => [];
+    const schedulePayment = async (_params: CreateRecurringPaymentParams) => { throw new Error('Not implemented'); };
+    const executeRecurringPayment = async (_paymentId: string) => { throw new Error('Not implemented'); };
+    const cancelRecurringPayment = async (_paymentId: string) => { throw new Error('Not implemented'); };
+    const getProposalSignatures = async (_proposalId: number) => [];
+    const remindSigner = async (_proposalId: number, _signerAddress: string) => { throw new Error('Not implemented'); };
+    const exportSignatures = async (_proposalId: number) => { throw new Error('Not implemented'); };
+
+    return {
+        proposeTransfer, 
+        rejectProposal, 
+        executeProposal, 
+        getDashboardStats, 
+        getVaultEvents, 
+        getAllRoles, 
+        setRole, 
+        getUserRole, 
+        getVaultBalance,
+        getTokenBalance,
+        getTokenBalances,
+        getTokenInfo,
+        addCustomToken,
+        getPortfolioValue,
+        getRecurringPayments,
+        getRecurringPaymentHistory,
+        schedulePayment,
+        executeRecurringPayment,
+        cancelRecurringPayment,
+        getProposalSignatures,
+        remindSigner,
+        exportSignatures,
+        loading 
+    };
 };
