@@ -9,6 +9,7 @@ mod errors;
 mod events;
 mod storage;
 mod test;
+mod test_audit;
 mod token;
 mod types;
 
@@ -16,7 +17,7 @@ pub use types::InitConfig;
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{Config, ListMode, Proposal, ProposalStatus, Role};
+use types::{AuditAction, AuditEntry, Comment, Config, ListMode, Proposal, ProposalStatus, Role};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -83,6 +84,9 @@ impl VaultDAO {
         storage::set_role(&env, &admin, Role::Admin);
         storage::set_initialized(&env);
         storage::extend_instance_ttl(&env);
+
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::Initialize, &admin, 0);
 
         // Emit event
         events::emit_initialized(&env, &admin, config.threshold);
@@ -181,10 +185,13 @@ impl VaultDAO {
         };
 
         storage::set_proposal(&env, &proposal);
-        storage::add_to_priority_queue(&env, priority as u32, proposal_id);
+        storage::add_to_priority_queue(&env, 0, proposal_id);
 
         // Extend TTL to ensure persistent data stays alive
         storage::extend_instance_ttl(&env);
+
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::ProposeTransfer, &proposer, proposal_id);
 
         // 11. Emit event
         events::emit_proposal_created(&env, proposal_id, &proposer, &recipient, amount);
@@ -261,6 +268,9 @@ impl VaultDAO {
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
 
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::ApproveProposal, &signer, proposal_id);
+
         // Emit event
         events::emit_proposal_approved(
             &env,
@@ -330,6 +340,9 @@ impl VaultDAO {
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
 
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::ExecuteProposal, &executor, proposal_id);
+
         // Emit event
         events::emit_proposal_executed(
             &env,
@@ -369,6 +382,9 @@ impl VaultDAO {
 
         // Note: Daily spending is NOT refunded to prevent gaming
 
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::RejectProposal, &rejector, proposal_id);
+
         events::emit_proposal_rejected(&env, proposal_id, &rejector);
 
         Ok(())
@@ -397,6 +413,9 @@ impl VaultDAO {
         storage::set_role(&env, &target, role.clone());
         storage::extend_instance_ttl(&env);
 
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::SetRole, &admin, 0);
+
         events::emit_role_assigned(&env, &target, role as u32);
 
         Ok(())
@@ -423,6 +442,9 @@ impl VaultDAO {
         config.signers.push_back(new_signer.clone());
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
+
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::AddSigner, &admin, 0);
 
         events::emit_signer_added(&env, &new_signer, config.signers.len());
 
@@ -463,6 +485,9 @@ impl VaultDAO {
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
 
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::RemoveSigner, &admin, 0);
+
         events::emit_signer_removed(&env, &signer, config.signers.len());
 
         Ok(())
@@ -494,6 +519,9 @@ impl VaultDAO {
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
 
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::UpdateLimits, &admin, 0);
+
         events::emit_config_updated(&env, &admin);
 
         Ok(())
@@ -522,6 +550,9 @@ impl VaultDAO {
         config.threshold = threshold;
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
+
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::UpdateThreshold, &admin, 0);
 
         events::emit_config_updated(&env, &admin);
 
@@ -927,107 +958,49 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Comments
+    // Audit Trail
     // ========================================================================
 
-    /// Add a comment to a proposal
-    pub fn add_comment(
-        env: Env,
-        author: Address,
-        proposal_id: u64,
-        text: Symbol,
-        parent_id: u64,
-    ) -> Result<u64, VaultError> {
-        author.require_auth();
-
-        // Verify proposal exists
-        let _ = storage::get_proposal(&env, proposal_id)?;
-
-        // Validate text length (Symbol max is 32 bytes, for longer use String type)
-        // Here we'll enforce 500 char limit via the Symbol constraint
-        let text_str = text.to_string();
-        if text_str.len() > 500 {
-            return Err(VaultError::CommentTooLong);
-        }
-
-        // If parent_id is provided, verify parent comment exists
-        if parent_id > 0 {
-            let _ = storage::get_comment(&env, parent_id)?;
-        }
-
-        let comment_id = storage::increment_comment_id(&env);
-        let current_ledger = env.ledger().sequence() as u64;
-
-        let comment = Comment {
-            id: comment_id,
-            proposal_id,
-            author: author.clone(),
-            text,
-            parent_id,
-            created_at: current_ledger,
-            edited_at: 0,
-        };
-
-        storage::set_comment(&env, &comment);
-        storage::add_comment_to_proposal(&env, proposal_id, comment_id);
-        storage::extend_instance_ttl(&env);
-
-        events::emit_comment_added(&env, comment_id, proposal_id, &author);
-
-        Ok(comment_id)
+    /// Get audit entry by ID
+    pub fn get_audit_entry(env: Env, entry_id: u64) -> Result<AuditEntry, VaultError> {
+        storage::get_audit_entry(&env, entry_id)
     }
 
-    /// Edit a comment
-    pub fn edit_comment(
-        env: Env,
-        author: Address,
-        comment_id: u64,
-        new_text: Symbol,
-    ) -> Result<(), VaultError> {
-        author.require_auth();
-
-        let mut comment = storage::get_comment(&env, comment_id)?;
-
-        // Only author can edit
-        if comment.author != author {
-            return Err(VaultError::NotCommentAuthor);
+    /// Verify audit trail integrity
+    ///
+    /// Validates the hash chain from start_id to end_id.
+    /// Returns true if the chain is valid, false otherwise.
+    pub fn verify_audit_trail(env: Env, start_id: u64, end_id: u64) -> Result<bool, VaultError> {
+        if start_id > end_id {
+            return Err(VaultError::InvalidAmount);
         }
 
-        // Validate text length
-        let text_str = new_text.to_string();
-        if text_str.len() > 500 {
-            return Err(VaultError::CommentTooLong);
-        }
-
-        comment.text = new_text;
-        comment.edited_at = env.ledger().sequence() as u64;
-
-        storage::set_comment(&env, &comment);
-        storage::extend_instance_ttl(&env);
-
-        events::emit_comment_edited(&env, comment_id, &author);
-
-        Ok(())
-    }
-
-    /// Get all comments for a proposal
-    pub fn get_proposal_comments(env: Env, proposal_id: u64) -> Vec<Comment> {
-        let comment_ids = storage::get_proposal_comments(&env, proposal_id);
-        let mut comments = Vec::new(&env);
-
-        for i in 0..comment_ids.len() {
-            if let Some(comment_id) = comment_ids.get(i) {
-                if let Ok(comment) = storage::get_comment(&env, comment_id) {
-                    comments.push_back(comment);
+        for id in start_id..=end_id {
+            let entry = storage::get_audit_entry(&env, id)?;
+            
+            // Verify hash computation
+            let computed_hash = storage::compute_audit_hash(
+                &env,
+                &entry.action,
+                &entry.actor,
+                entry.target,
+                entry.timestamp,
+                entry.prev_hash,
+            );
+            
+            if computed_hash != entry.hash {
+                return Ok(false);
+            }
+            
+            // Verify chain linkage (except for first entry)
+            if id > 1 {
+                let prev_entry = storage::get_audit_entry(&env, id - 1)?;
+                if entry.prev_hash != prev_entry.hash {
+                    return Ok(false);
                 }
             }
         }
 
-        comments
-    }
-
-    /// Get a single comment by ID
-    pub fn get_comment(env: Env, comment_id: u64) -> Result<Comment, VaultError> {
-        storage::get_comment(&env, comment_id)
+        Ok(true)
     }
 }

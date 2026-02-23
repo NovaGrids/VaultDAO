@@ -173,3 +173,63 @@ pub struct VelocityConfig {
     /// The time window in seconds (e.g., 3600 for 1 hour)
     pub window: u64,
 }
+
+/// Audit action types
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum AuditAction {
+    Initialize = 0,
+    ProposeTransfer = 1,
+    ApproveProposal = 2,
+    ExecuteProposal = 3,
+    RejectProposal = 4,
+    SetRole = 5,
+    AddSigner = 6,
+    RemoveSigner = 7,
+    UpdateLimits = 8,
+    UpdateThreshold = 9,
+}
+
+/// Audit trail entry with cryptographic verification
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AuditEntry {
+    /// Unique entry ID
+    pub id: u64,
+    /// Action performed
+    pub action: AuditAction,
+    /// Actor who performed the action
+    pub actor: Address,
+    /// Target of the action (proposal ID, address, etc.)
+    pub target: u64,
+    /// Ledger timestamp
+    pub timestamp: u64,
+    /// Hash of previous entry (chain integrity)
+    pub prev_hash: u64,
+    /// Hash of this entry
+    pub hash: u64,
+}
+
+/// Recipient list mode
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ListMode {
+    Disabled = 0,
+    Whitelist = 1,
+    Blacklist = 2,
+}
+
+/// Comment on a proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Comment {
+    pub id: u64,
+    pub proposal_id: u64,
+    pub author: Address,
+    pub text: Symbol,
+    pub parent_id: u64,
+    pub created_at: u64,
+    pub edited_at: u64,
+}

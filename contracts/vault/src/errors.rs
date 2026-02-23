@@ -79,4 +79,20 @@ pub enum VaultError {
     BalanceConditionFailed = 701,
     /// Date condition not satisfied
     DateConditionFailed = 702,
+    
+    // Recipient list errors (8xx)
+    /// Recipient not on whitelist
+    RecipientNotWhitelisted = 800,
+    /// Recipient is blacklisted
+    RecipientBlacklisted = 801,
+    /// Address already on list
+    AddressAlreadyOnList = 802,
+    /// Address not on list
+    AddressNotOnList = 803,
+    
+    // Comment errors (9xx)
+    /// Comment text too long
+    CommentTooLong = 900,
+    /// Not the comment author
+    NotCommentAuthor = 901,
 }

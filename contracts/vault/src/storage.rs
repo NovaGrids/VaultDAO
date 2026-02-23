@@ -5,7 +5,8 @@
 use soroban_sdk::{contracttype, Address, Env, Vec};
 
 use crate::errors::VaultError;
-use crate::types::{Config, Proposal, Role, VelocityConfig};
+use crate::types::{AuditEntry, Comment, Config, Proposal, Role, VelocityConfig};
+use soroban_sdk::Vec as SdkVec;
 
 /// Storage key definitions
 #[contracttype]
@@ -33,6 +34,26 @@ pub enum DataKey {
     NextRecurringId,
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
+    /// Recipient list mode
+    ListMode,
+    /// Whitelist entry
+    Whitelist(Address),
+    /// Blacklist entry
+    Blacklist(Address),
+    /// Comment by ID
+    Comment(u64),
+    /// Comments for a proposal
+    ProposalComments(u64),
+    /// Next comment ID counter
+    NextCommentId,
+    /// Audit entry by ID
+    AuditEntry(u64),
+    /// Next audit entry ID counter
+    NextAuditId,
+    /// Last audit entry hash
+    LastAuditHash,
+    /// Priority queue for proposals
+    PriorityQueue(u32),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -362,52 +383,74 @@ pub fn add_comment_to_proposal(env: &Env, proposal_id: u64, comment_id: u64) {
 }
 
 // ============================================================================
-// Comments
+// Priority Queue
 // ============================================================================
 
-pub fn get_next_comment_id(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get(&DataKey::NextCommentId)
-        .unwrap_or(1)
+pub fn add_to_priority_queue(env: &Env, priority: u32, proposal_id: u64) {
+    let key = DataKey::PriorityQueue(priority);
+    let mut queue: SdkVec<u64> = env.storage().persistent().get(&key).unwrap_or_else(|| SdkVec::new(env));
+    queue.push_back(proposal_id);
+    env.storage().persistent().set(&key, &queue);
+    env.storage().persistent().extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
-pub fn increment_comment_id(env: &Env) -> u64 {
-    let id = get_next_comment_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextCommentId, &(id + 1));
+// ============================================================================
+// Audit Trail
+// ============================================================================
+
+pub fn get_next_audit_id(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::NextAuditId).unwrap_or(1)
+}
+
+pub fn increment_audit_id(env: &Env) -> u64 {
+    let id = get_next_audit_id(env);
+    env.storage().instance().set(&DataKey::NextAuditId, &(id + 1));
     id
 }
 
-pub fn set_comment(env: &Env, comment: &Comment) {
-    let key = DataKey::Comment(comment.id);
-    env.storage().persistent().set(&key, comment);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+pub fn get_last_audit_hash(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::LastAuditHash).unwrap_or(0)
 }
 
-pub fn get_comment(env: &Env, id: u64) -> Result<Comment, VaultError> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Comment(id))
-        .ok_or(VaultError::ProposalNotFound)
+pub fn set_last_audit_hash(env: &Env, hash: u64) {
+    env.storage().instance().set(&DataKey::LastAuditHash, &hash);
 }
 
-pub fn get_proposal_comments(env: &Env, proposal_id: u64) -> SdkVec<u64> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::ProposalComments(proposal_id))
-        .unwrap_or_else(|| SdkVec::new(env))
+pub fn set_audit_entry(env: &Env, entry: &AuditEntry) {
+    let key = DataKey::AuditEntry(entry.id);
+    env.storage().persistent().set(&key, entry);
+    env.storage().persistent().extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
-pub fn add_comment_to_proposal(env: &Env, proposal_id: u64, comment_id: u64) {
-    let mut comments = get_proposal_comments(env, proposal_id);
-    comments.push_back(comment_id);
-    let key = DataKey::ProposalComments(proposal_id);
-    env.storage().persistent().set(&key, &comments);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+pub fn get_audit_entry(env: &Env, id: u64) -> Result<AuditEntry, VaultError> {
+    env.storage().persistent().get(&DataKey::AuditEntry(id)).ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn compute_audit_hash(env: &Env, action: &crate::types::AuditAction, actor: &Address, target: u64, timestamp: u64, prev_hash: u64) -> u64 {
+    let mut hash = prev_hash;
+    hash = hash.wrapping_mul(31).wrapping_add(*action as u64);
+    hash = hash.wrapping_mul(31).wrapping_add(actor.to_string().len() as u64);
+    hash = hash.wrapping_mul(31).wrapping_add(target);
+    hash = hash.wrapping_mul(31).wrapping_add(timestamp);
+    hash
+}
+
+pub fn create_audit_entry(env: &Env, action: crate::types::AuditAction, actor: &Address, target: u64) {
+    let id = increment_audit_id(env);
+    let timestamp = env.ledger().sequence() as u64;
+    let prev_hash = get_last_audit_hash(env);
+    let hash = compute_audit_hash(env, &action, actor, target, timestamp, prev_hash);
+    
+    let entry = AuditEntry {
+        id,
+        action,
+        actor: actor.clone(),
+        target,
+        timestamp,
+        prev_hash,
+        hash,
+    };
+    
+    set_audit_entry(env, &entry);
+    set_last_audit_hash(env, hash);
 }
