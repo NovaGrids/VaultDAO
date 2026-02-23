@@ -215,3 +215,59 @@ pub fn emit_comment_edited(env: &Env, comment_id: u64, author: &Address) {
         author.clone(),
     );
 }
+
+// ============================================================================
+// DEX/AMM Events (feature/amm-integration)
+// ============================================================================
+
+/// Emit when DEX configuration is updated
+pub fn emit_dex_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "dex_config_updated"),), admin.clone());
+}
+
+/// Emit when a swap is executed
+pub fn emit_swap_executed(
+    env: &Env,
+    proposal_id: u64,
+    dex: &Address,
+    amount_in: i128,
+    amount_out: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "swap_executed"), proposal_id),
+        (dex.clone(), amount_in, amount_out),
+    );
+}
+
+/// Emit when liquidity is added
+pub fn emit_liquidity_added(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
+    env.events().publish(
+        (Symbol::new(env, "liquidity_added"), proposal_id),
+        (dex.clone(), lp_tokens),
+    );
+}
+
+/// Emit when liquidity is removed
+pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
+    env.events().publish(
+        (Symbol::new(env, "liquidity_removed"), proposal_id),
+        (dex.clone(), lp_tokens),
+    );
+}
+
+/// Emit when LP tokens are staked
+pub fn emit_lp_staked(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "lp_staked"), proposal_id),
+        (farm.clone(), amount),
+    );
+}
+
+/// Emit when rewards are claimed
+pub fn emit_rewards_claimed(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "rewards_claimed"), proposal_id),
+        (farm.clone(), amount),
+    );
+}

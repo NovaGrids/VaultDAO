@@ -56,16 +56,12 @@ pub enum DataKey {
     InsuranceConfig,
     /// Per-user notification preferences -> NotificationPreferences
     NotificationPrefs(Address),
-    /// Cross-chain proposal by ID -> CrossChainProposal
-    CrossChainProposal(u64),
-    /// Next cross-chain proposal ID counter -> u64
-    NextCrossChainId,
-    /// Cross-chain asset tracking by ID -> CrossChainAsset
-    CrossChainAsset(u64),
-    /// Next cross-chain asset ID counter -> u64
-    NextAssetId,
-    /// Bridge configuration -> BridgeConfig
-    BridgeConfig,
+    /// DEX configuration -> DexConfig
+    DexConfig,
+    /// Swap proposal by ID -> SwapProposal
+    SwapProposal(u64),
+    /// Swap result by proposal ID -> SwapResult
+    SwapResult(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -543,78 +539,43 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
 }
 
 // ============================================================================
-// Cross-Chain Bridge Operations
+// DEX/AMM Integration (Issue: feature/amm-integration)
 // ============================================================================
 
-pub fn get_next_crosschain_id(env: &Env) -> u64 {
+use crate::types::{DexConfig, SwapProposal, SwapResult};
+
+pub fn set_dex_config(env: &Env, config: &DexConfig) {
+    env.storage().instance().set(&DataKey::DexConfig, config);
+}
+
+pub fn get_dex_config(env: &Env) -> Option<DexConfig> {
+    env.storage().instance().get(&DataKey::DexConfig)
+}
+
+pub fn set_swap_proposal(env: &Env, proposal_id: u64, swap: &SwapProposal) {
+    let key = DataKey::SwapProposal(proposal_id);
+    env.storage().persistent().set(&key, swap);
     env.storage()
         .persistent()
-        .get(&DataKey::NextCrossChainId)
-        .unwrap_or(1)
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
 }
 
-pub fn increment_crosschain_id(env: &Env) -> u64 {
-    let next_id = get_next_crosschain_id(env);
+pub fn get_swap_proposal(env: &Env, proposal_id: u64) -> Option<SwapProposal> {
     env.storage()
         .persistent()
-        .set(&DataKey::NextCrossChainId, &(next_id + 1));
-    next_id
+        .get(&DataKey::SwapProposal(proposal_id))
 }
 
-pub fn set_crosschain_proposal(env: &Env, proposal: &crate::types::CrossChainProposal) {
-    let key = DataKey::CrossChainProposal(proposal.id);
-    env.storage().persistent().set(&key, proposal);
-}
-
-pub fn get_crosschain_proposal(
-    env: &Env,
-    id: u64,
-) -> Result<crate::types::CrossChainProposal, VaultError> {
-    let key = DataKey::CrossChainProposal(id);
+pub fn set_swap_result(env: &Env, proposal_id: u64, result: &SwapResult) {
+    let key = DataKey::SwapResult(proposal_id);
+    env.storage().persistent().set(&key, result);
     env.storage()
         .persistent()
-        .get(&key)
-        .ok_or(VaultError::ProposalNotFound)
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
 }
 
-pub fn get_next_asset_id(env: &Env) -> u64 {
+pub fn get_swap_result(env: &Env, proposal_id: u64) -> Option<SwapResult> {
     env.storage()
         .persistent()
-        .get(&DataKey::NextAssetId)
-        .unwrap_or(1)
-}
-
-pub fn increment_asset_id(env: &Env) -> u64 {
-    let next_id = get_next_asset_id(env);
-    env.storage()
-        .persistent()
-        .set(&DataKey::NextAssetId, &(next_id + 1));
-    next_id
-}
-
-pub fn set_crosschain_asset(env: &Env, asset: &crate::types::CrossChainAsset) {
-    let key = DataKey::CrossChainAsset(asset.id);
-    env.storage().persistent().set(&key, asset);
-}
-
-pub fn get_crosschain_asset(
-    env: &Env,
-    id: u64,
-) -> Result<crate::types::CrossChainAsset, VaultError> {
-    let key = DataKey::CrossChainAsset(id);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .ok_or(VaultError::ProposalNotFound)
-}
-
-pub fn set_bridge_config(env: &Env, config: &crate::types::BridgeConfig) {
-    env.storage().instance().set(&DataKey::BridgeConfig, config);
-}
-
-pub fn get_bridge_config(env: &Env) -> Result<crate::types::BridgeConfig, VaultError> {
-    env.storage()
-        .instance()
-        .get(&DataKey::BridgeConfig)
-        .ok_or(VaultError::BridgeNotConfigured)
+        .get(&DataKey::SwapResult(proposal_id))
 }
