@@ -273,34 +273,6 @@ const Proposals: React.FC = () => {
     }
   };
 
-  const _handleTokenSelect = (token: TokenInfo) => {
-    setNewProposalForm(prev => ({ ...prev, token: token.address }));
-    setSelectedToken(token);
-  };
-
-  // Find the selected token balance
-  const _selectedTokenBalance = useMemo(() => {
-    if (!selectedToken) return null;
-    return tokenBalances.find((tb: TokenBalance) => tb.token.address === selectedToken.address);
-  }, [tokenBalances, selectedToken]);
-
-  // Compute amount error
-  const _amountError = useMemo(() => {
-    if (newProposalForm.amount && _selectedTokenBalance) {
-      const amount = parseFloat(newProposalForm.amount);
-      const balance = parseFloat(_selectedTokenBalance.balance);
-
-      if (isNaN(amount)) {
-        return 'Please enter a valid amount';
-      } else if (amount <= 0) {
-        return 'Amount must be greater than 0';
-      } else if (amount > balance) {
-        return `Insufficient balance. Available: ${formatTokenBalance(balance, _selectedTokenBalance.token.decimals)} ${_selectedTokenBalance.token.symbol}`;
-      }
-    }
-    return null;
-  }, [newProposalForm.amount, _selectedTokenBalance]);
-
   // Initialize selected token when tokenBalances load
   useEffect(() => {
     if (!selectedToken && tokenBalances.length > 0) {
@@ -312,21 +284,6 @@ const Proposals: React.FC = () => {
       }
     }
   }, [selectedToken, tokenBalances]);
-
-  const _handleAddCustomToken = async (address: string): Promise<TokenInfo | null> => {
-    try {
-      const tokenInfo = await addCustomToken?.(address);
-      if (tokenInfo) {
-        // Refresh token balances
-        const balances = await getTokenBalances();
-        setTokenBalances(balances.map((b: TokenBalance) => ({ ...b, isLoading: false })));
-      }
-      return tokenInfo ?? null;
-    } catch (error) {
-      console.error('Failed to add custom token:', error);
-      throw error;
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gray-900 p-6 text-white">
