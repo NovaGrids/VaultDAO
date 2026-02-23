@@ -115,6 +115,19 @@ pub fn emit_proposal_vetoed(env: &Env, proposal_id: u64, vetoer: &Address) {
     );
 }
 
+/// Emit when proposal execution is rolled back after a failure.
+pub fn emit_execution_rolled_back(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    reason_code: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "execution_rolled_back"), proposal_id),
+        (executor.clone(), reason_code),
+    );
+}
+
 /// Emit when a role is assigned
 pub fn emit_role_assigned(env: &Env, addr: &Address, role: u32) {
     env.events()

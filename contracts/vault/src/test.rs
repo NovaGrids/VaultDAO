@@ -1900,4 +1900,113 @@ fn test_veto_blocks_execution_of_approved_proposal() {
     assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotApproved)));
 }
 
+#[test]
+fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let invalid_token = Address::generate(&env); // Not a token contract; transfer should fail.
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &invalid_token,
+        &100,
+        &Symbol::new(&env, "rbk"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        ProposalStatus::Approved
+    );
+
+    let res = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::TransferFailed)));
+
+    // Rollback should restore the proposal state.
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let invalid_token = Address::generate(&env); // Not a token contract; transfer should fail.
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &invalid_token,
+        &100,
+        &Symbol::new(&env, "rbkq"),
+        &Priority::Critical,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    let critical = client.get_proposals_by_priority(&Priority::Critical);
+    assert!(critical.contains(proposal_id));
+
+    let res = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::TransferFailed)));
+
+    // Rollback should restore queue membership.
+    let critical = client.get_proposals_by_priority(&Priority::Critical);
+    assert!(critical.contains(proposal_id));
+}
+
 

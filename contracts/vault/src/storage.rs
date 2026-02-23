@@ -31,6 +31,16 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
+    /// Execution snapshot by proposal ID -> ExecutionSnapshot
+    ExecutionSnapshot(u64),
+}
+
+/// Snapshot used to rollback proposal execution failures.
+#[contracttype]
+#[derive(Clone)]
+pub struct ExecutionSnapshot {
+    pub proposal: Proposal,
+    pub was_in_priority_queue: bool,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -256,6 +266,34 @@ pub fn get_proposals_by_priority(env: &Env, priority: u32) -> soroban_sdk::Vec<u
         .persistent()
         .get(&key)
         .unwrap_or(soroban_sdk::Vec::new(env))
+}
+
+pub fn is_in_priority_queue(env: &Env, priority: u32, proposal_id: u64) -> bool {
+    get_proposals_by_priority(env, priority).contains(proposal_id)
+}
+
+// ============================================================================
+// Execution Snapshot Management
+// ============================================================================
+
+pub fn set_execution_snapshot(env: &Env, proposal_id: u64, snapshot: &ExecutionSnapshot) {
+    let key = DataKey::ExecutionSnapshot(proposal_id);
+    env.storage().temporary().set(&key, snapshot);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, DAY_IN_LEDGERS, DAY_IN_LEDGERS);
+}
+
+pub fn get_execution_snapshot(env: &Env, proposal_id: u64) -> Option<ExecutionSnapshot> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::ExecutionSnapshot(proposal_id))
+}
+
+pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
+    env.storage()
+        .temporary()
+        .remove(&DataKey::ExecutionSnapshot(proposal_id));
 }
 
 // ============================================================================

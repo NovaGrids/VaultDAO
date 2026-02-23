@@ -121,6 +121,41 @@ fn evaluate_conditions(env: &Env, proposal: &Proposal) -> Result<(), VaultError>
     Ok(())
 }
 
+fn try_token_transfer(
+    env: &Env,
+    token_addr: &Address,
+    recipient: &Address,
+    amount: i128,
+) -> Result<(), VaultError> {
+    let client = soroban_sdk::token::Client::new(env, token_addr);
+    let vault_address = env.current_contract_address();
+    match client.try_transfer(&vault_address, recipient, &amount) {
+        Ok(Ok(())) => Ok(()),
+        _ => Err(VaultError::TransferFailed),
+    }
+}
+
+fn rollback_execution(
+    env: &Env,
+    proposal_id: u64,
+    priority: u32,
+    executor: &Address,
+    reason: VaultError,
+) {
+    if let Some(snapshot) = storage::get_execution_snapshot(env, proposal_id) {
+        storage::set_proposal(env, &snapshot.proposal);
+        let in_queue = storage::is_in_priority_queue(env, priority, proposal_id);
+        if snapshot.was_in_priority_queue && !in_queue {
+            storage::add_to_priority_queue(env, priority, proposal_id);
+        }
+        if !snapshot.was_in_priority_queue && in_queue {
+            storage::remove_from_priority_queue(env, priority, proposal_id);
+        }
+        storage::remove_execution_snapshot(env, proposal_id);
+        events::emit_execution_rolled_back(env, proposal_id, executor, reason as u32);
+    }
+}
+
 #[contractimpl]
 impl VaultDAO {
     // ========================================================================
@@ -435,6 +470,11 @@ impl VaultDAO {
     /// 3. Any applicable timelock has expired.
     /// 4. The vault has sufficient balance of the target token.
     ///
+    /// Rollback behavior:
+    /// - A snapshot of execution-critical state is recorded before transfer.
+    /// - If transfer fails, proposal and queue state are restored from snapshot.
+    /// - A rollback event is emitted with the failure reason code.
+    ///
     /// # Arguments
     /// * `executor` - The address triggering the final transfer (must authorize).
     /// * `proposal_id` - ID of the proposal to execute.
@@ -482,13 +522,31 @@ impl VaultDAO {
             return Err(VaultError::InsufficientBalance);
         }
 
-        // Execute transfer
-        token::transfer(&env, &proposal.token, &proposal.recipient, proposal.amount);
+        // Snapshot state before execution mutations.
+        let priority = proposal.priority as u32;
+        storage::set_execution_snapshot(
+            &env,
+            proposal_id,
+            &storage::ExecutionSnapshot {
+                proposal: proposal.clone(),
+                was_in_priority_queue: storage::is_in_priority_queue(&env, priority, proposal_id),
+            },
+        );
 
-        // Update proposal status
+        // Stage state changes (transaction-like). If transfer fails we rollback.
         proposal.status = ProposalStatus::Executed;
         storage::set_proposal(&env, &proposal);
-        storage::remove_from_priority_queue(&env, proposal.priority as u32, proposal_id);
+        storage::remove_from_priority_queue(&env, priority, proposal_id);
+
+        // Execute transfer
+        if let Err(e) = try_token_transfer(&env, &proposal.token, &proposal.recipient, proposal.amount)
+        {
+            rollback_execution(&env, proposal_id, priority, &executor, e);
+            return Err(e);
+        }
+
+        // Commit successful execution by dropping snapshot.
+        storage::remove_execution_snapshot(&env, proposal_id);
         storage::extend_instance_ttl(&env);
 
         // Emit event
