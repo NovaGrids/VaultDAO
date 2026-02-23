@@ -4,6 +4,8 @@ import CommentThread, { type Comment } from './CommentThread';
 import { useWallet } from '../context/WalletContextProps';
 import { useVaultContract } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';
+import { useWebSocket } from '../context/WebSocketProvider';
+import TypingIndicator from './TypingIndicator';
 
 interface ProposalCommentsProps {
   proposalId: string;
@@ -14,6 +16,7 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
   const { address } = useWallet();
   const { addComment, editComment, getProposalComments } = useVaultContract();
   const { notify } = useToast();
+  const { setTyping } = useWebSocket();
 
   const [comments, setComments] = useState<Comment[]>([]);
   const [newCommentText, setNewCommentText] = useState('');
@@ -23,6 +26,7 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
   const [mentionFilter, setMentionFilter] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pollIntervalRef = useRef<number | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchComments = async () => {
     if (!proposalId) return;
@@ -75,6 +79,23 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
 
   const handleTextChange = (text: string) => {
     setNewCommentText(text.slice(0, 500));
+    
+    // Notify typing status
+    if (text.length > 0) {
+      setTyping(proposalId, true);
+      
+      // Clear existing timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      
+      // Set timeout to stop typing indicator after 2 seconds of inactivity
+      typingTimeoutRef.current = setTimeout(() => {
+        setTyping(proposalId, false);
+      }, 2000);
+    } else {
+      setTyping(proposalId, false);
+    }
     
     const lastAtIndex = text.lastIndexOf('@');
     if (lastAtIndex !== -1) {
@@ -197,6 +218,9 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
           </button>
         </div>
       </div>
+
+      {/* Typing Indicator */}
+      <TypingIndicator proposalId={proposalId} currentUserAddress={address || undefined} />
 
       {fetching && comments.length === 0 ? (
         <div className="flex items-center justify-center py-8">

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare } from 'lucide-react';
 import ProposalComments from '../ProposalComments';
-import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck } from 'lucide-react';
 import SignatureStatus, { type Signer } from '../SignatureStatus';
 import SignatureFlow, { type FlowStep } from '../SignatureFlow';
 import QRSignature from '../QRSignature';
 import { useVaultContract } from '../../hooks/useVaultContract';
+import { useWebSocket } from '../../context/WebSocketProvider';
+import PresenceIndicator from '../PresenceIndicator';
+import LiveUpdates from '../LiveUpdates';
 
 // Define the shape of a Proposal to fix the 'any' error
 export interface Proposal {
@@ -28,9 +30,21 @@ interface ProposalDetailModalProps {
 const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClose, proposal }) => {
     const [activeTab, setActiveTab] = useState<'details' | 'comments'>('details');
     const { getProposalSignatures, remindSigner, exportSignatures } = useVaultContract();
+    const { updatePresence } = useWebSocket();
     const [signers, setSigners] = useState<Signer[]>([]);
     const [showQR, setShowQR] = useState(false);
     const [mockXDR] = useState('AAAAAgAAAAC...'); // Mock XDR for demo
+
+    // Update presence when viewing this proposal
+    useEffect(() => {
+        if (isOpen && proposal) {
+            updatePresence(proposal.id);
+            
+            return () => {
+                updatePresence(null);
+            };
+        }
+    }, [isOpen, proposal, updatePresence]);
 
     useEffect(() => {
         if (isOpen && proposal) {
@@ -88,7 +102,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
 
                 {/* 1. Header */}
                 <div className="px-6 py-5 border-b border-gray-800 flex justify-between items-center shrink-0">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
                         <h2 className="text-xl font-bold text-white tracking-tight">Proposal Details</h2>
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${proposal.status === 'Executed'
                             ? 'bg-green-500/10 text-green-500 border-green-500/20'
@@ -97,9 +111,14 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                             {proposal.status}
                         </span>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg transition-colors text-gray-500 hover:text-white">
-                        <X size={20} />
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <div className="hidden md:block">
+                            <PresenceIndicator proposalId={proposal.id} compact />
+                        </div>
+                        <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg transition-colors text-gray-500 hover:text-white">
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Tabs */}
@@ -129,8 +148,16 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
 
                 {/* 2. Scrollable Body */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-6 custom-scrollbar">
+                    {activeTab === 'details' ? (
+                        <>
+                            {/* Live Updates for this proposal */}
+                            <div className="md:hidden">
+                                <PresenceIndicator proposalId={proposal.id} />
+                            </div>
+                            
+                            <LiveUpdates proposalId={proposal.id} showToasts={false} />
 
-                    {/* Signature Flow */}
+                            {/* Signature Flow */}
                     <div>
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Signing Progress</h3>
                         <SignatureFlow steps={flowSteps} />
