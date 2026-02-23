@@ -571,6 +571,18 @@ export const useVaultContract = () => {
         return Promise.resolve();
     }, []);
 
+    const getProposalComments = useCallback(async (_proposalId: string) => [], []);
+    const addComment = useCallback(async (_proposalId: string, _body: string, _parentId?: string) => { }, []);
+    const editComment = useCallback(async (_commentId: string, _body: string) => { }, []);
+    const getListMode = useCallback(async () => 'Disabled' as const, []);
+    const setListMode = useCallback(async (_mode: string) => { }, []);
+    const addToWhitelist = useCallback(async (_address: string) => { }, []);
+    const removeFromWhitelist = useCallback(async (_address: string) => { }, []);
+    const addToBlacklist = useCallback(async (_address: string) => { }, []);
+    const removeFromBlacklist = useCallback(async (_address: string) => { }, []);
+    const isWhitelisted = useCallback(async (_address: string) => true, []);
+    const isBlacklisted = useCallback(async (_address: string) => false, []);
+
     return {
         proposeTransfer,
         approveProposal,
@@ -586,6 +598,17 @@ export const useVaultContract = () => {
         getProposalSignatures,
         remindSigner,
         exportSignatures,
+        getProposalComments,
+        addComment,
+        editComment,
+        getListMode,
+        setListMode,
+        addToWhitelist,
+        removeFromWhitelist,
+        addToBlacklist,
+        removeFromBlacklist,
+        isWhitelisted,
+        isBlacklisted,
         getTokenBalances: async () => [],
         getPortfolioValue: async () => "0",
         addCustomToken: async (_address: string) => null,

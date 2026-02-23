@@ -20,7 +20,7 @@ import { useToast } from '../hooks/useToast';
 import { Bell } from 'lucide-react';
 
 // ---- Labels ----
-const EVENT_LABELS: Record<NotificationEventKey, string> = {
+const EVENT_LABELS: Partial<Record<NotificationEventKey, string>> = {
   new_proposal: 'New proposal',
   proposal_approved: 'Proposal approved',
   proposal_executed: 'Proposal executed',
@@ -205,7 +205,7 @@ const NotificationSettings: React.FC = () => {
             <Toggle
               key={key}
               id={`event-${key}`}
-              label={EVENT_LABELS[key]}
+              label={EVENT_LABELS[key] ?? key}
               checked={eventEnabled(key)}
               onChange={(v) => setEvent(key, v)}
             />

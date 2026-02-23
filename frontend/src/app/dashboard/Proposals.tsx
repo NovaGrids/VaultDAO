@@ -51,7 +51,7 @@ export interface Proposal {
 
 const Proposals: React.FC = () => {
   const { notify } = useToast();
-  const { rejectProposal, approveProposal, getTokenBalances, addCustomToken } = useVaultContract();
+  const { rejectProposal, approveProposal } = useVaultContract();
   const { address } = useWallet();
 
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -61,7 +61,6 @@ const Proposals: React.FC = () => {
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
-  // const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
 
   const [activeFilters, setActiveFilters] = useState<FilterState>({
     search: '',
@@ -77,26 +76,6 @@ const Proposals: React.FC = () => {
     amount: '',
     memo: '',
   });
-  // const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
-
-  // Fetch token balances
-  useEffect(() => {
-    const fetchBalances = async () => {
-      try {
-        const balances = await getTokenBalances();
-        setTokenBalances(balances.map((b: TokenBalance) => ({ ...b, isLoading: false })));
-      } catch (error) {
-        console.error('Failed to fetch token balances:', error);
-        // Set default tokens with zero balances
-        setTokenBalances(DEFAULT_TOKENS.map(token => ({
-          token,
-          balance: '0',
-          isLoading: false,
-        })));
-      }
-    };
-    fetchBalances();
-  }, [getTokenBalances]);
 
   useEffect(() => {
     const fetchProposals = async () => {
@@ -262,61 +241,6 @@ const Proposals: React.FC = () => {
         newSet.delete(proposalId);
         return newSet;
       });
-    }
-  };
-
-  const handleTokenSelect = (token: TokenInfo) => {
-    setNewProposalForm(prev => ({ ...prev, token: token.address }));
-    setSelectedToken(token);
-  };
-
-  // Find the selected token balance
-  const selectedTokenBalance = useMemo(() => {
-    if (!selectedToken) return null;
-    return tokenBalances.find(tb => tb.token.address === selectedToken.address);
-  }, [tokenBalances, selectedToken]);
-
-  // Compute amount error
-  const amountError = useMemo(() => {
-    if (newProposalForm.amount && selectedTokenBalance) {
-      const amount = parseFloat(newProposalForm.amount);
-      const balance = parseFloat(selectedTokenBalance.balance);
-
-      if (isNaN(amount)) {
-        return 'Please enter a valid amount';
-      } else if (amount <= 0) {
-        return 'Amount must be greater than 0';
-      } else if (amount > balance) {
-        return `Insufficient balance. Available: ${formatTokenBalance(balance, selectedTokenBalance.token.decimals)} ${selectedTokenBalance.token.symbol}`;
-      }
-    }
-    return null;
-  }, [newProposalForm.amount, selectedTokenBalance]);
-
-  // Initialize selected token when tokenBalances load
-  useEffect(() => {
-    if (!selectedToken && tokenBalances.length > 0) {
-      const xlmToken = tokenBalances.find(tb => tb.token.address === 'NATIVE');
-      if (xlmToken) {
-        setSelectedToken(xlmToken.token);
-      } else {
-        setSelectedToken(tokenBalances[0].token);
-      }
-    }
-  }, [selectedToken, tokenBalances]);
-
-  const handleAddCustomToken = async (address: string): Promise<TokenInfo | null> => {
-    try {
-      const tokenInfo = await addCustomToken?.(address);
-      if (tokenInfo) {
-        // Refresh token balances
-        const balances = await getTokenBalances();
-        setTokenBalances(balances.map((b: TokenBalance) => ({ ...b, isLoading: false })));
-      }
-      return tokenInfo ?? null;
-    } catch (error) {
-      console.error('Failed to add custom token:', error);
-      throw error;
     }
   };
 

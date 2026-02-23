@@ -115,10 +115,13 @@ pub fn set_role(env: &Env, addr: &Address, role: Role) {
 // ============================================================================
 
 pub fn get_proposal(env: &Env, id: u64) -> Result<Proposal, VaultError> {
-    env.storage()
+    let mut proposal: Proposal = env
+        .storage()
         .persistent()
         .get(&DataKey::Proposal(id))
-        .ok_or(VaultError::ProposalNotFound)
+        .ok_or(VaultError::ProposalNotFound)?;
+    proposal.attachments = get_attachments(env, id);
+    Ok(proposal)
 }
 
 pub fn set_proposal(env: &Env, proposal: &Proposal) {
@@ -449,7 +452,7 @@ pub fn get_reputation(env: &Env, addr: &Address) -> Reputation {
     env.storage()
         .persistent()
         .get(&DataKey::Reputation(addr.clone()))
-        .unwrap_or_else(|| Reputation::default())
+        .unwrap_or_else(Reputation::default)
 }
 
 pub fn set_reputation(env: &Env, addr: &Address, rep: &Reputation) {
@@ -518,7 +521,7 @@ pub fn get_notification_prefs(env: &Env, addr: &Address) -> NotificationPreferen
     env.storage()
         .persistent()
         .get(&DataKey::NotificationPrefs(addr.clone()))
-        .unwrap_or_else(|| NotificationPreferences::default())
+        .unwrap_or_else(NotificationPreferences::default)
 }
 
 pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPreferences) {
