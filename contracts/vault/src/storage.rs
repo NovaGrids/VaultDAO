@@ -6,8 +6,8 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, InsuranceConfig, ListMode, NotificationPreferences, Proposal, Reputation,
-    Role, VelocityConfig,
+    Comment, Config, InsuranceConfig, ListMode, LiquidityProposal, NotificationPreferences,
+    Proposal, Reputation, Role, SwapProposal, VelocityConfig, YieldPosition,
 };
 
 /// Storage key definitions
@@ -66,6 +66,20 @@ pub enum DataKey {
     NextAssetId,
     /// Bridge configuration -> BridgeConfig
     BridgeConfig,
+    /// DEX configuration -> DexConfig
+    DexConfig,
+    /// Swap proposal by ID -> SwapProposal
+    SwapProposal(u64),
+    /// Next swap proposal ID counter -> u64
+    NextSwapId,
+    /// Liquidity proposal by ID -> LiquidityProposal
+    LiquidityProposal(u64),
+    /// Next liquidity proposal ID counter -> u64
+    NextLiquidityId,
+    /// Yield position by ID -> YieldPosition
+    YieldPosition(u64),
+    /// Next yield position ID counter -> u64
+    NextYieldId,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -614,4 +628,106 @@ pub fn get_bridge_config(env: &Env) -> Result<crate::types::BridgeConfig, VaultE
         .instance()
         .get(&DataKey::BridgeConfig)
         .ok_or(VaultError::BridgeNotConfigured)
+}
+
+// ============================================================================
+// DEX/AMM Storage
+// ============================================================================
+
+pub fn set_dex_config(env: &Env, config: &crate::types::DexConfig) {
+    env.storage().instance().set(&DataKey::DexConfig, config);
+}
+
+pub fn get_dex_config(env: &Env) -> Result<crate::types::DexConfig, VaultError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::DexConfig)
+        .ok_or(VaultError::DexNotConfigured)
+}
+
+pub fn get_next_swap_id(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::NextSwapId)
+        .unwrap_or(1)
+}
+
+pub fn increment_swap_id(env: &Env) -> u64 {
+    let next_id = get_next_swap_id(env);
+    env.storage()
+        .persistent()
+        .set(&DataKey::NextSwapId, &(next_id + 1));
+    next_id
+}
+
+pub fn set_swap_proposal(env: &Env, swap: &crate::types::SwapProposal) {
+    let key = DataKey::SwapProposal(swap.id);
+    env.storage().persistent().set(&key, swap);
+    env.storage().persistent().extend_ttl(&key, PROPOSAL_TTL, PROPOSAL_TTL);
+}
+
+pub fn get_swap_proposal(env: &Env, id: u64) -> Result<crate::types::SwapProposal, VaultError> {
+    let key = DataKey::SwapProposal(id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn get_next_liquidity_id(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::NextLiquidityId)
+        .unwrap_or(1)
+}
+
+pub fn increment_liquidity_id(env: &Env) -> u64 {
+    let next_id = get_next_liquidity_id(env);
+    env.storage()
+        .persistent()
+        .set(&DataKey::NextLiquidityId, &(next_id + 1));
+    next_id
+}
+
+pub fn set_liquidity_proposal(env: &Env, liquidity: &crate::types::LiquidityProposal) {
+    let key = DataKey::LiquidityProposal(liquidity.id);
+    env.storage().persistent().set(&key, liquidity);
+    env.storage().persistent().extend_ttl(&key, PROPOSAL_TTL, PROPOSAL_TTL);
+}
+
+pub fn get_liquidity_proposal(env: &Env, id: u64) -> Result<crate::types::LiquidityProposal, VaultError> {
+    let key = DataKey::LiquidityProposal(id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn get_next_yield_id(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::NextYieldId)
+        .unwrap_or(1)
+}
+
+pub fn increment_yield_id(env: &Env) -> u64 {
+    let next_id = get_next_yield_id(env);
+    env.storage()
+        .persistent()
+        .set(&DataKey::NextYieldId, &(next_id + 1));
+    next_id
+}
+
+pub fn set_yield_position(env: &Env, position: &crate::types::YieldPosition) {
+    let key = DataKey::YieldPosition(position.id);
+    env.storage().persistent().set(&key, position);
+    env.storage().persistent().extend_ttl(&key, PROPOSAL_TTL, PROPOSAL_TTL);
+}
+
+pub fn get_yield_position(env: &Env, id: u64) -> Result<crate::types::YieldPosition, VaultError> {
+    let key = DataKey::YieldPosition(id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .ok_or(VaultError::ProposalNotFound)
 }

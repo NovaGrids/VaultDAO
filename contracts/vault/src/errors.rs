@@ -117,4 +117,16 @@ pub enum VaultError {
     InsufficientConfirmations = 1305,
     /// Bridge transaction already verified
     AlreadyVerified = 1306,
+
+    // DEX/AMM errors (14xx)
+    /// Slippage tolerance exceeded
+    SlippageExceeded = 1400,
+    /// Price impact too high
+    PriceImpactTooHigh = 1401,
+    /// DEX not configured
+    DexNotConfigured = 1402,
+    /// DEX not enabled or insufficient liquidity
+    DexOperationFailed = 1403,
+    /// Swap deadline exceeded
+    DeadlineExceeded = 1404,
 }

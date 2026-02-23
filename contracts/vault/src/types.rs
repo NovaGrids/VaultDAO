@@ -4,6 +4,26 @@
 
 use soroban_sdk::{contracttype, Address, String, Symbol, Vec};
 
+// ============================================================================
+// DEX/AMM Configuration Types (must be defined before Config)
+// ============================================================================
+
+/// DEX configuration for automated market maker operations
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DexConfig {
+    /// Enabled DEX protocols
+    pub enabled_dexes: Vec<Address>,
+    /// Maximum slippage tolerance in basis points (e.g., 100 = 1%)
+    pub max_slippage_bps: u32,
+    /// Maximum price impact in basis points (e.g., 500 = 5%)
+    pub max_price_impact_bps: u32,
+    /// Minimum liquidity threshold for pools
+    pub min_liquidity: i128,
+    /// Enable/disable yield farming
+    pub yield_farming_enabled: bool,
+}
+
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -413,4 +433,75 @@ pub struct CrossChainTransferParams {
     pub amount: i128,
     pub memo: Symbol,
     pub priority: Priority,
+}
+
+// ============================================================================
+// AMM/DEX Proposal Types
+// ============================================================================
+
+/// Swap proposal for DEX token exchange
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SwapProposal {
+    pub id: u64,
+    pub proposer: Address,
+    pub dex_address: Address,
+    pub token_in: Address,
+    pub token_out: Address,
+    pub amount_in: i128,
+    pub min_amount_out: i128,
+    pub slippage_bps: u32,
+    pub deadline: u64,
+    pub approvals: Vec<Address>,
+    pub status: ProposalStatus,
+    pub priority: Priority,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub unlock_ledger: u64,
+}
+
+/// Liquidity provision proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct LiquidityProposal {
+    pub id: u64,
+    pub proposer: Address,
+    pub dex_address: Address,
+    pub token_a: Address,
+    pub token_b: Address,
+    pub amount_a: i128,
+    pub amount_b: i128,
+    pub min_liquidity: i128,
+    pub deadline: u64,
+    pub approvals: Vec<Address>,
+    pub status: ProposalStatus,
+    pub priority: Priority,
+    pub created_at: u64,
+    pub expires_at: u64,
+}
+
+/// Yield farming position
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct YieldPosition {
+    pub id: u64,
+    pub dex_address: Address,
+    pub pool_address: Address,
+    pub lp_token: Address,
+    pub lp_amount: i128,
+    pub token_a: Address,
+    pub token_b: Address,
+    pub deposited_at: u64,
+    pub last_harvest: u64,
+    pub total_rewards: i128,
+}
+
+/// Price impact calculation result
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PriceImpact {
+    pub impact_bps: u32,
+    pub expected_output: i128,
+    pub price_before: i128,
+    pub price_after: i128,
 }

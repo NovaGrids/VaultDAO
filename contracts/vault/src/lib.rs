@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod bridge;
+mod dex;
 mod errors;
 mod events;
 mod storage;
@@ -20,8 +21,9 @@ use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
 use types::{
     BridgeConfig, Comment, Condition, ConditionLogic, Config, CrossChainAsset, CrossChainProposal,
-    CrossChainTransferParams, InsuranceConfig, ListMode, NotificationPreferences, Priority,
-    Proposal, ProposalStatus, Reputation, Role, ThresholdStrategy,
+    CrossChainTransferParams, DexConfig, InsuranceConfig, LiquidityProposal, ListMode,
+    NotificationPreferences, PriceImpact, Priority, Proposal, ProposalStatus, Reputation, Role,
+    SwapProposal, ThresholdStrategy, YieldPosition,
 };
 
 /// The main contract structure for VaultDAO.
@@ -1744,5 +1746,292 @@ impl VaultDAO {
     pub fn calculate_fee(env: Env, amount: i128) -> Result<i128, VaultError> {
         let bridge_config = storage::get_bridge_config(&env)?;
         Ok(bridge::calculate_bridge_fee(amount, bridge_config.fee_bps))
+    }
+
+    // ========================================================================
+    // DEX/AMM Operations
+    // ========================================================================
+
+    /// Configure DEX settings
+    pub fn configure_dex(env: Env, admin: Address, dex_config: DexConfig) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        storage::set_dex_config(&env, &dex_config);
+        Ok(())
+    }
+
+    /// Create a swap proposal
+    pub fn propose_swap(
+        env: Env,
+        proposer: Address,
+        dex_address: Address,
+        token_in: Address,
+        token_out: Address,
+        amount_in: i128,
+        min_amount_out: i128,
+        slippage_bps: u32,
+        deadline: u64,
+        priority: Priority,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+
+        let _config = storage::get_config(&env)?;
+        let dex_config = storage::get_dex_config(&env)?;
+
+        // Validate DEX is enabled
+        if !dex_config.enabled_dexes.iter().any(|d| d == dex_address) {
+            return Err(VaultError::DexOperationFailed);
+        }
+
+        // Validate slippage
+        if slippage_bps > dex_config.max_slippage_bps {
+            return Err(VaultError::SlippageExceeded);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let swap_id = storage::increment_swap_id(&env);
+
+        let swap = SwapProposal {
+            id: swap_id,
+            proposer: proposer.clone(),
+            dex_address,
+            token_in,
+            token_out,
+            amount_in,
+            min_amount_out,
+            slippage_bps,
+            deadline,
+            approvals: Vec::new(&env),
+            status: ProposalStatus::Pending,
+            priority,
+            created_at: current_ledger,
+            expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+            unlock_ledger: 0,
+        };
+
+        storage::set_swap_proposal(&env, &swap);
+        Ok(swap_id)
+    }
+
+    /// Approve a swap proposal
+    pub fn approve_swap(env: Env, signer: Address, swap_id: u64) -> Result<(), VaultError> {
+        signer.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.signers.iter().any(|s| s == signer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let mut swap = storage::get_swap_proposal(&env, swap_id)?;
+        if swap.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        if swap.approvals.iter().any(|a| a == signer) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        swap.approvals.push_back(signer);
+        if swap.approvals.len() >= config.threshold {
+            swap.status = ProposalStatus::Approved;
+        }
+
+        storage::set_swap_proposal(&env, &swap);
+        Ok(())
+    }
+
+    /// Execute a swap proposal
+    pub fn execute_swap(env: Env, executor: Address, swap_id: u64) -> Result<i128, VaultError> {
+        executor.require_auth();
+
+        let swap = storage::get_swap_proposal(&env, swap_id)?;
+        if swap.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger > swap.deadline {
+            return Err(VaultError::DeadlineExceeded);
+        }
+
+        // In a real implementation, this would call the DEX contract
+        // For now, we simulate the swap
+        let output_amount = swap.min_amount_out;
+
+        // Validate slippage
+        dex::validate_slippage(output_amount, swap.min_amount_out, swap.slippage_bps)?;
+
+        let mut swap_mut = swap;
+        swap_mut.status = ProposalStatus::Executed;
+        storage::set_swap_proposal(&env, &swap_mut);
+
+        Ok(output_amount)
+    }
+
+    /// Calculate price impact for a potential swap
+    pub fn calculate_swap_impact(
+        env: Env,
+        reserve_in: i128,
+        reserve_out: i128,
+        amount_in: i128,
+    ) -> Result<PriceImpact, VaultError> {
+        dex::calculate_price_impact(&env, reserve_in, reserve_out, amount_in)
+    }
+
+    /// Create a liquidity provision proposal
+    pub fn propose_liquidity(
+        env: Env,
+        proposer: Address,
+        dex_address: Address,
+        token_a: Address,
+        token_b: Address,
+        amount_a: i128,
+        amount_b: i128,
+        min_liquidity: i128,
+        deadline: u64,
+        priority: Priority,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+
+        let _config = storage::get_config(&env)?;
+        let dex_config = storage::get_dex_config(&env)?;
+
+        if !dex_config.enabled_dexes.iter().any(|d| d == dex_address) {
+            return Err(VaultError::DexOperationFailed);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let liquidity_id = storage::increment_liquidity_id(&env);
+
+        let liquidity = LiquidityProposal {
+            id: liquidity_id,
+            proposer: proposer.clone(),
+            dex_address,
+            token_a,
+            token_b,
+            amount_a,
+            amount_b,
+            min_liquidity,
+            deadline,
+            approvals: Vec::new(&env),
+            status: ProposalStatus::Pending,
+            priority,
+            created_at: current_ledger,
+            expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+        };
+
+        storage::set_liquidity_proposal(&env, &liquidity);
+        Ok(liquidity_id)
+    }
+
+    /// Approve a liquidity proposal
+    pub fn approve_liquidity(env: Env, signer: Address, liquidity_id: u64) -> Result<(), VaultError> {
+        signer.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.signers.iter().any(|s| s == signer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let mut liquidity = storage::get_liquidity_proposal(&env, liquidity_id)?;
+        if liquidity.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        if liquidity.approvals.iter().any(|a| a == signer) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        liquidity.approvals.push_back(signer);
+        if liquidity.approvals.len() >= config.threshold {
+            liquidity.status = ProposalStatus::Approved;
+        }
+
+        storage::set_liquidity_proposal(&env, &liquidity);
+        Ok(())
+    }
+
+    /// Execute a liquidity provision proposal
+    pub fn execute_liquidity(env: Env, executor: Address, liquidity_id: u64) -> Result<i128, VaultError> {
+        executor.require_auth();
+
+        let liquidity = storage::get_liquidity_proposal(&env, liquidity_id)?;
+        if liquidity.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger > liquidity.deadline {
+            return Err(VaultError::DeadlineExceeded);
+        }
+
+        // In a real implementation, this would call the DEX contract
+        // For now, we simulate receiving LP tokens
+        let lp_tokens = liquidity.min_liquidity;
+
+        let mut liquidity_mut = liquidity;
+        liquidity_mut.status = ProposalStatus::Executed;
+        storage::set_liquidity_proposal(&env, &liquidity_mut);
+
+        Ok(lp_tokens)
+    }
+
+    /// Stake LP tokens for yield farming
+    pub fn stake_for_yield(
+        env: Env,
+        staker: Address,
+        dex_address: Address,
+        pool_address: Address,
+        lp_token: Address,
+        lp_amount: i128,
+        token_a: Address,
+        token_b: Address,
+    ) -> Result<u64, VaultError> {
+        staker.require_auth();
+
+        let _config = storage::get_config(&env)?;
+        let dex_config = storage::get_dex_config(&env)?;
+
+        if !dex_config.yield_farming_enabled {
+            return Err(VaultError::DexOperationFailed);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let position_id = storage::increment_yield_id(&env);
+
+        let position = YieldPosition {
+            id: position_id,
+            dex_address,
+            pool_address,
+            lp_token,
+            lp_amount,
+            token_a,
+            token_b,
+            deposited_at: current_ledger,
+            last_harvest: current_ledger,
+            total_rewards: 0,
+        };
+
+        storage::set_yield_position(&env, &position);
+        Ok(position_id)
+    }
+
+    /// Get yield position details
+    pub fn get_yield_position(env: Env, position_id: u64) -> Result<YieldPosition, VaultError> {
+        storage::get_yield_position(&env, position_id)
+    }
+
+    /// Get swap proposal details
+    pub fn get_swap_proposal(env: Env, swap_id: u64) -> Result<SwapProposal, VaultError> {
+        storage::get_swap_proposal(&env, swap_id)
+    }
+
+    /// Get liquidity proposal details
+    pub fn get_liquidity_proposal(env: Env, liquidity_id: u64) -> Result<LiquidityProposal, VaultError> {
+        storage::get_liquidity_proposal(&env, liquidity_id)
     }
 }

@@ -1775,3 +1775,299 @@ fn test_condition_no_conditions() {
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
+
+// ============================================================================
+// DEX/AMM Integration Tests
+// ============================================================================
+
+#[test]
+fn test_dex_configuration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let dex_address = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure DEX
+    let mut enabled_dexes = Vec::new(&env);
+    enabled_dexes.push_back(dex_address.clone());
+
+    let dex_config = DexConfig {
+        enabled_dexes,
+        max_slippage_bps: 100, // 1%
+        max_price_impact_bps: 500, // 5%
+        min_liquidity: 1000,
+        yield_farming_enabled: true,
+    };
+
+    client.configure_dex(&admin, &dex_config);
+}
+
+#[test]
+fn test_swap_proposal_workflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let dex_address = Address::generate(&env);
+    let token_in = Address::generate(&env);
+    let token_out = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure DEX
+    let mut enabled_dexes = Vec::new(&env);
+    enabled_dexes.push_back(dex_address.clone());
+
+    let dex_config = DexConfig {
+        enabled_dexes,
+        max_slippage_bps: 100,
+        max_price_impact_bps: 500,
+        min_liquidity: 1000,
+        yield_farming_enabled: true,
+    };
+    client.configure_dex(&admin, &dex_config);
+
+    // Propose swap
+    let swap_id = client.propose_swap(
+        &signer1,
+        &dex_address,
+        &token_in,
+        &token_out,
+        &1000,
+        &950,
+        &50, // 0.5% slippage
+        &1000,
+        &Priority::Normal,
+    );
+
+    // First approval
+    client.approve_swap(&signer1, &swap_id);
+
+    let swap = client.get_swap_proposal(&swap_id);
+    assert_eq!(swap.status, ProposalStatus::Pending);
+
+    // Second approval - should approve
+    client.approve_swap(&signer2, &swap_id);
+
+    let swap = client.get_swap_proposal(&swap_id);
+    assert_eq!(swap.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_price_impact_calculation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Calculate price impact for a swap
+    let reserve_in = 100_000;
+    let reserve_out = 100_000;
+    let amount_in = 1_000;
+
+    let impact = client.calculate_swap_impact(&reserve_in, &reserve_out, &amount_in);
+
+    // Verify impact is calculated
+    assert!(impact.expected_output > 0);
+    assert!(impact.impact_bps < 1000); // Less than 10% impact
+}
+
+#[test]
+fn test_liquidity_proposal_workflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let dex_address = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure DEX
+    let mut enabled_dexes = Vec::new(&env);
+    enabled_dexes.push_back(dex_address.clone());
+
+    let dex_config = DexConfig {
+        enabled_dexes,
+        max_slippage_bps: 100,
+        max_price_impact_bps: 500,
+        min_liquidity: 1000,
+        yield_farming_enabled: true,
+    };
+    client.configure_dex(&admin, &dex_config);
+
+    // Propose liquidity provision
+    let liquidity_id = client.propose_liquidity(
+        &signer1,
+        &dex_address,
+        &token_a,
+        &token_b,
+        &5000,
+        &5000,
+        &4500,
+        &1000,
+        &Priority::Normal,
+    );
+
+    // Approve liquidity proposal
+    client.approve_liquidity(&signer1, &liquidity_id);
+
+    let liquidity = client.get_liquidity_proposal(&liquidity_id);
+    assert_eq!(liquidity.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_yield_farming_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let dex_address = Address::generate(&env);
+    let pool_address = Address::generate(&env);
+    let lp_token = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure DEX with yield farming enabled
+    let mut enabled_dexes = Vec::new(&env);
+    enabled_dexes.push_back(dex_address.clone());
+
+    let dex_config = DexConfig {
+        enabled_dexes,
+        max_slippage_bps: 100,
+        max_price_impact_bps: 500,
+        min_liquidity: 1000,
+        yield_farming_enabled: true,
+    };
+    client.configure_dex(&admin, &dex_config);
+
+    // Stake LP tokens for yield
+    let position_id = client.stake_for_yield(
+        &admin,
+        &dex_address,
+        &pool_address,
+        &lp_token,
+        &10000,
+        &token_a,
+        &token_b,
+    );
+
+    // Verify position was created
+    let position = client.get_yield_position(&position_id);
+    assert_eq!(position.lp_amount, 10000);
+    assert_eq!(position.total_rewards, 0);
+}
