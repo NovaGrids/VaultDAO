@@ -53,7 +53,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
     };
 
     const handleRemind = async (address: string) => {
-        await remindSigner(parseInt(proposal.id), parseInt(proposal.id), address);
+        await remindSigner(parseInt(proposal.id), address);
     };
 
     const handleExport = () => {

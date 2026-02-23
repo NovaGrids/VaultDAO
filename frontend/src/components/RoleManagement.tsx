@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, UserPlus, Search, Users } from 'lucide-react';
 import { useVaultContract } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';
