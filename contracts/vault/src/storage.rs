@@ -34,6 +34,10 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
+    /// Streaming payment by ID -> StreamingPayment
+    Streaming(u64),
+    /// Next streaming payment ID counter -> u64
+    NextStreamId,
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
     /// Cancellation record for a proposal -> CancellationRecord
@@ -285,6 +289,40 @@ pub fn get_recurring_payment(
         .persistent()
         .get(&DataKey::Recurring(id))
         .ok_or(VaultError::ProposalNotFound)
+}
+
+// ============================================================================
+// Streaming Payments
+// ============================================================================
+
+pub fn get_next_stream_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextStreamId)
+        .unwrap_or(1)
+}
+
+pub fn increment_stream_id(env: &Env) -> u64 {
+    let id = get_next_stream_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextStreamId, &(id + 1));
+    id
+}
+
+pub fn set_streaming_payment(env: &Env, stream: &StreamingPayment) {
+    let key = DataKey::Streaming(stream.id);
+    env.storage().persistent().set(&key, stream);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_streaming_payment(env: &Env, id: u64) -> Result<StreamingPayment, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Streaming(id))
+        .ok_or(VaultError::StreamNotFound)
 }
 
 // ============================================================================
