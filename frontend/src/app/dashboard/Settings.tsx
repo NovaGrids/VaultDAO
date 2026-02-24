@@ -8,6 +8,7 @@ import { Download, Trash2, FileText, Shield } from 'lucide-react';
 import RecipientListManagement from '../../components/RecipientListManagement';
 import RoleManagement from '../../components/RoleManagement';
 import WalletComparison from '../../components/WalletComparison';
+import PWASettings from '../../components/PWASettings';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -72,6 +73,11 @@ const Settings: React.FC = () => {
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-bold">Settings</h2>
+
+      {/* PWA Settings */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <PWASettings />
+      </div>
 
       {/* Wallet Comparison */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">

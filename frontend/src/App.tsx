@@ -11,27 +11,37 @@ import Settings from './app/dashboard/Settings';
 import Templates from './app/dashboard/Templates';
 import RecurringPayments from './app/dashboard/RecurringPayments';
 import ErrorDashboard from './components/ErrorDashboard';
+import InstallPrompt from './components/InstallPrompt';
+import OfflineIndicator from './components/OfflineIndicator';
+import UpdatePrompt from './components/UpdatePrompt';
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard" element={<DashboardLayout />}>
-          <Route index element={<Overview />} />
-          <Route path="proposals" element={<Proposals />} />
-          <Route path="activity" element={<Activity />} />
-          <Route path="templates" element={<Templates />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="recurring-payments" element={<RecurringPayments />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="errors" element={<ErrorDashboard />} />
-        </Route>
+    <>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<DashboardLayout />}>
+            <Route index element={<Overview />} />
+            <Route path="proposals" element={<Proposals />} />
+            <Route path="activity" element={<Activity />} />
+            <Route path="templates" element={<Templates />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="recurring-payments" element={<RecurringPayments />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="errors" element={<ErrorDashboard />} />
+          </Route>
 
-        {/* Toast Demo Route */}
-        {/* <Route path="/toast-demo" element={<ToastDemo />} /> */}
-      </Routes>
-    </BrowserRouter>
+          {/* Toast Demo Route */}
+          {/* <Route path="/toast-demo" element={<ToastDemo />} /> */}
+        </Routes>
+      </BrowserRouter>
+      
+      {/* PWA Components */}
+      <InstallPrompt />
+      <OfflineIndicator />
+      <UpdatePrompt />
+    </>
   );
 }
 
