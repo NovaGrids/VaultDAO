@@ -183,22 +183,44 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
-        // 7. Check per-proposal spending limit
-        if amount > config.spending_limit {
+        // 7. Check per-proposal spending limit with reputation boost
+        // High reputation (800+) gets 2x limit, very high (900+) gets 3x
+        let rep = storage::get_reputation(&env, &proposer);
+        storage::apply_reputation_decay(&env, &mut rep.clone());
+        let adjusted_spending_limit = if rep.score >= 900 {
+            config.spending_limit * 3
+        } else if rep.score >= 800 {
+            config.spending_limit * 2
+        } else {
+            config.spending_limit
+        };
+        if amount > adjusted_spending_limit {
             return Err(VaultError::ExceedsProposalLimit);
         }
 
-        // 8. Check daily aggregate limit
+        // 8. Check daily aggregate limit with reputation boost
+        // Higher reputation gives higher daily limits (up to 1.5x)
+        let adjusted_daily_limit = if rep.score >= 750 {
+            (config.daily_limit * 3) / 2 // 1.5x for 750+
+        } else {
+            config.daily_limit
+        };
         let today = storage::get_day_number(&env);
         let spent_today = storage::get_daily_spent(&env, today);
-        if spent_today + amount > config.daily_limit {
+        if spent_today + amount > adjusted_daily_limit {
             return Err(VaultError::ExceedsDailyLimit);
         }
 
-        // 9. Check weekly aggregate limit
+        // 9. Check weekly aggregate limit with reputation boost
+        // Higher reputation gives higher weekly limits (up to 1.5x)
+        let adjusted_weekly_limit = if rep.score >= 750 {
+            (config.weekly_limit * 3) / 2 // 1.5x for 750+
+        } else {
+            config.weekly_limit
+        };
         let week = storage::get_week_number(&env);
         let spent_week = storage::get_weekly_spent(&env, week);
-        if spent_week + amount > config.weekly_limit {
+        if spent_week + amount > adjusted_weekly_limit {
             return Err(VaultError::ExceedsWeeklyLimit);
         }
 
@@ -210,7 +232,6 @@ impl VaultDAO {
             let mut min_required = amount * insurance_config.min_insurance_bps as i128 / 10_000;
 
             // Reputation discount: score >= 750 gets 50% off insurance requirement
-            let rep = storage::get_reputation(&env, &proposer);
             if rep.score >= 750 {
                 min_required /= 2;
             }

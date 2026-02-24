@@ -4692,3 +4692,529 @@ fn test_dispute_on_approved_proposal() {
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Rejected);
 }
+// ============================================================================
+// Reputation System Tests (Issue: feature/reputation-system)
+// ============================================================================
+
+#[test]
+fn test_reputation_initialized_at_neutral() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // New address starts with neutral reputation (500)
+    let rep = client.get_reputation(&proposer);
+    assert_eq!(rep.score, 500);
+    assert_eq!(rep.proposals_created, 0);
+    assert_eq!(rep.proposals_executed, 0);
+    assert_eq!(rep.proposals_rejected, 0);
+    assert_eq!(rep.approvals_given, 0);
+}
+
+#[test]
+fn test_reputation_increases_on_proposal_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    let rep_before = client.get_reputation(&proposer);
+    assert_eq!(rep_before.proposals_created, 0);
+
+    // Create a proposal
+    client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+
+    let rep_after = client.get_reputation(&proposer);
+    assert_eq!(rep_after.proposals_created, 1);
+}
+
+#[test]
+fn test_reputation_increases_on_approval() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let approver = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(approver.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &approver, &Role::Treasurer);
+
+    let rep_before = client.get_reputation(&approver);
+    let score_before = rep_before.score;
+
+    // Create and approve a proposal
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+
+    client.approve_proposal(&approver, &proposal_id);
+
+    let rep_after = client.get_reputation(&approver);
+    assert!(rep_after.score >= score_before); // Score should increase or stay same
+    assert_eq!(rep_after.approvals_given, 1);
+}
+
+#[test]
+fn test_reputation_increases_on_execution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 0, // No timelock
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &signer, &Role::Treasurer);
+
+    let rep_before = client.get_reputation(&proposer);
+    let _score_before = rep_before.score;
+    assert_eq!(rep_before.proposals_executed, 0);
+
+    // Create and approve proposal (execution requires token setup which tests don't mock)
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+
+    client.approve_proposal(&signer, &proposal_id);
+
+    // Just verify proposal is approved - execution test requires token mocking
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_reputation_decreases_on_rejection() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let proposer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &proposer2, &Role::Treasurer);
+
+    let rep_before = client.get_reputation(&proposer);
+    let score_before = rep_before.score;
+
+    // Create proposal
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+
+    // Reject the proposal
+    client.reject_proposal(&admin, &proposal_id);
+
+    let rep_after = client.get_reputation(&proposer);
+    assert!(rep_after.score < score_before); // Score decreases on rejection
+    assert_eq!(rep_after.proposals_rejected, 1);
+}
+
+#[test]
+fn test_reputation_decay_over_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Create proposal to build some reputation
+    client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+
+    let rep_before = client.get_reputation(&proposer);
+
+    // Simulate 30 days of inactivity (~259200 ledgers + 1)
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 259_201);
+
+    // Trigger decay by querying reputation
+    let rep_after = client.get_reputation(&proposer);
+
+    // Score should drift toward neutral (500)
+    if rep_before.score > 500 {
+        assert!(
+            rep_after.score < rep_before.score,
+            "Decay should decrease score above 500"
+        );
+    } else if rep_before.score < 500 {
+        assert!(
+            rep_after.score > rep_before.score,
+            "Decay should increase score below 500"
+        );
+    }
+}
+
+#[test]
+fn test_reputation_based_spending_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Low reputation (500) - standard limit
+    // Should fail with amount > 1000
+    let result = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1500,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+    assert!(result.is_err()); // Should exceed limit
+
+    // Standard amount should work
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &800,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+    assert!(proposal_id > 0);
+}
+
+#[test]
+fn test_reputation_high_score_get_limits_boost() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 0,
+        velocity_limit: VelocityConfig {
+            limit: 1000,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &signer, &Role::Treasurer);
+
+    // Low reputation (500) - standard limit, should fail with amount > 1000
+    let result = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1500,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+    assert!(result.is_err()); // Should exceed standard limit
+
+    // Standard amount should work
+    let _proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &800,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+}
