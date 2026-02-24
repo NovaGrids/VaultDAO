@@ -725,7 +725,13 @@ impl VaultDAO {
                 // Schedule retry and return Ok — Soroban rolls back state on Err,
                 // so we must return Ok to persist the retry state. The proposal
                 // remains in Approved status, signaling that execution is pending.
-                Self::schedule_retry(&env, proposal_id, &config.retry_config, current_ledger, &err)?;
+                Self::schedule_retry(
+                    &env,
+                    proposal_id,
+                    &config.retry_config,
+                    current_ledger,
+                    &err,
+                )?;
                 Ok(())
             }
             Err(err) => Err(err),
@@ -749,12 +755,11 @@ impl VaultDAO {
             return Err(VaultError::RetryNotEnabled);
         }
 
-        let retry_state = storage::get_retry_state(&env, proposal_id)
-            .unwrap_or(RetryState {
-                retry_count: 0,
-                next_retry_ledger: 0,
-                last_retry_ledger: 0,
-            });
+        let retry_state = storage::get_retry_state(&env, proposal_id).unwrap_or(RetryState {
+            retry_count: 0,
+            next_retry_ledger: 0,
+            last_retry_ledger: 0,
+        });
 
         if retry_state.retry_count >= config.retry_config.max_retries {
             return Err(VaultError::MaxRetriesExceeded);
@@ -2633,12 +2638,11 @@ impl VaultDAO {
         current_ledger: u64,
         err: &VaultError,
     ) -> Result<(), VaultError> {
-        let mut retry_state = storage::get_retry_state(env, proposal_id)
-            .unwrap_or(RetryState {
-                retry_count: 0,
-                next_retry_ledger: 0,
-                last_retry_ledger: 0,
-            });
+        let mut retry_state = storage::get_retry_state(env, proposal_id).unwrap_or(RetryState {
+            retry_count: 0,
+            next_retry_ledger: 0,
+            last_retry_ledger: 0,
+        });
 
         retry_state.retry_count += 1;
 

@@ -387,12 +387,7 @@ pub fn emit_retry_scheduled(
 }
 
 /// Emit when a retry execution attempt is made
-pub fn emit_retry_attempted(
-    env: &Env,
-    proposal_id: u64,
-    retry_count: u32,
-    executor: &Address,
-) {
+pub fn emit_retry_attempted(env: &Env, proposal_id: u64, retry_count: u32, executor: &Address) {
     env.events().publish(
         (Symbol::new(env, "retry_attempted"), proposal_id),
         (retry_count, executor.clone()),

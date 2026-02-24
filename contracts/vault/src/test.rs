@@ -1,7 +1,9 @@
 #![cfg(test)]
 
 use super::*;
-use crate::types::{DexConfig, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VelocityConfig};
+use crate::types::{
+    DexConfig, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VelocityConfig,
+};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -2804,10 +2806,7 @@ fn test_retry_backoff_enforced() {
 
     // Try again immediately — should fail with RetryBackoffNotElapsed
     let result = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::RetryBackoffNotElapsed))
-    );
+    assert_eq!(result.err(), Some(Ok(VaultError::RetryBackoffNotElapsed)));
 }
 
 #[test]
@@ -2987,7 +2986,11 @@ fn test_retry_execution_function() {
 
     // Use execute_proposal again to trigger second retry (still insufficient balance)
     let result = client.try_execute_proposal(&admin, &proposal_id);
-    assert!(result.is_ok(), "Second retry should be scheduled, got: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Second retry should be scheduled, got: {:?}",
+        result
+    );
 
     let state = client.get_retry_state(&proposal_id).unwrap();
     assert_eq!(state.retry_count, 2);
