@@ -30,6 +30,10 @@ pub struct InitConfig {
     pub threshold_strategy: ThresholdStrategy,
     /// Default voting deadline in ledgers (0 = no deadline)
     pub default_voting_deadline: u64,
+    /// Proposal expiration period in ledgers
+    pub expiration_period: u64,
+    /// Grace period after expiration before cleanup in ledgers
+    pub grace_period: u64,
 }
 
 /// Vault configuration
@@ -58,6 +62,10 @@ pub struct Config {
     pub threshold_strategy: ThresholdStrategy,
     /// Default voting deadline in ledgers (0 = no deadline)
     pub default_voting_deadline: u64,
+    /// Proposal expiration period in ledgers
+    pub expiration_period: u64,
+    /// Grace period after expiration before cleanup in ledgers
+    pub grace_period: u64,
 }
 
 /// Audit record for a cancelled proposal

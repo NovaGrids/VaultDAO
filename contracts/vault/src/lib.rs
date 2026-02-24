@@ -99,6 +99,8 @@ impl VaultDAO {
             velocity_limit: config.velocity_limit,
             threshold_strategy: config.threshold_strategy,
             default_voting_deadline: config.default_voting_deadline,
+            expiration_period: config.expiration_period,
+            grace_period: config.grace_period,
         };
 
         // Store state
@@ -2265,7 +2267,7 @@ impl VaultDAO {
         }
 
         // Validate DEX is enabled
-        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexNotEnabled)?;
+        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
 
         // Validate DEX address
         let dex_addr = match &swap_op {
@@ -2278,7 +2280,7 @@ impl VaultDAO {
         };
 
         if !dex_config.enabled_dexs.contains(dex_addr) {
-            return Err(VaultError::DexNotEnabled);
+            return Err(VaultError::DexError);
         }
 
         // Create proposal
@@ -2356,9 +2358,8 @@ impl VaultDAO {
         }
 
         // Get swap operation
-        let swap_op =
-            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::InvalidSwapParams)?;
-        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexNotEnabled)?;
+        let swap_op = storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexError)?;
+        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
 
         // Execute based on operation type
         let result = match swap_op {
@@ -2448,12 +2449,12 @@ impl VaultDAO {
 
         // Validate slippage
         if expected_out < min_amount_out {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexError);
         }
 
         // Validate price impact
         if price_impact > dex_config.max_price_impact_bps {
-            return Err(VaultError::PriceImpactExceeded);
+            return Err(VaultError::DexError);
         }
 
         // Execute swap via DEX contract
@@ -2491,7 +2492,7 @@ impl VaultDAO {
         let lp_tokens = (amount_a + amount_b) / 2;
 
         if lp_tokens < min_lp_tokens {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexError);
         }
 
         events::emit_liquidity_added(env, 0, dex, lp_tokens);
@@ -2518,7 +2519,7 @@ impl VaultDAO {
         let token_b_out = amount / 2;
 
         if token_a_out < min_token_a || token_b_out < min_token_b {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexError);
         }
 
         events::emit_liquidity_removed(env, 0, dex, amount);
@@ -2607,7 +2608,7 @@ impl VaultDAO {
         let denominator = reserve_in + amount_in_with_fee;
 
         if denominator == 0 {
-            return Err(VaultError::InsufficientLiquidity);
+            return Err(VaultError::DexError);
         }
 
         Ok(numerator / denominator)

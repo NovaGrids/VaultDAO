@@ -80,30 +80,17 @@ pub enum VaultError {
     IntervalTooShort = 150,
 
     // DEX/AMM
-    DexNotEnabled = 160,
-    SlippageExceeded = 161,
-    PriceImpactExceeded = 162,
-    InvalidSwapParams = 163,
-    InsufficientLiquidity = 164,
+    DexError = 160,
 
-    // Bridge — variants must match all call sites in bridge.rs exactly
-    BridgeNotEnabled = 170,
-    BridgeNotConfigured = 171,
-    UnsupportedChain = 172,
-    ChainNotSupported = 173,
-    BridgeAmountExceedsLimit = 174,
-    ExceedsBridgeLimit = 175,
+    // Bridge
+    BridgeError = 170,
 
     // Reputation
     ReputationTooLow = 180,
 
     // Expiration errors
-    /// Proposal has not expired yet
-    ProposalNotExpired = 700,
-    /// Grace period has not expired yet
-    GracePeriodNotExpired = 701,
-    /// Invalid expiration period
-    InvalidExpirationPeriod = 702,
-    /// Invalid grace period
-    InvalidGracePeriod = 703,
+    ProposalNotExpired = 190,
+    GracePeriodNotExpired = 191,
+    InvalidExpirationPeriod = 192,
+    InvalidGracePeriod = 193,
 }
