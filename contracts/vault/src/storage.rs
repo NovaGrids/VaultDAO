@@ -7,8 +7,8 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, GasConfig, InsuranceConfig,
-    ListMode, NotificationPreferences, Proposal, ProposalAmendment, Reputation, RetryState, Role,
-    VaultMetrics, VelocityConfig,
+    ListMode, NotificationPreferences, Proposal, Reputation, RetryState, Role, VaultMetrics,
+    VelocityConfig,
 };
 
 /// Storage key definitions
