@@ -48,7 +48,7 @@ const CollaborativeProposalExample: React.FC = () => {
   // Submit proposal
   const handleSubmit = async (data: NewProposalFormData) => {
     if (!address) {
-      notify('wallet_error', 'Please connect your wallet', 'error');
+      notify('new_proposal', 'Please connect your wallet', 'error');
       return;
     }
 
@@ -61,7 +61,7 @@ const CollaborativeProposalExample: React.FC = () => {
         data.memo
       );
       
-      notify('proposal_created', 'Proposal submitted successfully', 'success');
+      notify('new_proposal', 'Proposal submitted successfully', 'success');
       
       // Reset form and close modals
       setFormData({
@@ -74,7 +74,7 @@ const CollaborativeProposalExample: React.FC = () => {
       setShowCollabModal(false);
     } catch (error) {
       console.error('Failed to submit proposal:', error);
-      notify('proposal_error', 'Failed to submit proposal', 'error');
+      notify('new_proposal', 'Failed to submit proposal', 'error');
     } finally {
       setLoading(false);
     }

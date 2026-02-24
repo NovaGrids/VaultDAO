@@ -1,17 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
-import type { ProposalDraft, DraftVersion, UserChange, DraftComment, CollaboratorPresence } from '../types/collaboration';
+import type { ProposalDraft, CollaboratorPresence } from '../types/collaboration';
 
 const WEBSOCKET_URL = import.meta.env.VITE_COLLAB_WS_URL || 'ws://localhost:1234';
-const AUTO_SAVE_INTERVAL = 30000; // 30 seconds
 
 interface UseCollaborationOptions {
   draftId: string;
   userId: string;
   userName: string;
   onSync?: (draft: Partial<ProposalDraft>) => void;
-  onError?: (error: Error) => void;
 }
 
 export function useCollaboration({
@@ -19,7 +17,6 @@ export function useCollaboration({
   userId,
   userName,
   onSync,
-  onError,
 }: UseCollaborationOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const [collaborators, setCollaborators] = useState<CollaboratorPresence[]>([]);

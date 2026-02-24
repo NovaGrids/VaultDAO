@@ -6,7 +6,6 @@ const MAX_VERSIONS = 50;
 
 export function useVersionHistory(draftId: string) {
   const [versions, setVersions] = useState<DraftVersion[]>([]);
-  const [loading, setLoading] = useState(false);
 
   // Load versions from localStorage
   useEffect(() => {
@@ -27,7 +26,7 @@ export function useVersionHistory(draftId: string) {
   // Save new version
   const saveVersion = useCallback((
     draft: Partial<ProposalDraft>,
-    userId: string,
+    _userId: string,
     userName: string,
     changeDescription: string
   ) => {
@@ -89,7 +88,6 @@ export function useVersionHistory(draftId: string) {
 
   return {
     versions,
-    loading,
     saveVersion,
     restoreVersion,
     getDiff,

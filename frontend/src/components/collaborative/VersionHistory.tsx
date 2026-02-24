@@ -10,7 +10,7 @@ interface VersionHistoryProps {
 }
 
 const VersionHistory: React.FC<VersionHistoryProps> = ({ draftId, onRestore }) => {
-  const { versions, restoreVersion, getDiff } = useVersionHistory(draftId);
+  const { versions, restoreVersion } = useVersionHistory(draftId);
   const [selectedVersion, setSelectedVersion] = useState<DraftVersion | null>(null);
   const [compareVersion, setCompareVersion] = useState<DraftVersion | null>(null);
   const [showDiff, setShowDiff] = useState(false);

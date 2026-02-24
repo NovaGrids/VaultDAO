@@ -26,7 +26,7 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const { isConnected, collaborators, hasConflict, updateField, getField } = useCollaboration({
+  const { isConnected, collaborators, hasConflict, updateField } = useCollaboration({
     draftId,
     userId,
     userName,
@@ -79,12 +79,14 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     });
 
     // Update CRDT
-    if (field !== 'attachments') {
-      updateField(field as 'recipient' | 'token' | 'amount' | 'memo', value);
+    if (field === 'recipient' || field === 'token' || field === 'amount' || field === 'memo') {
+      updateField(field, value);
     }
 
     // Track change
-    trackChange(userId, userName, field as any, oldValue, value);
+    if (field === 'recipient' || field === 'token' || field === 'amount' || field === 'memo') {
+      trackChange(userId, userName, field, oldValue, value);
+    }
   }, [formData, onDataChange, updateField, trackChange, userId, userName]);
 
   return (
