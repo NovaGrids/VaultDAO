@@ -80,6 +80,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       loadListMode().catch(console.error);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, loadListMode]);
 
   useEffect(() => {
@@ -89,6 +90,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
     } else {
       setRecipientError(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.recipient, listMode, validateRecipient]);
 
   if (!isOpen) {
