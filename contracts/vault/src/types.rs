@@ -75,6 +75,21 @@ pub struct CancellationRecord {
     pub refunded_amount: i128,
 }
 
+/// Audit record for a proposal amendment
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalAmendment {
+    pub proposal_id: u64,
+    pub amended_by: Address,
+    pub amended_at_ledger: u64,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
+}
+
 /// Threshold strategy for dynamic approval requirements
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -239,6 +254,8 @@ pub struct Proposal {
     pub snapshot_ledger: u64,
     /// Voting power snapshot — addresses eligible to vote at creation time
     pub snapshot_signers: Vec<Address>,
+    /// Proposal IDs that must be executed before this proposal can execute
+    pub depends_on: Vec<u64>,
     /// Flag indicating if this is a swap proposal
     pub is_swap: bool,
     /// Ledger sequence when voting must complete (0 = no deadline)

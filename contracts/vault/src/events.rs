@@ -2,6 +2,7 @@
 //!
 //! Standardized events for proposal lifecycle and admin actions.
 
+use crate::types::ProposalAmendment;
 use soroban_sdk::{Address, Env, Symbol};
 
 /// Emit when contract is initialized
@@ -117,6 +118,23 @@ pub fn emit_proposal_cancelled(
     env.events().publish(
         (Symbol::new(env, "proposal_cancelled"), proposal_id),
         (cancelled_by.clone(), reason.clone(), refunded_amount),
+    );
+}
+
+/// Emit when a proposal is amended.
+pub fn emit_proposal_amended(env: &Env, amendment: &ProposalAmendment) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_amended"), amendment.proposal_id),
+        (
+            amendment.amended_by.clone(),
+            amendment.old_recipient.clone(),
+            amendment.new_recipient.clone(),
+            amendment.old_amount,
+            amendment.new_amount,
+            amendment.old_memo.clone(),
+            amendment.new_memo.clone(),
+            amendment.amended_at_ledger,
+        ),
     );
 }
 
