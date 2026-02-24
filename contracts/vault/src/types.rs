@@ -636,10 +636,10 @@ impl ExpirationConfig {
     pub fn default() -> Self {
         ExpirationConfig {
             enabled: true,
-            default_period: 172_800,      // ~10 days (5 sec/ledger)
-            high_priority_period: 86_400,  // ~5 days
+            default_period: 172_800,          // ~10 days (5 sec/ledger)
+            high_priority_period: 86_400,     // ~5 days
             critical_priority_period: 43_200, // ~2.5 days
-            grace_period: 17_280,          // ~1 day
+            grace_period: 17_280,             // ~1 day
             max_cleanup_batch_size: 50,
         }
     }

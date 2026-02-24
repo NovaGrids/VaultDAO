@@ -98,9 +98,8 @@ pub enum VaultError {
     MaxRetriesExceeded = 190,
     RetryBackoffNotElapsed = 191,
     RetryNotEnabled = 192,
-
     // Expiration errors (reuse existing codes where possible)
     // ExpirationDisabled - use RetryNotEnabled (192)
-    // ProposalNotExpired - use ProposalNotPending (21) 
+    // ProposalNotExpired - use ProposalNotPending (21)
     // GracePeriodNotPassed - use TimelockNotExpired (60)
 }

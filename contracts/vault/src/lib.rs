@@ -36,11 +36,7 @@ pub struct VaultDAO;
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
 /// Calculate expiration ledger based on priority and configuration
-fn calculate_expiration_ledger(
-    config: &Config,
-    priority: &Priority,
-    current_ledger: u64,
-) -> u64 {
+fn calculate_expiration_ledger(config: &Config, priority: &Priority, current_ledger: u64) -> u64 {
     if !config.expiration_config.enabled {
         return 0; // No expiration
     }
@@ -2729,7 +2725,7 @@ impl VaultDAO {
         cleaner.require_auth();
 
         let config = storage::get_config(&env)?;
-        
+
         if !config.expiration_config.enabled {
             return Err(VaultError::RetryNotEnabled); // Reusing for ExpirationDisabled
         }
@@ -2751,7 +2747,12 @@ impl VaultDAO {
         // Refund insurance if any
         let refunded_insurance = proposal.insurance_amount;
         if refunded_insurance > 0 {
-            token::transfer(&env, &proposal.token, &proposal.proposer, refunded_insurance);
+            token::transfer(
+                &env,
+                &proposal.token,
+                &proposal.proposer,
+                refunded_insurance,
+            );
         }
 
         // Create expiration record
@@ -2798,14 +2799,14 @@ impl VaultDAO {
         cleaner.require_auth();
 
         let config = storage::get_config(&env)?;
-        
+
         if !config.expiration_config.enabled {
             return Err(VaultError::RetryNotEnabled); // Reusing for ExpirationDisabled
         }
 
         let current_ledger = env.ledger().sequence() as u64;
         let max_batch = config.expiration_config.max_cleanup_batch_size;
-        
+
         let mut cleaned_count: u32 = 0;
         let mut total_refunded: i128 = 0;
 
@@ -2820,7 +2821,7 @@ impl VaultDAO {
                 // Check eligibility
                 if proposal.status == types::ProposalStatus::Expired {
                     let grace_end = proposal.expires_at + config.expiration_config.grace_period;
-                    
+
                     if current_ledger >= grace_end {
                         // Refund insurance
                         let refunded = proposal.insurance_amount;
@@ -2897,10 +2898,7 @@ impl VaultDAO {
     }
 
     /// Get expiration record for a cleaned up proposal.
-    pub fn get_expiration_record(
-        env: Env,
-        proposal_id: u64,
-    ) -> Option<types::ExpirationRecord> {
+    pub fn get_expiration_record(env: Env, proposal_id: u64) -> Option<types::ExpirationRecord> {
         storage::get_expiration_record(&env, proposal_id)
     }
 
@@ -2919,7 +2917,7 @@ impl VaultDAO {
     /// Returns true if the proposal was marked as expired, false otherwise.
     pub fn check_and_mark_expired(env: Env, proposal_id: u64) -> Result<bool, VaultError> {
         let config = storage::get_config(&env)?;
-        
+
         if !config.expiration_config.enabled {
             return Ok(false);
         }
@@ -2928,9 +2926,10 @@ impl VaultDAO {
         let current_ledger = env.ledger().sequence() as u64;
 
         // Only mark as expired if currently pending and past expiration
-        if proposal.status == types::ProposalStatus::Pending 
-            && proposal.expires_at > 0 
-            && current_ledger > proposal.expires_at {
+        if proposal.status == types::ProposalStatus::Pending
+            && proposal.expires_at > 0
+            && current_ledger > proposal.expires_at
+        {
             proposal.status = types::ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_expiry(&env);
@@ -2946,7 +2945,7 @@ impl VaultDAO {
     /// Returns true if the proposal is expired and grace period has passed.
     pub fn is_eligible_for_cleanup(env: Env, proposal_id: u64) -> Result<bool, VaultError> {
         let config = storage::get_config(&env)?;
-        
+
         if !config.expiration_config.enabled {
             return Ok(false);
         }
@@ -2955,9 +2954,10 @@ impl VaultDAO {
         let current_ledger = env.ledger().sequence() as u64;
 
         // Check and mark as expired if needed
-        if proposal.status == types::ProposalStatus::Pending 
-            && proposal.expires_at > 0 
-            && current_ledger > proposal.expires_at {
+        if proposal.status == types::ProposalStatus::Pending
+            && proposal.expires_at > 0
+            && current_ledger > proposal.expires_at
+        {
             proposal.status = types::ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_expiry(&env);
@@ -2972,4 +2972,3 @@ impl VaultDAO {
         Ok(current_ledger >= grace_end)
     }
 }
-
