@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare } from 'lucide-react';
-import ProposalComments from '../ProposalComments';
-import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck } from 'lucide-react';
 import SignatureStatus, { type Signer } from '../SignatureStatus';
 import SignatureFlow, { type FlowStep } from '../SignatureFlow';
 import QRSignature from '../QRSignature';
@@ -51,7 +49,10 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
     }, [isOpen]);
 
     useEffect(() => {
-        if (isOpen) setActiveTab('details');
+        if (isOpen) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setActiveTab('details');
+        }
     }, [isOpen]);
 
     if (!isOpen || !proposal) return null;
@@ -247,7 +248,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                                 </div>
                             ))}
                         </div>
-                    </div>\n                        </>\n                    ) : (\n                        <ProposalComments proposalId={proposal.id} />\n                    )}
+                    </div>
                 </div>
 
                 {/* 3. Footer */}

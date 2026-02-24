@@ -10,6 +10,7 @@ import RoleManagement from '../../components/RoleManagement';
 import EmergencyControls from '../../components/EmergencyControls';
 import { useWallet } from '../../context/WalletContext';
 import { useVaultContract } from '../../hooks/useVaultContract';
+import WalletComparison from '../../components/WalletComparison';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -109,6 +110,13 @@ const Settings: React.FC = () => {
           isAdmin={isAdmin}
           isSigner={isSigner}
         />
+      {/* Wallet Comparison */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <h3 className="text-lg font-semibold mb-4">Supported Wallets</h3>
+        <p className="text-gray-400 text-sm mb-4">
+          Compare wallet features. Select your preferred wallet in the header to connect.
+        </p>
+        <WalletComparison />
       </div>
 
       {/* Role Management Section */}

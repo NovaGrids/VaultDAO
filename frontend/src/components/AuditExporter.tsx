@@ -116,20 +116,22 @@ const AuditExporter: React.FC = () => {
       }
 
       switch (config.format) {
-        case 'CSV':
+        case 'CSV': {
           blob = exportToCSV(filteredData);
           filename = `audit_export_${timestamp}.csv`;
           break;
+        }
         
-        case 'JSON':
+        case 'JSON': {
           const jsonData = config.includeSignature 
             ? { ...exportData, signature: signatureData }
             : exportData;
           blob = exportToJSON(jsonData);
           filename = `audit_export_${timestamp}.json`;
           break;
+        }
         
-        case 'PDF':
+        case 'PDF': {
           blob = await generateSOC2Report({
             entries: filteredData,
             dateRange: {
@@ -140,6 +142,7 @@ const AuditExporter: React.FC = () => {
           });
           filename = `audit_export_${timestamp}.pdf`;
           break;
+        }
         
         default:
           throw new Error('Invalid export format');

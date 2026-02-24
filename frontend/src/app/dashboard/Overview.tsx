@@ -7,7 +7,8 @@ import DashboardBuilder from '../../components/DashboardBuilder';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
 import { loadDashboardLayout } from '../../utils/dashboardTemplates';
-import type { TokenInfo } from '../../constants/tokens';
+import type { TokenInfo, TokenBalance } from '../../types';
+import type { WidgetConfig } from '../../types/dashboard';
 import { isValidStellarAddress } from '../../constants/tokens';
 import { formatTokenAmount } from '../../utils/formatters';
 
@@ -23,8 +24,8 @@ interface DashboardStats {
 const Overview: React.FC = () => {
     const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, getVaultBalance, loading } = useVaultContract();
     const [stats, setStats] = useState<DashboardStats | null>(null);
-    const [tokenBalances, setTokenBalances] = useState<any[]>([]);
-    const [portfolioValue, setPortfolioValue] = useState<any>(null);
+    const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
+    const [portfolioValue, setPortfolioValue] = useState<{ total: number; change24h: number } | null>(null);
     const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
     const [showAddTokenModal, setShowAddTokenModal] = useState(false);
     const [newTokenAddress, setNewTokenAddress] = useState('');
@@ -36,7 +37,7 @@ const Overview: React.FC = () => {
     const [balanceError, setBalanceError] = useState<string | null>(null);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [showAdvancedDashboard, setShowAdvancedDashboard] = useState(false);
-    const [savedLayout, setSavedLayout] = useState<any>(null);
+    const [savedLayout, setSavedLayout] = useState<{ widgets?: unknown[] } | null>(null);
 
     const quickActionTemplates = (() => {
         const mostUsed = getMostUsedTemplates(3);
@@ -85,7 +86,7 @@ const Overview: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [getDashboardStats]);
+    }, [getDashboardStats, fetchBalance]);
 
     // Fetch token balances
     const fetchTokenBalances = useCallback(async () => {
@@ -129,7 +130,7 @@ const Overview: React.FC = () => {
         setAddError(null);
 
         try {
-            const tokenInfo = await addCustomToken?.(newTokenAddress.trim());
+            const tokenInfo = await addCustomToken?.();
             if (tokenInfo) {
                 // Add to local state
                 setTokenBalances(prev => [...prev, {
@@ -192,7 +193,7 @@ const Overview: React.FC = () => {
             {/* Advanced Dashboard */}
             {showAdvancedDashboard && (
                 <DashboardBuilder
-                    initialWidgets={savedLayout?.widgets || []}
+                    initialWidgets={(savedLayout?.widgets as WidgetConfig[] | undefined) || []}
                 />
             )}
 

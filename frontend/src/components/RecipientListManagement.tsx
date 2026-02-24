@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useVaultContract } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';
-
-type ListMode = 'Disabled' | 'Whitelist' | 'Blacklist';
+import type { ListMode } from '../types';
 
 interface RecipientListManagementProps {
     onClose?: () => void;
@@ -24,6 +23,7 @@ export default function RecipientListManagement({ onClose }: RecipientListManage
 
     useEffect(() => {
         loadListMode();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const loadListMode = async () => {

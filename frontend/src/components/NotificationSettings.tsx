@@ -28,6 +28,18 @@ const EVENT_LABELS: Record<NotificationEventKey, string> = {
   signer_updated: 'Signer updated',
   config_updated: 'Config updated',
   spending_limit_warning: 'Spending limit warning',
+  audit_error: 'Audit error',
+  audit_tamper: 'Audit tampering detected',
+  audit_fetch_error: 'Audit fetch error',
+  no_data: 'No data available',
+  preview_ready: 'Preview ready',
+  preview_error: 'Preview error',
+  report_downloaded: 'Report downloaded',
+  report_error: 'Report error',
+  export_success: 'Export successful',
+  export_error: 'Export error',
+  approval_failed: 'Approval failed',
+  approval_success: 'Approval successful',
 };
 
 const METHOD_LABELS: Record<NotificationMethod, string> = {
