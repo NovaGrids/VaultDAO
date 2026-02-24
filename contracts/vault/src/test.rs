@@ -4,7 +4,7 @@ use super::*;
 use crate::types::{ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::Address as _,
     Env, Symbol, Vec,
 };
 
