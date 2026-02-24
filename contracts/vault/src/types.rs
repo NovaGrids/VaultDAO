@@ -609,3 +609,63 @@ pub struct RetryState {
     /// Ledger of the last retry attempt
     pub last_retry_ledger: u64,
 }
+
+// ============================================================================
+// Cross-Vault Proposal Coordination (Issue: feature/cross-vault-coordination)
+// ============================================================================
+
+/// Status of a cross-vault proposal
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CrossVaultStatus {
+    Pending = 0,
+    Approved = 1,
+    Executed = 2,
+    Failed = 3,
+    Cancelled = 4,
+}
+
+/// Describes a single action to be executed on a participant vault
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VaultAction {
+    /// Address of the participant vault contract
+    pub vault_address: Address,
+    /// Recipient of the transfer from the participant vault
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Amount to transfer
+    pub amount: i128,
+    /// Optional memo
+    pub memo: Symbol,
+}
+
+/// Cross-vault proposal stored alongside the base Proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossVaultProposal {
+    /// List of actions to execute across participant vaults
+    pub actions: Vec<VaultAction>,
+    /// Current status of the cross-vault proposal
+    pub status: CrossVaultStatus,
+    /// Per-action execution results (true = success)
+    pub execution_results: Vec<bool>,
+    /// Ledger when executed (0 if not yet executed)
+    pub executed_at: u64,
+}
+
+/// Configuration for cross-vault participation
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossVaultConfig {
+    /// Whether this vault participates in cross-vault operations
+    pub enabled: bool,
+    /// Vault addresses authorized to coordinate actions on this vault
+    pub authorized_coordinators: Vec<Address>,
+    /// Maximum amount per single cross-vault action
+    pub max_action_amount: i128,
+    /// Maximum number of actions in a single cross-vault proposal
+    pub max_actions: u32,
+}

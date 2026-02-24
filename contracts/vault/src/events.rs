@@ -401,3 +401,85 @@ pub fn emit_retries_exhausted(env: &Env, proposal_id: u64, total_attempts: u32) 
         total_attempts,
     );
 }
+
+// ============================================================================
+// Cross-Vault Events (feature/cross-vault-coordination)
+// ============================================================================
+
+/// Emit when a cross-vault proposal is created
+pub fn emit_cross_vault_proposed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_proposed"), proposal_id),
+        (proposer.clone(), num_actions),
+    );
+}
+
+/// Emit when cross-vault execution starts
+pub fn emit_cross_vault_execution_started(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_exec_start"), proposal_id),
+        (executor.clone(), num_actions),
+    );
+}
+
+/// Emit when a single cross-vault action is executed
+pub fn emit_cross_vault_action_executed(
+    env: &Env,
+    proposal_id: u64,
+    action_index: u32,
+    vault_address: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_action"), proposal_id),
+        (action_index, vault_address.clone(), amount),
+    );
+}
+
+/// Emit when all cross-vault actions complete successfully
+pub fn emit_cross_vault_executed(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_executed"), proposal_id),
+        (executor.clone(), num_actions),
+    );
+}
+
+/// Emit when a participant vault receives and executes a cross-vault action
+pub fn emit_cross_vault_action_received(
+    env: &Env,
+    coordinator: &Address,
+    recipient: &Address,
+    token: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_received"),),
+        (
+            coordinator.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+        ),
+    );
+}
+
+/// Emit when cross-vault configuration is updated
+pub fn emit_cross_vault_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "xvault_cfg_updated"),), admin.clone());
+}

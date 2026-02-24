@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::types::{
-    DexConfig, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VelocityConfig,
+    CrossVaultConfig, CrossVaultStatus, DexConfig, RetryConfig, SwapProposal, TimeBasedThreshold,
+    TransferDetails, VaultAction, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -3645,4 +3646,697 @@ fn test_retry_succeeds_after_balance_funded() {
     // Retry should succeed now
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_ok(), "Retry should succeed after funding");
+}
+
+// ============================================================================
+// Cross-Vault Proposal Coordination Tests
+// ============================================================================
+
+/// Helper: set up a coordinator vault and a participant vault for cross-vault tests.
+/// Returns (env, coordinator_id, participant_id, admin, signer1, signer2, token_address)
+fn setup_cross_vault_env() -> (Env, Address, Address, Address, Address, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Register two vault contracts
+    let coordinator_id = env.register(VaultDAO, ());
+    let participant_id = env.register(VaultDAO, ());
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+    let participant = VaultDAOClient::new(&env, &participant_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers: signers.clone(),
+        threshold: 2,
+        quorum: 0,
+        spending_limit: 10_000,
+        daily_limit: 50_000,
+        weekly_limit: 100_000,
+        timelock_threshold: 50_000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+
+    // Initialize both vaults
+    coordinator.initialize(&admin, &config);
+    participant.initialize(&admin, &config);
+
+    // Set roles
+    coordinator.set_role(&admin, &signer1, &Role::Treasurer);
+    coordinator.set_role(&admin, &signer2, &Role::Treasurer);
+    participant.set_role(&admin, &signer1, &Role::Treasurer);
+    participant.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Register a real token and fund the participant vault
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address();
+    let token_admin_client = StellarAssetClient::new(&env, &token_addr);
+    token_admin_client.mint(&participant_id, &100_000);
+
+    // Configure participant to accept coordinator
+    let mut authorized = Vec::new(&env);
+    authorized.push_back(coordinator_id.clone());
+    let cv_config = CrossVaultConfig {
+        enabled: true,
+        authorized_coordinators: authorized,
+        max_action_amount: 10_000,
+        max_actions: 5,
+    };
+    participant.set_cross_vault_config(&admin, &cv_config);
+
+    (
+        env,
+        coordinator_id,
+        participant_id,
+        admin,
+        signer1,
+        signer2,
+        token_addr,
+    )
+}
+
+#[test]
+fn test_cross_vault_single_action_success() {
+    let (env, coordinator_id, participant_id, admin, signer1, signer2, token_addr) =
+        setup_cross_vault_env();
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+
+    let recipient = Address::generate(&env);
+    let participant_addr = participant_id.clone();
+
+    // Build actions
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: participant_addr.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 500,
+        memo: Symbol::new(&env, "xfer"),
+    });
+
+    // Propose
+    let proposal_id = coordinator.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Approve (2-of-3)
+    coordinator.approve_proposal(&signer1, &proposal_id);
+    coordinator.approve_proposal(&signer2, &proposal_id);
+
+    let proposal = coordinator.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+
+    // Execute cross-vault
+    coordinator.execute_cross_vault(&admin, &proposal_id);
+
+    // Verify: proposal is Executed
+    let proposal = coordinator.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+
+    // Verify: cross-vault proposal status
+    let cv = coordinator.get_cross_vault_proposal(&proposal_id).unwrap();
+    assert_eq!(cv.status, CrossVaultStatus::Executed);
+    assert_eq!(cv.execution_results.len(), 1);
+
+    // Verify: recipient received funds
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+    assert_eq!(token_client.balance(&recipient), 500);
+}
+
+#[test]
+fn test_cross_vault_multi_vault_actions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Register coordinator + 3 participant vaults
+    let coordinator_id = env.register(VaultDAO, ());
+    let participant1_id = env.register(VaultDAO, ());
+    let participant2_id = env.register(VaultDAO, ());
+    let participant3_id = env.register(VaultDAO, ());
+
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+    let p1 = VaultDAOClient::new(&env, &participant1_id);
+    let p2 = VaultDAOClient::new(&env, &participant2_id);
+    let p3 = VaultDAOClient::new(&env, &participant3_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers: signers.clone(),
+        threshold: 2,
+        quorum: 0,
+        spending_limit: 10_000,
+        daily_limit: 50_000,
+        weekly_limit: 100_000,
+        timelock_threshold: 50_000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+
+    // Initialize all vaults
+    coordinator.initialize(&admin, &config);
+    p1.initialize(&admin, &config);
+    p2.initialize(&admin, &config);
+    p3.initialize(&admin, &config);
+
+    coordinator.set_role(&admin, &signer1, &Role::Treasurer);
+    coordinator.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Register token and fund participants
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address();
+    let token_admin_client = StellarAssetClient::new(&env, &token_addr);
+    token_admin_client.mint(&participant1_id, &50_000);
+    token_admin_client.mint(&participant2_id, &50_000);
+    token_admin_client.mint(&participant3_id, &50_000);
+
+    // Configure all participants to trust coordinator
+    let mut authorized = Vec::new(&env);
+    authorized.push_back(coordinator_id.clone());
+    let cv_config = CrossVaultConfig {
+        enabled: true,
+        authorized_coordinators: authorized,
+        max_action_amount: 10_000,
+        max_actions: 5,
+    };
+    p1.set_cross_vault_config(&admin, &cv_config);
+    p2.set_cross_vault_config(&admin, &cv_config);
+    p3.set_cross_vault_config(&admin, &cv_config);
+
+    let recipient = Address::generate(&env);
+
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: participant1_id.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 1_000,
+        memo: Symbol::new(&env, "p1"),
+    });
+    actions.push_back(VaultAction {
+        vault_address: participant2_id.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 2_000,
+        memo: Symbol::new(&env, "p2"),
+    });
+    actions.push_back(VaultAction {
+        vault_address: participant3_id.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 3_000,
+        memo: Symbol::new(&env, "p3"),
+    });
+
+    let proposal_id = coordinator.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    coordinator.approve_proposal(&signer1, &proposal_id);
+    coordinator.approve_proposal(&signer2, &proposal_id);
+    coordinator.execute_cross_vault(&admin, &proposal_id);
+
+    let cv = coordinator.get_cross_vault_proposal(&proposal_id).unwrap();
+    assert_eq!(cv.status, CrossVaultStatus::Executed);
+    assert_eq!(cv.execution_results.len(), 3);
+
+    // Verify recipient received total of 6000
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+    assert_eq!(token_client.balance(&recipient), 6_000);
+}
+
+#[test]
+fn test_cross_vault_rollback_on_amount_limit() {
+    let (env, coordinator_id, participant_id, admin, signer1, signer2, token_addr) =
+        setup_cross_vault_env();
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+
+    let recipient = Address::generate(&env);
+    let participant_addr = participant_id.clone();
+
+    // Action exceeds participant's max_action_amount (10_000)
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: participant_addr.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 15_000, // exceeds limit
+        memo: Symbol::new(&env, "big"),
+    });
+
+    let proposal_id = coordinator.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    coordinator.approve_proposal(&signer1, &proposal_id);
+    coordinator.approve_proposal(&signer2, &proposal_id);
+
+    // Execute should fail — Soroban rolls back everything
+    let result = coordinator.try_execute_cross_vault(&admin, &proposal_id);
+    assert!(result.is_err());
+
+    // Proposal should still be Approved (rollback)
+    let proposal = coordinator.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_cross_vault_unauthorized_coordinator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Two independent vaults — NOT authorized as coordinators of each other
+    let vault_a_id = env.register(VaultDAO, ());
+    let vault_b_id = env.register(VaultDAO, ());
+    let vault_a = VaultDAOClient::new(&env, &vault_a_id);
+    let vault_b = VaultDAOClient::new(&env, &vault_b_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers: signers.clone(),
+        threshold: 2,
+        quorum: 0,
+        spending_limit: 10_000,
+        daily_limit: 50_000,
+        weekly_limit: 100_000,
+        timelock_threshold: 50_000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+
+    vault_a.initialize(&admin, &config);
+    vault_b.initialize(&admin, &config);
+    vault_a.set_role(&admin, &signer1, &Role::Treasurer);
+    vault_a.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address();
+    let token_admin_client = StellarAssetClient::new(&env, &token_addr);
+    token_admin_client.mint(&vault_b_id, &50_000);
+
+    // Configure vault_b with an EMPTY authorized list (no coordinators)
+    let cv_config = CrossVaultConfig {
+        enabled: true,
+        authorized_coordinators: Vec::new(&env),
+        max_action_amount: 10_000,
+        max_actions: 5,
+    };
+    vault_b.set_cross_vault_config(&admin, &cv_config);
+
+    let recipient = Address::generate(&env);
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: vault_b_id.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 100,
+        memo: Symbol::new(&env, "sneaky"),
+    });
+
+    let proposal_id = vault_a.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    vault_a.approve_proposal(&signer1, &proposal_id);
+    vault_a.approve_proposal(&signer2, &proposal_id);
+
+    // Execution should fail because vault_a is not an authorized coordinator
+    let result = vault_a.try_execute_cross_vault(&admin, &proposal_id);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cross_vault_not_enabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let vault_a_id = env.register(VaultDAO, ());
+    let vault_b_id = env.register(VaultDAO, ());
+    let vault_a = VaultDAOClient::new(&env, &vault_a_id);
+    let vault_b = VaultDAOClient::new(&env, &vault_b_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers: signers.clone(),
+        threshold: 2,
+        quorum: 0,
+        spending_limit: 10_000,
+        daily_limit: 50_000,
+        weekly_limit: 100_000,
+        timelock_threshold: 50_000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+
+    vault_a.initialize(&admin, &config);
+    vault_b.initialize(&admin, &config);
+    vault_a.set_role(&admin, &signer1, &Role::Treasurer);
+    vault_a.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address();
+    let token_admin_client = StellarAssetClient::new(&env, &token_addr);
+    token_admin_client.mint(&vault_b_id, &50_000);
+
+    // vault_b has NO cross-vault config at all
+
+    let recipient = Address::generate(&env);
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: vault_b_id.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 100,
+        memo: Symbol::new(&env, "test"),
+    });
+
+    let proposal_id = vault_a.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    vault_a.approve_proposal(&signer1, &proposal_id);
+    vault_a.approve_proposal(&signer2, &proposal_id);
+
+    // Execution fails — vault_b has no cross-vault config
+    let result = vault_a.try_execute_cross_vault(&admin, &proposal_id);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cross_vault_empty_actions_rejected() {
+    let (env, coordinator_id, _participant_id, _admin, signer1, _signer2, _token_addr) =
+        setup_cross_vault_env();
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+
+    let empty_actions: Vec<VaultAction> = Vec::new(&env);
+
+    let result = coordinator.try_propose_cross_vault(
+        &signer1,
+        &empty_actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cross_vault_too_many_actions_rejected() {
+    let (env, coordinator_id, participant_id, _admin, signer1, _signer2, token_addr) =
+        setup_cross_vault_env();
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+
+    let participant_addr = participant_id.clone();
+    let recipient = Address::generate(&env);
+
+    // Build 6 actions (exceeds MAX_CROSS_VAULT_ACTIONS = 5)
+    let mut actions = Vec::new(&env);
+    for _i in 0..6u32 {
+        actions.push_back(VaultAction {
+            vault_address: participant_addr.clone(),
+            recipient: recipient.clone(),
+            token: token_addr.clone(),
+            amount: 10,
+            memo: Symbol::new(&env, "too_many"),
+        });
+    }
+
+    let result = coordinator.try_propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cross_vault_insufficient_balance_rollback() {
+    let (env, coordinator_id, participant_id, admin, signer1, signer2, token_addr) =
+        setup_cross_vault_env();
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+    let participant = VaultDAOClient::new(&env, &participant_id);
+
+    let recipient = Address::generate(&env);
+    let participant_addr = participant_id.clone();
+
+    // Request more than participant has (participant has 100_000)
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: participant_addr.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 5_000, // within amount limit but...
+        memo: Symbol::new(&env, "drain"),
+    });
+
+    // First, reduce participant balance by transferring most of it out
+    // We'll create a proposal on the participant vault directly to drain funds
+    // Instead, let's just set a very low max_action_amount on the participant
+    // Actually, let's test with an amount within limits but exceeding balance.
+    // We need participant to have less balance than the action amount.
+    // The participant was minted 100_000. Let's use an amount within the
+    // max_action_amount (10_000) but we need insufficient balance.
+    // Let's update the cross-vault config to allow higher amounts, then request more than balance.
+    let mut authorized = Vec::new(&env);
+    authorized.push_back(coordinator.address.clone());
+    let cv_config = CrossVaultConfig {
+        enabled: true,
+        authorized_coordinators: authorized,
+        max_action_amount: 200_000, // allow large actions
+        max_actions: 5,
+    };
+    participant.set_cross_vault_config(&admin, &cv_config);
+
+    // Now request more than the 100_000 balance
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: participant_addr.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 150_000, // exceeds participant's 100_000 balance
+        memo: Symbol::new(&env, "over"),
+    });
+
+    let proposal_id = coordinator.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    coordinator.approve_proposal(&signer1, &proposal_id);
+    coordinator.approve_proposal(&signer2, &proposal_id);
+
+    // Execute should fail due to insufficient balance
+    let result = coordinator.try_execute_cross_vault(&admin, &proposal_id);
+    assert!(result.is_err());
+
+    // Proposal stays Approved (Soroban rollback)
+    let proposal = coordinator.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_cross_vault_proposal_not_approved() {
+    let (env, coordinator_id, participant_id, admin, signer1, _signer2, token_addr) =
+        setup_cross_vault_env();
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+
+    let recipient = Address::generate(&env);
+    let participant_addr = participant_id.clone();
+
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: participant_addr.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 100,
+        memo: Symbol::new(&env, "early"),
+    });
+
+    let proposal_id = coordinator.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Only one approval — not enough for 2-of-3
+    coordinator.approve_proposal(&signer1, &proposal_id);
+
+    let proposal = coordinator.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+
+    // Try to execute before approval
+    let result = coordinator.try_execute_cross_vault(&admin, &proposal_id);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cross_vault_full_multisig_flow() {
+    let (env, coordinator_id, participant_id, admin, signer1, signer2, token_addr) =
+        setup_cross_vault_env();
+    let coordinator = VaultDAOClient::new(&env, &coordinator_id);
+
+    let recipient = Address::generate(&env);
+    let participant_addr = participant_id.clone();
+
+    let mut actions = Vec::new(&env);
+    actions.push_back(VaultAction {
+        vault_address: participant_addr.clone(),
+        recipient: recipient.clone(),
+        token: token_addr.clone(),
+        amount: 1_000,
+        memo: Symbol::new(&env, "multisig"),
+    });
+
+    // Propose
+    let proposal_id = coordinator.propose_cross_vault(
+        &signer1,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Verify initial state
+    let cv = coordinator.get_cross_vault_proposal(&proposal_id).unwrap();
+    assert_eq!(cv.status, CrossVaultStatus::Pending);
+    assert_eq!(cv.actions.len(), 1);
+
+    // First approval
+    coordinator.approve_proposal(&signer1, &proposal_id);
+    let p = coordinator.get_proposal(&proposal_id);
+    assert_eq!(p.status, ProposalStatus::Pending);
+    assert_eq!(p.approvals.len(), 1);
+
+    // Second approval — reaches 2-of-3 threshold
+    coordinator.approve_proposal(&signer2, &proposal_id);
+    let p = coordinator.get_proposal(&proposal_id);
+    assert_eq!(p.status, ProposalStatus::Approved);
+    assert_eq!(p.approvals.len(), 2);
+
+    // Execute
+    coordinator.execute_cross_vault(&admin, &proposal_id);
+
+    // Verify final state
+    let p = coordinator.get_proposal(&proposal_id);
+    assert_eq!(p.status, ProposalStatus::Executed);
+
+    let cv = coordinator.get_cross_vault_proposal(&proposal_id).unwrap();
+    assert_eq!(cv.status, CrossVaultStatus::Executed);
+    // executed_at is the ledger sequence at execution time (may be 0 in test env)
+    assert_eq!(cv.execution_results.len(), 1);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+    assert_eq!(token_client.balance(&recipient), 1_000);
 }

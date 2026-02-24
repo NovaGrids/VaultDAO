@@ -6,8 +6,8 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
-    Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    Comment, Config, CrossVaultConfig, CrossVaultProposal, GasConfig, InsuranceConfig, ListMode,
+    NotificationPreferences, Proposal, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -72,6 +72,10 @@ pub enum DataKey {
     Metrics,
     /// Retry state for a proposal -> RetryState
     RetryState(u64),
+    /// Cross-vault proposal by ID -> CrossVaultProposal
+    CrossVaultProposal(u64),
+    /// Cross-vault configuration -> CrossVaultConfig
+    CrossVaultConfig,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -735,6 +739,34 @@ pub fn get_retry_state(env: &Env, proposal_id: u64) -> Option<RetryState> {
 pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
     let key = DataKey::RetryState(proposal_id);
     env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Cross-Vault Coordination (Issue: feature/cross-vault-coordination)
+// ============================================================================
+
+pub fn get_cross_vault_config(env: &Env) -> Option<CrossVaultConfig> {
+    env.storage().instance().get(&DataKey::CrossVaultConfig)
+}
+
+pub fn set_cross_vault_config(env: &Env, config: &CrossVaultConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CrossVaultConfig, config);
+}
+
+pub fn get_cross_vault_proposal(env: &Env, proposal_id: u64) -> Option<CrossVaultProposal> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossVaultProposal(proposal_id))
+}
+
+pub fn set_cross_vault_proposal(env: &Env, proposal_id: u64, proposal: &CrossVaultProposal) {
+    let key = DataKey::CrossVaultProposal(proposal_id);
+    env.storage().persistent().set(&key, proposal);
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
