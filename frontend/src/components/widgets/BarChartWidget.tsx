@@ -3,8 +3,8 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 interface BarChartWidgetProps {
   title: string;
-  data?: Array<{ name: string; value: number }>;
-  onDrillDown?: (data: unknown) => void;
+  data?: Record<string, unknown>[];
+  onDrillDown?: (data: Record<string, unknown>) => void;
 }
 
 const BarChartWidget: React.FC<BarChartWidgetProps> = ({ title, data = [], onDrillDown }) => {

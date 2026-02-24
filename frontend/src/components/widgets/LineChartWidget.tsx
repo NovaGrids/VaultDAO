@@ -3,8 +3,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 interface LineChartWidgetProps {
   title: string;
-  data?: Array<{ name: string; value: number }>;
-  onDrillDown?: (data: unknown) => void;
+  data?: Record<string, unknown>[];
+  onDrillDown?: (data: Record<string, unknown>) => void;
 }
 
 const LineChartWidget: React.FC<LineChartWidgetProps> = ({ title, data = [], onDrillDown }) => {

@@ -77,14 +77,16 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      loadListMode();
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadListMode().catch(console.error);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, loadListMode]);
 
   useEffect(() => {
     if (formData.recipient && listMode !== 'Disabled') {
-      validateRecipient();
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      validateRecipient().catch(console.error);
     } else {
       setRecipientError(null);
     }

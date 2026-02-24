@@ -10,16 +10,8 @@ import ProposalFilters, { type FilterState } from '../../components/proposals/Pr
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../context/WalletContextProps';
-import { reportError } from '../../components/ErrorReporting';
-import { parseError } from '../../utils/errorParser';
-import type { TokenInfo } from '../../constants/tokens';
+import type { TokenInfo, TokenBalance } from '../../types';
 import { DEFAULT_TOKENS } from '../../constants/tokens';
-
-interface TokenBalance {
-  token: TokenInfo;
-  balance: string;
-  isLoading: boolean;
-}
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
@@ -231,8 +223,6 @@ const Proposals: React.FC = () => {
       setProposals(prev => prev.map(p => p.id === rejectingId ? { ...p, status: 'Rejected' } : p));
       notify('proposal_rejected', `Proposal #${rejectingId} rejected`, 'success');
     } catch (err: unknown) {
-      const vaultErr = parseError(err);
-      reportError({ ...vaultErr, context: 'Proposals.handleReject' });
       const errorMessage = err instanceof Error ? err.message : 'Failed to reject';
       notify('proposal_rejected', errorMessage, 'error');
     } finally {
@@ -266,8 +256,6 @@ const Proposals: React.FC = () => {
       }));
       notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
     } catch (err: unknown) {
-      const vaultErr = parseError(err);
-      reportError({ ...vaultErr, context: 'Proposals.handleApprove' });
       const errorMessage = err instanceof Error ? err.message : 'Failed to approve proposal';
       notify('proposal_rejected', errorMessage, 'error');
     } finally {
@@ -282,7 +270,7 @@ const Proposals: React.FC = () => {
   // Initialize selected token when tokenBalances load
   useEffect(() => {
     if (!selectedToken && tokenBalances.length > 0) {
-      const xlmToken = tokenBalances.find((tb: TokenBalance) => tb.token.address === 'NATIVE');
+      const xlmToken = tokenBalances.find(tb => tb.token.address === 'NATIVE');
       if (xlmToken) {
         setSelectedToken(xlmToken.token);
       } else {
@@ -423,7 +411,6 @@ const Proposals: React.FC = () => {
           selectedTemplateName={null}
           formData={newProposalForm}
           onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
-          onAttachmentsChange={(attachments) => setNewProposalForm(prev => ({ ...prev, attachments }))}
           onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
           onOpenTemplateSelector={() => { }}
           onSaveAsTemplate={() => { }}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle } from 'lucide-react';
 import ForecastChart from './ForecastChart';
 import AnomalyDetector from './AnomalyDetector';
@@ -23,16 +23,11 @@ const SpendingAnalytics: React.FC<SpendingAnalyticsProps> = ({
   monthlyBudget = 10000
 }) => {
   const [forecastPeriod, setForecastPeriod] = useState<30 | 90>(30);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setNow(Date.now());
-  }, []);
+  const [currentTime] = useState(() => Date.now());
 
   const analytics = useMemo(() => {
     const last30Days = transactions.filter(t => {
-      const diff = now - new Date(t.timestamp).getTime();
+      const diff = currentTime - new Date(t.timestamp).getTime();
       return diff < 30 * 24 * 60 * 60 * 1000;
     });
 
@@ -65,7 +60,7 @@ const SpendingAnalytics: React.FC<SpendingAnalyticsProps> = ({
       velocity,
       transactionCount: last30Days.length
     };
-  }, [transactions, currentBalance, monthlyBudget, forecastPeriod, now]);
+  }, [transactions, currentBalance, monthlyBudget, forecastPeriod, currentTime]);
 
   const getBudgetColor = (percent: number) => {
     if (percent >= 100) return 'bg-red-500';

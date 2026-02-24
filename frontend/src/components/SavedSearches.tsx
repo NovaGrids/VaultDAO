@@ -12,11 +12,8 @@ const SavedSearches: React.FC<SavedSearchesProps> = ({ onSelect, className = '' 
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      const searches = getSavedSearches();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSaved(searches);
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSaved(getSavedSearches());
   }, [open]);
 
   const handleDelete = (e: React.MouseEvent, id: string) => {

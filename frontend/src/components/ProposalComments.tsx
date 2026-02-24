@@ -45,6 +45,7 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposalId]);
 
   const buildCommentTree = (flatComments: Comment[]): Comment[] => {
@@ -108,8 +109,8 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
       notify('new_proposal', 'Comment added successfully', 'success');
       await fetchComments();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to add comment';
-      notify('new_proposal', message, 'error');
+      const error = err as { message?: string };
+      notify('new_proposal', error.message || 'Failed to add comment', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -122,8 +123,8 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
       notify('new_proposal', 'Reply added successfully', 'success');
       await fetchComments();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to add reply';
-      notify('new_proposal', message, 'error');
+      const error = err as { message?: string };
+      notify('new_proposal', error.message || 'Failed to add reply', 'error');
       throw err;
     }
   };
@@ -135,8 +136,8 @@ const ProposalComments: React.FC<ProposalCommentsProps> = ({ proposalId, signers
       notify('new_proposal', 'Comment updated successfully', 'success');
       await fetchComments();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to edit comment';
-      notify('new_proposal', message, 'error');
+      const error = err as { message?: string };
+      notify('new_proposal', error.message || 'Failed to edit comment', 'error');
       throw err;
     }
   };

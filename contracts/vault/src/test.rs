@@ -1302,6 +1302,576 @@ fn test_admin_can_add_attachment() {
 }
 
 #[test]
+fn test_set_and_get_proposal_metadata() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let key = Symbol::new(&env, "category");
+    let value = soroban_sdk::String::from_str(&env, "operations");
+    client.set_proposal_metadata(&signer1, &proposal_id, &key, &value);
+
+    let single = client.get_proposal_metadata_value(&proposal_id, &key);
+    assert_eq!(single, Some(value.clone()));
+
+    let metadata = client.get_proposal_metadata(&proposal_id);
+    assert_eq!(metadata.len(), 1);
+    assert_eq!(metadata.get(key), Some(value));
+}
+
+#[test]
+fn test_remove_proposal_metadata() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let key = Symbol::new(&env, "source");
+    let value = soroban_sdk::String::from_str(&env, "payroll");
+    client.set_proposal_metadata(&signer1, &proposal_id, &key, &value);
+    client.remove_proposal_metadata(&signer1, &proposal_id, &key);
+
+    let single = client.get_proposal_metadata_value(&proposal_id, &key);
+    assert_eq!(single, None);
+}
+
+#[test]
+fn test_proposal_metadata_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let key = Symbol::new(&env, "category");
+    let value = soroban_sdk::String::from_str(&env, "ops");
+    let res = client.try_set_proposal_metadata(&signer2, &proposal_id, &key, &value);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
+fn test_proposal_metadata_empty_value_invalid() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let key = Symbol::new(&env, "category");
+    let empty_value = soroban_sdk::String::from_str(&env, "");
+    let res = client.try_set_proposal_metadata(&signer1, &proposal_id, &key, &empty_value);
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_proposal_metadata_value_too_long_invalid() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let key = Symbol::new(&env, "category");
+    let too_long_std = "a".repeat((MAX_METADATA_VALUE_LEN + 1) as usize);
+    let too_long_value = soroban_sdk::String::from_str(&env, too_long_std.as_str());
+    let res = client.try_set_proposal_metadata(&signer1, &proposal_id, &key, &too_long_value);
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_proposal_metadata_limit_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let keys = [
+        "k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08", "k09", "k10", "k11", "k12", "k13",
+        "k14", "k15", "k16",
+    ];
+
+    for &key_name in keys.iter().take(MAX_METADATA_ENTRIES as usize) {
+        let key = Symbol::new(&env, key_name);
+        let value = soroban_sdk::String::from_str(&env, "ok");
+        client.set_proposal_metadata(&signer1, &proposal_id, &key, &value);
+    }
+
+    let overflow_key = Symbol::new(&env, "k17");
+    let overflow_value = soroban_sdk::String::from_str(&env, "overflow");
+    let res =
+        client.try_set_proposal_metadata(&signer1, &proposal_id, &overflow_key, &overflow_value);
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
+
+#[test]
+fn test_admin_can_manage_proposal_metadata() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let key = Symbol::new(&env, "admin_key");
+    let value = soroban_sdk::String::from_str(&env, "set_by_admin");
+    client.set_proposal_metadata(&admin, &proposal_id, &key, &value);
+    assert_eq!(
+        client.get_proposal_metadata_value(&proposal_id, &key),
+        Some(value.clone())
+    );
+
+    client.remove_proposal_metadata(&admin, &proposal_id, &key);
+    assert_eq!(client.get_proposal_metadata_value(&proposal_id, &key), None);
+}
+
+#[test]
+fn test_metadata_update_existing_key_at_capacity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let keys = [
+        "k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08", "k09", "k10", "k11", "k12", "k13",
+        "k14", "k15", "k16",
+    ];
+
+    for &key_name in keys.iter().take(MAX_METADATA_ENTRIES as usize) {
+        let key = Symbol::new(&env, key_name);
+        let value = soroban_sdk::String::from_str(&env, "ok");
+        client.set_proposal_metadata(&signer1, &proposal_id, &key, &value);
+    }
+
+    // Updating an existing key at capacity should still succeed.
+    let update_key = Symbol::new(&env, "k01");
+    let updated_value = soroban_sdk::String::from_str(&env, "updated");
+    client.set_proposal_metadata(&signer1, &proposal_id, &update_key, &updated_value);
+
+    let metadata = client.get_proposal_metadata(&proposal_id);
+    assert_eq!(metadata.len(), MAX_METADATA_ENTRIES);
+    assert_eq!(metadata.get(update_key), Some(updated_value));
+}
+
+#[test]
+fn test_get_proposal_metadata_value_missing_key_returns_none() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let missing = client.get_proposal_metadata_value(&proposal_id, &Symbol::new(&env, "missing"));
+    assert_eq!(missing, None);
+}
+
+#[test]
+fn test_get_proposals_by_tag() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let ops_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "ops1"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let payroll_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &120,
+        &Symbol::new(&env, "pay1"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let second_ops_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &140,
+        &Symbol::new(&env, "ops2"),
+        &Priority::High,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let ops_tag = Symbol::new(&env, "ops");
+    let payroll_tag = Symbol::new(&env, "payroll");
+
+    client.add_proposal_tag(&signer1, &ops_id, &ops_tag);
+    client.add_proposal_tag(&signer1, &payroll_id, &payroll_tag);
+    client.add_proposal_tag(&signer1, &second_ops_id, &ops_tag);
+
+    let ops_results = client.get_proposals_by_tag(&ops_tag);
+    assert!(ops_results.contains(ops_id));
+    assert!(ops_results.contains(second_ops_id));
+    assert!(!ops_results.contains(payroll_id));
+
+    let payroll_results = client.get_proposals_by_tag(&payroll_tag);
+    assert!(payroll_results.contains(payroll_id));
+    assert!(!payroll_results.contains(ops_id));
+}
+
+#[test]
+fn test_proposal_tag_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let tag = Symbol::new(&env, "ops");
+    let res = client.try_add_proposal_tag(&signer2, &proposal_id, &tag);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
 fn test_fixed_threshold_strategy() {
     let env = Env::default();
     env.mock_all_auths();
