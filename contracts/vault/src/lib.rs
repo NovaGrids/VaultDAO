@@ -21,8 +21,8 @@ use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec
 use types::{
     Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
     CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, GasConfig, InsuranceConfig,
-    ListMode, NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
-    RetryState, Role, ThresholdStrategy, VaultAction, VaultMetrics,
+    ListMode, NotificationPreferences, Priority, Proposal, ProposalAmendment, ProposalStatus,
+    Reputation, RetryConfig, RetryState, Role, ThresholdStrategy, VaultAction, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -1027,6 +1027,94 @@ impl VaultDAO {
     /// Retrieve the full cancellation history (list of cancelled proposal IDs).
     pub fn get_cancellation_history(env: Env) -> soroban_sdk::Vec<u64> {
         storage::get_cancellation_history(&env)
+    }
+
+    /// Amend a pending proposal and require fresh re-approval.
+    ///
+    /// Only the original proposer can amend. Approvals and abstentions are reset,
+    /// and an amendment record is appended to on-chain history for auditing.
+    pub fn amend_proposal(
+        env: Env,
+        proposer: Address,
+        proposal_id: u64,
+        new_recipient: Address,
+        new_amount: i128,
+        new_memo: Symbol,
+    ) -> Result<(), VaultError> {
+        proposer.require_auth();
+
+        let config = storage::get_config(&env)?;
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        if proposal.proposer != proposer {
+            return Err(VaultError::Unauthorized);
+        }
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        Self::validate_recipient(&env, &new_recipient)?;
+        if new_amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        if new_amount > config.spending_limit {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        // Keep reserved spending in sync with amended amount.
+        if new_amount > proposal.amount {
+            let increase = new_amount - proposal.amount;
+            let today = storage::get_day_number(&env);
+            let week = storage::get_week_number(&env);
+
+            let spent_today = storage::get_daily_spent(&env, today);
+            if spent_today + increase > config.daily_limit {
+                return Err(VaultError::ExceedsDailyLimit);
+            }
+            let spent_week = storage::get_weekly_spent(&env, week);
+            if spent_week + increase > config.weekly_limit {
+                return Err(VaultError::ExceedsWeeklyLimit);
+            }
+
+            storage::add_daily_spent(&env, today, increase);
+            storage::add_weekly_spent(&env, week, increase);
+        } else if proposal.amount > new_amount {
+            let decrease = proposal.amount - new_amount;
+            storage::refund_spending_limits(&env, decrease);
+        }
+
+        let amendment = ProposalAmendment {
+            proposal_id,
+            amended_by: proposer,
+            amended_at_ledger: env.ledger().sequence() as u64,
+            old_recipient: proposal.recipient.clone(),
+            new_recipient: new_recipient.clone(),
+            old_amount: proposal.amount,
+            new_amount,
+            old_memo: proposal.memo.clone(),
+            new_memo: new_memo.clone(),
+        };
+
+        proposal.recipient = new_recipient;
+        proposal.amount = new_amount;
+        proposal.memo = new_memo;
+        proposal.approvals = Vec::new(&env);
+        proposal.abstentions = Vec::new(&env);
+        proposal.status = ProposalStatus::Pending;
+        proposal.unlock_ledger = 0;
+
+        storage::set_proposal(&env, &proposal);
+        storage::add_amendment_record(&env, &amendment);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_proposal_amended(&env, &amendment);
+
+        Ok(())
+    }
+
+    /// Get amendment history for a proposal.
+    pub fn get_proposal_amendments(env: Env, proposal_id: u64) -> Vec<ProposalAmendment> {
+        storage::get_amendment_history(&env, proposal_id)
     }
 
     // ========================================================================

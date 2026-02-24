@@ -245,6 +245,216 @@ fn test_timelock_violation() {
 }
 
 #[test]
+fn test_amend_proposal_resets_approvals_and_tracks_history() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient1,
+        &token,
+        &100_i128,
+        &Symbol::new(&env, "oldmemo"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+    let before = client.get_proposal(&proposal_id);
+    assert_eq!(before.approvals.len(), 1);
+    assert_eq!(before.status, ProposalStatus::Pending);
+
+    client.amend_proposal(
+        &signer1,
+        &proposal_id,
+        &recipient2,
+        &150_i128,
+        &Symbol::new(&env, "newmemo"),
+    );
+
+    let amended = client.get_proposal(&proposal_id);
+    assert_eq!(amended.recipient, recipient2);
+    assert_eq!(amended.amount, 150_i128);
+    assert_eq!(amended.memo, Symbol::new(&env, "newmemo"));
+    assert_eq!(amended.approvals.len(), 0);
+    assert_eq!(amended.abstentions.len(), 0);
+    assert_eq!(amended.status, ProposalStatus::Pending);
+
+    let history = client.get_proposal_amendments(&proposal_id);
+    assert_eq!(history.len(), 1);
+    let amendment = history.get(0).unwrap();
+    assert_eq!(amendment.old_recipient, recipient1);
+    assert_eq!(amendment.new_recipient, recipient2);
+    assert_eq!(amendment.old_amount, 100_i128);
+    assert_eq!(amendment.new_amount, 150_i128);
+    assert_eq!(amendment.old_memo, Symbol::new(&env, "oldmemo"));
+    assert_eq!(amendment.new_memo, Symbol::new(&env, "newmemo"));
+
+    // Requires fresh re-approval after amendment.
+    client.approve_proposal(&signer1, &proposal_id);
+    let mid = client.get_proposal(&proposal_id);
+    assert_eq!(mid.status, ProposalStatus::Pending);
+    client.approve_proposal(&signer2, &proposal_id);
+    let approved = client.get_proposal(&proposal_id);
+    assert_eq!(approved.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_amend_proposal_only_proposer_can_amend() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let other = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    signers.push_back(other.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &other, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100_i128,
+        &Symbol::new(&env, "memo"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+    );
+
+    let res = client.try_amend_proposal(
+        &other,
+        &proposal_id,
+        &recipient,
+        &120_i128,
+        &Symbol::new(&env, "newmemo"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
+fn test_amend_proposal_rejects_non_pending_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100_i128,
+        &Symbol::new(&env, "memo"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+    );
+
+    client.approve_proposal(&proposer, &proposal_id);
+    let res = client.try_amend_proposal(
+        &proposer,
+        &proposal_id,
+        &recipient,
+        &90_i128,
+        &Symbol::new(&env, "edited"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
+}
+
+#[test]
+fn test_amend_proposal_enforces_spending_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100_i128,
+        &Symbol::new(&env, "memo"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+    );
+
+    let res = client.try_amend_proposal(
+        &proposer,
+        &proposal_id,
+        &recipient,
+        &1_001_i128,
+        &Symbol::new(&env, "edited"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
+
+#[test]
 fn test_priority_levels() {
     let env = Env::default();
     env.mock_all_auths();

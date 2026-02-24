@@ -7,8 +7,8 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, GasConfig, InsuranceConfig,
-    ListMode, NotificationPreferences, Proposal, Reputation, RetryState, Role, VaultMetrics,
-    VelocityConfig,
+    ListMode, NotificationPreferences, Proposal, ProposalAmendment, Reputation, RetryState, Role,
+    VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -41,6 +41,8 @@ pub enum DataKey {
     CancellationRecord(u64),
     /// List of all cancelled proposal IDs -> Vec<u64>
     CancellationHistory,
+    /// Amendment history for a proposal -> Vec<ProposalAmendment>
+    AmendmentHistory(u64),
     /// Recipient list mode -> ListMode
     ListMode,
     /// Whitelist flag for address -> bool
@@ -447,6 +449,24 @@ pub fn get_cancellation_history(env: &Env) -> soroban_sdk::Vec<u64> {
         .persistent()
         .get(&key)
         .unwrap_or(soroban_sdk::Vec::new(env))
+}
+
+pub fn get_amendment_history(env: &Env, proposal_id: u64) -> Vec<ProposalAmendment> {
+    let key = DataKey::AmendmentHistory(proposal_id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_amendment_record(env: &Env, record: &ProposalAmendment) {
+    let key = DataKey::AmendmentHistory(record.proposal_id);
+    let mut history = get_amendment_history(env, record.proposal_id);
+    history.push_back(record.clone());
+    env.storage().persistent().set(&key, &history);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 /// Refund spending limits when a proposal is cancelled
