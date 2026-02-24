@@ -90,17 +90,11 @@ pub enum VaultError {
     ChainNotSupported = 173,
     ExceedsBridgeLimit = 175,
 
-    // Reputation
-    ReputationTooLow = 180,
-
-    // Templates
-    TemplateNotFound = 190,
-    TemplateInactive = 191,
-    TemplateNameExists = 192,
-    TemplateValidationFailed = 193,
-
     // Retry errors
-    MaxRetriesExceeded = 200,
-    RetryBackoffNotElapsed = 201,
-    RetryNotEnabled = 202,
+    MaxRetriesExceeded = 190,
+    RetryBackoffNotElapsed = 191,
+    RetryNotEnabled = 192,
+
+    // Cross-vault errors
+    XVaultNotEnabled = 200,
 }

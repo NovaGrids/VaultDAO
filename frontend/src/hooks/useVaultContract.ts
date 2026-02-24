@@ -10,9 +10,10 @@ import {
 } from 'stellar-sdk';
 import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
-import { withRetry } from '../components/RetryMechanism';
+import { withRetry } from '../utils/retryUtils';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
 import type { SimulationResult } from '../utils/simulation';
+import type { Comment, ListMode } from '../types';
 import {
     generateCacheKey,
     getCachedSimulation,
@@ -151,6 +152,10 @@ interface RawEvent {
 export const useVaultContract = () => {
     const { address, isConnected, signTransaction } = useWallet();
     const [loading, setLoading] = useState(false);
+    const [recipientListMode, setRecipientListMode] = useState<ListMode>('Disabled');
+    const [whitelistAddresses, setWhitelistAddresses] = useState<string[]>([]);
+    const [blacklistAddresses, setBlacklistAddresses] = useState<string[]>([]);
+    const [proposalComments, setProposalComments] = useState<Record<string, Comment[]>>({});
 
     const getDashboardStats = useCallback(async () => {
         try {
@@ -572,17 +577,83 @@ export const useVaultContract = () => {
         return Promise.resolve();
     }, []);
 
-    const getProposalComments = useCallback(async (_proposalId: string) => [], []);
-    const addComment = useCallback(async (_proposalId: string, _body: string, _parentId?: string) => { }, []);
-    const editComment = useCallback(async (_commentId: string, _body: string) => { }, []);
-    const getListMode = useCallback(async () => 'Disabled' as const, []);
-    const setListMode = useCallback(async (_mode: string) => { }, []);
-    const addToWhitelist = useCallback(async (_address: string) => { }, []);
-    const removeFromWhitelist = useCallback(async (_address: string) => { }, []);
-    const addToBlacklist = useCallback(async (_address: string) => { }, []);
-    const removeFromBlacklist = useCallback(async (_address: string) => { }, []);
-    const isWhitelisted = useCallback(async (_address: string) => true, []);
-    const isBlacklisted = useCallback(async (_address: string) => false, []);
+    const getProposalComments = useCallback(async (proposalId: string): Promise<Comment[]> => {
+        return proposalComments[proposalId] ?? [];
+    }, [proposalComments]);
+
+    const addComment = useCallback(async (
+        proposalId: string,
+        text: string,
+        parentId: string = '0',
+    ): Promise<string> => {
+        if (!address) {
+            throw new Error('Wallet not connected');
+        }
+
+        const newComment: Comment = {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            proposalId,
+            author: address,
+            text,
+            parentId,
+            createdAt: new Date().toISOString(),
+            editedAt: '',
+            replies: [],
+        };
+
+        setProposalComments((prev) => ({
+            ...prev,
+            [proposalId]: [...(prev[proposalId] ?? []), newComment],
+        }));
+
+        return newComment.id;
+    }, [address]);
+
+    const editComment = useCallback(async (commentId: string, text: string): Promise<void> => {
+        setProposalComments((prev) => {
+            const updated: Record<string, Comment[]> = {};
+
+            for (const [proposalId, comments] of Object.entries(prev)) {
+                updated[proposalId] = comments.map((comment) =>
+                    comment.id === commentId
+                        ? { ...comment, text, editedAt: new Date().toISOString() }
+                        : comment
+                );
+            }
+
+            return updated;
+        });
+    }, []);
+
+    const getListMode = useCallback(async (): Promise<ListMode> => recipientListMode, [recipientListMode]);
+
+    const setListMode = useCallback(async (mode: ListMode): Promise<void> => {
+        setRecipientListMode(mode);
+    }, []);
+
+    const addToWhitelist = useCallback(async (recipient: string): Promise<void> => {
+        setWhitelistAddresses((prev) => (prev.includes(recipient) ? prev : [...prev, recipient]));
+    }, []);
+
+    const removeFromWhitelist = useCallback(async (recipient: string): Promise<void> => {
+        setWhitelistAddresses((prev) => prev.filter((addressItem) => addressItem !== recipient));
+    }, []);
+
+    const addToBlacklist = useCallback(async (recipient: string): Promise<void> => {
+        setBlacklistAddresses((prev) => (prev.includes(recipient) ? prev : [...prev, recipient]));
+    }, []);
+
+    const removeFromBlacklist = useCallback(async (recipient: string): Promise<void> => {
+        setBlacklistAddresses((prev) => prev.filter((addressItem) => addressItem !== recipient));
+    }, []);
+
+    const isWhitelisted = useCallback(async (recipient: string): Promise<boolean> => {
+        return whitelistAddresses.includes(recipient);
+    }, [whitelistAddresses]);
+
+    const isBlacklisted = useCallback(async (recipient: string): Promise<boolean> => {
+        return blacklistAddresses.includes(recipient);
+    }, [blacklistAddresses]);
 
     return {
         proposeTransfer,
@@ -599,9 +670,9 @@ export const useVaultContract = () => {
         getProposalSignatures,
         remindSigner,
         exportSignatures,
-        getProposalComments,
         addComment,
         editComment,
+        getProposalComments,
         getListMode,
         setListMode,
         addToWhitelist,
@@ -612,16 +683,16 @@ export const useVaultContract = () => {
         isBlacklisted,
         getTokenBalances: async () => [],
         getPortfolioValue: async () => "0",
-        addCustomToken: async (_address: string) => null,
+        addCustomToken: async () => null,
         getVaultBalance: async () => "0",
         getRecurringPayments: async () => [],
-        getRecurringPaymentHistory: async (_id: string) => [],
-        schedulePayment: async (_formData: unknown) => "1",
-        executeRecurringPayment: async (_id: string) => { },
-        cancelRecurringPayment: async (_id: string) => { },
+        getRecurringPaymentHistory: async () => [],
+        schedulePayment: async () => "1",
+        executeRecurringPayment: async () => { },
+        cancelRecurringPayment: async () => { },
         getAllRoles: async () => [],
-        setRole: async (_address: string, _role: number) => { },
-        getUserRole: async (_address: string) => 0,
-        assignRole: async (_address: string, _role: number) => { },
+        setRole: async () => { },
+        getUserRole: async () => 0,
+        assignRole: async () => { },
     };
 };

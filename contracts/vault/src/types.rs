@@ -1,8 +1,23 @@
 //! VaultDAO - Type Definitions
 //!
 //! Core data structures for the multisig treasury contract.
+//!
+//! # Gas Optimization Notes
+//!
+//! This module implements several gas optimization techniques:
+//!
+//! 1. **Type Size Optimization**: Using smaller integer types (u32 instead of u64) where
+//!    values won't exceed the smaller type's range. This reduces storage and serialization costs.
+//!
+//! 2. **Storage Packing**: Related fields are grouped in `Packed*` structs to minimize
+//!    the number of storage operations. A single storage read/write is cheaper than multiple.
+//!
+//! 3. **Lazy Loading**: Large optional fields (attachments, conditions) are stored separately
+//!    to avoid paying for their serialization when not needed.
+//!
+//! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
-use soroban_sdk::{contracttype, Address, String, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
 
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
@@ -73,6 +88,21 @@ pub struct CancellationRecord {
     pub reason: Symbol,
     pub cancelled_at_ledger: u64,
     pub refunded_amount: i128,
+}
+
+/// Audit record for a proposal amendment
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalAmendment {
+    pub proposal_id: u64,
+    pub amended_by: Address,
+    pub amended_at_ledger: u64,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -205,6 +235,10 @@ pub struct Proposal {
     pub amount: i128,
     /// Optional memo/description
     pub memo: Symbol,
+    /// Extensible metadata map for proposal context and integration tags
+    pub metadata: Map<Symbol, String>,
+    /// Optional categorical labels for proposal filtering
+    pub tags: Vec<Symbol>,
     /// Addresses that have approved
     pub approvals: Vec<Address>,
     /// Addresses that explicitly abstained
@@ -235,6 +269,8 @@ pub struct Proposal {
     pub snapshot_ledger: u64,
     /// Voting power snapshot — addresses eligible to vote at creation time
     pub snapshot_signers: Vec<Address>,
+    /// Proposal IDs that must be executed before this proposal can execute
+    pub depends_on: Vec<u64>,
     /// Flag indicating if this is a swap proposal
     pub is_swap: bool,
     /// Ledger sequence when voting must complete (0 = no deadline)
@@ -667,4 +703,220 @@ pub struct RetryState {
     pub next_retry_ledger: u64,
     /// Ledger of the last retry attempt
     pub last_retry_ledger: u64,
+}
+
+// ============================================================================
+// Cross-Vault Proposal Coordination (Issue: feature/cross-vault-coordination)
+// ============================================================================
+
+/// Status of a cross-vault proposal
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CrossVaultStatus {
+    Pending = 0,
+    Approved = 1,
+    Executed = 2,
+    Failed = 3,
+    Cancelled = 4,
+}
+
+/// Describes a single action to be executed on a participant vault
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VaultAction {
+    /// Address of the participant vault contract
+    pub vault_address: Address,
+    /// Recipient of the transfer from the participant vault
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Amount to transfer
+    pub amount: i128,
+    /// Optional memo
+    pub memo: Symbol,
+}
+
+/// Cross-vault proposal stored alongside the base Proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossVaultProposal {
+    /// List of actions to execute across participant vaults
+    pub actions: Vec<VaultAction>,
+    /// Current status of the cross-vault proposal
+    pub status: CrossVaultStatus,
+    /// Per-action execution results (true = success)
+    pub execution_results: Vec<bool>,
+    /// Ledger when executed (0 if not yet executed)
+    pub executed_at: u64,
+}
+
+/// Configuration for cross-vault participation
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossVaultConfig {
+    /// Whether this vault participates in cross-vault operations
+    pub enabled: bool,
+    /// Vault addresses authorized to coordinate actions on this vault
+    pub authorized_coordinators: Vec<Address>,
+    /// Maximum amount per single cross-vault action
+    pub max_action_amount: i128,
+    /// Maximum number of actions in a single cross-vault proposal
+    pub max_actions: u32,
+}
+
+// ============================================================================
+// Dispute Resolution (Issue: feature/dispute-resolution)
+// ============================================================================
+
+/// Lifecycle status of a dispute
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DisputeStatus {
+    /// Dispute has been filed, awaiting arbitrator review
+    Filed = 0,
+    /// Arbitrator is actively reviewing the dispute
+    UnderReview = 1,
+    /// Dispute has been resolved by an arbitrator
+    Resolved = 2,
+    /// Dispute was dismissed by an arbitrator
+    Dismissed = 3,
+}
+
+/// Outcome of a dispute resolution
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DisputeResolution {
+    /// Ruling in favor of the original proposer (proposal proceeds)
+    InFavorOfProposer = 0,
+    /// Ruling in favor of the disputer (proposal rejected)
+    InFavorOfDisputer = 1,
+    /// Compromise reached (proposal modified or partially executed)
+    Compromise = 2,
+    /// Dispute dismissed as invalid
+    Dismissed = 3,
+}
+
+/// On-chain dispute record for a contested proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Dispute {
+    /// Unique dispute ID
+    pub id: u64,
+    /// ID of the disputed proposal
+    pub proposal_id: u64,
+    /// Address that filed the dispute
+    pub disputer: Address,
+    /// Short reason for the dispute
+    pub reason: Symbol,
+    /// IPFS hashes or on-chain references to supporting evidence
+    pub evidence: Vec<String>,
+    /// Current status
+    pub status: DisputeStatus,
+    /// Resolution outcome (only set when status is Resolved or Dismissed)
+    pub resolution: DisputeResolution,
+    /// Arbitrator who resolved the dispute (zero-value until resolved)
+    pub arbitrator: Address,
+    /// Ledger when dispute was filed
+    pub filed_at: u64,
+    /// Ledger when dispute was resolved (0 if unresolved)
+    pub resolved_at: u64,
+}
+// ============================================================================
+// Escrow System (Issue: feature/escrow-system)
+// ============================================================================
+
+/// Status lifecycle of an escrow
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EscrowStatus {
+    /// Escrow created, awaiting funding
+    Pending = 0,
+    /// Funds locked, milestone phase active
+    Active = 1,
+    /// All milestones completed, funds ready for release
+    MilestonesComplete = 2,
+    /// Funds released to recipient
+    Released = 3,
+    /// Refunded to funder (on failure or dispute)
+    Refunded = 4,
+    /// Disputed, awaiting arbitration
+    Disputed = 5,
+}
+
+/// Milestone tracking unit for progressive fund release
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Milestone {
+    /// Unique milestone ID
+    pub id: u64,
+    /// Percentage of total escrow amount (0-100)
+    pub percentage: u32,
+    /// Ledger when this milestone can be marked complete
+    pub release_ledger: u64,
+    /// Whether this milestone has been verified as complete
+    pub is_completed: bool,
+    /// Ledger when milestone was completed (0 if not completed)
+    pub completion_ledger: u64,
+}
+
+/// Escrow agreement holding funds with milestone-based releases
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Escrow {
+    /// Unique escrow ID
+    pub id: u64,
+    /// Address that funded the escrow
+    pub funder: Address,
+    /// Address that receives funds on completion
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Total escrow amount (in token's smallest unit)
+    pub total_amount: i128,
+    /// Amount already released
+    pub released_amount: i128,
+    /// Milestones for progressive fund release
+    pub milestones: Vec<Milestone>,
+    /// Current escrow status
+    pub status: EscrowStatus,
+    /// Arbitrator for dispute resolution
+    pub arbitrator: Address,
+    /// Optional dispute details if disputed
+    pub dispute_reason: Symbol,
+    /// Ledger when escrow was created
+    pub created_at: u64,
+    /// Ledger when escrow expires (full refund if not completed)
+    pub expires_at: u64,
+    /// Ledger when escrow was released/refunded (0 if still active)
+    pub finalized_at: u64,
+}
+
+impl Escrow {
+    /// Calculate total percentage from all milestones
+    pub fn total_milestone_percentage(&self) -> u32 {
+        let mut total: u32 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                total = total.saturating_add(m.percentage);
+            }
+        }
+        total
+    }
+
+    /// Calculate amount available for immediate release
+    pub fn amount_to_release(&self) -> i128 {
+        let mut completed_percentage: u32 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.is_completed {
+                    completed_percentage = completed_percentage.saturating_add(m.percentage);
+                }
+            }
+        }
+        (self.total_amount * completed_percentage as i128) / 100 - self.released_amount
+    }
 }

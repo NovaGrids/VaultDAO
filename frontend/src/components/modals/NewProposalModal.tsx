@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import FileUploader, { type UploadedAttachment } from '../FileUploader';
+import FormRenderer from '../FormRenderer';
+import type { FormConfig, FormSubmissionData } from '../../types/formBuilder';
 
 export interface NewProposalFormData {
   recipient: string;
@@ -21,6 +23,8 @@ interface NewProposalModalProps {
   onAttachmentsChange?: (attachments: UploadedAttachment[]) => void;
   onOpenTemplateSelector: () => void;
   onSaveAsTemplate: () => void;
+  useCustomForm?: boolean;
+  customFormConfig?: FormConfig;
 }
 
 const NewProposalModal: React.FC<NewProposalModalProps> = ({
@@ -34,6 +38,8 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   onAttachmentsChange,
   onOpenTemplateSelector,
   onSaveAsTemplate,
+  useCustomForm = false,
+  customFormConfig,
 }) => {
   const { getListMode, isWhitelisted, isBlacklisted } = useVaultContract();
   const [recipientError, setRecipientError] = useState<string | null>(null);
@@ -77,20 +83,78 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      loadListMode();
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadListMode().catch(console.error);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, loadListMode]);
 
   useEffect(() => {
     if (formData.recipient && listMode !== 'Disabled') {
-      validateRecipient();
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      validateRecipient().catch(console.error);
     } else {
       setRecipientError(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.recipient, listMode, validateRecipient]);
 
   if (!isOpen) {
     return null;
+  }
+
+  // Use custom form if provided
+  if (useCustomForm && customFormConfig) {
+    const handleCustomFormSubmit = (data: FormSubmissionData) => {
+      // Map custom form data to proposal form data
+      const mappedData: NewProposalFormData = {
+        recipient: String(data['recipient-address'] ?? ''),
+        token: String(data['token-address'] ?? 'native'),
+        amount: String(data['amount'] ?? ''),
+        memo: String(data['memo'] ?? ''),
+      };
+
+      // Update form data
+      Object.entries(mappedData).forEach(([key, value]) => {
+        onFieldChange(key as keyof NewProposalFormData, value);
+      });
+
+      // Trigger submit
+      const syntheticEvent = {
+        preventDefault: () => { },
+        stopPropagation: () => { },
+      } as React.FormEvent;
+      onSubmit(syntheticEvent);
+    };
+
+    return (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
+        <div className="w-full max-w-2xl rounded-xl border border-gray-700 bg-gray-900 p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="text-xl font-semibold text-white">Create New Proposal</h3>
+            {selectedTemplateName ? (
+              <span className="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs text-purple-300">
+                Template: {selectedTemplateName}
+              </span>
+            ) : null}
+          </div>
+
+          <FormRenderer
+            config={customFormConfig}
+            onSubmit={handleCustomFormSubmit}
+            loading={loading}
+            submitButtonText={loading ? 'Submitting...' : 'Submit Proposal'}
+          />
+
+          <button
+            onClick={onClose}
+            className="mt-4 w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

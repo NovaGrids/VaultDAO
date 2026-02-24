@@ -1,13 +1,30 @@
 //! VaultDAO - Storage Layer
 //!
 //! Storage keys and helper functions for persistent state.
+//!
+//! # Gas Optimization Notes
+//!
+//! This module implements several gas optimization techniques:
+//!
+//! 1. **Packed Storage Keys**: Related data is stored together using `Packed*` structs
+//!    to reduce the number of storage operations.
+//!
+//! 2. **Temporary Storage**: Short-lived data (daily/weekly spending, velocity history)
+//!    uses temporary storage which is cheaper and auto-expires.
+//!
+//! 3. **Lazy Loading**: Large optional fields are stored separately and loaded only when needed.
+//!
+//! 4. **Caching**: Frequently accessed data is cached in instance storage for faster access.
+//!
+//! 5. **Batch Operations**: Multiple related updates are batched into single storage operations.
 
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
-    ProposalTemplate, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, GasConfig,
+    InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment, Reputation,
+    RetryState, Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -40,6 +57,8 @@ pub enum DataKey {
     CancellationRecord(u64),
     /// List of all cancelled proposal IDs -> Vec<u64>
     CancellationHistory,
+    /// Amendment history for a proposal -> Vec<ProposalAmendment>
+    AmendmentHistory(u64),
     /// Recipient list mode -> ListMode
     ListMode,
     /// Whitelist flag for address -> bool
@@ -78,6 +97,26 @@ pub enum DataKey {
     TemplateName(soroban_sdk::Symbol),
     /// Retry state for a proposal -> RetryState
     RetryState(u64),
+    /// Cross-vault proposal by ID -> CrossVaultProposal
+    CrossVaultProposal(u64),
+    /// Cross-vault configuration -> CrossVaultConfig
+    CrossVaultConfig,
+    /// Dispute by ID -> Dispute
+    Dispute(u64),
+    /// Dispute ID for a proposal -> u64
+    ProposalDispute(u64),
+    /// Next dispute ID counter -> u64
+    NextDisputeId,
+    /// Arbitrator addresses -> Vec<Address>
+    Arbitrators,
+    /// Escrow agreement by ID -> Escrow
+    Escrow(u64),
+    /// Next escrow ID counter -> u64
+    NextEscrowId,
+    /// Escrow IDs by funder address -> Vec<u64>
+    FunderEscrows(Address),
+    /// Escrow IDs by recipient address -> Vec<u64>
+    RecipientEscrows(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -146,6 +185,10 @@ pub fn get_proposal(env: &Env, id: u64) -> Result<Proposal, VaultError> {
         .ok_or(VaultError::ProposalNotFound)?;
     proposal.attachments = get_attachments(env, id);
     Ok(proposal)
+}
+
+pub fn proposal_exists(env: &Env, id: u64) -> bool {
+    env.storage().persistent().has(&DataKey::Proposal(id))
 }
 
 pub fn set_proposal(env: &Env, proposal: &Proposal) {
@@ -436,6 +479,24 @@ pub fn get_cancellation_history(env: &Env) -> soroban_sdk::Vec<u64> {
         .persistent()
         .get(&key)
         .unwrap_or(soroban_sdk::Vec::new(env))
+}
+
+pub fn get_amendment_history(env: &Env, proposal_id: u64) -> Vec<ProposalAmendment> {
+    let key = DataKey::AmendmentHistory(proposal_id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_amendment_record(env: &Env, record: &ProposalAmendment) {
+    let key = DataKey::AmendmentHistory(record.proposal_id);
+    let mut history = get_amendment_history(env, record.proposal_id);
+    history.push_back(record.clone());
+    env.storage().persistent().set(&key, &history);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 /// Refund spending limits when a proposal is cancelled
@@ -815,4 +876,157 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Cross-Vault Coordination (Issue: feature/cross-vault-coordination)
+// ============================================================================
+
+pub fn get_cross_vault_config(env: &Env) -> Option<CrossVaultConfig> {
+    env.storage().instance().get(&DataKey::CrossVaultConfig)
+}
+
+pub fn set_cross_vault_config(env: &Env, config: &CrossVaultConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CrossVaultConfig, config);
+}
+
+pub fn get_cross_vault_proposal(env: &Env, proposal_id: u64) -> Option<CrossVaultProposal> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossVaultProposal(proposal_id))
+}
+
+pub fn set_cross_vault_proposal(env: &Env, proposal_id: u64, proposal: &CrossVaultProposal) {
+    let key = DataKey::CrossVaultProposal(proposal_id);
+    env.storage().persistent().set(&key, proposal);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Dispute Resolution (Issue: feature/dispute-resolution)
+// ============================================================================
+
+pub fn get_arbitrators(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Arbitrators)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_arbitrators(env: &Env, arbitrators: &Vec<Address>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::Arbitrators, arbitrators);
+}
+
+pub fn get_next_dispute_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextDisputeId)
+        .unwrap_or(1)
+}
+
+pub fn increment_dispute_id(env: &Env) -> u64 {
+    let id = get_next_dispute_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDisputeId, &(id + 1));
+    id
+}
+
+pub fn get_dispute(env: &Env, id: u64) -> Option<Dispute> {
+    env.storage().persistent().get(&DataKey::Dispute(id))
+}
+
+pub fn set_dispute(env: &Env, dispute: &Dispute) {
+    let key = DataKey::Dispute(dispute.id);
+    env.storage().persistent().set(&key, dispute);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn get_proposal_dispute(env: &Env, proposal_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ProposalDispute(proposal_id))
+}
+
+pub fn set_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
+    let key = DataKey::ProposalDispute(proposal_id);
+    env.storage().persistent().set(&key, &dispute_id);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+// ============================================================================
+// Escrow (Issue: feature/escrow-system)
+// ============================================================================
+
+pub fn get_next_escrow_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextEscrowId)
+        .unwrap_or(1)
+}
+
+pub fn increment_escrow_id(env: &Env) -> u64 {
+    let id = get_next_escrow_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextEscrowId, &(id + 1));
+    id
+}
+
+pub fn get_escrow(env: &Env, id: u64) -> Result<Escrow, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Escrow(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn set_escrow(env: &Env, escrow: &Escrow) {
+    let key = DataKey::Escrow(escrow.id);
+    env.storage().persistent().set(&key, escrow);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn get_funder_escrows(env: &Env, funder: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::FunderEscrows(funder.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_funder_escrow(env: &Env, funder: &Address, escrow_id: u64) {
+    let mut escrows = get_funder_escrows(env, funder);
+    escrows.push_back(escrow_id);
+    let key = DataKey::FunderEscrows(funder.clone());
+    env.storage().persistent().set(&key, &escrows);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_recipient_escrows(env: &Env, recipient: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecipientEscrows(recipient.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
+    let mut escrows = get_recipient_escrows(env, recipient);
+    escrows.push_back(escrow_id);
+    let key = DataKey::RecipientEscrows(recipient.clone());
+    env.storage().persistent().set(&key, &escrows);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }

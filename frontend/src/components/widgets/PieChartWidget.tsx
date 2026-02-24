@@ -3,8 +3,8 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
 interface PieChartWidgetProps {
   title: string;
-  data?: any[];
-  onDrillDown?: (data: any) => void;
+  data?: Record<string, unknown>[];
+  onDrillDown?: (data: Record<string, unknown>) => void;
 }
 
 const COLORS = ['#8B5CF6', '#EC4899', '#10B981', '#F59E0B', '#3B82F6'];
