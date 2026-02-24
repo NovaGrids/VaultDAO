@@ -1289,7 +1289,7 @@ impl VaultDAO {
         }
 
         if storage::is_whitelisted(&env, &addr) {
-            return Err(VaultError::AddressAlreadyOnList);
+            return Err(VaultError::AddressListError);
         }
 
         storage::add_to_whitelist(&env, &addr);
@@ -1314,7 +1314,7 @@ impl VaultDAO {
         }
 
         if !storage::is_whitelisted(&env, &addr) {
-            return Err(VaultError::AddressNotOnList);
+            return Err(VaultError::AddressListError);
         }
 
         storage::remove_from_whitelist(&env, &addr);
@@ -1340,7 +1340,7 @@ impl VaultDAO {
         }
 
         if storage::is_blacklisted(&env, &addr) {
-            return Err(VaultError::AddressAlreadyOnList);
+            return Err(VaultError::AddressListError);
         }
 
         storage::add_to_blacklist(&env, &addr);
@@ -1365,7 +1365,7 @@ impl VaultDAO {
         }
 
         if !storage::is_blacklisted(&env, &addr) {
-            return Err(VaultError::AddressNotOnList);
+            return Err(VaultError::AddressListError);
         }
 
         storage::remove_from_blacklist(&env, &addr);
@@ -1389,12 +1389,12 @@ impl VaultDAO {
                 if storage::is_whitelisted(env, recipient) {
                     Ok(())
                 } else {
-                    Err(VaultError::RecipientNotWhitelisted)
+                    Err(VaultError::AddressListError)
                 }
             }
             ListMode::Blacklist => {
                 if storage::is_blacklisted(env, recipient) {
-                    Err(VaultError::RecipientBlacklisted)
+                    Err(VaultError::AddressListError)
                 } else {
                     Ok(())
                 }
@@ -2138,7 +2138,7 @@ impl VaultDAO {
         }
 
         // Validate DEX is enabled
-        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexNotEnabled)?;
+        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
 
         // Validate DEX address
         let dex_addr = match &swap_op {
@@ -2151,7 +2151,7 @@ impl VaultDAO {
         };
 
         if !dex_config.enabled_dexs.contains(dex_addr) {
-            return Err(VaultError::DexNotEnabled);
+            return Err(VaultError::DexError);
         }
 
         // Create proposal
@@ -2230,8 +2230,8 @@ impl VaultDAO {
 
         // Get swap operation
         let swap_op =
-            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::InvalidSwapParams)?;
-        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexNotEnabled)?;
+            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexError)?;
+        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
 
         // Execute based on operation type
         let result = match swap_op {
@@ -2321,12 +2321,12 @@ impl VaultDAO {
 
         // Validate slippage
         if expected_out < min_amount_out {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexError);
         }
 
         // Validate price impact
         if price_impact > dex_config.max_price_impact_bps {
-            return Err(VaultError::PriceImpactExceeded);
+            return Err(VaultError::DexError);
         }
 
         // Execute swap via DEX contract
@@ -2364,7 +2364,7 @@ impl VaultDAO {
         let lp_tokens = (amount_a + amount_b) / 2;
 
         if lp_tokens < min_lp_tokens {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexError);
         }
 
         events::emit_liquidity_added(env, 0, dex, lp_tokens);
@@ -2391,7 +2391,7 @@ impl VaultDAO {
         let token_b_out = amount / 2;
 
         if token_a_out < min_token_a || token_b_out < min_token_b {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexError);
         }
 
         events::emit_liquidity_removed(env, 0, dex, amount);
@@ -2480,7 +2480,7 @@ impl VaultDAO {
         let denominator = reserve_in + amount_in_with_fee;
 
         if denominator == 0 {
-            return Err(VaultError::InsufficientLiquidity);
+            return Err(VaultError::DexError);
         }
 
         Ok(numerator / denominator)
@@ -2510,5 +2510,253 @@ impl VaultDAO {
     /// Get swap result for a proposal
     pub fn get_swap_result(env: Env, proposal_id: u64) -> Option<types::SwapResult> {
         storage::get_swap_result(&env, proposal_id)
+    }
+
+    // ========================================================================
+    // Guardian Recovery Management (Issue: feature/wallet-recovery)
+    // ========================================================================
+
+    /// Add a new guardian to the recovery system
+    ///
+    /// Only the vault owner (Admin) can add guardians. The guardian system requires
+    /// a minimum of 2 guardians and allows a maximum of 10 to prevent excessive gas costs.
+    ///
+    /// # Arguments
+    /// * `owner` - The admin address (must authorize)
+    /// * `guardian` - The address to add as a guardian
+    ///
+    /// # Errors
+    /// * `Unauthorized` - Caller is not an admin
+    /// * `GuardianAlreadyExists` - Guardian is already in the list
+    /// * `TooManyGuardians` - Would exceed maximum of 10 guardians
+    pub fn add_guardian(env: Env, owner: Address, guardian: Address) -> Result<(), VaultError> {
+        // Verify caller is owner/admin
+        owner.require_auth();
+        
+        let role = storage::get_role(&env, &owner);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Get or create guardian config
+        let mut config = storage::get_guardian_config(&env).unwrap_or_else(|| {
+            types::GuardianConfig {
+                guardians: Vec::new(&env),
+                threshold: 2, // Default threshold
+                recovery_delay: 120_960, // ~7 days in ledgers
+                recovery_expiry: 518_400, // ~30 days in ledgers
+            }
+        });
+
+        // Check if guardian already exists (active or inactive)
+        if let Some(existing) = storage::get_guardian(&env, &guardian) {
+            if existing.is_active {
+                return Err(VaultError::GuardianAlreadyExists);
+            }
+            // If guardian was previously removed, we can reactivate them
+            // by updating their record
+        }
+
+        // Count active guardians
+        let mut active_count = 0u32;
+        for i in 0..config.guardians.len() {
+            if let Some(g) = config.guardians.get(i) {
+                if g.is_active {
+                    active_count += 1;
+                }
+            }
+        }
+
+        // Check maximum guardian limit (10)
+        if active_count >= 10 {
+            return Err(VaultError::TooManyGuardians);
+        }
+
+        // Create guardian record
+        let current_ledger = env.ledger().sequence() as u64;
+        let new_guardian = types::Guardian {
+            address: guardian.clone(),
+            is_active: true,
+            added_at: current_ledger,
+            removed_at: 0,
+        };
+
+        // Store guardian
+        storage::set_guardian(&env, &new_guardian);
+
+        // Update guardian list in config
+        // Check if guardian was in the list before (inactive)
+        let mut found = false;
+        for i in 0..config.guardians.len() {
+            if let Some(g) = config.guardians.get(i) {
+                if g.address == guardian {
+                    // Update existing entry
+                    config.guardians.set(i, new_guardian.clone());
+                    found = true;
+                    break;
+                }
+            }
+        }
+        
+        if !found {
+            // Add new guardian to list
+            config.guardians.push_back(new_guardian);
+        }
+
+        // Store updated config
+        storage::set_guardian_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_guardian_added(&env, &guardian, active_count + 1);
+
+        Ok(())
+    }
+
+    /// Remove a guardian from the recovery system
+    ///
+    /// Only the vault owner (Admin) can remove guardians. The system enforces
+    /// a minimum of 2 active guardians to ensure recovery is always possible.
+    ///
+    /// # Arguments
+    /// * `owner` - The admin address (must authorize)
+    /// * `guardian` - The address to remove as a guardian
+    ///
+    /// # Errors
+    /// * `Unauthorized` - Caller is not an admin
+    /// * `GuardianNotFound` - Guardian does not exist or is already inactive
+    /// * `InsufficientGuardians` - Would leave fewer than 2 active guardians
+    pub fn remove_guardian(
+        env: Env,
+        owner: Address,
+        guardian: Address,
+    ) -> Result<(), VaultError> {
+        // Verify caller is owner/admin
+        owner.require_auth();
+        
+        let role = storage::get_role(&env, &owner);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Get guardian config
+        let mut config = storage::get_guardian_config(&env)
+            .ok_or(VaultError::GuardianNotFound)?;
+
+        // Get guardian record
+        let mut guardian_record = storage::get_guardian(&env, &guardian)
+            .ok_or(VaultError::GuardianNotFound)?;
+
+        // Check if guardian is active
+        if !guardian_record.is_active {
+            return Err(VaultError::GuardianNotFound);
+        }
+
+        // Count active guardians
+        let mut active_count = 0u32;
+        for i in 0..config.guardians.len() {
+            if let Some(g) = config.guardians.get(i) {
+                if g.is_active {
+                    active_count += 1;
+                }
+            }
+        }
+
+        // Check minimum guardian requirement (must have at least 2 active)
+        if active_count <= 2 {
+            return Err(VaultError::InsufficientGuardians);
+        }
+
+        // Mark guardian as inactive
+        let current_ledger = env.ledger().sequence() as u64;
+        guardian_record.is_active = false;
+        guardian_record.removed_at = current_ledger;
+
+        // Store updated guardian
+        storage::set_guardian(&env, &guardian_record);
+
+        // Update guardian list in config
+        for i in 0..config.guardians.len() {
+            if let Some(g) = config.guardians.get(i) {
+                if g.address == guardian {
+                    config.guardians.set(i, guardian_record.clone());
+                    break;
+                }
+            }
+        }
+
+        // Store updated config
+        storage::set_guardian_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_guardian_removed(&env, &guardian, active_count - 1);
+
+        Ok(())
+    }
+
+    /// Set the guardian approval threshold for recovery
+    ///
+    /// Only the vault owner (Admin) can set the threshold. The threshold must be
+    /// at least 1 and cannot exceed the number of active guardians.
+    ///
+    /// # Arguments
+    /// * `owner` - The admin address (must authorize)
+    /// * `threshold` - The number of guardian approvals required for recovery
+    ///
+    /// # Errors
+    /// * `Unauthorized` - Caller is not an admin
+    /// * `InvalidGuardianThreshold` - Threshold is 0 or exceeds active guardian count
+    pub fn set_guardian_threshold(
+        env: Env,
+        owner: Address,
+        threshold: u32,
+    ) -> Result<(), VaultError> {
+        // Verify caller is owner/admin
+        owner.require_auth();
+        
+        let role = storage::get_role(&env, &owner);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Get guardian config
+        let mut config = storage::get_guardian_config(&env)
+            .ok_or(VaultError::InvalidGuardianThreshold)?;
+
+        // Validate threshold >= 1
+        if threshold < 1 {
+            return Err(VaultError::InvalidGuardianThreshold);
+        }
+
+        // Count active guardians
+        let mut active_count = 0u32;
+        for i in 0..config.guardians.len() {
+            if let Some(g) = config.guardians.get(i) {
+                if g.is_active {
+                    active_count += 1;
+                }
+            }
+        }
+
+        // Validate threshold <= active guardian count
+        if threshold > active_count {
+            return Err(VaultError::InvalidGuardianThreshold);
+        }
+
+        // Store old threshold for event
+        let old_threshold = config.threshold;
+
+        // Update threshold
+        config.threshold = threshold;
+
+        // Store updated config
+        storage::set_guardian_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_threshold_updated(&env, old_threshold, threshold);
+
+        Ok(())
     }
 }
