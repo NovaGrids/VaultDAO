@@ -28,6 +28,7 @@ fn test_audit_trail_creation() {
     let config = InitConfig {
         signers,
         threshold: 1,
+        quorum: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -76,6 +77,7 @@ fn test_audit_trail_hash_chain() {
     let config = InitConfig {
         signers,
         threshold: 1,
+        quorum: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -124,6 +126,7 @@ fn test_audit_trail_verification() {
     let config = InitConfig {
         signers,
         threshold: 1,
+        quorum: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -166,6 +169,7 @@ fn test_audit_trail_all_actions() {
     let config = InitConfig {
         signers,
         threshold: 1,
+        quorum: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
