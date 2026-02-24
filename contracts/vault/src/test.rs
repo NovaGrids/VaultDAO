@@ -3202,7 +3202,7 @@ fn test_proposal_expires_after_period() {
 
     // Mark as expired
     let marked = client.check_and_mark_expired(&proposal_id);
-    assert_eq!(marked, true);
+    assert!(marked);
 
     // Try to approve - should fail with expired
     let result = client.try_approve_proposal(&signer, &proposal_id);
@@ -3698,7 +3698,7 @@ fn test_update_expiration_config() {
 
     // Verify update
     let retrieved_config = client.get_expiration_config();
-    assert_eq!(retrieved_config.enabled, true);
+    assert!(retrieved_config.enabled);
     assert_eq!(retrieved_config.default_period, 200);
     assert_eq!(retrieved_config.high_priority_period, 100);
     assert_eq!(retrieved_config.critical_priority_period, 50);
@@ -3768,7 +3768,7 @@ fn test_is_eligible_for_cleanup() {
     );
 
     // Not eligible yet (not expired)
-    assert_eq!(client.is_eligible_for_cleanup(&proposal_id), false);
+    assert!(!client.is_eligible_for_cleanup(&proposal_id));
 
     // Advance past expiration
     env.ledger().with_mut(|li| {
@@ -3779,7 +3779,7 @@ fn test_is_eligible_for_cleanup() {
     client.check_and_mark_expired(&proposal_id);
 
     // Still not eligible (grace period)
-    assert_eq!(client.is_eligible_for_cleanup(&proposal_id), false);
+    assert!(!client.is_eligible_for_cleanup(&proposal_id));
 
     // Advance past grace period
     env.ledger().with_mut(|li| {
@@ -3787,5 +3787,5 @@ fn test_is_eligible_for_cleanup() {
     });
 
     // Now eligible
-    assert_eq!(client.is_eligible_for_cleanup(&proposal_id), true);
+    assert!(client.is_eligible_for_cleanup(&proposal_id));
 }
