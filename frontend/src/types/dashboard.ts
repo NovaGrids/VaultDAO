@@ -1,4 +1,4 @@
-export type WidgetType = 'line-chart' | 'bar-chart' | 'pie-chart' | 'stat-card' | 'proposal-list' | 'calendar';
+export type WidgetType = 'line-chart' | 'bar-chart' | 'pie-chart' | 'stat-card' | 'proposal-list' | 'calendar' | 'custom';
 
 export interface WidgetConfig {
   id: string;
@@ -6,6 +6,9 @@ export interface WidgetConfig {
   title: string;
   dataSource?: string;
   settings?: Record<string, any>;
+  // For custom/third-party widgets
+  source?: 'built-in' | 'third-party' | 'custom';
+  manifestUrl?: string;
 }
 
 export interface LayoutItem {
