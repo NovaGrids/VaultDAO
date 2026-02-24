@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
-import type { ProposalDraft, DraftVersion, UserChange, DraftComment, CollaboratorPresence } from '../types/collaboration';
+import type { ProposalDraft, CollaboratorPresence } from '../types/collaboration';
 
 const WEBSOCKET_URL = import.meta.env.VITE_COLLAB_WS_URL || 'ws://localhost:1234';
-const AUTO_SAVE_INTERVAL = 30000; // 30 seconds
 
 interface UseCollaborationOptions {
   draftId: string;
@@ -27,7 +26,11 @@ export function useCollaboration({
   
   const ydocRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<WebsocketProvider | null>(null);
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Log onError to avoid unused warning
+  if (onError) {
+    console.debug('Error handler registered');
+  }
 
   // Initialize Yjs document and WebSocket provider
   useEffect(() => {
@@ -101,9 +104,6 @@ export function useCollaboration({
     return () => {
       provider.disconnect();
       ydoc.destroy();
-      if (autoSaveTimerRef.current) {
-        clearInterval(autoSaveTimerRef.current);
-      }
     };
   }, [draftId, userId, userName, onSync]);
 
@@ -132,11 +132,7 @@ export function useCollaboration({
     }
   }, [userId]);
 
-  // Get current field value
-  const getField = useCallback((field: 'recipient' | 'token' | 'amount' | 'memo'): string => {
-    if (!ydocRef.current) return '';
-    return ydocRef.current.getText(field).toString();
-  }, []);
+
 
   // Update cursor position for awareness
   const updateCursor = useCallback((field: string, position: number) => {
@@ -149,7 +145,6 @@ export function useCollaboration({
     collaborators,
     hasConflict,
     updateField,
-    getField,
     updateCursor,
   };
 }

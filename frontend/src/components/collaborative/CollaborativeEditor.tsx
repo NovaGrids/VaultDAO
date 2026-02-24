@@ -26,7 +26,7 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const { isConnected, collaborators, hasConflict, updateField, getField } = useCollaboration({
+  const { isConnected, collaborators, hasConflict, updateField } = useCollaboration({
     draftId,
     userId,
     userName,

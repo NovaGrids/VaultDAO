@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Activity, User, Filter, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, ChevronDown, ChevronUp } from 'lucide-react';
 import { useChangeTracking } from '../../hooks/useChangeTracking';
 
 interface ChangeTrackerProps {
