@@ -218,6 +218,53 @@ pub struct Comment {
     pub edited_at: u64,
 }
 
+/// Streaming payment status
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum StreamStatus {
+    /// Stream is active and accruing
+    Active = 0,
+    /// Stream is paused (no accrual)
+    Paused = 1,
+    /// Stream was cancelled by sender
+    Cancelled = 2,
+    /// Stream completed (full amount streamed)
+    Completed = 3,
+}
+
+/// Streaming payment for continuous token transfers (salary streaming, vesting)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StreamingPayment {
+    /// Unique stream ID
+    pub id: u64,
+    /// Address that created the stream (Treasurer/Admin)
+    pub sender: Address,
+    /// Recipient of the streamed tokens
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Total amount to stream over duration
+    pub total_amount: i128,
+    /// Amount per ledger (rate)
+    pub rate: i128,
+    /// Duration in ledgers
+    pub duration: u64,
+    /// Ledger when stream started
+    pub start_ledger: u64,
+    /// Amount already claimed by recipient
+    pub amount_claimed: i128,
+    /// Current status
+    pub status: StreamStatus,
+    /// Cumulative ledgers spent paused (for accrual calculation)
+    pub total_paused_ledgers: u64,
+    /// Ledger when current pause started (0 if not paused)
+    pub pause_start_ledger: u64,
+    /// Memo/description
+    pub memo: Symbol,
+}
+
 /// Recurring payment schedule
 #[contracttype]
 #[derive(Clone, Debug)]

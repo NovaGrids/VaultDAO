@@ -271,3 +271,59 @@ pub fn emit_rewards_claimed(env: &Env, proposal_id: u64, farm: &Address, amount:
         (farm.clone(), amount),
     );
 }
+
+// ============================================================================
+// Streaming Payment Events (feature/streaming-payments)
+// ============================================================================
+
+/// Emit when a streaming payment is created
+pub fn emit_stream_created(
+    env: &Env,
+    stream_id: u64,
+    sender: &Address,
+    recipient: &Address,
+    token: &Address,
+    total_amount: i128,
+    rate: i128,
+    duration: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_created"), stream_id),
+        (
+            sender.clone(),
+            recipient.clone(),
+            token.clone(),
+            total_amount,
+            rate,
+            duration,
+        ),
+    );
+}
+
+/// Emit when a stream is paused
+pub fn emit_stream_paused(env: &Env, stream_id: u64, by: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "stream_paused"), stream_id), by.clone());
+}
+
+/// Emit when a stream is resumed
+pub fn emit_stream_resumed(env: &Env, stream_id: u64, by: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "stream_resumed"), stream_id), by.clone());
+}
+
+/// Emit when a stream is cancelled
+pub fn emit_stream_cancelled(env: &Env, stream_id: u64, by: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "stream_cancelled"), stream_id),
+        by.clone(),
+    );
+}
+
+/// Emit when recipient claims from a stream
+pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "stream_claimed"), stream_id),
+        (recipient.clone(), amount),
+    );
+}

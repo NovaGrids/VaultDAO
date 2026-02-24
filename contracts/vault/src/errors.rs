@@ -50,6 +50,10 @@ pub enum VaultError {
     TimelockNotExpired = 404,
     /// Recurring payment interval too short
     IntervalTooShort = 405,
+    /// Stream does not exist or invalid state
+    StreamNotFound = 406,
+    /// Stream not active (paused, cancelled, or wrong state)
+    StreamNotActive = 407,
 
     // Configuration errors (5xx)
     /// Threshold must be at least 1

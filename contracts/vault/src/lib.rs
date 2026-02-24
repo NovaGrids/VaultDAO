@@ -20,7 +20,8 @@ use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
     Comment, Condition, ConditionLogic, Config, InsuranceConfig, ListMode, NotificationPreferences,
-    Priority, Proposal, ProposalStatus, Reputation, Role, ThresholdStrategy,
+    Priority, Proposal, ProposalStatus, Reputation, Role, StreamStatus, StreamingPayment,
+    ThresholdStrategy,
 };
 
 /// The main contract structure for VaultDAO.
@@ -724,6 +725,278 @@ impl VaultDAO {
         // Use a generic event or add a specific one (skipping specific event for brevity/limit)
 
         Ok(id)
+    }
+
+    // ========================================================================
+    // Streaming Payments (feature/streaming-payments)
+    // ========================================================================
+
+    /// Create a streaming payment for continuous token transfers.
+    ///
+    /// Only Treasurer or Admin can create. Tokens are reserved from vault balance.
+    /// Rate = amount per ledger; duration = total ledgers.
+    pub fn create_stream(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token_addr: Address,
+        total_amount: i128,
+        duration: u64,
+        memo: Symbol,
+    ) -> Result<u64, VaultError> {
+        sender.require_auth();
+
+        let role = storage::get_role(&env, &sender);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        if total_amount <= 0 || duration == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        Self::validate_recipient(&env, &recipient)?;
+
+        let balance = token::balance(&env, &token_addr);
+        if balance < total_amount {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let rate = total_amount / duration as i128;
+        if rate <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let stream_id = storage::increment_stream_id(&env);
+        let stream = StreamingPayment {
+            id: stream_id,
+            sender: sender.clone(),
+            recipient: recipient.clone(),
+            token: token_addr.clone(),
+            total_amount,
+            rate,
+            duration,
+            start_ledger: current_ledger,
+            amount_claimed: 0,
+            status: StreamStatus::Active,
+            total_paused_ledgers: 0,
+            pause_start_ledger: 0,
+            memo,
+        };
+
+        storage::set_streaming_payment(&env, &stream);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_created(
+            &env,
+            stream_id,
+            &sender,
+            &recipient,
+            &token_addr,
+            total_amount,
+            rate,
+            duration,
+        );
+
+        Ok(stream_id)
+    }
+
+    /// Compute claimable (streamed) amount for a stream.
+    fn compute_stream_balance(env: &Env, stream: &StreamingPayment) -> i128 {
+        if stream.status == StreamStatus::Cancelled {
+            return 0;
+        }
+        if stream.status == StreamStatus::Completed {
+            return 0;
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let elapsed = if stream.status == StreamStatus::Paused {
+            stream
+                .pause_start_ledger
+                .saturating_sub(stream.start_ledger)
+        } else {
+            current_ledger.saturating_sub(stream.start_ledger)
+        };
+        let effective_elapsed = elapsed.saturating_sub(stream.total_paused_ledgers);
+        let capped_elapsed = effective_elapsed.min(stream.duration);
+        let streamed = stream.rate * capped_elapsed as i128;
+        let claimable = streamed - stream.amount_claimed;
+        claimable.max(0)
+    }
+
+    /// Get the claimable balance for a stream (for the recipient).
+    pub fn get_stream_balance(env: Env, stream_id: u64) -> Result<i128, VaultError> {
+        let stream = storage::get_streaming_payment(&env, stream_id)?;
+        Ok(Self::compute_stream_balance(&env, &stream))
+    }
+
+    /// Claim accrued tokens from a stream.
+    ///
+    /// Only the recipient can claim. Transfers claimable amount to recipient.
+    pub fn claim_stream(env: Env, recipient: Address, stream_id: u64) -> Result<i128, VaultError> {
+        recipient.require_auth();
+
+        let mut stream = storage::get_streaming_payment(&env, stream_id)?;
+
+        if stream.recipient != recipient {
+            return Err(VaultError::Unauthorized);
+        }
+        if stream.status == StreamStatus::Cancelled {
+            return Err(VaultError::StreamNotActive);
+        }
+        if stream.status == StreamStatus::Completed {
+            return Ok(0);
+        }
+
+        let claimable = Self::compute_stream_balance(&env, &stream);
+        if claimable <= 0 {
+            return Ok(0);
+        }
+
+        let balance = token::balance(&env, &stream.token);
+        if balance < claimable {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        token::transfer(&env, &stream.token, &recipient, claimable);
+
+        stream.amount_claimed += claimable;
+        if stream.amount_claimed >= stream.total_amount {
+            stream.status = StreamStatus::Completed;
+        }
+        storage::set_streaming_payment(&env, &stream);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_claimed(&env, stream_id, &recipient, claimable);
+
+        Ok(claimable)
+    }
+
+    /// Execute stream accrual and transfer to recipient (keeper-callable).
+    ///
+    /// Anyone can call to push accrued tokens to the recipient.
+    pub fn execute_stream(env: Env, stream_id: u64) -> Result<i128, VaultError> {
+        let stream = storage::get_streaming_payment(&env, stream_id)?;
+
+        if stream.status != StreamStatus::Active {
+            return Err(VaultError::StreamNotActive);
+        }
+
+        let claimable = Self::compute_stream_balance(&env, &stream);
+        if claimable <= 0 {
+            return Ok(0);
+        }
+
+        let mut stream = storage::get_streaming_payment(&env, stream_id)?;
+        let balance = token::balance(&env, &stream.token);
+        if balance < claimable {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        let recipient = stream.recipient.clone();
+        token::transfer(&env, &stream.token, &recipient, claimable);
+
+        stream.amount_claimed += claimable;
+        if stream.amount_claimed >= stream.total_amount {
+            stream.status = StreamStatus::Completed;
+        }
+        storage::set_streaming_payment(&env, &stream);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_claimed(&env, stream_id, &recipient, claimable);
+
+        Ok(claimable)
+    }
+
+    /// Pause a stream (stops accrual).
+    ///
+    /// Only sender (creator) or Admin can pause.
+    pub fn pause_stream(env: Env, caller: Address, stream_id: u64) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut stream = storage::get_streaming_payment(&env, stream_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if caller != stream.sender && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if stream.status != StreamStatus::Active {
+            return Err(VaultError::StreamNotActive);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        stream.status = StreamStatus::Paused;
+        stream.pause_start_ledger = current_ledger;
+        storage::set_streaming_payment(&env, &stream);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_paused(&env, stream_id, &caller);
+
+        Ok(())
+    }
+
+    /// Resume a paused stream.
+    ///
+    /// Only sender (creator) or Admin can resume.
+    pub fn resume_stream(env: Env, caller: Address, stream_id: u64) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut stream = storage::get_streaming_payment(&env, stream_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if caller != stream.sender && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if stream.status != StreamStatus::Paused {
+            return Err(VaultError::StreamNotActive);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let paused_duration = current_ledger.saturating_sub(stream.pause_start_ledger);
+        stream.total_paused_ledgers += paused_duration;
+        stream.status = StreamStatus::Active;
+        stream.pause_start_ledger = 0;
+        storage::set_streaming_payment(&env, &stream);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_resumed(&env, stream_id, &caller);
+
+        Ok(())
+    }
+
+    /// Cancel a stream. Unclaimed remainder stays in vault.
+    ///
+    /// Only sender (creator) or Admin can cancel.
+    pub fn cancel_stream(env: Env, caller: Address, stream_id: u64) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut stream = storage::get_streaming_payment(&env, stream_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if caller != stream.sender && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if stream.status != StreamStatus::Active && stream.status != StreamStatus::Paused {
+            return Err(VaultError::StreamNotActive);
+        }
+
+        stream.status = StreamStatus::Cancelled;
+        storage::set_streaming_payment(&env, &stream);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_cancelled(&env, stream_id, &caller);
+
+        Ok(())
+    }
+
+    /// Get streaming payment by ID.
+    pub fn get_stream(env: Env, stream_id: u64) -> Result<StreamingPayment, VaultError> {
+        storage::get_streaming_payment(&env, stream_id)
     }
 
     /// Execute a scheduled recurring payment

@@ -2172,6 +2172,479 @@ fn test_price_impact_calculation() {
     assert!(client.get_dex_config().is_none());
 }
 
+// ============================================================================
+// Streaming Payment Tests (feature/streaming-payments)
+// ============================================================================
+
+#[test]
+fn test_create_stream_insufficient_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let member = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    let res = client.try_create_stream(
+        &member,
+        &recipient,
+        &token,
+        &1000i128,
+        &100u64,
+        &Symbol::new(&env, "stream"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::InsufficientRole)));
+}
+
+#[test]
+fn test_create_stream_invalid_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let res = client.try_create_stream(
+        &treasurer,
+        &recipient,
+        &token,
+        &0i128,
+        &100u64,
+        &Symbol::new(&env, "stream"),
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
+
+    let res2 = client.try_create_stream(
+        &treasurer,
+        &recipient,
+        &token,
+        &1000i128,
+        &0u64,
+        &Symbol::new(&env, "stream"),
+    );
+    assert_eq!(res2.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_stream_pause_resume_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(1000);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_address = token_asset.address();
+    let stellar_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&contract_id, &10000i128);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let stream_id = client.create_stream(
+        &treasurer,
+        &recipient,
+        &token_address,
+        &1000i128,
+        &100u64,
+        &Symbol::new(&env, "salary"),
+    );
+    assert_eq!(stream_id, 1);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, crate::types::StreamStatus::Active);
+
+    client.pause_stream(&treasurer, &stream_id);
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, crate::types::StreamStatus::Paused);
+
+    client.resume_stream(&treasurer, &stream_id);
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, crate::types::StreamStatus::Active);
+
+    client.cancel_stream(&treasurer, &stream_id);
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, crate::types::StreamStatus::Cancelled);
+}
+
+#[test]
+fn test_stream_balance_tracking() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(1000);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_address = token_asset.address();
+    let stellar_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&contract_id, &10000i128);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let total = 1000i128;
+    let duration = 100u64;
+    let rate = total / duration as i128;
+
+    let stream_id = client.create_stream(
+        &treasurer,
+        &recipient,
+        &token_address,
+        &total,
+        &duration,
+        &Symbol::new(&env, "vesting"),
+    );
+
+    let balance0 = client.get_stream_balance(&stream_id);
+    assert_eq!(balance0, 0);
+
+    env.ledger().set_sequence_number(1050);
+    let balance50 = client.get_stream_balance(&stream_id);
+    assert_eq!(balance50, rate * 50);
+
+    env.ledger().set_sequence_number(1100);
+    let balance100 = client.get_stream_balance(&stream_id);
+    assert_eq!(balance100, total);
+}
+
+#[test]
+fn test_stream_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(1000);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_address = token_asset.address();
+    let stellar_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&contract_id, &10000i128);
+    let token_client = soroban_sdk::token::Client::new(&env, &token_address);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let total = 1000i128;
+    let duration = 100u64;
+
+    let stream_id = client.create_stream(
+        &treasurer,
+        &recipient,
+        &token_address,
+        &total,
+        &duration,
+        &Symbol::new(&env, "claim_test"),
+    );
+
+    env.ledger().set_sequence_number(1050);
+    let claimed = client.claim_stream(&recipient, &stream_id);
+    assert_eq!(claimed, 500);
+
+    let recv_balance = token_client.balance(&recipient);
+    assert_eq!(recv_balance, 500);
+
+    env.ledger().set_sequence_number(1100);
+    let claimed2 = client.claim_stream(&recipient, &stream_id);
+    assert_eq!(claimed2, 500);
+
+    let recv_balance2 = token_client.balance(&recipient);
+    assert_eq!(recv_balance2, 1000);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, crate::types::StreamStatus::Completed);
+}
+
+#[test]
+fn test_stream_execute_by_keeper() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(1000);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let _keeper = Address::generate(&env);
+    let token_asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_address = token_asset.address();
+    let stellar_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&contract_id, &10000i128);
+    let token_client = soroban_sdk::token::Client::new(&env, &token_address);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let stream_id = client.create_stream(
+        &treasurer,
+        &recipient,
+        &token_address,
+        &1000i128,
+        &100u64,
+        &Symbol::new(&env, "keeper_exec"),
+    );
+
+    env.ledger().set_sequence_number(1050);
+    let amount = client.execute_stream(&stream_id);
+    assert_eq!(amount, 500);
+
+    let recv_balance = token_client.balance(&recipient);
+    assert_eq!(recv_balance, 500);
+}
+
+#[test]
+fn test_stream_pause_resume_affects_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(1000);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_address = token_asset.address();
+    let stellar_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&contract_id, &10000i128);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let stream_id = client.create_stream(
+        &treasurer,
+        &recipient,
+        &token_address,
+        &1000i128,
+        &100u64,
+        &Symbol::new(&env, "pause_balance"),
+    );
+
+    env.ledger().set_sequence_number(1025);
+    let before_pause = client.get_stream_balance(&stream_id);
+    assert_eq!(before_pause, 250);
+
+    client.pause_stream(&treasurer, &stream_id);
+    env.ledger().set_sequence_number(1075);
+    let during_pause = client.get_stream_balance(&stream_id);
+    assert_eq!(during_pause, 250);
+
+    client.resume_stream(&treasurer, &stream_id);
+    env.ledger().set_sequence_number(1085);
+    let after_resume = client.get_stream_balance(&stream_id);
+    assert_eq!(after_resume, 350);
+}
+
+#[test]
+fn test_stream_cancel_stops_accrual() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(1000);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_address = token_asset.address();
+    let stellar_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&contract_id, &10000i128);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let stream_id = client.create_stream(
+        &treasurer,
+        &recipient,
+        &token_address,
+        &1000i128,
+        &100u64,
+        &Symbol::new(&env, "cancel_test"),
+    );
+
+    client.cancel_stream(&treasurer, &stream_id);
+    env.ledger().set_sequence_number(1100);
+    let balance = client.get_stream_balance(&stream_id);
+    assert_eq!(balance, 0);
+
+    let res = client.try_claim_stream(&recipient, &stream_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::StreamNotActive)));
+}
+
 #[test]
 fn test_slippage_protection() {
     let env = Env::default();
