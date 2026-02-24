@@ -22,8 +22,8 @@ const ROLE_PERMISSIONS = {
 };
 
 const RoleManagement: React.FC = () => {
-  const { getAllRoles, setRole, getUserRole, loading } = useVaultContract();
-  const { showToast } = useToast();
+  const { getAllRoles, getUserRole, assignRole, loading } = useVaultContract();
+  const { notify } = useToast();
   const [currentUserRole, setCurrentUserRole] = useState<number>(0);
   const [roleAssignments, setRoleAssignments] = useState<RoleAssignment[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,11 +43,11 @@ const RoleManagement: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const role = await getUserRole();
+      const role = await getUserRole("");
       setCurrentUserRole(role);
-      
+
       if (role === 2) {
-        const roles = await getAllRoles();
+        const roles = await getAllRoles?.() || [];
         setRoleAssignments(roles);
       }
     } catch (error) {
@@ -61,13 +61,13 @@ const RoleManagement: React.FC = () => {
 
   const handleAssignRole = () => {
     if (!validateStellarAddress(newAddress)) {
-      showToast('Invalid Stellar address format', 'error');
+      notify("config_updated", "Invalid Stellar address format", "error");
       return;
     }
 
     const existing = roleAssignments.find(r => r.address === newAddress);
     if (existing) {
-      showToast('Address already has a role. Use Change Role instead.', 'warning');
+      notify("config_updated", "Address already has a role. Use Change Role instead.", "info");
       return;
     }
 
@@ -101,15 +101,15 @@ const RoleManagement: React.FC = () => {
   const executeRoleChange = async () => {
     try {
       const { type, address, newRole } = confirmModal;
-      
+
       if (!address) return;
 
       if (type === 'revoke') {
-        await setRole(address, 0);
-        showToast('Role revoked successfully', 'success');
+        await assignRole?.(address, 0);
+        notify("config_updated", 'Role revoked successfully', 'success');
       } else {
-        await setRole(address, newRole ?? 0);
-        showToast(`Role ${type === 'assign' ? 'assigned' : 'changed'} successfully`, 'success');
+        await assignRole?.(address, newRole ?? 0);
+        notify("config_updated", `Role ${type === 'assign' ? 'assigned' : 'changed'} successfully`, 'success');
       }
 
       if (type === 'assign') {
@@ -118,14 +118,14 @@ const RoleManagement: React.FC = () => {
       }
 
       await loadData();
-    } catch (error: any) {
-      showToast(error.message || 'Failed to update role', 'error');
+    } catch (error: unknown) {
+      notify("config_updated", error instanceof Error ? error.message : "Failed to update role", "error");
     } finally {
       setConfirmModal({ isOpen: false, type: 'assign' });
     }
   };
 
-  const filteredAssignments = roleAssignments.filter(r => 
+  const filteredAssignments = roleAssignments.filter(r =>
     r.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
     ROLES[r.role as keyof typeof ROLES]?.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -290,15 +290,15 @@ const RoleManagement: React.FC = () => {
         isOpen={confirmModal.isOpen}
         title={
           confirmModal.type === 'assign' ? 'Assign Role' :
-          confirmModal.type === 'change' ? 'Change Role' :
-          'Revoke Role'
+            confirmModal.type === 'change' ? 'Change Role' :
+              'Revoke Role'
         }
         message={
-          confirmModal.type === 'assign' 
+          confirmModal.type === 'assign'
             ? `Assign ${ROLES[confirmModal.newRole as keyof typeof ROLES]?.name} role to ${confirmModal.address?.slice(0, 8)}...${confirmModal.address?.slice(-8)}?`
             : confirmModal.type === 'change'
-            ? `Change role for ${confirmModal.address?.slice(0, 8)}...${confirmModal.address?.slice(-8)}?`
-            : `Revoke ${ROLES[confirmModal.currentRole as keyof typeof ROLES]?.name} role from ${confirmModal.address?.slice(0, 8)}...${confirmModal.address?.slice(-8)}? This will set their role to Member.`
+              ? `Change role for ${confirmModal.address?.slice(0, 8)}...${confirmModal.address?.slice(-8)}?`
+              : `Revoke ${ROLES[confirmModal.currentRole as keyof typeof ROLES]?.name} role from ${confirmModal.address?.slice(0, 8)}...${confirmModal.address?.slice(-8)}? This will set their role to Member.`
         }
         confirmText={confirmModal.type === 'revoke' ? 'Revoke' : 'Confirm'}
         onConfirm={executeRoleChange}

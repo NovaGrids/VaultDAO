@@ -23,4 +23,5 @@ target
 .agent/
 .agents/
 issue.md
+PR_DESCRIPTION.md
 contracts/vault/test_snapshots/

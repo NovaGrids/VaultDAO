@@ -20,7 +20,7 @@ import { useToast } from '../hooks/useToast';
 import { Bell } from 'lucide-react';
 
 // ---- Labels ----
-const EVENT_LABELS: Record<NotificationEventKey, string> = {
+const EVENT_LABELS: Partial<Record<NotificationEventKey, string>> = {
   new_proposal: 'New proposal',
   proposal_approved: 'Proposal approved',
   proposal_executed: 'Proposal executed',
@@ -28,6 +28,18 @@ const EVENT_LABELS: Record<NotificationEventKey, string> = {
   signer_updated: 'Signer updated',
   config_updated: 'Config updated',
   spending_limit_warning: 'Spending limit warning',
+  audit_error: 'Audit error',
+  audit_tamper: 'Audit tamper',
+  audit_fetch_error: 'Audit fetch error',
+  no_data: 'No data',
+  preview_ready: 'Preview ready',
+  preview_error: 'Preview error',
+  report_downloaded: 'Report downloaded',
+  report_error: 'Report error',
+  export_success: 'Export success',
+  export_error: 'Export error',
+  approval_failed: 'Approval failed',
+  approval_success: 'Approval success',
 };
 
 const METHOD_LABELS: Record<NotificationMethod, string> = {
@@ -205,7 +217,7 @@ const NotificationSettings: React.FC = () => {
             <Toggle
               key={key}
               id={`event-${key}`}
-              label={EVENT_LABELS[key]}
+              label={EVENT_LABELS[key] ?? key}
               checked={eventEnabled(key)}
               onChange={(v) => setEvent(key, v)}
             />
