@@ -733,8 +733,7 @@ impl VaultDAO {
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
         // Only mark pending or approved proposals as expired
-        if proposal.status != ProposalStatus::Pending
-            && proposal.status != ProposalStatus::Approved
+        if proposal.status != ProposalStatus::Pending && proposal.status != ProposalStatus::Approved
         {
             return Err(VaultError::ProposalNotPending);
         }
