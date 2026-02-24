@@ -809,7 +809,7 @@ pub fn add_delegation_history(env: &Env, history: &DelegationHistory) {
             .persistent()
             .get(&list_key)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         // Check if already in list
         let mut found = false;
         for i in 0..history_ids.len() {
@@ -818,13 +818,15 @@ pub fn add_delegation_history(env: &Env, history: &DelegationHistory) {
                 break;
             }
         }
-        
+
         if !found {
             history_ids.push_back(history.id);
             env.storage().persistent().set(&list_key, &history_ids);
-            env.storage()
-                .persistent()
-                .extend_ttl(&list_key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+            env.storage().persistent().extend_ttl(
+                &list_key,
+                PERSISTENT_TTL_THRESHOLD,
+                PERSISTENT_TTL,
+            );
         }
     }
 }

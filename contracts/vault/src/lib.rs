@@ -572,7 +572,9 @@ impl VaultDAO {
         let is_delegated = effective_voter != signer;
 
         // Prevent double-approval or abstaining then approving (check effective voter)
-        if proposal.approvals.contains(&effective_voter) || proposal.abstentions.contains(&effective_voter) {
+        if proposal.approvals.contains(&effective_voter)
+            || proposal.abstentions.contains(&effective_voter)
+        {
             return Err(VaultError::AlreadyApproved);
         }
 
@@ -895,8 +897,8 @@ impl VaultDAO {
         delegator.require_auth();
 
         // Get active delegation
-        let mut delegation = storage::get_delegation(&env, &delegator)
-            .ok_or(VaultError::DelegationError)?;
+        let mut delegation =
+            storage::get_delegation(&env, &delegator).ok_or(VaultError::DelegationError)?;
 
         if !delegation.is_active {
             return Err(VaultError::DelegationError);
@@ -943,7 +945,7 @@ impl VaultDAO {
     /// Get active delegation for an address.
     pub fn get_delegation(env: Env, delegator: Address) -> Option<types::Delegation> {
         let delegation = storage::get_delegation(&env, &delegator)?;
-        
+
         // Check if expired
         let current_ledger = env.ledger().sequence() as u64;
         if delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger {
@@ -951,12 +953,12 @@ impl VaultDAO {
             let mut expired_delegation = delegation.clone();
             expired_delegation.is_active = false;
             storage::set_delegation(&env, &expired_delegation);
-            
+
             events::emit_delegation_expired(&env, &delegation.delegator, &delegation.delegate);
-            
+
             return None;
         }
-        
+
         if delegation.is_active {
             Some(delegation)
         } else {
@@ -993,9 +995,9 @@ impl VaultDAO {
                 let mut expired_delegation = delegation.clone();
                 expired_delegation.is_active = false;
                 storage::set_delegation(env, &expired_delegation);
-                
+
                 events::emit_delegation_expired(env, &delegation.delegator, &delegation.delegate);
-                
+
                 return voter.clone();
             }
 
@@ -1041,7 +1043,11 @@ impl VaultDAO {
     }
 
     /// Recursively detect cycles in delegation chain.
-    fn detect_cycle(env: &Env, current: &Address, visited: &Vec<Address>) -> Result<(), VaultError> {
+    fn detect_cycle(
+        env: &Env,
+        current: &Address,
+        visited: &Vec<Address>,
+    ) -> Result<(), VaultError> {
         // Check if we've seen this address before
         for i in 0..visited.len() {
             if let Some(addr) = visited.get(i) {
@@ -1886,7 +1892,9 @@ impl VaultDAO {
         let is_delegated = effective_voter != signer;
 
         // Prevent voting twice (approving then abstaining, or abstaining twice) - check effective voter
-        if proposal.approvals.contains(&effective_voter) || proposal.abstentions.contains(&effective_voter) {
+        if proposal.approvals.contains(&effective_voter)
+            || proposal.abstentions.contains(&effective_voter)
+        {
             return Err(VaultError::AlreadyApproved);
         }
 
@@ -1923,7 +1931,13 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         // Emit dedicated abstention event (use effective voter)
-        events::emit_proposal_abstained(&env, proposal_id, &effective_voter, abstention_count, quorum_votes);
+        events::emit_proposal_abstained(
+            &env,
+            proposal_id,
+            &effective_voter,
+            abstention_count,
+            quorum_votes,
+        );
 
         Ok(())
     }
@@ -2577,8 +2591,7 @@ impl VaultDAO {
         }
 
         // Get swap operation
-        let swap_op =
-            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexError)?;
+        let swap_op = storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexError)?;
         let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
 
         // Execute based on operation type
