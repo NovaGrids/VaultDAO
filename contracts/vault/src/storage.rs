@@ -142,6 +142,10 @@ pub fn get_proposal(env: &Env, id: u64) -> Result<Proposal, VaultError> {
     Ok(proposal)
 }
 
+pub fn proposal_exists(env: &Env, id: u64) -> bool {
+    env.storage().persistent().has(&DataKey::Proposal(id))
+}
+
 pub fn set_proposal(env: &Env, proposal: &Proposal) {
     let key = DataKey::Proposal(proposal.id);
     env.storage().persistent().set(&key, proposal);

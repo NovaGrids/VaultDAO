@@ -239,6 +239,8 @@ pub struct Proposal {
     pub snapshot_ledger: u64,
     /// Voting power snapshot — addresses eligible to vote at creation time
     pub snapshot_signers: Vec<Address>,
+    /// Proposal IDs that must be executed before this proposal can execute
+    pub depends_on: Vec<u64>,
     /// Flag indicating if this is a swap proposal
     pub is_swap: bool,
     /// Ledger sequence when voting must complete (0 = no deadline)

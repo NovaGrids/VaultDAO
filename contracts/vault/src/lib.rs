@@ -154,6 +154,69 @@ impl VaultDAO {
         condition_logic: ConditionLogic,
         insurance_amount: i128,
     ) -> Result<u64, VaultError> {
+        let empty_dependencies = Vec::new(&env);
+        Self::propose_transfer_internal(
+            env,
+            proposer,
+            recipient,
+            token_addr,
+            amount,
+            memo,
+            priority,
+            conditions,
+            condition_logic,
+            insurance_amount,
+            empty_dependencies,
+        )
+    }
+
+    /// Propose a new transfer with prerequisite proposal dependencies.
+    ///
+    /// The proposal is blocked from execution until all `depends_on` proposals are executed.
+    /// Dependencies are validated at creation time for existence and circular references.
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_transfer_with_deps(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token_addr: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+        depends_on: Vec<u64>,
+    ) -> Result<u64, VaultError> {
+        Self::propose_transfer_internal(
+            env,
+            proposer,
+            recipient,
+            token_addr,
+            amount,
+            memo,
+            priority,
+            conditions,
+            condition_logic,
+            insurance_amount,
+            depends_on,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn propose_transfer_internal(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token_addr: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+        depends_on: Vec<u64>,
+    ) -> Result<u64, VaultError> {
         // 1. Verify identity
         proposer.require_auth();
 
@@ -234,6 +297,7 @@ impl VaultDAO {
 
         // 12. Create and store the proposal
         let proposal_id = storage::increment_proposal_id(&env);
+        Self::validate_dependencies(&env, proposal_id, &depends_on)?;
         let current_ledger = env.ledger().sequence() as u64;
 
         // Gas limit: derive from GasConfig (0 = unlimited)
@@ -268,6 +332,7 @@ impl VaultDAO {
             gas_used: 0,
             snapshot_ledger: current_ledger,
             snapshot_signers: config.signers.clone(),
+            depends_on: depends_on.clone(),
             is_swap: false,
             voting_deadline: if config.default_voting_deadline > 0 {
                 current_ledger + config.default_voting_deadline
@@ -475,6 +540,7 @@ impl VaultDAO {
                 gas_used: 0,
                 snapshot_ledger: current_ledger,
                 snapshot_signers: config.signers.clone(),
+                depends_on: Vec::new(&env),
                 is_swap: false,
                 voting_deadline: if config.default_voting_deadline > 0 {
                     current_ledger + config.default_voting_deadline
@@ -666,6 +732,9 @@ impl VaultDAO {
         if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
             return Err(VaultError::TimelockNotExpired);
         }
+
+        // Dependencies must be fully executed before this proposal can execute.
+        Self::ensure_dependencies_executable(&env, &proposal)?;
 
         // Enforce retry constraints if this is a retry attempt
         let config = storage::get_config(&env)?;
@@ -1202,6 +1271,40 @@ impl VaultDAO {
         Ok((quorum_votes, required_quorum, quorum_reached))
     }
 
+    /// Return proposal IDs that are currently executable.
+    ///
+    /// A proposal is considered executable when it is approved, not expired,
+    /// timelock has elapsed, and all dependencies have been executed.
+    pub fn get_executable_proposals(env: Env) -> Vec<u64> {
+        let mut executable = Vec::new(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+        let next_id = storage::get_next_proposal_id(&env);
+
+        for proposal_id in 1..next_id {
+            let proposal = match storage::get_proposal(&env, proposal_id) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if proposal.status != ProposalStatus::Approved {
+                continue;
+            }
+            if current_ledger > proposal.expires_at {
+                continue;
+            }
+            if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
+                continue;
+            }
+            if Self::ensure_dependencies_executable(&env, &proposal).is_err() {
+                continue;
+            }
+
+            executable.push_back(proposal_id);
+        }
+
+        executable
+    }
+
     // ========================================================================
     // Recurring Payments
     // ========================================================================
@@ -1702,6 +1805,12 @@ impl VaultDAO {
                 continue;
             }
 
+            // Skip if dependencies are not satisfied or graph is invalid.
+            if Self::ensure_dependencies_executable(&env, &proposal).is_err() {
+                failed_count += 1;
+                continue;
+            }
+
             // Skip if conditions not satisfied
             if !proposal.conditions.is_empty()
                 && Self::evaluate_conditions(&env, &proposal).is_err()
@@ -2163,6 +2272,91 @@ impl VaultDAO {
     // Private Helpers
     // ========================================================================
 
+    /// Validate dependency IDs for a new proposal.
+    fn validate_dependencies(
+        env: &Env,
+        proposal_id: u64,
+        depends_on: &Vec<u64>,
+    ) -> Result<(), VaultError> {
+        let mut seen = Vec::new(env);
+
+        for i in 0..depends_on.len() {
+            let dependency_id = depends_on.get(i).unwrap();
+
+            if dependency_id == proposal_id {
+                return Err(VaultError::InvalidAmount);
+            }
+            if seen.contains(&dependency_id) {
+                return Err(VaultError::InvalidAmount);
+            }
+            if !storage::proposal_exists(env, dependency_id) {
+                return Err(VaultError::ProposalNotFound);
+            }
+
+            // If any dependency can reach this proposal ID, adding the edge would form a cycle.
+            let mut visited = Vec::new(env);
+            if Self::has_dependency_path(env, dependency_id, proposal_id, &mut visited)? {
+                return Err(VaultError::InvalidAmount);
+            }
+
+            seen.push_back(dependency_id);
+        }
+
+        Ok(())
+    }
+
+    /// Ensure all dependencies are executed and no circular references exist.
+    fn ensure_dependencies_executable(env: &Env, proposal: &Proposal) -> Result<(), VaultError> {
+        for i in 0..proposal.depends_on.len() {
+            let dependency_id = proposal.depends_on.get(i).unwrap();
+
+            if dependency_id == proposal.id {
+                return Err(VaultError::InvalidAmount);
+            }
+
+            let mut visited = Vec::new(env);
+            if Self::has_dependency_path(env, dependency_id, proposal.id, &mut visited)? {
+                return Err(VaultError::InvalidAmount);
+            }
+
+            let dependency = storage::get_proposal(env, dependency_id)
+                .map_err(|_| VaultError::ProposalNotFound)?;
+            if dependency.status != ProposalStatus::Executed {
+                return Err(VaultError::ProposalNotApproved);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// DFS reachability check used for dependency cycle detection.
+    fn has_dependency_path(
+        env: &Env,
+        from_id: u64,
+        target_id: u64,
+        visited: &mut Vec<u64>,
+    ) -> Result<bool, VaultError> {
+        if from_id == target_id {
+            return Ok(true);
+        }
+        if visited.contains(&from_id) {
+            return Ok(false);
+        }
+
+        visited.push_back(from_id);
+
+        let proposal =
+            storage::get_proposal(env, from_id).map_err(|_| VaultError::ProposalNotFound)?;
+        for i in 0..proposal.depends_on.len() {
+            let next_id = proposal.depends_on.get(i).unwrap();
+            if Self::has_dependency_path(env, next_id, target_id, visited)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
     /// Calculate effective threshold based on the configured ThresholdStrategy.
     fn calculate_threshold(config: &Config, amount: &i128) -> u32 {
         match &config.threshold_strategy {
@@ -2427,6 +2621,7 @@ impl VaultDAO {
             gas_used: 0,
             snapshot_ledger: current_ledger as u64,
             snapshot_signers: config.signers.clone(),
+            depends_on: Vec::new(&env),
             is_swap: true,
             voting_deadline: if config.default_voting_deadline > 0 {
                 current_ledger as u64 + config.default_voting_deadline
@@ -2466,6 +2661,8 @@ impl VaultDAO {
         if env.ledger().sequence() < proposal.unlock_ledger as u32 {
             return Err(VaultError::TimelockNotExpired);
         }
+
+        Self::ensure_dependencies_executable(&env, &proposal)?;
 
         // Get swap operation
         let swap_op =

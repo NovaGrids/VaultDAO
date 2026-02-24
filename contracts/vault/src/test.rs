@@ -3646,3 +3646,182 @@ fn test_retry_succeeds_after_balance_funded() {
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_ok(), "Retry should succeed after funding");
 }
+
+#[test]
+fn test_proposal_dependencies_enforce_execution_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    sac_admin_client.mint(&contract_id, &1000_i128);
+
+    let first_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token_addr,
+        &100_i128,
+        &Symbol::new(&env, "first"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+    );
+
+    let mut depends_on = Vec::new(&env);
+    depends_on.push_back(first_id);
+    let second_id = client.propose_transfer_with_deps(
+        &admin,
+        &recipient,
+        &token_addr,
+        &100_i128,
+        &Symbol::new(&env, "second"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+        &depends_on,
+    );
+
+    client.approve_proposal(&admin, &first_id);
+    client.approve_proposal(&admin, &second_id);
+
+    let blocked = client.try_execute_proposal(&admin, &second_id);
+    assert_eq!(blocked.err(), Some(Ok(VaultError::ProposalNotApproved)));
+
+    client.execute_proposal(&admin, &first_id);
+    let ready = client.try_execute_proposal(&admin, &second_id);
+    assert!(ready.is_ok());
+}
+
+#[test]
+fn test_dependency_validation_missing_and_circular() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let mut missing_dep = Vec::new(&env);
+    missing_dep.push_back(999_u64);
+    let missing = client.try_propose_transfer_with_deps(
+        &admin,
+        &recipient,
+        &token,
+        &100_i128,
+        &Symbol::new(&env, "missing"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+        &missing_dep,
+    );
+    assert_eq!(missing.err(), Some(Ok(VaultError::ProposalNotFound)));
+
+    let mut self_dep = Vec::new(&env);
+    self_dep.push_back(1_u64);
+    let circular = client.try_propose_transfer_with_deps(
+        &admin,
+        &recipient,
+        &token,
+        &100_i128,
+        &Symbol::new(&env, "self"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+        &self_dep,
+    );
+    assert_eq!(circular.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_get_executable_proposals_respects_dependencies() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &admin, &Role::Treasurer);
+    sac_admin_client.mint(&contract_id, &1000_i128);
+
+    let first_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token_addr,
+        &100_i128,
+        &Symbol::new(&env, "one"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+    );
+
+    let mut depends_on = Vec::new(&env);
+    depends_on.push_back(first_id);
+    let second_id = client.propose_transfer_with_deps(
+        &admin,
+        &recipient,
+        &token_addr,
+        &100_i128,
+        &Symbol::new(&env, "two"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+        &depends_on,
+    );
+
+    client.approve_proposal(&admin, &first_id);
+    client.approve_proposal(&admin, &second_id);
+
+    let executable_before = client.get_executable_proposals();
+    assert!(executable_before.contains(&first_id));
+    assert!(!executable_before.contains(&second_id));
+
+    client.execute_proposal(&admin, &first_id);
+
+    let executable_after = client.get_executable_proposals();
+    assert!(executable_after.contains(&second_id));
+}
