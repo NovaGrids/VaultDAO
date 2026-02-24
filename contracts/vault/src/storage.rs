@@ -6,8 +6,9 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
-    Reputation, RetryState, Role, Subscription, SubscriptionPayment, VaultMetrics, VelocityConfig,
+    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, GasConfig, InsuranceConfig,
+    ListMode, NotificationPreferences, Proposal, Reputation, RetryState, Role, VaultMetrics,
+    VelocityConfig,
 };
 
 /// Storage key definitions
@@ -72,14 +73,18 @@ pub enum DataKey {
     Metrics,
     /// Retry state for a proposal -> RetryState
     RetryState(u64),
-    /// Subscription by ID -> Subscription
-    Subscription(u64),
-    /// Next subscription ID counter -> u64
-    NextSubscriptionId,
-    /// Subscription payment history -> Vec<SubscriptionPayment>
-    SubscriptionPayments(u64),
-    /// Active subscriptions by subscriber -> Vec<u64>
-    SubscriberSubscriptions(Address),
+    /// Cross-vault proposal by ID -> CrossVaultProposal
+    CrossVaultProposal(u64),
+    /// Cross-vault configuration -> CrossVaultConfig
+    CrossVaultConfig,
+    /// Dispute by ID -> Dispute
+    Dispute(u64),
+    /// Dispute ID for a proposal -> u64
+    ProposalDispute(u64),
+    /// Next dispute ID counter -> u64
+    NextDisputeId,
+    /// Arbitrator addresses -> Vec<Address>
+    Arbitrators,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -749,69 +754,87 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 }
 
 // ============================================================================
-// Subscription System (Issue: feature/subscription-system)
+// Cross-Vault Coordination (Issue: feature/cross-vault-coordination)
 // ============================================================================
 
-pub fn get_next_subscription_id(env: &Env) -> u64 {
+pub fn get_cross_vault_config(env: &Env) -> Option<CrossVaultConfig> {
+    env.storage().instance().get(&DataKey::CrossVaultConfig)
+}
+
+pub fn set_cross_vault_config(env: &Env, config: &CrossVaultConfig) {
     env.storage()
         .instance()
-        .get(&DataKey::NextSubscriptionId)
+        .set(&DataKey::CrossVaultConfig, config);
+}
+
+pub fn get_cross_vault_proposal(env: &Env, proposal_id: u64) -> Option<CrossVaultProposal> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossVaultProposal(proposal_id))
+}
+
+pub fn set_cross_vault_proposal(env: &Env, proposal_id: u64, proposal: &CrossVaultProposal) {
+    let key = DataKey::CrossVaultProposal(proposal_id);
+    env.storage().persistent().set(&key, proposal);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Dispute Resolution (Issue: feature/dispute-resolution)
+// ============================================================================
+
+pub fn get_arbitrators(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Arbitrators)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_arbitrators(env: &Env, arbitrators: &Vec<Address>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::Arbitrators, arbitrators);
+}
+
+pub fn get_next_dispute_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextDisputeId)
         .unwrap_or(1)
 }
 
-pub fn increment_subscription_id(env: &Env) -> u64 {
-    let id = get_next_subscription_id(env);
+pub fn increment_dispute_id(env: &Env) -> u64 {
+    let id = get_next_dispute_id(env);
     env.storage()
         .instance()
-        .set(&DataKey::NextSubscriptionId, &(id + 1));
+        .set(&DataKey::NextDisputeId, &(id + 1));
     id
 }
 
-pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Subscription(id))
-        .ok_or(VaultError::ProposalNotFound)
+pub fn get_dispute(env: &Env, id: u64) -> Option<Dispute> {
+    env.storage().persistent().get(&DataKey::Dispute(id))
 }
 
-pub fn set_subscription(env: &Env, subscription: &Subscription) {
-    let key = DataKey::Subscription(subscription.id);
-    env.storage().persistent().set(&key, subscription);
+pub fn set_dispute(env: &Env, dispute: &Dispute) {
+    let key = DataKey::Dispute(dispute.id);
+    env.storage().persistent().set(&key, dispute);
     env.storage()
         .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
-pub fn get_subscription_payments(env: &Env, subscription_id: u64) -> Vec<SubscriptionPayment> {
+pub fn get_proposal_dispute(env: &Env, proposal_id: u64) -> Option<u64> {
     env.storage()
         .persistent()
-        .get(&DataKey::SubscriptionPayments(subscription_id))
-        .unwrap_or_else(|| Vec::new(env))
+        .get(&DataKey::ProposalDispute(proposal_id))
 }
 
-pub fn add_subscription_payment(env: &Env, payment: &SubscriptionPayment) {
-    let mut payments = get_subscription_payments(env, payment.subscription_id);
-    payments.push_back(payment.clone());
-    let key = DataKey::SubscriptionPayments(payment.subscription_id);
-    env.storage().persistent().set(&key, &payments);
+pub fn set_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
+    let key = DataKey::ProposalDispute(proposal_id);
+    env.storage().persistent().set(&key, &dispute_id);
     env.storage()
         .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
-}
-
-pub fn get_subscriber_subscriptions(env: &Env, subscriber: &Address) -> Vec<u64> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::SubscriberSubscriptions(subscriber.clone()))
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-pub fn add_subscriber_subscription(env: &Env, subscriber: &Address, subscription_id: u64) {
-    let mut subs = get_subscriber_subscriptions(env, subscriber);
-    subs.push_back(subscription_id);
-    let key = DataKey::SubscriberSubscriptions(subscriber.clone());
-    env.storage().persistent().set(&key, &subs);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }

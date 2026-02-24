@@ -403,62 +403,117 @@ pub fn emit_retries_exhausted(env: &Env, proposal_id: u64, total_attempts: u32) 
 }
 
 // ============================================================================
-// Subscription Events (feature/subscription-system)
+// Cross-Vault Events (feature/cross-vault-coordination)
 // ============================================================================
 
-/// Emit when a new subscription is created
-pub fn emit_subscription_created(
+/// Emit when a cross-vault proposal is created
+pub fn emit_cross_vault_proposed(
     env: &Env,
-    subscription_id: u64,
-    subscriber: &Address,
-    tier: u32,
+    proposal_id: u64,
+    proposer: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_proposed"), proposal_id),
+        (proposer.clone(), num_actions),
+    );
+}
+
+/// Emit when cross-vault execution starts
+pub fn emit_cross_vault_execution_started(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_exec_start"), proposal_id),
+        (executor.clone(), num_actions),
+    );
+}
+
+/// Emit when a single cross-vault action is executed
+pub fn emit_cross_vault_action_executed(
+    env: &Env,
+    proposal_id: u64,
+    action_index: u32,
+    vault_address: &Address,
     amount: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "subscription_created"), subscription_id),
-        (subscriber.clone(), tier, amount),
+        (Symbol::new(env, "xvault_action"), proposal_id),
+        (action_index, vault_address.clone(), amount),
     );
 }
 
-/// Emit when a subscription is renewed
-pub fn emit_subscription_renewed(
+/// Emit when all cross-vault actions complete successfully
+pub fn emit_cross_vault_executed(
     env: &Env,
-    subscription_id: u64,
-    payment_number: u32,
+    proposal_id: u64,
+    executor: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_executed"), proposal_id),
+        (executor.clone(), num_actions),
+    );
+}
+
+/// Emit when a participant vault receives and executes a cross-vault action
+pub fn emit_cross_vault_action_received(
+    env: &Env,
+    coordinator: &Address,
+    recipient: &Address,
+    token: &Address,
     amount: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "subscription_renewed"), subscription_id),
-        (payment_number, amount),
+        (Symbol::new(env, "xvault_received"),),
+        (
+            coordinator.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+        ),
     );
 }
 
-/// Emit when a subscription is cancelled
-pub fn emit_subscription_cancelled(env: &Env, subscription_id: u64, cancelled_by: &Address) {
+/// Emit when cross-vault configuration is updated
+pub fn emit_cross_vault_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "xvault_cfg_updated"),), admin.clone());
+}
+
+// ============================================================================
+// Dispute Resolution Events (feature/dispute-resolution)
+// ============================================================================
+
+/// Emit when a dispute is filed against a proposal
+pub fn emit_dispute_filed(env: &Env, dispute_id: u64, proposal_id: u64, disputer: &Address) {
     env.events().publish(
-        (Symbol::new(env, "subscription_cancelled"), subscription_id),
-        cancelled_by.clone(),
+        (Symbol::new(env, "dispute_filed"), dispute_id),
+        (proposal_id, disputer.clone()),
     );
 }
 
-/// Emit when a subscription tier is upgraded
-pub fn emit_subscription_upgraded(
+/// Emit when a dispute is resolved by an arbitrator
+pub fn emit_dispute_resolved(
     env: &Env,
-    subscription_id: u64,
-    old_tier: u32,
-    new_tier: u32,
-    new_amount: i128,
+    dispute_id: u64,
+    proposal_id: u64,
+    arbitrator: &Address,
+    resolution: u32,
 ) {
     env.events().publish(
-        (Symbol::new(env, "subscription_upgraded"), subscription_id),
-        (old_tier, new_tier, new_amount),
+        (Symbol::new(env, "dispute_resolved"), dispute_id),
+        (proposal_id, arbitrator.clone(), resolution),
     );
 }
 
-/// Emit when a subscription expires
-pub fn emit_subscription_expired(env: &Env, subscription_id: u64) {
+/// Emit when arbitrator list is updated
+pub fn emit_arbitrators_updated(env: &Env, admin: &Address, count: u32) {
     env.events().publish(
-        (Symbol::new(env, "subscription_expired"),),
-        subscription_id,
+        (Symbol::new(env, "arbitrators_updated"),),
+        (admin.clone(), count),
     );
 }

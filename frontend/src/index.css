@@ -3,7 +3,16 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --transition-speed: 0.3s;
+  }
+
   body {
+    /* Instead of hardcoded gray-900, we use theme-aware classes or variables */
+    @apply bg-white text-gray-900 transition-colors duration-300;
+  }
+
+  .dark body {
     @apply bg-gray-900 text-white;
   }
 }
@@ -19,7 +28,11 @@
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-gray-700 rounded-full;
+    @apply bg-gray-300 rounded-full;
+  }
+  
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-700;
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
@@ -29,39 +42,26 @@
   /* Firefox support */
   .custom-scrollbar {
     scrollbar-width: thin;
+    scrollbar-color: #d1d5db transparent;
+  }
+  
+  .dark .custom-scrollbar {
     scrollbar-color: #374151 transparent;
   }
 
   /* Toast animations */
   @keyframes slideInRight {
-    from {
-      transform: translateX(100%);
-      opacity: 0;
-    }
-    to {
-      transform: translateX(0);
-      opacity: 1;
-    }
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
   }
 
   @keyframes slideOutRight {
-    from {
-      transform: translateX(0);
-      opacity: 1;
-    }
-    to {
-      transform: translateX(100%);
-      opacity: 0;
-    }
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
   }
 
-  .animate-slide-in-right {
-    animation: slideInRight 0.3s ease-out forwards;
-  }
-
-  .animate-slide-out-right {
-    animation: slideOutRight 0.3s ease-in forwards;
-  }
+  .animate-slide-in-right { animation: slideInRight 0.3s ease-out forwards; }
+  .animate-slide-out-right { animation: slideOutRight 0.3s ease-in forwards; }
 
   /* React Grid Layout Styles */
   .react-grid-layout {
@@ -72,46 +72,5 @@
   .react-grid-item {
     transition: all 200ms ease;
     transition-property: left, top, width, height;
-  }
-
-  .react-grid-item img {
-    pointer-events: none;
-    user-select: none;
-  }
-
-  .react-grid-item > .react-resizable-handle {
-    position: absolute;
-    width: 20px;
-    height: 20px;
-  }
-
-  .react-grid-item > .react-resizable-handle::after {
-    content: "";
-    position: absolute;
-    right: 3px;
-    bottom: 3px;
-    width: 5px;
-    height: 5px;
-    border-right: 2px solid rgba(139, 92, 246, 0.4);
-    border-bottom: 2px solid rgba(139, 92, 246, 0.4);
-  }
-
-  .react-resizable-hide > .react-resizable-handle {
-    display: none;
-  }
-
-  .react-grid-item > .react-resizable-handle.react-resizable-handle-se {
-    bottom: 0;
-    right: 0;
-    cursor: se-resize;
-  }
-
-  .react-grid-item.react-grid-placeholder {
-    background: rgba(139, 92, 246, 0.2);
-    opacity: 0.2;
-    transition-duration: 100ms;
-    z-index: 2;
-    user-select: none;
-    border-radius: 0.5rem;
   }
 }

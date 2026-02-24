@@ -19,9 +19,10 @@ pub use types::InitConfig;
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
-    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
-    RetryState, Role, ThresholdStrategy, VaultMetrics,
+    Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
+    CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, GasConfig, InsuranceConfig,
+    ListMode, NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
+    RetryState, Role, ThresholdStrategy, VaultAction, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -39,6 +40,9 @@ const MAX_BATCH_SIZE: u32 = 10;
 
 /// Maximum metadata entries stored per proposal
 const MAX_METADATA_ENTRIES: u32 = 16;
+
+/// Maximum actions in a cross-vault proposal
+const MAX_CROSS_VAULT_ACTIONS: u32 = 5;
 
 /// Maximum length for a single metadata value
 const MAX_METADATA_VALUE_LEN: u32 = 256;
@@ -2957,6 +2961,474 @@ impl VaultDAO {
     /// Get swap result for a proposal
     pub fn get_swap_result(env: Env, proposal_id: u64) -> Option<types::SwapResult> {
         storage::get_swap_result(&env, proposal_id)
+    }
+
+    // ========================================================================
+    // Cross-Vault Proposal Coordination (Issue: feature/cross-vault-coordination)
+    // ========================================================================
+
+    /// Configure cross-vault participation for this vault.
+    ///
+    /// Only Admin can configure. Sets which coordinators are authorized to
+    /// trigger actions on this vault and the safety limits.
+    pub fn set_cross_vault_config(
+        env: Env,
+        admin: Address,
+        config: CrossVaultConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::set_cross_vault_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+        events::emit_cross_vault_config_updated(&env, &admin);
+        Ok(())
+    }
+
+    /// Query cross-vault configuration.
+    pub fn get_cross_vault_config(env: Env) -> Option<CrossVaultConfig> {
+        storage::get_cross_vault_config(&env)
+    }
+
+    /// Propose a cross-vault operation.
+    ///
+    /// Creates a base Proposal (for the standard approval workflow) plus a
+    /// companion CrossVaultProposal describing the actions on participant vaults.
+    /// Follows the same pattern as `propose_swap`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_cross_vault(
+        env: Env,
+        proposer: Address,
+        actions: Vec<VaultAction>,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+
+        let config = storage::get_config(&env)?;
+        let role = storage::get_role(&env, &proposer);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // Validate actions
+        if actions.is_empty() {
+            return Err(VaultError::InvalidAmount);
+        }
+        if actions.len() > MAX_CROSS_VAULT_ACTIONS {
+            return Err(VaultError::BatchTooLarge);
+        }
+
+        // Validate each action
+        for i in 0..actions.len() {
+            let action = actions.get(i).unwrap();
+            if action.amount <= 0 {
+                return Err(VaultError::InvalidAmount);
+            }
+        }
+
+        // Create base proposal (companion pattern like propose_swap)
+        let proposal_id = storage::increment_proposal_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let gas_cfg = storage::get_gas_config(&env);
+        let proposal_gas_limit = if gas_cfg.enabled {
+            gas_cfg.default_gas_limit
+        } else {
+            0
+        };
+
+        let proposal = Proposal {
+            id: proposal_id,
+            proposer: proposer.clone(),
+            recipient: env.current_contract_address(),
+            token: env.current_contract_address(),
+            amount: 0,
+            memo: Symbol::new(&env, "cross_vault"),
+            metadata: Map::new(&env),
+            tags: Vec::new(&env),
+            approvals: Vec::new(&env),
+            abstentions: Vec::new(&env),
+            attachments: Vec::new(&env),
+            status: ProposalStatus::Pending,
+            priority: priority.clone(),
+            conditions,
+            condition_logic,
+            created_at: current_ledger,
+            expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+            unlock_ledger: 0,
+            insurance_amount,
+            gas_limit: proposal_gas_limit,
+            gas_used: 0,
+            snapshot_ledger: current_ledger,
+            snapshot_signers: config.signers.clone(),
+            is_swap: false,
+            voting_deadline: if config.default_voting_deadline > 0 {
+                current_ledger + config.default_voting_deadline
+            } else {
+                0
+            },
+        };
+
+        storage::set_proposal(&env, &proposal);
+        storage::add_to_priority_queue(&env, priority as u32, proposal_id);
+
+        // Store companion cross-vault proposal
+        let cross_vault = CrossVaultProposal {
+            actions: actions.clone(),
+            status: CrossVaultStatus::Pending,
+            execution_results: Vec::new(&env),
+            executed_at: 0,
+        };
+        storage::set_cross_vault_proposal(&env, proposal_id, &cross_vault);
+
+        storage::extend_instance_ttl(&env);
+
+        events::emit_proposal_created(
+            &env,
+            proposal_id,
+            &proposer,
+            &env.current_contract_address(),
+            &env.current_contract_address(),
+            0,
+            insurance_amount,
+        );
+        events::emit_cross_vault_proposed(&env, proposal_id, &proposer, actions.len());
+
+        Self::update_reputation_on_propose(&env, &proposer);
+        storage::metrics_on_proposal(&env);
+
+        Ok(proposal_id)
+    }
+
+    /// Execute an approved cross-vault proposal.
+    ///
+    /// Calls each participant vault's `execute_cross_vault_action` in sequence.
+    /// Soroban atomicity guarantees that if any call fails, the entire
+    /// transaction (including all prior actions) rolls back.
+    pub fn execute_cross_vault(
+        env: Env,
+        executor: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        executor.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        let mut cross_vault = storage::get_cross_vault_proposal(&env, proposal_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+
+        if cross_vault.status == CrossVaultStatus::Executed {
+            return Err(VaultError::ProposalAlreadyExecuted);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Check timelock
+        if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        // Check expiration
+        if current_ledger > proposal.expires_at {
+            proposal.status = ProposalStatus::Expired;
+            storage::set_proposal(&env, &proposal);
+            return Err(VaultError::ProposalExpired);
+        }
+
+        let num_actions = cross_vault.actions.len();
+        events::emit_cross_vault_execution_started(&env, proposal_id, &executor, num_actions);
+
+        // Execute each action by calling the participant vault
+        let mut results = Vec::new(&env);
+        for i in 0..num_actions {
+            let action = cross_vault.actions.get(i).unwrap();
+
+            // Cross-contract call to participant vault
+            let participant = VaultDAOClient::new(&env, &action.vault_address);
+            participant.execute_cross_vault_action(
+                &env.current_contract_address(),
+                &action.recipient,
+                &action.token,
+                &action.amount,
+                &action.memo,
+            );
+
+            results.push_back(true);
+            events::emit_cross_vault_action_executed(
+                &env,
+                proposal_id,
+                i,
+                &action.vault_address,
+                action.amount,
+            );
+        }
+
+        // All actions succeeded — update state
+        cross_vault.status = CrossVaultStatus::Executed;
+        cross_vault.execution_results = results;
+        cross_vault.executed_at = current_ledger;
+        storage::set_cross_vault_proposal(&env, proposal_id, &cross_vault);
+
+        proposal.status = ProposalStatus::Executed;
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_cross_vault_executed(&env, proposal_id, &executor, num_actions);
+        Self::update_reputation_on_execution(&env, &proposal);
+
+        let gas_cfg = storage::get_gas_config(&env);
+        let estimated_gas = gas_cfg.base_cost + num_actions as u64 * gas_cfg.condition_cost;
+        let execution_time = current_ledger.saturating_sub(proposal.created_at);
+        storage::metrics_on_execution(&env, estimated_gas, execution_time);
+
+        Ok(())
+    }
+
+    /// Participant entry point for cross-vault actions.
+    ///
+    /// Called by a coordinator vault to execute a transfer from this vault.
+    /// Validates that the coordinator is authorized, cross-vault is enabled,
+    /// and the action is within configured limits.
+    pub fn execute_cross_vault_action(
+        env: Env,
+        coordinator: Address,
+        recipient: Address,
+        token_addr: Address,
+        amount: i128,
+        memo: Symbol,
+    ) -> Result<(), VaultError> {
+        coordinator.require_auth();
+
+        // Load cross-vault config
+        let cv_config =
+            storage::get_cross_vault_config(&env).ok_or(VaultError::XVaultNotEnabled)?;
+
+        if !cv_config.enabled {
+            return Err(VaultError::XVaultNotEnabled);
+        }
+
+        // Verify coordinator is authorized
+        if !cv_config.authorized_coordinators.contains(&coordinator) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Validate amount
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        if amount > cv_config.max_action_amount {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        // Check balance
+        let balance = token::balance(&env, &token_addr);
+        if balance < amount {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        // Execute transfer
+        token::transfer(&env, &token_addr, &recipient, amount);
+
+        let _ = memo; // memo is for event/audit purposes
+        events::emit_cross_vault_action_received(
+            &env,
+            &coordinator,
+            &recipient,
+            &token_addr,
+            amount,
+        );
+
+        Ok(())
+    }
+
+    /// Query a cross-vault proposal by its proposal ID.
+    pub fn get_cross_vault_proposal(env: Env, proposal_id: u64) -> Option<CrossVaultProposal> {
+        storage::get_cross_vault_proposal(&env, proposal_id)
+    }
+
+    // ========================================================================
+    // Dispute Resolution (Issue: feature/dispute-resolution)
+    // ========================================================================
+
+    /// Set the list of arbitrator addresses authorized to resolve disputes.
+    ///
+    /// Only Admin can configure arbitrators.
+    pub fn set_arbitrators(
+        env: Env,
+        admin: Address,
+        arbitrators: Vec<Address>,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::set_arbitrators(&env, &arbitrators);
+        storage::extend_instance_ttl(&env);
+        events::emit_arbitrators_updated(&env, &admin, arbitrators.len());
+        Ok(())
+    }
+
+    /// Query the current list of arbitrators.
+    pub fn get_arbitrators(env: Env) -> Vec<Address> {
+        storage::get_arbitrators(&env)
+    }
+
+    /// File a dispute against a pending or approved proposal.
+    ///
+    /// Any signer can file a dispute. The proposal must be in Pending or
+    /// Approved status (cannot dispute already-executed or cancelled proposals).
+    /// Only one dispute per proposal is allowed.
+    pub fn file_dispute(
+        env: Env,
+        disputer: Address,
+        proposal_id: u64,
+        reason: Symbol,
+        evidence: Vec<String>,
+    ) -> Result<u64, VaultError> {
+        disputer.require_auth();
+
+        // Must be a signer
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&disputer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        // Check proposal exists and is disputable
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Pending && proposal.status != ProposalStatus::Approved
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Only one dispute per proposal
+        if storage::get_proposal_dispute(&env, proposal_id).is_some() {
+            return Err(VaultError::AlreadyApproved); // reuse: already acted on
+        }
+
+        let dispute_id = storage::increment_dispute_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let dispute = Dispute {
+            id: dispute_id,
+            proposal_id,
+            disputer: disputer.clone(),
+            reason,
+            evidence,
+            status: DisputeStatus::Filed,
+            resolution: DisputeResolution::Dismissed, // placeholder until resolved
+            arbitrator: disputer.clone(),             // placeholder until resolved
+            filed_at: current_ledger,
+            resolved_at: 0,
+        };
+
+        storage::set_dispute(&env, &dispute);
+        storage::set_proposal_dispute(&env, proposal_id, dispute_id);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_dispute_filed(&env, dispute_id, proposal_id, &disputer);
+
+        Ok(dispute_id)
+    }
+
+    /// Resolve a dispute as a designated arbitrator.
+    ///
+    /// The arbitrator must be in the configured arbitrator list.
+    /// Resolution outcomes:
+    /// - `InFavorOfProposer` (0): proposal proceeds, dispute dismissed
+    /// - `InFavorOfDisputer` (1): proposal is rejected
+    /// - `Compromise` (2): dispute resolved, proposal remains in current state
+    /// - `Dismissed` (3): dispute dismissed as invalid
+    pub fn resolve_dispute(
+        env: Env,
+        arbitrator: Address,
+        dispute_id: u64,
+        resolution: DisputeResolution,
+    ) -> Result<(), VaultError> {
+        arbitrator.require_auth();
+
+        // Must be a designated arbitrator
+        let arbitrators = storage::get_arbitrators(&env);
+        if !arbitrators.contains(&arbitrator) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Load dispute
+        let mut dispute =
+            storage::get_dispute(&env, dispute_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Must be in Filed or UnderReview status
+        if dispute.status == DisputeStatus::Resolved || dispute.status == DisputeStatus::Dismissed {
+            return Err(VaultError::ProposalAlreadyExecuted); // reuse: already finalized
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Apply resolution effects on the proposal
+        match resolution {
+            DisputeResolution::InFavorOfDisputer => {
+                // Reject the disputed proposal
+                let mut proposal = storage::get_proposal(&env, dispute.proposal_id)?;
+                if proposal.status == ProposalStatus::Pending
+                    || proposal.status == ProposalStatus::Approved
+                {
+                    proposal.status = ProposalStatus::Rejected;
+                    storage::set_proposal(&env, &proposal);
+                    storage::metrics_on_rejection(&env);
+                    events::emit_proposal_rejected(
+                        &env,
+                        dispute.proposal_id,
+                        &arbitrator,
+                        &proposal.proposer,
+                    );
+                }
+            }
+            _ => {
+                // InFavorOfProposer, Compromise, Dismissed: proposal unaffected
+            }
+        }
+
+        // Update dispute record
+        dispute.status = match resolution {
+            DisputeResolution::Dismissed => DisputeStatus::Dismissed,
+            _ => DisputeStatus::Resolved,
+        };
+        dispute.resolution = resolution.clone();
+        dispute.arbitrator = arbitrator.clone();
+        dispute.resolved_at = current_ledger;
+
+        storage::set_dispute(&env, &dispute);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_dispute_resolved(
+            &env,
+            dispute_id,
+            dispute.proposal_id,
+            &arbitrator,
+            resolution as u32,
+        );
+
+        Ok(())
+    }
+
+    /// Query a dispute by its ID.
+    pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
+        storage::get_dispute(&env, dispute_id)
+    }
+
+    /// Query the dispute ID associated with a proposal (if any).
+    pub fn get_proposal_dispute(env: Env, proposal_id: u64) -> Option<u64> {
+        storage::get_proposal_dispute(&env, proposal_id)
     }
 
     // ========================================================================
