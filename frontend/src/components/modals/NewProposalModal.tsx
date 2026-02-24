@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Users } from 'lucide-react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import FileUploader, { type UploadedAttachment } from '../FileUploader';
 
@@ -21,6 +22,7 @@ interface NewProposalModalProps {
   onAttachmentsChange?: (attachments: UploadedAttachment[]) => void;
   onOpenTemplateSelector: () => void;
   onSaveAsTemplate: () => void;
+  onEnableCollaboration?: () => void;
 }
 
 const NewProposalModal: React.FC<NewProposalModalProps> = ({
@@ -34,6 +36,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   onAttachmentsChange,
   onOpenTemplateSelector,
   onSaveAsTemplate,
+  onEnableCollaboration,
 }) => {
   const { getListMode, isWhitelisted, isBlacklisted } = useVaultContract();
   const [recipientError, setRecipientError] = useState<string | null>(null);
@@ -98,11 +101,24 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
       <div className="w-full max-w-2xl rounded-xl border border-gray-700 bg-gray-900 p-4 sm:p-6">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-xl font-semibold text-white">Create New Proposal</h3>
-          {selectedTemplateName ? (
-            <span className="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs text-purple-300">
-              Template: {selectedTemplateName}
-            </span>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {selectedTemplateName && (
+              <span className="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs text-purple-300">
+                Template: {selectedTemplateName}
+              </span>
+            )}
+            {onEnableCollaboration && (
+              <button
+                type="button"
+                onClick={onEnableCollaboration}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-blue-500/40 bg-blue-500/10 text-xs text-blue-300 hover:bg-blue-500/20 transition-colors"
+                title="Enable collaborative editing"
+              >
+                <Users size={14} />
+                Collaborate
+              </button>
+            )}
+          </div>
         </div>
 
         {listMode !== 'Disabled' && (
