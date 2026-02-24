@@ -39,7 +39,7 @@ export function useProposalNotifications() {
     );
   };
 
-  const notifyProposalApproved = (proposalId: string, title: string, approverCount: number) => {
+  const notifyProposalApproved = (_proposalId: string, title: string, approverCount: number) => {
     notifyProposal(
       'Proposal Approved',
       `Proposal "${title}" has received ${approverCount} approvals`,
@@ -50,14 +50,14 @@ export function useProposalNotifications() {
           type: 'view',
           variant: 'primary',
           handler: async () => {
-            navigate(`/dashboard/proposals?id=${proposalId}`);
+            navigate(`/dashboard/proposals?id=${_proposalId}`);
           },
         },
       ]
     );
   };
 
-  const notifyProposalExecuted = (proposalId: string, title: string) => {
+  const notifyProposalExecuted = (_proposalId: string, title: string) => {
     notifyProposal(
       'Proposal Executed',
       `Proposal "${title}" has been successfully executed`,
@@ -99,7 +99,7 @@ export function useTransactionNotifications() {
   const navigate = useNavigate();
 
   const notifySignatureRequired = (
-    transactionId: string,
+    _transactionId: string,
     description: string,
     onApprove: () => Promise<void>
   ) => {
@@ -112,7 +112,7 @@ export function useTransactionNotifications() {
           label: 'Sign Now',
           type: 'approve',
           variant: 'primary',
-          handler: async (notificationId) => {
+          handler: async (_notificationId) => {
             try {
               await onApprove();
               notifySystem('Transaction Signed', 'Your signature has been recorded', 'normal');
@@ -131,14 +131,14 @@ export function useTransactionNotifications() {
           type: 'view',
           variant: 'secondary',
           handler: async () => {
-            navigate(`/dashboard/proposals?transaction=${transactionId}`);
+            navigate(`/dashboard/proposals?transaction=${_transactionId}`);
           },
         },
       ]
     );
   };
 
-  const notifyTransactionComplete = (transactionId: string, description: string) => {
+  const notifyTransactionComplete = (_transactionId: string, description: string) => {
     notifySystem(
       'Transaction Complete',
       `Transaction completed: ${description}`,
@@ -223,7 +223,7 @@ export function useVaultNotifications() {
   const { notify, notifySystem, notifyCritical } = useNotificationCenter();
   const navigate = useNavigate();
 
-  const notifyVaultCreated = (vaultId: string, vaultName: string) => {
+  const notifyVaultCreated = (_vaultId: string, vaultName: string) => {
     notify(
       'Vault Created',
       `Vault "${vaultName}" has been successfully created`,
@@ -237,7 +237,7 @@ export function useVaultNotifications() {
             type: 'view',
             variant: 'primary',
             handler: async () => {
-              navigate(`/dashboard?vault=${vaultId}`);
+              navigate(`/dashboard?vault=${_vaultId}`);
             },
           },
         ],
@@ -245,7 +245,7 @@ export function useVaultNotifications() {
     );
   };
 
-  const notifyMemberAdded = (vaultId: string, memberAddress: string) => {
+  const notifyMemberAdded = (_vaultId: string, memberAddress: string) => {
     notifySystem(
       'Member Added',
       `New member ${memberAddress.slice(0, 8)}... added to vault`,
@@ -253,7 +253,7 @@ export function useVaultNotifications() {
     );
   };
 
-  const notifyThresholdChanged = (vaultId: string, oldThreshold: number, newThreshold: number) => {
+  const notifyThresholdChanged = (_vaultId: string, oldThreshold: number, newThreshold: number) => {
     notifySystem(
       'Threshold Updated',
       `Vault threshold changed from ${oldThreshold} to ${newThreshold}`,
@@ -261,7 +261,7 @@ export function useVaultNotifications() {
     );
   };
 
-  const notifyVaultLocked = (vaultId: string, reason: string) => {
+  const notifyVaultLocked = (_vaultId: string, reason: string) => {
     notifyCritical(
       'Vault Locked',
       `Vault has been locked: ${reason}`,
@@ -327,10 +327,10 @@ export function useErrorNotifications() {
  * Example: Complete Integration in a Component
  */
 export function ExampleProposalComponent() {
-  const { notifyProposalCreated, notifyProposalRejected } = useProposalNotifications();
+  const { notifyProposalCreated } = useProposalNotifications();
   const { notifyError } = useErrorNotifications();
 
-  const handleSubmitProposal = async (proposalData: any) => {
+  const _handleSubmitProposal = async (proposalData: any) => {
     try {
       // Submit proposal logic here
       const proposalId = 'prop-123';

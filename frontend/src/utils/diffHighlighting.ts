@@ -46,7 +46,6 @@ export function calculateCharDiff(text1: string, text2: string): DiffSegment[] {
   const segments: DiffSegment[] = [];
   const len1 = text1.length;
   const len2 = text2.length;
-  const maxLen = Math.max(len1, len2);
 
   let i = 0;
   let j = 0;

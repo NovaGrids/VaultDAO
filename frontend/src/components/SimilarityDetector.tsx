@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { AlertTriangle, Copy, CheckCircle2 } from 'lucide-react';
 import { calculateSimilarityMatrix, detectDuplicates } from '../utils/similarityDetection';
-import type { SimilarityScore } from '../types/comparison';
 
 interface SimilarityDetectorProps {
   proposals: any[];
@@ -83,7 +82,7 @@ const SimilarityDetector: React.FC<SimilarityDetectorProps> = ({
 
       {/* Duplicate List */}
       <div className="space-y-2">
-        {duplicates.map(([id1, id2, score], index) => {
+        {duplicates.map(([id1, id2, score]) => {
           const proposal1 = proposals.find((p) => p.id === id1);
           const proposal2 = proposals.find((p) => p.id === id2);
 

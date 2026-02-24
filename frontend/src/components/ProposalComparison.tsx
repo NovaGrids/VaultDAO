@@ -18,7 +18,6 @@ const ProposalComparison: React.FC<ProposalComparisonProps> = ({
   onSelectionChange,
 }) => {
   const [showComparison, setShowComparison] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
 
   const selectedProposals = proposals.filter((p) => selectedIds.has(p.id));
 
@@ -46,13 +45,10 @@ const ProposalComparison: React.FC<ProposalComparisonProps> = ({
   };
 
   const handleExport = useCallback(async () => {
-    setIsExporting(true);
     try {
       await exportComparisonToPDF(selectedProposals);
     } catch (error) {
       console.error('Failed to export PDF:', error);
-    } finally {
-      setIsExporting(false);
     }
   }, [selectedProposals]);
 

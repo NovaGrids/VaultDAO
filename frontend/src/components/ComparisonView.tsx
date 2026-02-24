@@ -24,20 +24,20 @@ const COMPARISON_FIELDS: ComparisonField[] = [
 const DiffText: React.FC<{ segments: DiffSegment[] }> = ({ segments }) => {
   return (
     <span className="inline">
-      {segments.map((segment, index) => {
+      {segments.map((segment, idx) => {
         if (segment.type === 'equal') {
-          return <span key={index}>{segment.value}</span>;
+          return <span key={idx}>{segment.value}</span>;
         }
         if (segment.type === 'insert') {
           return (
-            <span key={index} className="bg-green-500/20 text-green-400">
+            <span key={idx} className="bg-green-500/20 text-green-400">
               {segment.value}
             </span>
           );
         }
         if (segment.type === 'delete') {
           return (
-            <span key={index} className="bg-red-500/20 text-red-400 line-through">
+            <span key={idx} className="bg-red-500/20 text-red-400 line-through">
               {segment.value}
             </span>
           );
@@ -142,7 +142,7 @@ const ComparisonView: React.FC<ComparisonViewProps> = ({ proposals, onClose, onE
                   </tr>
                 </thead>
                 <tbody>
-                  {comparisonData.map(({ field, values, diffs, hasDifferences }, rowIndex) => (
+                  {comparisonData.map(({ field, values, diffs, hasDifferences }) => (
                     <tr
                       key={field.key}
                       className={`border-t border-gray-700 ${

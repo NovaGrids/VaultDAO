@@ -367,7 +367,7 @@ const Proposals: React.FC = () => {
                   <div onClick={() => setSelectedProposal(prop)} className="cursor-pointer">
                     <div className="flex flex-col gap-4">
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                      <div className="flex items-center gap-4 flex-1">
+                        <div className="flex items-center gap-4 flex-1">
                         <div className="p-3 bg-gray-900 rounded-xl text-purple-400 group-hover:bg-purple-600 group-hover:text-white transition-colors">
                           <ArrowUpRight size={20} />
                         </div>
@@ -383,12 +383,12 @@ const Proposals: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                        <StatusBadge status={prop.status} />
+                        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                          <StatusBadge status={prop.status} />
+                        </div>
                       </div>
-                    </div>
 
-                    {prop.status === 'Pending' && (
+                      {prop.status === 'Pending' && (
                       <div className="flex flex-col gap-3 pt-3 border-t border-gray-700/50">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex-1">
