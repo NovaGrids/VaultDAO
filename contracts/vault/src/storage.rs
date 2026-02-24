@@ -62,6 +62,8 @@ pub enum DataKey {
     SwapProposal(u64),
     /// Swap result by proposal ID -> SwapResult
     SwapResult(u64),
+    /// Price feed cache by token -> PriceFeed
+    PriceFeed(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -578,4 +580,31 @@ pub fn get_swap_result(env: &Env, proposal_id: u64) -> Option<SwapResult> {
     env.storage()
         .persistent()
         .get(&DataKey::SwapResult(proposal_id))
+}
+
+// ============================================================================
+// Oracle Integration (Issue: feature/oracle-integration)
+// ============================================================================
+
+use crate::types::{OracleConfig, PriceFeed};
+
+/// Get cached price feed for a token
+pub fn get_price_feed(env: &Env, token: &Address) -> Option<PriceFeed> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::PriceFeed(token.clone()))
+}
+
+/// Cache price feed for a token
+pub fn set_price_feed(env: &Env, token: &Address, feed: &PriceFeed) {
+    let key = DataKey::PriceFeed(token.clone());
+    env.storage().temporary().set(&key, feed);
+    // Cache for 1 hour (720 ledgers)
+    env.storage().temporary().extend_ttl(&key, 720, 720);
+}
+
+/// Check if price feed is stale
+pub fn is_price_stale(env: &Env, feed: &PriceFeed, max_staleness: u64) -> bool {
+    let current_ledger = env.ledger().sequence() as u64;
+    current_ledger - feed.last_update > max_staleness
 }
