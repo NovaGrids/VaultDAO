@@ -2229,8 +2229,7 @@ impl VaultDAO {
         }
 
         // Get swap operation
-        let swap_op =
-            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexError)?;
+        let swap_op = storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexError)?;
         let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
 
         // Execute based on operation type
@@ -2665,7 +2664,13 @@ impl VaultDAO {
         storage::set_template(&env, &template);
         storage::extend_instance_ttl(&env);
 
-        events::emit_template_updated(&env, template_id, &template.name, template.version, &updater);
+        events::emit_template_updated(
+            &env,
+            template_id,
+            &template.name,
+            template.version,
+            &updater,
+        );
 
         Ok(())
     }
@@ -2873,7 +2878,13 @@ impl VaultDAO {
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
 
-        events::emit_proposal_from_template(&env, proposal_id, template_id, &template.name, &proposer);
+        events::emit_proposal_from_template(
+            &env,
+            proposal_id,
+            template_id,
+            &template.name,
+            &proposer,
+        );
 
         Ok(proposal_id)
     }

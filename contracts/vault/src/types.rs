@@ -579,7 +579,7 @@ pub struct TransferDetails {
 // ============================================================================
 
 /// Proposal template for recurring operations
-/// 
+///
 /// Templates allow pre-approved proposal configurations to be stored on-chain,
 /// enabling quick creation of common proposals like monthly payroll.
 #[contracttype]
