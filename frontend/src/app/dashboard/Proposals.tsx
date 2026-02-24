@@ -423,6 +423,7 @@ const Proposals: React.FC = () => {
           selectedTemplateName={null}
           formData={newProposalForm}
           onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
+          onAttachmentsChange={(attachments) => setNewProposalForm(prev => ({ ...prev, attachments }))}
           onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
           onOpenTemplateSelector={() => { }}
           onSaveAsTemplate={() => { }}
