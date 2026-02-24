@@ -10,6 +10,7 @@ use crate::types::{
     Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
     Subscription, SubscriptionPayment,
 };
+use crate::types::{Permission, PermissionGrant};
 
 /// Storage key definitions
 #[contracttype]
@@ -79,6 +80,8 @@ pub enum DataKey {
     Metrics,
     /// Retry state for a proposal -> RetryState
     RetryState(u64),
+    /// Permission grants for an address -> Vec<PermissionGrant>
+    Permissions(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -133,6 +136,90 @@ pub fn set_role(env: &Env, addr: &Address, role: Role) {
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// Permissions
+// ============================================================================
+
+pub fn get_permissions(env: &Env, addr: &Address) -> Vec<PermissionGrant> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Permissions(addr.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn set_permissions(env: &Env, addr: &Address, grants: &Vec<PermissionGrant>) {
+    let key = DataKey::Permissions(addr.clone());
+    env.storage().persistent().set(&key, grants);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+/// Grant a permission to an address. `granted_by` is the granter/delegator and
+/// `expires_at` is ledger sequence when this grant becomes invalid (0 = never).
+pub fn grant_permission(env: &Env, addr: &Address, granted_by: &Address, permission: Permission, expires_at: u64) {
+    let mut grants = get_permissions(env, addr);
+    let grant = PermissionGrant {
+        permission,
+        granted_by: granted_by.clone(),
+        expires_at,
+    };
+    grants.push_back(grant);
+    set_permissions(env, addr, &grants);
+}
+
+/// Revoke a given permission for an address (removes matching grants).
+pub fn revoke_permission(env: &Env, addr: &Address, permission: Permission) {
+    let grants = get_permissions(env, addr);
+    let mut filtered: Vec<PermissionGrant> = Vec::new(env);
+    for i in 0..grants.len() {
+        let g = grants.get(i).unwrap();
+        if g.permission != permission {
+            filtered.push_back(g);
+        }
+    }
+    set_permissions(env, addr, &filtered);
+}
+
+/// Delegate a set of permissions from `from` to `to` until `expires_at`.
+pub fn delegate_permissions(env: &Env, from: &Address, to: &Address, permissions: Vec<Permission>, expires_at: u64) {
+    for i in 0..permissions.len() {
+        let p = permissions.get(i).unwrap();
+        grant_permission(env, to, from, p, expires_at);
+    }
+}
+
+/// Check whether `addr` has `permission` either via role inheritance or active grants.
+pub fn has_permission(env: &Env, addr: &Address, permission: Permission) -> bool {
+    // Admin role has all permissions
+    let role = get_role(env, addr);
+    if role == Role::Admin {
+        return true;
+    }
+
+    // Role-based defaults
+    if role == Role::Treasurer {
+        match permission {
+            Permission::ProposeTransfer | Permission::ApproveProposal => return true,
+            _ => {}
+        }
+    }
+
+    // Explicit grants (and delegated grants)
+    let grants = get_permissions(env, addr);
+    let current = env.ledger().sequence() as u64;
+    for i in 0..grants.len() {
+        let g = grants.get(i).unwrap();
+        if g.permission == permission {
+            if g.expires_at == 0 || g.expires_at > current {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 // ============================================================================

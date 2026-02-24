@@ -3,6 +3,7 @@
 use super::*;
 use crate::types::{
     DexConfig, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VelocityConfig,
+    Permission,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -747,6 +748,79 @@ fn test_list_management() {
     assert!(client.is_blacklisted(&address2));
     client.remove_from_blacklist(&admin, &address2);
     assert!(!client.is_blacklisted(&address2));
+}
+
+#[test]
+fn test_permission_delegation_and_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let delegatee = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Give treasurer role to signer
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    // Treasurer delegates ProposeTransfer to delegatee for 10 ledgers
+    let now = env.ledger().sequence() as u64;
+    let expires_at = now + 10;
+
+    let mut perms = Vec::new(&env);
+    perms.push_back(Permission::ProposeTransfer);
+
+    // Grant treasurer the ability to delegate permissions
+    let mut grant_delegate_perm = Vec::new(&env);
+    grant_delegate_perm.push_back(Permission::DelegatePermissions);
+    client.delegate_permissions(&admin, &treasurer, &grant_delegate_perm, &0u64);
+
+    // Now treasurer delegates ProposeTransfer to delegatee
+    client.delegate_permissions(&treasurer, &delegatee, &perms, &expires_at);
+
+    // Delegatee should be able to propose within expiry
+    let res = client.try_propose_transfer(
+        &delegatee,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "delegated"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(res.is_ok());
+
+    // Advance ledger beyond expiry
+    env.ledger().set_sequence_number((now + 20).try_into().unwrap());
+
+    let res2 = client.try_propose_transfer(
+        &delegatee,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "expired"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(res2.is_err());
+
+    // Admin revokes any remaining explicit permissions (idempotent)
+    client.revoke_permission(&admin, &delegatee, &Permission::ProposeTransfer);
 }
 
 #[test]
@@ -3007,7 +3081,7 @@ fn test_subscription_create_and_renew() {
     assert_eq!(sub.payments_made, 0);
 
     // Advance ledger to renewal time
-    env.ledger().with_mut(|li| li.sequence_number += interval + 1);
+    env.ledger().with_mut(|li| li.sequence_number += (interval + 1) as u32);
 
     // Process renewal
     client.process_subscription_renewal(&signer, &sub_id);

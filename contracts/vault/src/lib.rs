@@ -22,6 +22,7 @@ use types::{
     Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
     NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
     RetryState, Role, ThresholdStrategy, VaultMetrics, Subscription, SubscriptionPayment,
+    Permission,
 };
 
 /// The main contract structure for VaultDAO.
@@ -154,9 +155,8 @@ impl VaultDAO {
         // 2. Check initialization and load config (single read — gas optimization)
         let config = storage::get_config(&env)?;
 
-        // 3. Check role
-        let role = storage::get_role(&env, &proposer);
-        if role != Role::Treasurer && role != Role::Admin {
+        // 3. Check permission (supports role inheritance and delegation)
+        if !storage::has_permission(&env, &proposer, Permission::ProposeTransfer) {
             return Err(VaultError::InsufficientRole);
         }
 
@@ -335,8 +335,7 @@ impl VaultDAO {
         }
 
         let config = storage::get_config(&env)?;
-        let role = storage::get_role(&env, &proposer);
-        if role != Role::Treasurer && role != Role::Admin {
+        if !storage::has_permission(&env, &proposer, Permission::ProposeTransfer) {
             return Err(VaultError::InsufficientRole);
         }
 
@@ -528,9 +527,8 @@ impl VaultDAO {
             return Err(VaultError::NotASigner);
         }
 
-        // Check role (must be Treasurer or Admin)
-        let role = storage::get_role(&env, &signer);
-        if role != Role::Treasurer && role != Role::Admin {
+        // Check permission to approve (supports role inheritance and delegation)
+        if !storage::has_permission(&env, &signer, Permission::ApproveProposal) {
             return Err(VaultError::InsufficientRole);
         }
 
@@ -950,6 +948,42 @@ impl VaultDAO {
 
         events::emit_role_assigned(&env, &target, role as u32);
 
+        Ok(())
+    }
+
+    /// Delegate permissions from `delegator` to `to` until `expires_at`.
+    /// Delegator must authorize and must have `DelegatePermissions` or be Admin.
+    pub fn delegate_permissions(
+        env: Env,
+        delegator: Address,
+        to: Address,
+        permissions: Vec<Permission>,
+        expires_at: u64,
+    ) -> Result<(), VaultError> {
+        delegator.require_auth();
+        if !storage::has_permission(&env, &delegator, Permission::DelegatePermissions) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::delegate_permissions(&env, &delegator, &to, permissions, expires_at);
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Revoke a permission for a target address. Only Admin may revoke explicit grants.
+    pub fn revoke_permission(
+        env: Env,
+        admin: Address,
+        target: Address,
+        permission: Permission,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+        storage::revoke_permission(&env, &target, permission);
+        storage::extend_instance_ttl(&env);
         Ok(())
     }
 

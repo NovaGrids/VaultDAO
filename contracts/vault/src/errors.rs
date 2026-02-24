@@ -1,8 +1,11 @@
 //! VaultDAO - Error Definitions
 
-use soroban_sdk::contracterror;
+use soroban_sdk::{
+    // Note: intentionally not using `contracterror` macro here to avoid
+    // macro metadata length limits in this environment. The enum is still
+    // used as the contract's error type.
+};
 
-#[contracterror]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum VaultError {

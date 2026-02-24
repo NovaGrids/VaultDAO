@@ -124,6 +124,41 @@ pub enum Role {
     Admin = 2,
 }
 
+/// Granular permissions for actions and resources
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Permission {
+    /// Create transfer proposals
+    ProposeTransfer = 0,
+    /// Approve proposals
+    ApproveProposal = 1,
+    /// Execute approved proposals
+    ExecuteProposal = 2,
+    /// Cancel proposals
+    CancelProposal = 3,
+    /// Manage roles and signers
+    ManageRoles = 4,
+    /// Manage configuration (limits, timelock)
+    ManageConfig = 5,
+    /// Manage recipient lists (whitelist/blacklist)
+    ManageLists = 6,
+    /// Delegate permissions to others
+    DelegatePermissions = 7,
+}
+
+/// A permission grant stored on-chain. Grants may be delegated and can expire.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PermissionGrant {
+    /// The permission being granted
+    pub permission: Permission,
+    /// Who granted or delegated this permission
+    pub granted_by: Address,
+    /// Ledger sequence when this grant expires (0 = never)
+    pub expires_at: u64,
+}
+
 /// The lifecycle states of a proposal.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
