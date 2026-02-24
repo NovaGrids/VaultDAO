@@ -781,7 +781,7 @@ impl VaultDAO {
             // The check will be done in the caller if needed
 
             // Check dependency exists
-            if let Err(_) = storage::get_proposal(env, dep_id) {
+            if storage::get_proposal(env, dep_id).is_err() {
                 return Err(VaultError::DependencyNotFound);
             }
 
