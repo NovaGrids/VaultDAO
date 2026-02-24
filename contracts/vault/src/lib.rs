@@ -20,9 +20,9 @@ use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
     Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
-    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
-    RetryState, Role, ThresholdStrategy, VaultMetrics, Subscription, SubscriptionPayment,
-    Permission,
+    NotificationPreferences, Permission, Priority, Proposal, ProposalStatus, Reputation,
+    RetryConfig, RetryState, Role, Subscription, SubscriptionPayment, ThresholdStrategy,
+    VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -1420,11 +1420,18 @@ impl VaultDAO {
         }
 
         // Execute payment from vault to recipient
-        token::transfer(&env, &subscription.token, &subscription.recipient, subscription.price);
+        token::transfer(
+            &env,
+            &subscription.token,
+            &subscription.recipient,
+            subscription.price,
+        );
 
         // Update subscription tracking
         subscription.payments_made += 1;
-        subscription.next_renewal_ledger = subscription.next_renewal_ledger.saturating_add(subscription.interval);
+        subscription.next_renewal_ledger = subscription
+            .next_renewal_ledger
+            .saturating_add(subscription.interval);
         storage::set_subscription(&env, &subscription);
 
         // Record payment history

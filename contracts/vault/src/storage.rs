@@ -7,8 +7,7 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
-    Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
-    Subscription, SubscriptionPayment,
+    Reputation, RetryState, Role, Subscription, SubscriptionPayment, VaultMetrics, VelocityConfig,
 };
 use crate::types::{Permission, PermissionGrant};
 
@@ -159,7 +158,13 @@ fn set_permissions(env: &Env, addr: &Address, grants: &Vec<PermissionGrant>) {
 
 /// Grant a permission to an address. `granted_by` is the granter/delegator and
 /// `expires_at` is ledger sequence when this grant becomes invalid (0 = never).
-pub fn grant_permission(env: &Env, addr: &Address, granted_by: &Address, permission: Permission, expires_at: u64) {
+pub fn grant_permission(
+    env: &Env,
+    addr: &Address,
+    granted_by: &Address,
+    permission: Permission,
+    expires_at: u64,
+) {
     let mut grants = get_permissions(env, addr);
     let grant = PermissionGrant {
         permission,
@@ -184,7 +189,13 @@ pub fn revoke_permission(env: &Env, addr: &Address, permission: Permission) {
 }
 
 /// Delegate a set of permissions from `from` to `to` until `expires_at`.
-pub fn delegate_permissions(env: &Env, from: &Address, to: &Address, permissions: Vec<Permission>, expires_at: u64) {
+pub fn delegate_permissions(
+    env: &Env,
+    from: &Address,
+    to: &Address,
+    permissions: Vec<Permission>,
+    expires_at: u64,
+) {
     for i in 0..permissions.len() {
         let p = permissions.get(i).unwrap();
         grant_permission(env, to, from, p, expires_at);
@@ -401,7 +412,10 @@ pub fn append_subscription_payment(env: &Env, payment: &SubscriptionPayment) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
-pub fn get_subscription_payments(env: &Env, subscription_id: u64) -> soroban_sdk::Vec<SubscriptionPayment> {
+pub fn get_subscription_payments(
+    env: &Env,
+    subscription_id: u64,
+) -> soroban_sdk::Vec<SubscriptionPayment> {
     env.storage()
         .persistent()
         .get(&DataKey::SubscriptionPayments(subscription_id))

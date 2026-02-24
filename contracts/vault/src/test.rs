@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::types::{
-    DexConfig, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VelocityConfig,
-    Permission,
+    DexConfig, Permission, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails,
+    VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -804,7 +804,8 @@ fn test_permission_delegation_and_expiry() {
     assert!(res.is_ok());
 
     // Advance ledger beyond expiry
-    env.ledger().set_sequence_number((now + 20).try_into().unwrap());
+    env.ledger()
+        .set_sequence_number((now + 20).try_into().unwrap());
 
     let res2 = client.try_propose_transfer(
         &delegatee,
@@ -3081,7 +3082,8 @@ fn test_subscription_create_and_renew() {
     assert_eq!(sub.payments_made, 0);
 
     // Advance ledger to renewal time
-    env.ledger().with_mut(|li| li.sequence_number += (interval + 1) as u32);
+    env.ledger()
+        .with_mut(|li| li.sequence_number += (interval + 1) as u32);
 
     // Process renewal
     client.process_subscription_renewal(&signer, &sub_id);
