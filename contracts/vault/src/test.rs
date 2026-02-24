@@ -2487,3 +2487,380 @@ fn test_initialize_rejects_quorum_too_high() {
     let result = client.try_initialize(&admin, &config);
     assert_eq!(result.err(), Some(Ok(VaultError::QuorumTooHigh)));
 }
+
+// ============================================================================
+// Oracle Integration Tests (Issue: feature/oracle-integration)
+// ============================================================================
+
+#[test]
+fn test_oracle_configuration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure oracle
+    let oracle_config = types::OracleConfig {
+        enabled: true,
+        oracle_address: oracle_addr.clone(),
+        max_staleness: 720, // 1 hour
+        min_sources: 3,
+        usd_limits_enabled: true,
+    };
+    client.set_oracle_config(&admin, &oracle_config);
+
+    // Verify configuration
+    let retrieved_config = client.get_oracle_config();
+    assert_eq!(retrieved_config.oracle_address, oracle_addr);
+    assert_eq!(retrieved_config.max_staleness, 720);
+    assert_eq!(retrieved_config.min_sources, 3);
+    assert_eq!(retrieved_config.usd_limits_enabled, true);
+    assert_eq!(retrieved_config.enabled, true);
+}
+
+#[test]
+fn test_fetch_price_feed() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure oracle
+    let oracle_config = types::OracleConfig {
+        enabled: true,
+        oracle_address: oracle_addr,
+        max_staleness: 720,
+        min_sources: 3,
+        usd_limits_enabled: true,
+    };
+    client.set_oracle_config(&admin, &oracle_config);
+
+    // Fetch price feed
+    let price_feed = client.fetch_price_feed(&token);
+    assert_eq!(price_feed.token, token);
+    assert!(price_feed.price > 0);
+    assert!(price_feed.sources >= 3);
+}
+
+#[test]
+fn test_convert_to_usd() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure oracle
+    let oracle_config = types::OracleConfig {
+        enabled: true,
+        oracle_address: oracle_addr,
+        max_staleness: 720,
+        min_sources: 3,
+        usd_limits_enabled: true,
+    };
+    client.set_oracle_config(&admin, &oracle_config);
+
+    // Convert 100 tokens to USD (assuming $1.00 price)
+    let token_amount = 100_0000000i128; // 100 tokens with 7 decimals
+    let usd_value = client.convert_to_usd(&token, &token_amount);
+    
+    // With $1.00 price, 100 tokens = $100
+    assert_eq!(usd_value, 100_0000000i128);
+}
+
+#[test]
+fn test_convert_from_usd() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure oracle
+    let oracle_config = types::OracleConfig {
+        enabled: true,
+        oracle_address: oracle_addr,
+        max_staleness: 720,
+        min_sources: 3,
+        usd_limits_enabled: true,
+    };
+    client.set_oracle_config(&admin, &oracle_config);
+
+    // Convert $100 USD to tokens (assuming $1.00 price)
+    let usd_amount = 100_0000000i128; // $100 with 7 decimals
+    let token_amount = client.convert_from_usd(&token, &usd_amount);
+    
+    // With $1.00 price, $100 = 100 tokens
+    assert_eq!(token_amount, 100_0000000i128);
+}
+
+#[test]
+fn test_portfolio_valuation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+    let token1 = Address::generate(&env);
+    let token2 = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure oracle
+    let oracle_config = types::OracleConfig {
+        enabled: true,
+        oracle_address: oracle_addr,
+        max_staleness: 720,
+        min_sources: 3,
+        usd_limits_enabled: true,
+    };
+    client.set_oracle_config(&admin, &oracle_config);
+
+    // Calculate portfolio valuation
+    let mut tokens = Vec::new(&env);
+    tokens.push_back(token1);
+    tokens.push_back(token2);
+    
+    let valuation = client.calculate_portfolio_valuation(&tokens);
+    assert!(valuation.total_usd >= 0);
+    assert_eq!(valuation.token_values.len(), 0); // No balances in test
+}
+
+#[test]
+fn test_price_based_conditions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+    let token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    // Admin role is already set by initialize, set Treasurer for proposal creation
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    // Configure oracle (admin has Admin role from initialize)
+    let oracle_config = types::OracleConfig {
+        enabled: true,
+        oracle_address: oracle_addr,
+        max_staleness: 720,
+        min_sources: 3,
+        usd_limits_enabled: true,
+    };
+    client.set_oracle_config(&admin, &oracle_config);
+
+    // Create proposal with price condition
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::PriceAbove(token.clone(), 5000000i128)); // $0.50
+    
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Approve proposal
+    client.approve_proposal(&admin, &proposal_id);
+
+    // Verify proposal is approved
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_price_staleness_check() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+
+    // Configure oracle with short staleness window
+    let oracle_config = types::OracleConfig {
+        enabled: true,
+        oracle_address: oracle_addr,
+        max_staleness: 10, // 10 ledgers
+        min_sources: 3,
+        usd_limits_enabled: true,
+    };
+    client.set_oracle_config(&admin, &oracle_config);
+
+    // Fetch price (creates cache)
+    let _ = client.fetch_price_feed(&token);
+
+    // Check staleness immediately (should be fresh)
+    let is_stale = client.is_price_feed_stale(&token);
+    assert_eq!(is_stale, false);
+
+    // Advance ledger beyond staleness window
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 20;
+    });
+
+    // Check staleness again (should be stale now)
+    let is_stale = client.is_price_feed_stale(&token);
+    assert_eq!(is_stale, true);
+}

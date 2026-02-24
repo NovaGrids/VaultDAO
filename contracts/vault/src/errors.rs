@@ -97,3 +97,4 @@ pub enum VaultError {
     // Reputation
     ReputationTooLow = 180,
 }
+

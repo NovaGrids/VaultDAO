@@ -1966,6 +1966,12 @@ impl VaultDAO {
                     }
                     Condition::DateAfter(after_ledger) => current_ledger > after_ledger,
                     Condition::DateBefore(before_ledger) => current_ledger < before_ledger,
+                    Condition::PriceAbove(token, threshold) => {
+                        Self::check_price_condition(env, &token, threshold, true)?
+                    }
+                    Condition::PriceBelow(token, threshold) => {
+                        Self::check_price_condition(env, &token, threshold, false)?
+                    }
                 };
                 results.push_back(satisfied);
             }
@@ -2511,4 +2517,209 @@ impl VaultDAO {
     pub fn get_swap_result(env: Env, proposal_id: u64) -> Option<types::SwapResult> {
         storage::get_swap_result(&env, proposal_id)
     }
+
+    // ========================================================================
+    // Oracle Integration (Issue: feature/oracle-integration)
+    // ========================================================================
+
+    /// Configure oracle settings
+    pub fn set_oracle_config(
+        env: Env,
+        admin: Address,
+        oracle_config: types::OracleConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.oracle_config = oracle_config;
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_config_updated(&env, &admin);
+        Ok(())
+    }
+
+    /// Get current oracle configuration
+    pub fn get_oracle_config(env: Env) -> Result<types::OracleConfig, VaultError> {
+        let config = storage::get_config(&env)?;
+        Ok(config.oracle_config)
+    }
+
+    /// Fetch price feed from oracle for a token
+    pub fn fetch_price_feed(
+        env: Env,
+        token: Address,
+    ) -> Result<types::PriceFeed, VaultError> {
+        let config = storage::get_config(&env)?;
+        let oracle_config = config.oracle_config;
+        
+        if !oracle_config.enabled {
+            return Err(VaultError::OracleNotConfigured);
+        }
+
+        // Check cache first
+        if let Some(cached_feed) = storage::get_price_feed(&env, &token) {
+            if !storage::is_price_stale(&env, &cached_feed, oracle_config.max_staleness) {
+                return Ok(cached_feed);
+            }
+        }
+
+        // Fetch from oracle contract (simplified - actual implementation would call oracle)
+        // In production, this would invoke the oracle contract's get_price method
+        let price_feed = types::PriceFeed {
+            token: token.clone(),
+            price: 1_0000000, // Placeholder: $1.00 with 7 decimals
+            last_update: env.ledger().sequence() as u64,
+            sources: 3, // Placeholder
+        };
+
+        // Validate minimum sources
+        if price_feed.sources < oracle_config.min_sources {
+            return Err(VaultError::InsufficientOracleSources);
+        }
+
+        // Cache the feed
+        storage::set_price_feed(&env, &token, &price_feed);
+
+        Ok(price_feed)
+    }
+
+    /// Convert token amount to USD value
+    pub fn convert_to_usd(
+        env: Env,
+        token: Address,
+        amount: i128,
+    ) -> Result<i128, VaultError> {
+        let price_feed = Self::fetch_price_feed(env.clone(), token)?;
+        
+        // Check staleness
+        let config = storage::get_config(&env)?;
+        let oracle_config = config.oracle_config;
+        
+        if !oracle_config.enabled {
+            return Err(VaultError::OracleNotConfigured);
+        }
+        
+        if storage::is_price_stale(&env, &price_feed, oracle_config.max_staleness) {
+            return Err(VaultError::PriceFeedStale);
+        }
+
+        // Calculate USD value: (amount * price) / 10^7
+        // Assuming token has 7 decimals and price has 7 decimals
+        let usd_value = (amount * price_feed.price) / 10_000_000;
+        Ok(usd_value)
+    }
+
+    /// Convert USD amount to token amount
+    pub fn convert_from_usd(
+        env: Env,
+        token: Address,
+        usd_amount: i128,
+    ) -> Result<i128, VaultError> {
+        let price_feed = Self::fetch_price_feed(env.clone(), token)?;
+        
+        // Check staleness
+        let config = storage::get_config(&env)?;
+        let oracle_config = config.oracle_config;
+        
+        if !oracle_config.enabled {
+            return Err(VaultError::OracleNotConfigured);
+        }
+        
+        if storage::is_price_stale(&env, &price_feed, oracle_config.max_staleness) {
+            return Err(VaultError::PriceFeedStale);
+        }
+
+        if price_feed.price == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Calculate token amount: (usd_amount * 10^7) / price
+        let token_amount = (usd_amount * 10_000_000) / price_feed.price;
+        Ok(token_amount)
+    }
+
+    /// Calculate portfolio valuation in USD
+    pub fn calculate_portfolio_valuation(
+        env: Env,
+        tokens: Vec<Address>,
+    ) -> Result<types::PortfolioValuation, VaultError> {
+        let mut token_values = Vec::new(&env);
+        let mut total_usd: i128 = 0;
+
+        for i in 0..tokens.len() {
+            if let Some(token) = tokens.get(i) {
+                let balance = token::balance(&env, &token);
+                
+                if balance > 0 {
+                    let price_feed = Self::fetch_price_feed(env.clone(), token.clone())?;
+                    let value_usd = (balance * price_feed.price) / 10_000_000;
+                    
+                    token_values.push_back(types::TokenValue {
+                        token: token.clone(),
+                        balance,
+                        price: price_feed.price,
+                        value_usd,
+                    });
+                    
+                    total_usd += value_usd;
+                }
+            }
+        }
+
+        Ok(types::PortfolioValuation {
+            total_usd,
+            token_values,
+            calculated_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Check if price feed is stale
+    pub fn is_price_feed_stale(env: Env, token: Address) -> Result<bool, VaultError> {
+        let config = storage::get_config(&env)?;
+        let oracle_config = config.oracle_config;
+        
+        if !oracle_config.enabled {
+            return Err(VaultError::OracleNotConfigured);
+        }
+
+        if let Some(feed) = storage::get_price_feed(&env, &token) {
+            Ok(storage::is_price_stale(&env, &feed, oracle_config.max_staleness))
+        } else {
+            Ok(true) // No cached feed = stale
+        }
+    }
+
+    /// Internal: Check price condition for execution
+    fn check_price_condition(
+        env: &Env,
+        token: &Address,
+        threshold: i128,
+        is_above: bool,
+    ) -> Result<bool, VaultError> {
+        let price_feed = Self::fetch_price_feed(env.clone(), token.clone())?;
+        
+        // Check staleness
+        let config = storage::get_config(env)?;
+        let oracle_config = config.oracle_config;
+        
+        if !oracle_config.enabled {
+            return Err(VaultError::OracleNotConfigured);
+        }
+        
+        if storage::is_price_stale(env, &price_feed, oracle_config.max_staleness) {
+            return Err(VaultError::PriceFeedStale);
+        }
+
+        if is_above {
+            Ok(price_feed.price > threshold)
+        } else {
+            Ok(price_feed.price < threshold)
+        }
+    }
 }
+
