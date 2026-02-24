@@ -8,6 +8,7 @@ use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
     Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    Subscription, SubscriptionPayment,
 };
 
 /// Storage key definitions
@@ -34,6 +35,12 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
+    /// Subscription by ID -> Subscription
+    Subscription(u64),
+    /// Next subscription ID counter -> u64
+    NextSubscriptionId,
+    /// Subscription payment history -> Vec<SubscriptionPayment>
+    SubscriptionPayments(u64),
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
     /// Cancellation record for a proposal -> CancellationRecord
@@ -261,6 +268,57 @@ pub fn get_next_recurring_id(env: &Env) -> u64 {
         .instance()
         .get(&DataKey::NextRecurringId)
         .unwrap_or(1)
+}
+
+pub fn get_next_subscription_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextSubscriptionId)
+        .unwrap_or(1)
+}
+
+pub fn increment_subscription_id(env: &Env) -> u64 {
+    let id = get_next_subscription_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextSubscriptionId, &(id + 1));
+    id
+}
+
+pub fn set_subscription(env: &Env, subscription: &Subscription) {
+    let key = DataKey::Subscription(subscription.id);
+    env.storage().persistent().set(&key, subscription);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Subscription(id))
+        .ok_or(VaultError::SubscriptionNotFound)
+}
+
+pub fn append_subscription_payment(env: &Env, payment: &SubscriptionPayment) {
+    let key = DataKey::SubscriptionPayments(payment.subscription_id);
+    let mut history: soroban_sdk::Vec<SubscriptionPayment> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+    history.push_back(payment.clone());
+    env.storage().persistent().set(&key, &history);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_subscription_payments(env: &Env, subscription_id: u64) -> soroban_sdk::Vec<SubscriptionPayment> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SubscriptionPayments(subscription_id))
+        .unwrap_or(soroban_sdk::Vec::new(env))
 }
 
 pub fn increment_recurring_id(env: &Env) -> u64 {

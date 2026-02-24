@@ -21,7 +21,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
     Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
     NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
-    RetryState, Role, ThresholdStrategy, VaultMetrics,
+    RetryState, Role, ThresholdStrategy, VaultMetrics, Subscription, SubscriptionPayment,
 };
 
 /// The main contract structure for VaultDAO.
@@ -1299,6 +1299,183 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Subscriptions
+    // ========================================================================
+
+    /// Create a subscription for recurring billing.
+    /// Only Treasurer or Admin can create subscriptions on behalf of an owner.
+    pub fn create_subscription(
+        env: Env,
+        creator: Address,
+        owner: Address,
+        recipient: Address,
+        token_addr: Address,
+        tier: Symbol,
+        price: i128,
+        interval: u64,
+    ) -> Result<u64, VaultError> {
+        creator.require_auth();
+
+        let role = storage::get_role(&env, &creator);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        if price <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        if interval < 720 {
+            return Err(VaultError::IntervalTooShort);
+        }
+
+        // Validate recipient
+        Self::validate_recipient(&env, &recipient)?;
+
+        let id = storage::increment_subscription_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let subscription = Subscription {
+            id,
+            owner: owner.clone(),
+            recipient: recipient.clone(),
+            token: token_addr.clone(),
+            tier: tier.clone(),
+            price,
+            interval,
+            next_renewal_ledger: current_ledger + interval,
+            payments_made: 0,
+            is_active: true,
+            created_at: current_ledger,
+        };
+
+        storage::set_subscription(&env, &subscription);
+        storage::extend_instance_ttl(&env);
+
+        Ok(id)
+    }
+
+    /// Process a single subscription renewal if it's due.
+    /// Can be called by anyone (keeper/bot) to trigger payment.
+    pub fn process_subscription_renewal(
+        env: Env,
+        caller: Address,
+        subscription_id: u64,
+    ) -> Result<(), VaultError> {
+        // Keepers may call but require auth to avoid accidental operations
+        caller.require_auth();
+
+        let mut subscription = storage::get_subscription(&env, subscription_id)?;
+
+        if !subscription.is_active {
+            return Err(VaultError::SubscriptionNotActive);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger < subscription.next_renewal_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        // Ensure vault has enough balance to pay (users are expected to pre-fund vault)
+        let balance = token::balance(&env, &subscription.token);
+        if balance < subscription.price {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        // Execute payment from vault to recipient
+        token::transfer(&env, &subscription.token, &subscription.recipient, subscription.price);
+
+        // Update subscription tracking
+        subscription.payments_made += 1;
+        subscription.next_renewal_ledger = subscription.next_renewal_ledger.saturating_add(subscription.interval);
+        storage::set_subscription(&env, &subscription);
+
+        // Record payment history
+        let payment = SubscriptionPayment {
+            subscription_id: subscription.id,
+            paid_at_ledger: current_ledger,
+            amount: subscription.price,
+        };
+        storage::append_subscription_payment(&env, &payment);
+
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Cancel a subscription. Only owner or Admin can cancel.
+    pub fn cancel_subscription(
+        env: Env,
+        caller: Address,
+        subscription_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut subscription = storage::get_subscription(&env, subscription_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != subscription.owner {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if !subscription.is_active {
+            return Err(VaultError::SubscriptionNotActive);
+        }
+
+        subscription.is_active = false;
+        storage::set_subscription(&env, &subscription);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Upgrade or change a subscription's tier and price. Owner or Admin only.
+    pub fn change_subscription_tier(
+        env: Env,
+        caller: Address,
+        subscription_id: u64,
+        new_tier: Symbol,
+        new_price: i128,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        if new_price <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut subscription = storage::get_subscription(&env, subscription_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != subscription.owner {
+            return Err(VaultError::Unauthorized);
+        }
+
+        subscription.tier = new_tier;
+        subscription.price = new_price;
+        // Optionally set next renewal to now + interval to bill immediately on change
+        let current = env.ledger().sequence() as u64;
+        subscription.next_renewal_ledger = current + subscription.interval;
+
+        storage::set_subscription(&env, &subscription);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get a subscription by ID
+    pub fn get_subscription(env: Env, subscription_id: u64) -> Result<Subscription, VaultError> {
+        storage::get_subscription(&env, subscription_id)
+    }
+
+    /// Get payment history for a subscription
+    pub fn get_subscription_payments(
+        env: Env,
+        subscription_id: u64,
+    ) -> soroban_sdk::Vec<SubscriptionPayment> {
+        storage::get_subscription_payments(&env, subscription_id)
     }
 
     // ========================================================================

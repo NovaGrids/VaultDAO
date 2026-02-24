@@ -275,6 +275,45 @@ pub struct RecurringPayment {
     pub is_active: bool,
 }
 
+// ============================================================================
+// Subscriptions
+// ============================================================================
+
+/// Subscription tiers are represented by a simple symbol (e.g., "basic", "pro").
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Subscription {
+    pub id: u64,
+    /// Payer who created/owns the subscription (funds should be deposited into vault)
+    pub owner: Address,
+    /// Recipient who receives payments
+    pub recipient: Address,
+    /// Token contract used for billing
+    pub token: Address,
+    /// Tier label
+    pub tier: Symbol,
+    /// Price per billing period
+    pub price: i128,
+    /// Billing interval in ledgers
+    pub interval: u64,
+    /// Next scheduled renewal ledger
+    pub next_renewal_ledger: u64,
+    /// Number of successful payments processed
+    pub payments_made: u32,
+    /// Whether subscription is active
+    pub is_active: bool,
+    /// Ledger when subscription was created
+    pub created_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SubscriptionPayment {
+    pub subscription_id: u64,
+    pub paid_at_ledger: u64,
+    pub amount: i128,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct VelocityConfig {

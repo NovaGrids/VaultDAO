@@ -98,4 +98,7 @@ pub enum VaultError {
     MaxRetriesExceeded = 190,
     RetryBackoffNotElapsed = 191,
     RetryNotEnabled = 192,
+    // Subscriptions
+    SubscriptionNotFound = 200,
+    SubscriptionNotActive = 201,
 }

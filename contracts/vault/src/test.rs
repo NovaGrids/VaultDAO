@@ -2958,6 +2958,124 @@ fn test_retry_not_enabled_passes_through_error() {
 }
 
 #[test]
+fn test_subscription_create_and_renew() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Register a SAC token and mint to vault so renewals can be paid
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = default_init_config(&env, signers.clone(), 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer, &Role::Treasurer);
+
+    // Mint enough tokens to the vault to cover renewals
+    sac_admin_client.mint(&contract_id, &1000_i128);
+
+    // Create subscription
+    let tier = Symbol::new(&env, "basic");
+    let price = 100_i128;
+    let interval = 10u64; // short interval for test
+
+    let sub_id = client.create_subscription(
+        &signer,
+        &owner,
+        &recipient,
+        &token_addr,
+        &tier,
+        &price,
+        &interval,
+    );
+
+    let sub = client.get_subscription(&sub_id);
+    assert_eq!(sub.is_active, true);
+    assert_eq!(sub.payments_made, 0);
+
+    // Advance ledger to renewal time
+    env.ledger().with_mut(|li| li.sequence_number += interval + 1);
+
+    // Process renewal
+    client.process_subscription_renewal(&signer, &sub_id);
+
+    let sub_after = client.get_subscription(&sub_id);
+    assert_eq!(sub_after.payments_made, 1);
+
+    let payments = client.get_subscription_payments(&sub_id);
+    assert_eq!(payments.len(), 1);
+}
+
+#[test]
+fn test_subscription_cancel_and_change_tier() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = default_init_config(&env, signers.clone(), 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer, &Role::Treasurer);
+
+    sac_admin_client.mint(&contract_id, &500_i128);
+
+    let tier = Symbol::new(&env, "basic");
+    let price = 50_i128;
+    let interval = 20u64;
+
+    let sub_id = client.create_subscription(
+        &signer,
+        &owner,
+        &recipient,
+        &token_addr,
+        &tier,
+        &price,
+        &interval,
+    );
+
+    // Change tier
+    let new_tier = Symbol::new(&env, "pro");
+    client.change_subscription_tier(&owner, &sub_id, &new_tier, &100_i128);
+
+    let sub = client.get_subscription(&sub_id);
+    assert_eq!(sub.tier, new_tier);
+    assert_eq!(sub.price, 100_i128);
+
+    // Cancel
+    client.cancel_subscription(&owner, &sub_id);
+    let sub_cancelled = client.get_subscription(&sub_id);
+    assert_eq!(sub_cancelled.is_active, false);
+}
+
+#[test]
 fn test_retry_execution_function() {
     setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);
 
