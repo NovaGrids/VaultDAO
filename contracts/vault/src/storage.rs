@@ -545,3 +545,21 @@ pub fn create_audit_entry(env: &Env, action: crate::types::AuditAction, actor: &
     set_audit_entry(env, &entry);
     set_last_audit_hash(env, hash);
 }
+
+// ============================================================================
+// Execution Retry (Issue: feature/execution-retry)
+// ============================================================================
+
+pub fn get_retry_state(env: &Env, proposal_id: u64) -> Option<RetryState> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RetryState(proposal_id))
+}
+
+pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
+    let key = DataKey::RetryState(proposal_id);
+    env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}

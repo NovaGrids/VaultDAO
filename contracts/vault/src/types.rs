@@ -30,6 +30,8 @@ pub struct InitConfig {
     pub threshold_strategy: ThresholdStrategy,
     /// Default voting deadline in ledgers (0 = no deadline)
     pub default_voting_deadline: u64,
+    /// Retry configuration for failed executions
+    pub retry_config: RetryConfig,
 }
 
 /// Vault configuration
@@ -58,6 +60,8 @@ pub struct Config {
     pub threshold_strategy: ThresholdStrategy,
     /// Default voting deadline in ledgers (0 = no deadline)
     pub default_voting_deadline: u64,
+    /// Retry configuration for failed executions
+    pub retry_config: RetryConfig,
 }
 
 /// Audit record for a cancelled proposal
@@ -338,4 +342,32 @@ pub struct Comment {
     pub parent_id: u64,
     pub created_at: u64,
     pub edited_at: u64,
+}
+
+// ============================================================================
+// Execution Retry (Issue: feature/execution-retry)
+// ============================================================================
+
+/// Configuration for automatic retry of failed proposal executions
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RetryConfig {
+    /// Whether retry logic is enabled
+    pub enabled: bool,
+    /// Maximum number of retry attempts allowed per proposal
+    pub max_retries: u32,
+    /// Initial backoff period in ledgers before first retry (~5 sec/ledger)
+    pub initial_backoff_ledgers: u64,
+}
+
+/// Tracks retry state for a specific proposal execution
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RetryState {
+    /// Number of retry attempts made so far
+    pub retry_count: u32,
+    /// Earliest ledger when next retry is allowed (exponential backoff)
+    pub next_retry_ledger: u64,
+    /// Ledger of the last retry attempt
+    pub last_retry_ledger: u64,
 }

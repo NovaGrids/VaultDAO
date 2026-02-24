@@ -367,3 +367,37 @@ pub fn emit_proposal_deadline_rejected(env: &Env, proposal_id: u64, deadline: u6
         deadline,
     );
 }
+
+// ============================================================================
+// Retry Events (feature/execution-retry)
+// ============================================================================
+
+/// Emit when an execution retry is scheduled after a transient failure
+pub fn emit_retry_scheduled(
+    env: &Env,
+    proposal_id: u64,
+    retry_count: u32,
+    next_retry_ledger: u64,
+    error_code: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "retry_scheduled"), proposal_id),
+        (retry_count, next_retry_ledger, error_code),
+    );
+}
+
+/// Emit when a retry execution attempt is made
+pub fn emit_retry_attempted(env: &Env, proposal_id: u64, retry_count: u32, executor: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "retry_attempted"), proposal_id),
+        (retry_count, executor.clone()),
+    );
+}
+
+/// Emit when all retry attempts for a proposal have been exhausted
+pub fn emit_retries_exhausted(env: &Env, proposal_id: u64, total_attempts: u32) {
+    env.events().publish(
+        (Symbol::new(env, "retries_exhausted"), proposal_id),
+        total_attempts,
+    );
+}
