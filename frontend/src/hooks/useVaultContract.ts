@@ -8,7 +8,6 @@ import {
     nativeToScVal,
     scValToNative
 } from 'stellar-sdk';
-import { signTransaction } from '@stellar/freighter-api';
 import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
 import { withRetry } from '../components/RetryMechanism';
@@ -150,7 +149,7 @@ interface RawEvent {
 }
 
 export const useVaultContract = () => {
-    const { address, isConnected } = useWallet();
+    const { address, isConnected, signTransaction } = useWallet();
     const [loading, setLoading] = useState(false);
 
     const getDashboardStats = useCallback(async () => {

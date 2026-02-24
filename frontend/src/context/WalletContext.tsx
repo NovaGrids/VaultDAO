@@ -1,164 +1,192 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import type { ReactNode } from "react";
-import {
-  isConnected as freighterIsConnected,
-  isAllowed,
-  setAllowed,
-  getUserInfo,
-  getNetwork,
-} from "@stellar/freighter-api";
-import { useToast } from "./ToastContext";
-import { WalletContext } from "./WalletContextProps";
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { ReactNode } from 'react';
+import { useToast } from './ToastContext';
+import { WalletContext } from './WalletContextProps';
+import { detectAvailableWallets, getAdapterById } from '../adapters';
+import type { WalletAdapter } from '../adapters';
 
-export const WalletProvider: React.FC<{ children: ReactNode }> = ({
-  children,
-}) => {
-  const [isInstalled, setIsInstalled] = useState(false);
+const PREFERRED_WALLET_KEY = 'vaultdao_preferred_wallet';
+const WALLET_CONNECTED_KEY = 'vaultdao_wallet_connected';
+
+export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [availableWallets, setAvailableWallets] = useState<WalletAdapter[]>([]);
+  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [network, setNetwork] = useState<string | null>(null);
-
-  const addressRef = useRef<string | null>(null);
-  const networkRef = useRef<string | null>(null);
-
+  const activeAdapterRef = useRef<WalletAdapter | null>(null);
   const { showToast } = useToast();
 
-  const checkInstallation = useCallback(async () => {
+  const detectWallets = useCallback(async () => {
+    const wallets = await detectAvailableWallets();
+    setAvailableWallets(wallets);
+    return wallets;
+  }, []);
+
+  const savePreferredWallet = useCallback((id: string) => {
     try {
-      const installed = await freighterIsConnected();
-      setIsInstalled(!!installed);
-      return !!installed;
-    } catch (e) {
-      console.error("Installation check failed", e);
-      return false;
+      localStorage.setItem(PREFERRED_WALLET_KEY, id);
+    } catch {
+      // ignore
     }
   }, []);
 
-  const validateNetwork = useCallback(async () => {
-    try {
-      const currentNetwork = await getNetwork();
-      if (currentNetwork !== networkRef.current) {
+  const validateNetwork = useCallback(
+    async (adapter: WalletAdapter) => {
+      try {
+        const currentNetwork = await adapter.getNetwork();
         setNetwork(currentNetwork);
-        networkRef.current = currentNetwork;
-
-        if (currentNetwork && currentNetwork !== "TESTNET" && connected) {
-          showToast("Please switch to Stellar Testnet in Freighter", "warning");
+        if (currentNetwork && currentNetwork !== 'TESTNET' && currentNetwork !== 'testnet' && connected) {
+          showToast('Please switch to Stellar Testnet in your wallet', 'warning');
         }
+        return currentNetwork;
+      } catch {
+        return null;
       }
-      return currentNetwork;
-    } catch (e) {
-      console.error("Failed to get network", e);
-      return null;
-    }
-  }, [connected, showToast]);
+    },
+    [connected, showToast]
+  );
 
-  const updateWalletState = useCallback(async () => {
-    try {
-      const allowed = await isAllowed();
-      if (allowed) {
-        const userInfo = await getUserInfo();
-        if (userInfo?.publicKey) {
-          if (userInfo.publicKey !== addressRef.current) {
-            setAddress(userInfo.publicKey);
-            addressRef.current = userInfo.publicKey;
-            setConnected(true);
-          }
-          await validateNetwork();
+  const updateWalletState = useCallback(
+    async (adapter: WalletAdapter) => {
+      try {
+        const pubkey = await adapter.getPublicKey();
+        if (pubkey) {
+          setAddress(pubkey);
+          setConnected(true);
+          activeAdapterRef.current = adapter;
+          await validateNetwork(adapter);
           return true;
-        } else if (addressRef.current) {
+        } else {
           setAddress(null);
-          addressRef.current = null;
           setConnected(false);
-          localStorage.removeItem("wallet_connected");
+          activeAdapterRef.current = null;
+          localStorage.removeItem(WALLET_CONNECTED_KEY);
         }
-      } else if (addressRef.current) {
-        setAddress(null);
-        addressRef.current = null;
-        setConnected(false);
-        localStorage.removeItem("wallet_connected");
+      } catch (e) {
+        console.error('Failed to update wallet state', e);
       }
-    } catch (e) {
-      console.error("Failed to update wallet state", e);
-    }
-    return false;
-  }, [validateNetwork]);
+      return false;
+    },
+    [validateNetwork]
+  );
 
   useEffect(() => {
-    const init = async () => {
-      const installed = await checkInstallation();
-      if (installed) {
-        const wasConnected =
-          localStorage.getItem("wallet_connected") === "true";
-        if (wasConnected) {
-          await updateWalletState();
+    detectWallets().then((wallets) => {
+      const preferred = localStorage.getItem(PREFERRED_WALLET_KEY);
+      const id = preferred && getAdapterById(preferred) ? preferred : wallets[0]?.id ?? null;
+      if (id) setSelectedWalletId(id);
+    });
+  }, [detectWallets]);
+
+  useEffect(() => {
+    if (!selectedWalletId || !connected) return;
+    const adapter = getAdapterById(selectedWalletId);
+    if (adapter && adapter.isAvailable) {
+      const interval = setInterval(async () => {
+        if (await adapter.isAvailable()) {
+          await updateWalletState(adapter);
         }
-      }
-    };
-    init();
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [selectedWalletId, connected, updateWalletState]);
 
-    const interval = setInterval(async () => {
-      if (await freighterIsConnected()) {
-        await updateWalletState();
+  useEffect(() => {
+    const wasConnected = localStorage.getItem(WALLET_CONNECTED_KEY);
+    if (wasConnected && selectedWalletId) {
+      const adapter = getAdapterById(selectedWalletId);
+      if (adapter) {
+        updateWalletState(adapter);
       }
-    }, 3000);
+    }
+  }, [selectedWalletId]);
 
-    return () => clearInterval(interval);
-  }, [checkInstallation, updateWalletState]);
-
-  const connect = async () => {
-    if (!isInstalled) {
-      const installed = await checkInstallation();
-      if (!installed) {
-        showToast("Freighter wallet not found. Please install it.", "error");
-        window.open("https://www.freighter.app/", "_blank");
-        return;
+  const connect = useCallback(async () => {
+    const adapter = selectedWalletId ? getAdapterById(selectedWalletId) : availableWallets[0];
+    if (!adapter) {
+      showToast('No wallet selected. Please install Freighter, Albedo, or Rabet.', 'error');
+      if (availableWallets.length === 0) {
+        window.open('https://www.freighter.app/', '_blank');
       }
+      return;
+    }
+
+    const isAvailable = await adapter.isAvailable();
+    if (!isAvailable) {
+      showToast(`${adapter.name} not found. Please install it.`, 'error');
+      window.open(adapter.url, '_blank');
+      return;
     }
 
     try {
-      const allowed = await setAllowed();
-      if (allowed) {
-        const success = await updateWalletState();
-        if (success) {
-          localStorage.setItem("wallet_connected", "true");
-          showToast("Wallet connected successfully!", "success");
-
-          const net = await getNetwork();
-          if (net !== "TESTNET") {
-            showToast("Application works best on Testnet", "warning");
-          }
+      await adapter.connect();
+      const success = await updateWalletState(adapter);
+      if (success) {
+        localStorage.setItem(WALLET_CONNECTED_KEY, 'true');
+        savePreferredWallet(adapter.id);
+        showToast('Wallet connected successfully!', 'success');
+        const net = await adapter.getNetwork();
+        if (net && net !== 'TESTNET' && net !== 'testnet') {
+          showToast('Application works best on Testnet', 'warning');
         }
-      } else {
-        showToast("Connection request rejected", "error");
       }
     } catch (e: unknown) {
-      console.error("Failed to connect wallet", e);
-      const errorMessage =
-        e instanceof Error ? e.message : "Failed to connect wallet";
-      showToast(errorMessage, "error");
+      const msg = e instanceof Error ? e.message : 'Connection failed';
+      showToast(msg, 'error');
     }
-  };
+  }, [selectedWalletId, availableWallets, updateWalletState, savePreferredWallet, showToast]);
 
-  const disconnect = async () => {
+  const disconnect = useCallback(async () => {
+    const adapter = activeAdapterRef.current;
+    if (adapter) {
+      try {
+        await adapter.disconnect();
+      } catch {
+        // ignore
+      }
+      activeAdapterRef.current = null;
+    }
     setConnected(false);
     setAddress(null);
     setNetwork(null);
-    addressRef.current = null;
-    networkRef.current = null;
-    localStorage.removeItem("wallet_connected");
-    showToast("Wallet disconnected", "info");
-  };
+    localStorage.removeItem(WALLET_CONNECTED_KEY);
+    showToast('Wallet disconnected', 'info');
+  }, [showToast]);
+
+  const switchWallet = useCallback((adapter: WalletAdapter) => {
+    setSelectedWalletId(adapter.id);
+    savePreferredWallet(adapter.id);
+    if (connected) {
+      disconnect();
+    }
+  }, [connected, disconnect, savePreferredWallet]);
+
+  const signTransaction = useCallback(
+    async (xdr: string, options?: { network?: string }): Promise<string> => {
+      const adapter = activeAdapterRef.current;
+      if (!adapter) throw new Error('Wallet not connected');
+      return adapter.signTransaction(xdr, options);
+    },
+    []
+  );
 
   return (
     <WalletContext.Provider
       value={{
         isConnected: connected,
-        isInstalled,
+        isInstalled: availableWallets.length > 0,
         address,
         network,
         connect,
         disconnect,
+        availableWallets,
+        selectedWalletId,
+        setSelectedWallet: (id: string) => setSelectedWalletId(id),
+        switchWallet,
+        signTransaction,
+        detectWallets,
       }}
     >
       {children}

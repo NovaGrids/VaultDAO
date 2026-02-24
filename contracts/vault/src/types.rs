@@ -125,6 +125,9 @@ pub struct InitConfig {
     pub signers: Vec<Address>,
     /// Required number of approvals (M in M-of-N)
     pub threshold: u32,
+    /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
+    /// Set to 0 to disable quorum enforcement.
+    pub quorum: u32,
     /// Maximum amount per proposal (in stroops)
     pub spending_limit: i128,
     /// Maximum aggregate daily spending (in stroops)
@@ -138,6 +141,8 @@ pub struct InitConfig {
     pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
+    /// Default voting deadline in ledgers (0 = no deadline)
+    pub default_voting_deadline: u64,
 }
 
 /// Vault configuration
@@ -148,6 +153,9 @@ pub struct Config {
     pub signers: Vec<Address>,
     /// Required number of approvals (M in M-of-N)
     pub threshold: u32,
+    /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
+    /// Set to 0 to disable quorum enforcement.
+    pub quorum: u32,
     /// Maximum amount per proposal (in stroops)
     pub spending_limit: i128,
     /// Maximum aggregate daily spending (in stroops)
@@ -161,8 +169,55 @@ pub struct Config {
     pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
-    /// Oracle configuration for price feeds
-    pub oracle_config: OracleConfig,
+    /// Default voting deadline in ledgers (0 = no deadline)
+    pub default_voting_deadline: u64,
+}
+
+/// Audit record for a cancelled proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CancellationRecord {
+    pub proposal_id: u64,
+    pub cancelled_by: Address,
+    pub reason: Symbol,
+    pub cancelled_at_ledger: u64,
+    pub refunded_amount: i128,
+}
+
+/// Threshold strategy for dynamic approval requirements
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum ThresholdStrategy {
+    /// Fixed threshold (original behavior)
+    Fixed,
+    /// Percentage-based: threshold = ceil(signers * percentage / 100)
+    Percentage(u32),
+    /// Amount-based tiers: (amount_threshold, required_approvals)
+    AmountBased(Vec<AmountTier>),
+    /// Time-based: threshold reduces after time passes
+    TimeBased(TimeBasedThreshold),
+}
+
+/// Amount-based threshold tier
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AmountTier {
+    /// Amount threshold for this tier
+    pub amount: i128,
+    /// Required approvals for this tier
+    pub approvals: u32,
+}
+
+/// Time-based threshold configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TimeBasedThreshold {
+    /// Initial threshold
+    pub initial_threshold: u32,
+    /// Reduced threshold after delay
+    pub reduced_threshold: u32,
+    /// Ledgers to wait before reduction
+    pub reduction_delay: u64,
 }
 
 /// Permissions assigned to vault participants.
@@ -193,6 +248,8 @@ pub enum ProposalStatus {
     Rejected = 3,
     /// Reached expiration ledger without hitting the approval threshold.
     Expired = 4,
+    /// Cancelled by proposer or admin, with spending refunded.
+    Cancelled = 5,
 }
 
 /// Proposal priority level for queue ordering
@@ -283,8 +340,18 @@ pub struct Proposal {
     pub unlock_ledger: u64,
     /// Insurance amount staked by proposer (0 = no insurance). Held in vault.
     pub insurance_amount: i128,
+    /// Gas (CPU instruction) limit for execution (0 = use global config default)
+    pub gas_limit: u64,
+    /// Estimated gas used during execution (populated on execution)
+    pub gas_used: u64,
+    /// Ledger sequence at which signers were snapshotted for this proposal
+    pub snapshot_ledger: u64,
+    /// Voting power snapshot — addresses eligible to vote at creation time
+    pub snapshot_signers: Vec<Address>,
     /// Flag indicating if this is a swap proposal
     pub is_swap: bool,
+    /// Ledger sequence when voting must complete (0 = no deadline)
+    pub voting_deadline: u64,
 }
 
 /// On-chain comment on a proposal
@@ -402,6 +469,90 @@ impl NotificationPreferences {
 }
 
 // ============================================================================
+// Gas Limits (Issue: feature/gas-limits)
+// ============================================================================
+
+/// Per-vault gas (CPU instruction budget) configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GasConfig {
+    /// Whether gas limiting is enforced
+    pub enabled: bool,
+    /// Default gas limit applied to new proposals (0 = unlimited)
+    pub default_gas_limit: u64,
+    /// Base cost charged per execution
+    pub base_cost: u64,
+    /// Extra cost per execution condition
+    pub condition_cost: u64,
+}
+
+impl GasConfig {
+    pub fn default() -> Self {
+        GasConfig {
+            enabled: false,
+            default_gas_limit: 0,
+            base_cost: 1_000,
+            condition_cost: 500,
+        }
+    }
+}
+
+// ============================================================================
+// Performance Metrics (Issue: feature/performance-metrics)
+// ============================================================================
+
+/// Vault-wide cumulative performance metrics
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VaultMetrics {
+    /// Total number of proposals ever created
+    pub total_proposals: u64,
+    /// Number of proposals successfully executed
+    pub executed_count: u64,
+    /// Number of proposals rejected
+    pub rejected_count: u64,
+    /// Number of proposals that expired without execution
+    pub expired_count: u64,
+    /// Cumulative ledgers elapsed from proposal creation to execution
+    pub total_execution_time_ledgers: u64,
+    /// Total gas units consumed across all executions
+    pub total_gas_used: u64,
+    /// Ledger when metrics were last updated
+    pub last_updated_ledger: u64,
+}
+
+impl VaultMetrics {
+    pub fn default() -> Self {
+        VaultMetrics {
+            total_proposals: 0,
+            executed_count: 0,
+            rejected_count: 0,
+            expired_count: 0,
+            total_execution_time_ledgers: 0,
+            total_gas_used: 0,
+            last_updated_ledger: 0,
+        }
+    }
+
+    /// Success rate in basis points (0-10000)
+    pub fn success_rate_bps(&self) -> u32 {
+        let total = self.executed_count + self.rejected_count + self.expired_count;
+        if total == 0 {
+            return 0;
+        }
+        (self.executed_count * 10_000 / total) as u32
+    }
+
+    /// Average ledgers from creation to execution (0 if none executed)
+    pub fn avg_execution_time_ledgers(&self) -> u64 {
+        if self.executed_count == 0 {
+            return 0;
+        }
+        self.total_execution_time_ledgers / self.executed_count
+    }
+}
+
+// ============================================================================
 // AMM/DEX Integration (Issue: feature/amm-integration)
 // ============================================================================
 
@@ -511,4 +662,22 @@ pub struct CrossChainTransferParams {
     pub recipient: String,
     pub amount: i128,
     pub token: Address,
+}
+
+// ============================================================================
+// Multi-Token Batch Transfers (Issue: feature/multi-token-batch-transfers)
+// ============================================================================
+
+/// Transfer details for batch operations supporting multiple tokens
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TransferDetails {
+    /// Recipient of the transfer
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Amount to transfer
+    pub amount: i128,
+    /// Optional memo
+    pub memo: Symbol,
 }
