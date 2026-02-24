@@ -46,7 +46,7 @@ export async function uploadToIPFS(
 
   try {
     onProgress?.(10);
-    const result = await client.add(file, { progress: (bytes) => onProgress?.(Math.min(90, (bytes / file.size) * 90)) });
+    const result = await client.add(file, { progress: (bytes: number) => onProgress?.(Math.min(90, (bytes / file.size) * 90)) });
     onProgress?.(100);
     return {
       cid: result.cid.toString(),
@@ -100,7 +100,7 @@ export async function uploadMultipleToIPFS(
 
     try {
       const result = await client.add(file, {
-        progress: (bytes) => {
+        progress: (bytes: number) => {
           const pct = Math.min(100, Math.round((bytes / file.size) * 100));
           updateProgress(fileId, { percent: pct });
         },

@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ChevronDown, Search, Plus, X, Loader2, AlertCircle, Check } from 'lucide-react';
-import type { TokenInfo } from '../constants/tokens';
+import type { TokenInfo, TokenBalance } from '../types';
 import { getTokenIcon, isValidStellarAddress, formatTokenBalance } from '../constants/tokens';
-import type { TokenBalance } from './TokenBalanceCard';
 
 interface TokenSelectorProps {
   tokens: TokenBalance[];

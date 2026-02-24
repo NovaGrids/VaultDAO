@@ -17,7 +17,7 @@ mod types;
 pub use types::InitConfig;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
 use types::{
     Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
     NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
@@ -36,6 +36,12 @@ const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
 /// Maximum proposals that can be batch-executed in one call (gas limit)
 const MAX_BATCH_SIZE: u32 = 10;
+
+/// Maximum metadata entries stored per proposal
+const MAX_METADATA_ENTRIES: u32 = 16;
+
+/// Maximum length for a single metadata value
+const MAX_METADATA_VALUE_LEN: u32 = 256;
 
 /// Reputation adjustments
 const REP_EXEC_PROPOSER: u32 = 10;
@@ -245,6 +251,8 @@ impl VaultDAO {
             token: token_addr.clone(),
             amount,
             memo,
+            metadata: Map::new(&env),
+            tags: Vec::new(&env),
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
@@ -450,6 +458,8 @@ impl VaultDAO {
                 token: transfer.token.clone(),
                 amount: transfer.amount,
                 memo: transfer.memo.clone(),
+                metadata: Map::new(&env),
+                tags: Vec::new(&env),
                 approvals: Vec::new(&env),
                 abstentions: Vec::new(&env),
                 attachments: Vec::new(&env),
@@ -1868,6 +1878,183 @@ impl VaultDAO {
     }
 
     // ========================================================================
+    // Metadata Management
+    // ========================================================================
+
+    /// Set or update a metadata key for a proposal.
+    ///
+    /// Only Admin or the original proposer can update metadata.
+    pub fn set_proposal_metadata(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        key: Symbol,
+        value: String,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Metadata validation: non-empty bounded value and bounded entry count.
+        let value_len = value.len();
+        if value_len == 0 || value_len > MAX_METADATA_VALUE_LEN {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let exists = proposal.metadata.get(key.clone()).is_some();
+        if !exists && proposal.metadata.len() >= MAX_METADATA_ENTRIES {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        proposal.metadata.set(key, value);
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Remove a metadata key from a proposal.
+    ///
+    /// Only Admin or the original proposer can remove metadata.
+    pub fn remove_proposal_metadata(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        key: Symbol,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        proposal.metadata.remove(key);
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get a single metadata value by key for a proposal.
+    pub fn get_proposal_metadata_value(
+        env: Env,
+        proposal_id: u64,
+        key: Symbol,
+    ) -> Result<Option<String>, VaultError> {
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        Ok(proposal.metadata.get(key))
+    }
+
+    /// Get the full metadata map for a proposal.
+    pub fn get_proposal_metadata(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<Map<Symbol, String>, VaultError> {
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        Ok(proposal.metadata)
+    }
+
+    // ========================================================================
+    // Tag Management
+    // ========================================================================
+
+    /// Add a tag to a proposal.
+    ///
+    /// Only Admin or the original proposer can add tags.
+    pub fn add_proposal_tag(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        tag: Symbol,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if proposal.tags.contains(&tag) {
+            return Err(VaultError::AlreadyApproved); // duplicate tag
+        }
+
+        proposal.tags.push_back(tag);
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Remove a tag from a proposal.
+    ///
+    /// Only Admin or the original proposer can remove tags.
+    pub fn remove_proposal_tag(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        tag: Symbol,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut found = false;
+        for i in 0..proposal.tags.len() {
+            if proposal.tags.get(i).unwrap() == tag {
+                proposal.tags.remove(i);
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            return Err(VaultError::ProposalNotFound); // tag not found
+        }
+
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get all tags for a proposal.
+    pub fn get_proposal_tags(env: Env, proposal_id: u64) -> Result<Vec<Symbol>, VaultError> {
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        Ok(proposal.tags)
+    }
+
+    /// Get proposal IDs that include a specific tag.
+    pub fn get_proposals_by_tag(env: Env, tag: Symbol) -> Vec<u64> {
+        let mut proposal_ids = Vec::new(&env);
+        let next_id = storage::get_next_proposal_id(&env);
+
+        for proposal_id in 1..next_id {
+            if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                if proposal.tags.contains(&tag) {
+                    proposal_ids.push_back(proposal_id);
+                }
+            }
+        }
+
+        proposal_ids
+    }
+
+    // ========================================================================
     // Insurance Configuration (Issue: feature/proposal-insurance)
     // ========================================================================
 
@@ -2223,6 +2410,8 @@ impl VaultDAO {
             token: env.current_contract_address(),
             amount: 0,
             memo: Symbol::new(&env, "swap"),
+            metadata: Map::new(&env),
+            tags: Vec::new(&env),
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),

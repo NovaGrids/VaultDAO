@@ -22,12 +22,17 @@ function AppWithErrorBoundary() {
   )
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <ToastProvider>
-      <WalletProvider>
-        <AppWithErrorBoundary />
-      </WalletProvider>
-    </ToastProvider>
-  </React.StrictMode>,
-)
+export function RootApp() {
+  return (
+    <React.StrictMode>
+      <ToastProvider>
+        <WalletProvider>
+          <AppWithErrorBoundary />
+        </WalletProvider>
+      </ToastProvider>
+    </React.StrictMode>
+  )
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root')!)
+root.render(<RootApp />)

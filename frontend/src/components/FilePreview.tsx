@@ -37,6 +37,7 @@ export function FilePreview({ file, onRemove, className = '' }: FilePreviewProps
   useEffect(() => {
     if ((isImage || isPdf) && file.file) {
       const url = file.objectUrl ?? URL.createObjectURL(file.file);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPreviewUrl(url);
       return () => {
         if (!file.objectUrl) URL.revokeObjectURL(url);

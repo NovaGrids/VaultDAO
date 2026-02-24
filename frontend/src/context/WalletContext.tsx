@@ -73,6 +73,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     detectWallets().then((wallets) => {
       const preferred = localStorage.getItem(PREFERRED_WALLET_KEY);
       const id = preferred && getAdapterById(preferred) ? preferred : wallets[0]?.id ?? null;
@@ -98,10 +99,11 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     if (wasConnected && selectedWalletId) {
       const adapter = getAdapterById(selectedWalletId);
       if (adapter) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         updateWalletState(adapter);
       }
     }
-  }, [selectedWalletId]);
+  }, [selectedWalletId, updateWalletState]);
 
   const connect = useCallback(async () => {
     const adapter = selectedWalletId ? getAdapterById(selectedWalletId) : availableWallets[0];
