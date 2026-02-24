@@ -572,9 +572,9 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        // Check expiration
+        // Check expiration (only if expiration is enabled, i.e., expires_at > 0)
         let current_ledger = env.ledger().sequence() as u64;
-        if current_ledger > proposal.expires_at {
+        if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_expiry(&env);
@@ -2909,6 +2909,38 @@ impl VaultDAO {
         storage::get_expiration_history(&env)
     }
 
+    /// Check and mark a proposal as expired if the expiration period has passed.
+    ///
+    /// This function updates the proposal status to Expired if:
+    /// - Expiration is enabled
+    /// - The proposal is currently Pending
+    /// - The current ledger is past the expiration ledger
+    ///
+    /// Returns true if the proposal was marked as expired, false otherwise.
+    pub fn check_and_mark_expired(env: Env, proposal_id: u64) -> Result<bool, VaultError> {
+        let config = storage::get_config(&env)?;
+        
+        if !config.expiration_config.enabled {
+            return Ok(false);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Only mark as expired if currently pending and past expiration
+        if proposal.status == types::ProposalStatus::Pending 
+            && proposal.expires_at > 0 
+            && current_ledger > proposal.expires_at {
+            proposal.status = types::ProposalStatus::Expired;
+            storage::set_proposal(&env, &proposal);
+            storage::metrics_on_expiry(&env);
+            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
     /// Check if a proposal is eligible for cleanup.
     ///
     /// Returns true if the proposal is expired and grace period has passed.
@@ -2919,8 +2951,18 @@ impl VaultDAO {
             return Ok(false);
         }
 
-        let proposal = storage::get_proposal(&env, proposal_id)?;
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
         let current_ledger = env.ledger().sequence() as u64;
+
+        // Check and mark as expired if needed
+        if proposal.status == types::ProposalStatus::Pending 
+            && proposal.expires_at > 0 
+            && current_ledger > proposal.expires_at {
+            proposal.status = types::ProposalStatus::Expired;
+            storage::set_proposal(&env, &proposal);
+            storage::metrics_on_expiry(&env);
+            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
+        }
 
         if proposal.status != types::ProposalStatus::Expired {
             return Ok(false);

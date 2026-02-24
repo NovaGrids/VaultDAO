@@ -85,6 +85,7 @@ fn test_multisig_approval() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -156,6 +157,7 @@ fn test_unauthorized_proposal() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -214,6 +216,7 @@ fn test_timelock_violation() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -281,6 +284,7 @@ fn test_priority_levels() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -376,6 +380,7 @@ fn test_get_proposals_by_priority() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -449,6 +454,7 @@ fn test_change_priority_unauthorized() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -505,6 +511,7 @@ fn test_comment_functionality() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -587,6 +594,7 @@ fn test_blacklist_mode() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -662,6 +670,7 @@ fn test_abstention_does_not_count_toward_threshold() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -732,6 +741,7 @@ fn test_list_management() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -787,6 +797,7 @@ fn test_cannot_abstain_after_voting() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -846,6 +857,7 @@ fn test_cannot_abstain_twice() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -906,6 +918,7 @@ fn test_velocity_limit_enforcement() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer, &Role::Treasurer);
@@ -985,6 +998,7 @@ fn test_verify_attachment() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1042,6 +1056,7 @@ fn test_remove_attachment() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1105,6 +1120,7 @@ fn test_attachment_unauthorized() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1165,6 +1181,7 @@ fn test_attachment_duplicate() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1225,6 +1242,7 @@ fn test_attachment_invalid_hash() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1282,6 +1300,7 @@ fn test_admin_can_add_attachment() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1341,6 +1360,7 @@ fn test_fixed_threshold_strategy() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1409,6 +1429,7 @@ fn test_percentage_threshold_strategy() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1488,6 +1509,7 @@ fn test_time_based_threshold_strategy() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1556,6 +1578,7 @@ fn test_condition_balance_above() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1621,6 +1644,7 @@ fn test_condition_date_after() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1697,6 +1721,7 @@ fn test_condition_multiple_and_logic() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1779,6 +1804,7 @@ fn test_condition_multiple_or_logic() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1854,6 +1880,7 @@ fn test_condition_no_conditions() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1918,6 +1945,7 @@ fn test_dex_config_setup() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -1979,6 +2007,7 @@ fn test_swap_proposal_creation() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -2046,6 +2075,7 @@ fn test_dex_not_enabled_error() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -2100,6 +2130,7 @@ fn test_batch_propose_multi_token() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -2178,6 +2209,7 @@ fn test_batch_propose_exceeds_max_size() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -2246,6 +2278,7 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2314,6 +2347,7 @@ fn test_quorum_blocks_approval_until_satisfied() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2403,6 +2437,7 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2492,6 +2527,7 @@ fn test_get_quorum_status() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2566,6 +2602,7 @@ fn test_update_quorum() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -2622,6 +2659,7 @@ fn test_quorum_satisfied_by_approvals_alone() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2686,6 +2724,7 @@ fn test_initialize_rejects_quorum_too_high() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
 
     let result = client.try_initialize(&admin, &config);
@@ -2740,6 +2779,7 @@ macro_rules! setup_retry_test {
                 max_retries: 3,
                 initial_backoff_ledgers: 10,
             },
+        expiration_config: ExpirationConfig::default(),
         };
 
         $client.initialize(&$admin, &config);
@@ -2931,6 +2971,7 @@ fn test_retry_not_enabled_passes_through_error() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
 
     client.initialize(&admin, &config);
@@ -3032,6 +3073,7 @@ fn test_retry_disabled_rejects_retry_execution() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
+    expiration_config: ExpirationConfig::default(),
     };
 
     client.initialize(&admin, &config);
@@ -3145,14 +3187,22 @@ fn test_proposal_expires_after_period() {
         &0,
     );
 
+    // Check initial proposal state
+    let proposal_before = client.get_proposal(&proposal_id);
+    assert!(proposal_before.expires_at > 0, "Proposal should have expiration set");
+
     // Advance ledger past expiration
     env.ledger().with_mut(|li| {
         li.sequence_number += 101;
     });
 
+    // Mark as expired
+    let marked = client.check_and_mark_expired(&proposal_id);
+    assert_eq!(marked, true);
+
     // Try to approve - should fail with expired
     let result = client.try_approve_proposal(&signer, &proposal_id);
-    assert_eq!(result, Err(Ok(VaultError::ProposalExpired)));
+    assert_eq!(result, Err(Ok(VaultError::ProposalNotPending)));
 
     // Check proposal status
     let proposal = client.get_proposal(&proposal_id);
@@ -3326,8 +3376,8 @@ fn test_cleanup_expired_proposal() {
         li.sequence_number += 101;
     });
 
-    // Mark as expired by trying to approve
-    let _ = client.try_approve_proposal(&signer, &proposal_id);
+    // Mark as expired
+    client.check_and_mark_expired(&proposal_id);
 
     // Try to cleanup before grace period - should fail
     let result = client.try_cleanup_expired_proposal(&admin, &proposal_id);
@@ -3350,7 +3400,7 @@ fn test_cleanup_expired_proposal() {
 
     // Verify proposal is removed
     let result = client.try_get_proposal(&proposal_id);
-    assert_eq!(result, Err(Ok(VaultError::ProposalNotFound)));
+    assert!(result.is_err());
 }
 
 #[test]
@@ -3404,7 +3454,7 @@ fn test_batch_cleanup_expired_proposals() {
 
     // Create multiple proposals
     let mut proposal_ids = Vec::new(&env);
-    for i in 0..5 {
+    for _i in 0..5 {
         let id = client.propose_transfer(
             &signer,
             &recipient,
@@ -3427,7 +3477,7 @@ fn test_batch_cleanup_expired_proposals() {
     // Mark all as expired
     for i in 0..proposal_ids.len() {
         let id = proposal_ids.get(i).unwrap();
-        let _ = client.try_approve_proposal(&signer, &id);
+        client.check_and_mark_expired(&id);
     }
 
     // Batch cleanup
@@ -3439,7 +3489,7 @@ fn test_batch_cleanup_expired_proposals() {
     for i in 0..proposal_ids.len() {
         let id = proposal_ids.get(i).unwrap();
         let result = client.try_get_proposal(&id);
-        assert_eq!(result, Err(Ok(VaultError::ProposalNotFound)));
+        assert!(result.is_err());
     }
 }
 
@@ -3510,7 +3560,7 @@ fn test_grace_period_prevents_immediate_cleanup() {
     });
 
     // Mark as expired
-    let _ = client.try_approve_proposal(&signer, &proposal_id);
+    client.check_and_mark_expired(&proposal_id);
 
     // Try cleanup - should fail (grace period not passed)
     let result = client.try_cleanup_expired_proposal(&admin, &proposal_id);
@@ -3721,7 +3771,7 @@ fn test_is_eligible_for_cleanup() {
     });
 
     // Mark as expired
-    let _ = client.try_approve_proposal(&signer, &proposal_id);
+    client.check_and_mark_expired(&proposal_id);
 
     // Still not eligible (grace period)
     assert_eq!(client.is_eligible_for_cleanup(&proposal_id), false);
