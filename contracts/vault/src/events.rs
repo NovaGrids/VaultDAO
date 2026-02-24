@@ -271,3 +271,31 @@ pub fn emit_rewards_claimed(env: &Env, proposal_id: u64, farm: &Address, amount:
         (farm.clone(), amount),
     );
 }
+
+// ============================================================================
+// Guardian Recovery Events (feature/wallet-recovery)
+// ============================================================================
+
+/// Emit when a guardian is added
+pub fn emit_guardian_added(env: &Env, guardian: &Address, total_guardians: u32) {
+    env.events().publish(
+        (Symbol::new(env, "guardian_added"),),
+        (guardian.clone(), total_guardians),
+    );
+}
+
+/// Emit when a guardian is removed
+pub fn emit_guardian_removed(env: &Env, guardian: &Address, total_guardians: u32) {
+    env.events().publish(
+        (Symbol::new(env, "guardian_removed"),),
+        (guardian.clone(), total_guardians),
+    );
+}
+
+/// Emit when guardian threshold is updated
+pub fn emit_threshold_updated(env: &Env, old_threshold: u32, new_threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "threshold_updated"),),
+        (old_threshold, new_threshold),
+    );
+}

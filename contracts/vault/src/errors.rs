@@ -70,25 +70,20 @@ pub enum VaultError {
     TransferFailed = 600,
     /// Insufficient vault balance
     InsufficientBalance = 601,
+    /// Velocity limit exceeded
+    VelocityLimitExceeded = 602,
 
-    VelocityLimitExceeded = 120,
     // Condition errors (7xx)
     /// Execution conditions not met
     ConditionsNotMet = 700,
-    /// Balance condition not satisfied
-    BalanceConditionFailed = 701,
-    /// Date condition not satisfied
-    DateConditionFailed = 702,
 
     // Recipient list errors (8xx)
-    AddressAlreadyOnList = 800,
-    AddressNotOnList = 801,
-    RecipientNotWhitelisted = 802,
-    RecipientBlacklisted = 803,
+    /// Address list error (already on list, not on list, or not allowed)
+    AddressListError = 800,
 
     // Comment errors (9xx)
-    CommentTooLong = 900,
-    NotCommentAuthor = 901,
+    /// Comment error (too long or not author)
+    CommentError = 900,
 
     // Batch errors (10xx)
     /// Batch size exceeds the maximum allowed limit
@@ -103,24 +98,40 @@ pub enum VaultError {
     ReputationTooLow = 1200,
 
     // DEX/AMM errors (13xx)
-    /// DEX is not enabled in configuration
-    DexNotEnabled = 1300,
-    /// Slippage exceeds maximum tolerance
-    SlippageExceeded = 1301,
-    /// Price impact exceeds maximum tolerance
-    PriceImpactExceeded = 1302,
-    /// Insufficient liquidity in pool
-    InsufficientLiquidity = 1303,
-    /// Invalid swap parameters
-    InvalidSwapParams = 1304,
-    /// DEX operation failed
-    DexOperationFailed = 1305,
+    /// DEX configuration or operation error
+    DexError = 1300,
 
     // Bridge errors (14xx)
-    /// Bridge is not configured
-    BridgeNotConfigured = 1400,
-    /// Target chain is not supported
-    ChainNotSupported = 1401,
+    /// Bridge configuration or chain not supported
+    BridgeConfigError = 1400,
     /// Amount exceeds bridge limit
-    ExceedsBridgeLimit = 1402,
+    ExceedsBridgeLimit = 1401,
+
+    // Recovery errors (15xx)
+    /// Guardian already exists
+    GuardianAlreadyExists = 1500,
+    /// Guardian not found
+    GuardianNotFound = 1501,
+    /// Not enough guardians (minimum 2 required)
+    InsufficientGuardians = 1502,
+    /// Too many guardians (maximum 10)
+    TooManyGuardians = 1503,
+    /// Guardian threshold invalid
+    InvalidGuardianThreshold = 1504,
+    /// Not an active guardian
+    NotAGuardian = 1505,
+    /// Recovery proposal not found
+    RecoveryProposalNotFound = 1506,
+    /// Active recovery proposal already exists
+    ActiveRecoveryExists = 1507,
+    /// Recovery proposal not approved
+    RecoveryNotApproved = 1508,
+    /// Recovery time delay not expired
+    RecoveryTimelockActive = 1509,
+    /// Recovery proposal has expired
+    RecoveryExpired = 1510,
+    /// Guardian already approved this recovery
+    GuardianAlreadyApproved = 1511,
+    /// Invalid recovery state or transition
+    InvalidRecoveryState = 1512,
 }

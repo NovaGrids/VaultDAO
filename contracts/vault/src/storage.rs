@@ -62,6 +62,16 @@ pub enum DataKey {
     SwapProposal(u64),
     /// Swap result by proposal ID -> SwapResult
     SwapResult(u64),
+    /// Guardian configuration -> GuardianConfig
+    GuardianConfig,
+    /// Guardian info by address -> Guardian
+    Guardian(Address),
+    /// Recovery proposal by ID -> RecoveryProposal
+    RecoveryProposal(u64),
+    /// Next recovery proposal ID counter -> u64
+    NextRecoveryProposalId,
+    /// Active recovery proposal ID (only one allowed) -> Option<u64>
+    ActiveRecoveryProposal,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -578,4 +588,81 @@ pub fn get_swap_result(env: &Env, proposal_id: u64) -> Option<SwapResult> {
     env.storage()
         .persistent()
         .get(&DataKey::SwapResult(proposal_id))
+}
+
+// ============================================================================
+// Guardian Recovery (Issue: feature/wallet-recovery)
+// ============================================================================
+
+use crate::types::{Guardian, GuardianConfig, RecoveryProposal};
+
+pub fn get_guardian_config(env: &Env) -> Option<GuardianConfig> {
+    env.storage().instance().get(&DataKey::GuardianConfig)
+}
+
+pub fn set_guardian_config(env: &Env, config: &GuardianConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GuardianConfig, config);
+}
+
+pub fn get_guardian(env: &Env, addr: &Address) -> Option<Guardian> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Guardian(addr.clone()))
+}
+
+pub fn set_guardian(env: &Env, guardian: &Guardian) {
+    let key = DataKey::Guardian(guardian.address.clone());
+    env.storage().persistent().set(&key, guardian);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_recovery_proposal(env: &Env, id: u64) -> Option<RecoveryProposal> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecoveryProposal(id))
+}
+
+pub fn set_recovery_proposal(env: &Env, proposal: &RecoveryProposal) {
+    let key = DataKey::RecoveryProposal(proposal.id);
+    env.storage().persistent().set(&key, proposal);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_next_recovery_proposal_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextRecoveryProposalId)
+        .unwrap_or(1)
+}
+
+pub fn increment_recovery_proposal_id(env: &Env) -> u64 {
+    let id = get_next_recovery_proposal_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextRecoveryProposalId, &(id + 1));
+    id
+}
+
+pub fn get_active_recovery_proposal(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ActiveRecoveryProposal)
+}
+
+pub fn set_active_recovery_proposal(env: &Env, proposal_id: Option<u64>) {
+    if let Some(id) = proposal_id {
+        env.storage()
+            .instance()
+            .set(&DataKey::ActiveRecoveryProposal, &id);
+    } else {
+        env.storage()
+            .instance()
+            .remove(&DataKey::ActiveRecoveryProposal);
+    }
 }

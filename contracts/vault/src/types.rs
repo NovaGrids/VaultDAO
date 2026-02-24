@@ -438,3 +438,76 @@ pub struct CrossChainTransferParams {
     pub amount: i128,
     pub token: Address,
 }
+
+// ============================================================================
+// Wallet Recovery System (Issue: feature/wallet-recovery)
+// ============================================================================
+
+/// Guardian information stored per address
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Guardian {
+    /// Guardian address
+    pub address: Address,
+    /// Whether guardian is currently active
+    pub is_active: bool,
+    /// Ledger when guardian was added
+    pub added_at: u64,
+    /// Ledger when guardian was removed (0 if active)
+    pub removed_at: u64,
+}
+
+/// Guardian configuration stored in vault config
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GuardianConfig {
+    /// List of all guardians (active and inactive)
+    pub guardians: Vec<Guardian>,
+    /// Number of guardian approvals required for recovery
+    pub threshold: u32,
+    /// Time delay in ledgers before recovery can execute
+    pub recovery_delay: u64,
+    /// Time in ledgers before recovery proposal expires
+    pub recovery_expiry: u64,
+}
+
+/// Recovery proposal status
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RecoveryStatus {
+    /// Awaiting guardian approvals
+    Pending = 0,
+    /// Threshold met, waiting for time delay
+    Approved = 1,
+    /// Ownership transferred successfully
+    Executed = 2,
+    /// Cancelled by owner
+    Cancelled = 3,
+    /// Expired without execution
+    Expired = 4,
+}
+
+/// Recovery proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RecoveryProposal {
+    /// Unique proposal ID
+    pub id: u64,
+    /// Address that initiated the recovery
+    pub initiator: Address,
+    /// New owner address to transfer control to
+    pub new_owner: Address,
+    /// Guardian addresses that have approved
+    pub approvals: Vec<Address>,
+    /// Current proposal status
+    pub status: RecoveryStatus,
+    /// Ledger when proposal was created
+    pub created_at: u64,
+    /// Earliest ledger when execution is allowed
+    pub unlock_ledger: u64,
+    /// Ledger when proposal expires
+    pub expires_at: u64,
+    /// Whether this was owner-initiated (emergency recovery)
+    pub is_owner_initiated: bool,
+}
