@@ -6,8 +6,8 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, InsuranceConfig, ListMode, NotificationPreferences, Proposal, Reputation,
-    Role, VelocityConfig,
+    Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
+    Reputation, Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -36,6 +36,10 @@ pub enum DataKey {
     NextRecurringId,
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
+    /// Cancellation record for a proposal -> CancellationRecord
+    CancellationRecord(u64),
+    /// List of all cancelled proposal IDs -> Vec<u64>
+    CancellationHistory,
     /// Recipient list mode -> ListMode
     ListMode,
     /// Whitelist flag for address -> bool
@@ -62,16 +66,10 @@ pub enum DataKey {
     SwapProposal(u64),
     /// Swap result by proposal ID -> SwapResult
     SwapResult(u64),
-    /// Guardian configuration -> GuardianConfig
-    GuardianConfig,
-    /// Guardian info by address -> Guardian
-    Guardian(Address),
-    /// Recovery proposal by ID -> RecoveryProposal
-    RecoveryProposal(u64),
-    /// Next recovery proposal ID counter -> u64
-    NextRecoveryProposalId,
-    /// Active recovery proposal ID (only one allowed) -> Option<u64>
-    ActiveRecoveryProposal,
+    /// Gas execution limit configuration -> GasConfig
+    GasConfig,
+    /// Vault-wide performance metrics -> VaultMetrics
+    Metrics,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -79,6 +77,8 @@ pub const DAY_IN_LEDGERS: u32 = 17_280; // ~24 hours
 pub const PROPOSAL_TTL: u32 = DAY_IN_LEDGERS * 7; // 7 days
 pub const INSTANCE_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
+pub const PERSISTENT_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
+pub const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
 
 // ============================================================================
 // Initialization
@@ -390,6 +390,68 @@ pub fn check_and_update_velocity(env: &Env, addr: &Address, config: &VelocityCon
     true
 }
 
+pub fn set_cancellation_record(env: &Env, record: &crate::types::CancellationRecord) {
+    let key = DataKey::CancellationRecord(record.proposal_id);
+    env.storage().persistent().set(&key, record);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_cancellation_record(
+    env: &Env,
+    proposal_id: u64,
+) -> Result<crate::types::CancellationRecord, crate::errors::VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CancellationRecord(proposal_id))
+        .ok_or(crate::errors::VaultError::ProposalNotFound)
+}
+
+pub fn add_to_cancellation_history(env: &Env, proposal_id: u64) {
+    let key = DataKey::CancellationHistory;
+    let mut history: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+    history.push_back(proposal_id);
+    env.storage().persistent().set(&key, &history);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_cancellation_history(env: &Env) -> soroban_sdk::Vec<u64> {
+    let key = DataKey::CancellationHistory;
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env))
+}
+
+/// Refund spending limits when a proposal is cancelled
+pub fn refund_spending_limits(env: &Env, amount: i128) {
+    // Refund daily
+    let today = get_day_number(env);
+    let spent_today = get_daily_spent(env, today);
+    let refunded_daily = spent_today.saturating_sub(amount).max(0);
+    let key_daily = DataKey::DailySpent(today);
+    env.storage().temporary().set(&key_daily, &refunded_daily);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key_daily, DAY_IN_LEDGERS * 2, DAY_IN_LEDGERS * 2);
+
+    // Refund weekly
+    let week = get_week_number(env);
+    let spent_week = get_weekly_spent(env, week);
+    let refunded_weekly = spent_week.saturating_sub(amount).max(0);
+    let key_weekly = DataKey::WeeklySpent(week);
+    env.storage().temporary().set(&key_weekly, &refunded_weekly);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key_weekly, DAY_IN_LEDGERS * 14, DAY_IN_LEDGERS * 14);
+}
 // ============================================================================
 // Comments
 // ============================================================================
@@ -496,12 +558,16 @@ pub fn apply_reputation_decay(env: &Env, rep: &mut Reputation) {
     }
     // Move score toward neutral (500) by 5% per period
     for _ in 0..periods {
-        if rep.score > 500 {
-            let diff = rep.score - 500;
-            rep.score = rep.score.saturating_sub(diff / 20 + 1);
-        } else if rep.score < 500 {
-            let diff = 500 - rep.score;
-            rep.score = rep.score.saturating_add(diff / 20 + 1);
+        match rep.score.cmp(&500) {
+            core::cmp::Ordering::Greater => {
+                let diff = rep.score - 500;
+                rep.score = rep.score.saturating_sub(diff / 20 + 1);
+            }
+            core::cmp::Ordering::Less => {
+                let diff = 500 - rep.score;
+                rep.score = rep.score.saturating_add(diff / 20 + 1);
+            }
+            core::cmp::Ordering::Equal => {}
         }
     }
     rep.last_decay_ledger = current_ledger;
@@ -591,78 +657,65 @@ pub fn get_swap_result(env: &Env, proposal_id: u64) -> Option<SwapResult> {
 }
 
 // ============================================================================
-// Guardian Recovery (Issue: feature/wallet-recovery)
+// Gas Config (Issue: feature/gas-limits)
 // ============================================================================
 
-use crate::types::{Guardian, GuardianConfig, RecoveryProposal};
-
-pub fn get_guardian_config(env: &Env) -> Option<GuardianConfig> {
-    env.storage().instance().get(&DataKey::GuardianConfig)
-}
-
-pub fn set_guardian_config(env: &Env, config: &GuardianConfig) {
+pub fn get_gas_config(env: &Env) -> GasConfig {
     env.storage()
         .instance()
-        .set(&DataKey::GuardianConfig, config);
+        .get(&DataKey::GasConfig)
+        .unwrap_or_else(GasConfig::default)
 }
 
-pub fn get_guardian(env: &Env, addr: &Address) -> Option<Guardian> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Guardian(addr.clone()))
+pub fn set_gas_config(env: &Env, config: &GasConfig) {
+    env.storage().instance().set(&DataKey::GasConfig, config);
 }
 
-pub fn set_guardian(env: &Env, guardian: &Guardian) {
-    let key = DataKey::Guardian(guardian.address.clone());
-    env.storage().persistent().set(&key, guardian);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
-}
+// ============================================================================
+// Performance Metrics (Issue: feature/performance-metrics)
+// ============================================================================
 
-pub fn get_recovery_proposal(env: &Env, id: u64) -> Option<RecoveryProposal> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::RecoveryProposal(id))
-}
-
-pub fn set_recovery_proposal(env: &Env, proposal: &RecoveryProposal) {
-    let key = DataKey::RecoveryProposal(proposal.id);
-    env.storage().persistent().set(&key, proposal);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
-}
-
-pub fn get_next_recovery_proposal_id(env: &Env) -> u64 {
+pub fn get_metrics(env: &Env) -> VaultMetrics {
     env.storage()
         .instance()
-        .get(&DataKey::NextRecoveryProposalId)
-        .unwrap_or(1)
+        .get(&DataKey::Metrics)
+        .unwrap_or_else(VaultMetrics::default)
 }
 
-pub fn increment_recovery_proposal_id(env: &Env) -> u64 {
-    let id = get_next_recovery_proposal_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextRecoveryProposalId, &(id + 1));
-    id
+pub fn set_metrics(env: &Env, metrics: &VaultMetrics) {
+    env.storage().instance().set(&DataKey::Metrics, metrics);
 }
 
-pub fn get_active_recovery_proposal(env: &Env) -> Option<u64> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ActiveRecoveryProposal)
+/// Increment proposal counter in metrics
+pub fn metrics_on_proposal(env: &Env) {
+    let mut m = get_metrics(env);
+    m.total_proposals += 1;
+    m.last_updated_ledger = env.ledger().sequence() as u64;
+    set_metrics(env, &m);
 }
 
-pub fn set_active_recovery_proposal(env: &Env, proposal_id: Option<u64>) {
-    if let Some(id) = proposal_id {
-        env.storage()
-            .instance()
-            .set(&DataKey::ActiveRecoveryProposal, &id);
-    } else {
-        env.storage()
-            .instance()
-            .remove(&DataKey::ActiveRecoveryProposal);
-    }
+/// Record a successful execution in metrics
+pub fn metrics_on_execution(env: &Env, gas_used: u64, execution_time_ledgers: u64) {
+    let mut m = get_metrics(env);
+    m.executed_count += 1;
+    m.total_gas_used += gas_used;
+    m.total_execution_time_ledgers += execution_time_ledgers;
+    m.last_updated_ledger = env.ledger().sequence() as u64;
+    set_metrics(env, &m);
+}
+
+/// Record a rejection in metrics
+pub fn metrics_on_rejection(env: &Env) {
+    let mut m = get_metrics(env);
+    m.rejected_count += 1;
+    m.last_updated_ledger = env.ledger().sequence() as u64;
+    set_metrics(env, &m);
+}
+
+/// Record an expiry in metrics
+pub fn metrics_on_expiry(env: &Env) {
+    let mut m = get_metrics(env);
+    m.expired_count += 1;
+    m.last_updated_ledger = env.ledger().sequence() as u64;
+    set_metrics(env, &m);
 }

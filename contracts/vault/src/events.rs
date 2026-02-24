@@ -48,6 +48,26 @@ pub fn emit_proposal_approved(
     );
 }
 
+/// Emit when a signer explicitly abstains from a proposal.
+///
+/// # Arguments
+/// * `proposal_id` - The proposal being abstained from.
+/// * `abstainer` - The signer recording an abstention.
+/// * `abstention_count` - Total abstentions recorded so far (after this one).
+/// * `quorum_votes` - Combined approvals + abstentions after this vote (quorum progress).
+pub fn emit_proposal_abstained(
+    env: &Env,
+    proposal_id: u64,
+    abstainer: &Address,
+    abstention_count: u32,
+    quorum_votes: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_abstained"), proposal_id),
+        (abstainer.clone(), abstention_count, quorum_votes),
+    );
+}
+
 /// Emit when a proposal reaches threshold and is ready for execution
 pub fn emit_proposal_ready(env: &Env, proposal_id: u64, unlock_ledger: u64) {
     env.events().publish(
@@ -83,6 +103,20 @@ pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address, p
     env.events().publish(
         (Symbol::new(env, "proposal_rejected"), proposal_id),
         (rejector.clone(), proposer.clone()),
+    );
+}
+
+/// Emit when a proposal is cancelled with a refund
+pub fn emit_proposal_cancelled(
+    env: &Env,
+    proposal_id: u64,
+    cancelled_by: &Address,
+    reason: &Symbol,
+    refunded_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_cancelled"), proposal_id),
+        (cancelled_by.clone(), reason.clone(), refunded_amount),
     );
 }
 
@@ -273,29 +307,63 @@ pub fn emit_rewards_claimed(env: &Env, proposal_id: u64, farm: &Address, amount:
 }
 
 // ============================================================================
-// Guardian Recovery Events (feature/wallet-recovery)
+// Gas Limit Events (feature/gas-limits)
 // ============================================================================
 
-/// Emit when a guardian is added
-pub fn emit_guardian_added(env: &Env, guardian: &Address, total_guardians: u32) {
+/// Emit when a proposal execution is blocked by its gas limit
+pub fn emit_gas_limit_exceeded(env: &Env, proposal_id: u64, gas_used: u64, gas_limit: u64) {
     env.events().publish(
-        (Symbol::new(env, "guardian_added"),),
-        (guardian.clone(), total_guardians),
+        (Symbol::new(env, "gas_limit_exceeded"), proposal_id),
+        (gas_used, gas_limit),
     );
 }
 
-/// Emit when a guardian is removed
-pub fn emit_guardian_removed(env: &Env, guardian: &Address, total_guardians: u32) {
+/// Emit when gas configuration is updated by admin
+pub fn emit_gas_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "gas_cfg_updated"),), admin.clone());
+}
+
+// ============================================================================
+// Performance Metrics Events (feature/performance-metrics)
+// ============================================================================
+
+/// Emit when vault-wide metrics are updated
+pub fn emit_metrics_updated(
+    env: &Env,
+    executed: u64,
+    rejected: u64,
+    expired: u64,
+    success_rate_bps: u32,
+) {
     env.events().publish(
-        (Symbol::new(env, "guardian_removed"),),
-        (guardian.clone(), total_guardians),
+        (Symbol::new(env, "metrics_updated"),),
+        (executed, rejected, expired, success_rate_bps),
     );
 }
 
-/// Emit when guardian threshold is updated
-pub fn emit_threshold_updated(env: &Env, old_threshold: u32, new_threshold: u32) {
+// ============================================================================
+// Voting Deadline Events
+// ============================================================================
+
+/// Emit when a proposal's voting deadline is extended
+pub fn emit_voting_deadline_extended(
+    env: &Env,
+    proposal_id: u64,
+    old_deadline: u64,
+    new_deadline: u64,
+    admin: &Address,
+) {
     env.events().publish(
-        (Symbol::new(env, "threshold_updated"),),
-        (old_threshold, new_threshold),
+        (Symbol::new(env, "deadline_extended"), proposal_id),
+        (old_deadline, new_deadline, admin.clone()),
+    );
+}
+
+/// Emit when a proposal is auto-rejected due to voting deadline
+pub fn emit_proposal_deadline_rejected(env: &Env, proposal_id: u64, deadline: u64) {
+    env.events().publish(
+        (Symbol::new(env, "deadline_rejected"), proposal_id),
+        deadline,
     );
 }
