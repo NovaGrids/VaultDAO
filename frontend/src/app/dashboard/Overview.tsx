@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { LayoutDashboard, FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
 import TokenBalanceCard from '../../components/TokenBalanceCard';
+import type { TokenBalance as ImportedTokenBalance } from '../../components/TokenBalanceCard';
 import DashboardBuilder from '../../components/DashboardBuilder';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
@@ -10,6 +11,12 @@ import { loadDashboardLayout } from '../../utils/dashboardTemplates';
 import type { TokenInfo } from '../../constants/tokens';
 import { isValidStellarAddress } from '../../constants/tokens';
 import { formatTokenAmount } from '../../utils/formatters';
+
+interface TokenBalance extends ImportedTokenBalance {
+    token: TokenInfo;
+    balance: string;
+    isLoading: boolean;
+}
 
 interface DashboardStats {
     totalBalance: string;

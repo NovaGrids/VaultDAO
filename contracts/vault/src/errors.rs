@@ -1,82 +1,99 @@
-//! VaultDAO - Error Types
-//!
-//! Custom error enum for all contract failure cases.
+//! VaultDAO - Error Definitions
 
 use soroban_sdk::contracterror;
 
-/// Contract error codes
 #[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum VaultError {
-    // Initialization errors (1xx)
-    /// Contract has already been initialized
-    AlreadyInitialized = 100,
-    /// Contract has not been initialized
-    NotInitialized = 101,
+    // Initialization
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    NoSigners = 3,
 
-    // Authorization errors (2xx)
-    /// Caller is not authorized for this action
-    Unauthorized = 200,
-    /// Caller is not a signer
-    NotASigner = 201,
-    /// Caller lacks required role
-    InsufficientRole = 202,
+    // Threshold / Quorum
+    ThresholdTooLow = 4,
+    ThresholdTooHigh = 5,
+    /// The configured quorum exceeds the total number of signers.
+    QuorumTooHigh = 6,
 
-    // Proposal errors (3xx)
-    /// Proposal does not exist
-    ProposalNotFound = 300,
-    /// Proposal is not in pending status
-    ProposalNotPending = 301,
-    /// Proposal has already been approved by this signer
-    AlreadyApproved = 302,
-    /// Proposal has expired
-    ProposalExpired = 303,
-    /// Proposal is not approved (threshold not met)
-    ProposalNotApproved = 304,
-    /// Proposal has already been executed
-    ProposalAlreadyExecuted = 305,
+    // Authorization
+    Unauthorized = 10,
+    NotASigner = 11,
+    InsufficientRole = 12,
+    VoterNotInSnapshot = 13,
 
-    // Spending limit errors (4xx)
-    /// Amount exceeds per-proposal spending limit
-    ExceedsProposalLimit = 400,
-    /// Amount would exceed daily spending limit
-    ExceedsDailyLimit = 401,
-    /// Amount would exceed weekly spending limit
-    ExceedsWeeklyLimit = 402,
-    /// Amount must be positive
-    InvalidAmount = 403,
-    /// Proposal is timelocked and cannot be executed yet
-    TimelockNotExpired = 404,
-    /// Recurring payment interval too short
-    IntervalTooShort = 405,
+    // Proposal state
+    ProposalNotFound = 20,
+    ProposalNotPending = 21,
+    ProposalNotApproved = 22,
+    ProposalAlreadyExecuted = 23,
+    ProposalExpired = 24,
+    ProposalAlreadyCancelled = 25,
+    VotingDeadlinePassed = 26,
 
-    // Configuration errors (5xx)
-    /// Threshold must be at least 1
-    ThresholdTooLow = 500,
-    /// Threshold cannot exceed number of signers
-    ThresholdTooHigh = 501,
-    /// Signer already exists
-    SignerAlreadyExists = 502,
-    /// Signer does not exist
-    SignerNotFound = 503,
-    /// Cannot remove signer: would make threshold unreachable
-    CannotRemoveSigner = 504,
-    /// At least one signer is required
-    NoSigners = 505,
+    // Voting
+    AlreadyApproved = 30,
 
-    // Token errors (6xx)
-    /// Token transfer failed
-    TransferFailed = 600,
-    /// Insufficient vault balance
-    InsufficientBalance = 601,
+    // Spending limits
+    InvalidAmount = 40,
+    ExceedsProposalLimit = 41,
+    ExceedsDailyLimit = 42,
+    ExceedsWeeklyLimit = 43,
 
-    VelocityLimitExceeded = 120,
-    // Condition errors (7xx)
-    /// Execution conditions not met
-    ConditionsNotMet = 700,
-    /// Balance condition not satisfied
-    BalanceConditionFailed = 701,
-    /// Date condition not satisfied
-    DateConditionFailed = 702,
+    // Velocity
+    VelocityLimitExceeded = 50,
+
+    // Timelock
+    TimelockNotExpired = 60,
+
+    // Balance
+    InsufficientBalance = 70,
+
+    // Signers
+    SignerAlreadyExists = 80,
+    SignerNotFound = 81,
+    CannotRemoveSigner = 82,
+
+    // Recipient lists
+    RecipientNotWhitelisted = 90,
+    RecipientBlacklisted = 91,
+    AddressAlreadyOnList = 92,
+    AddressNotOnList = 93,
+
+    // Comments
+    NotCommentAuthor = 100,
+
+    // Insurance
+    InsuranceInsufficient = 110,
+
+    // Gas
+    GasLimitExceeded = 120,
+
+    // Batch
+    BatchTooLarge = 130,
+
+    // Conditions
+    ConditionsNotMet = 140,
+
+    // Recurring payments
+    IntervalTooShort = 150,
+
+    // DEX/AMM
+    DexNotEnabled = 160,
+    SlippageExceeded = 161,
+    PriceImpactExceeded = 162,
+    InvalidSwapParams = 163,
+    InsufficientLiquidity = 164,
+
+    // Bridge — variants must match all call sites in bridge.rs exactly
+    BridgeNotEnabled = 170,
+    BridgeNotConfigured = 171,
+    UnsupportedChain = 172,
+    ChainNotSupported = 173,
+    BridgeAmountExceedsLimit = 174,
+    ExceedsBridgeLimit = 175,
+
+    // Reputation
+    ReputationTooLow = 180,
 }

@@ -8,9 +8,9 @@ import {
     nativeToScVal,
     scValToNative
 } from 'stellar-sdk';
-import { signTransaction } from '@stellar/freighter-api';
 import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
+import { withRetry } from '../components/RetryMechanism';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
 import type { SimulationResult } from '../utils/simulation';
 import {
@@ -149,23 +149,24 @@ interface RawEvent {
 }
 
 export const useVaultContract = () => {
-    const { address, isConnected } = useWallet();
+    const { address, isConnected, signTransaction } = useWallet();
     const [loading, setLoading] = useState(false);
 
     const getDashboardStats = useCallback(async () => {
         try {
-            const accountInfo = await server.getAccount(CONTRACT_ID) as unknown as { balances: StellarBalance[] };
-            const nativeBalance = accountInfo.balances.find((b: StellarBalance) => b.asset_type === 'native');
-            const balance = nativeBalance ? parseFloat(nativeBalance.balance).toLocaleString() : "0";
-
-            return {
-                totalBalance: balance,
-                totalProposals: 24,
-                pendingApprovals: 3,
-                readyToExecute: 1,
-                activeSigners: 5,
-                threshold: "3/5"
-            };
+            return await withRetry(async () => {
+                const accountInfo = await server.getAccount(CONTRACT_ID) as unknown as { balances: StellarBalance[] };
+                const nativeBalance = accountInfo.balances.find((b: StellarBalance) => b.asset_type === 'native');
+                const balance = nativeBalance ? parseFloat(nativeBalance.balance).toLocaleString() : "0";
+                return {
+                    totalBalance: balance,
+                    totalProposals: 24,
+                    pendingApprovals: 3,
+                    readyToExecute: 1,
+                    activeSigners: 5,
+                    threshold: "3/5"
+                };
+            }, { maxAttempts: 3, initialDelayMs: 1000 });
         } catch (e) {
             console.error("Failed to fetch dashboard stats:", e);
             return {
@@ -571,6 +572,18 @@ export const useVaultContract = () => {
         return Promise.resolve();
     }, []);
 
+    const getProposalComments = useCallback(async (_proposalId: string) => [], []);
+    const addComment = useCallback(async (_proposalId: string, _body: string, _parentId?: string) => { }, []);
+    const editComment = useCallback(async (_commentId: string, _body: string) => { }, []);
+    const getListMode = useCallback(async () => 'Disabled' as const, []);
+    const setListMode = useCallback(async (_mode: string) => { }, []);
+    const addToWhitelist = useCallback(async (_address: string) => { }, []);
+    const removeFromWhitelist = useCallback(async (_address: string) => { }, []);
+    const addToBlacklist = useCallback(async (_address: string) => { }, []);
+    const removeFromBlacklist = useCallback(async (_address: string) => { }, []);
+    const isWhitelisted = useCallback(async (_address: string) => true, []);
+    const isBlacklisted = useCallback(async (_address: string) => false, []);
+
     return {
         proposeTransfer,
         approveProposal,
@@ -586,6 +599,17 @@ export const useVaultContract = () => {
         getProposalSignatures,
         remindSigner,
         exportSignatures,
+        getProposalComments,
+        addComment,
+        editComment,
+        getListMode,
+        setListMode,
+        addToWhitelist,
+        removeFromWhitelist,
+        addToBlacklist,
+        removeFromBlacklist,
+        isWhitelisted,
+        isBlacklisted,
         getTokenBalances: async () => [],
         getPortfolioValue: async () => "0",
         addCustomToken: async (_address: string) => null,
@@ -598,5 +622,6 @@ export const useVaultContract = () => {
         getAllRoles: async () => [],
         setRole: async (_address: string, _role: number) => { },
         getUserRole: async (_address: string) => 0,
+        assignRole: async (_address: string, _role: number) => { },
     };
 };

@@ -6,6 +6,7 @@ import LineChart from '../../components/charts/LineChart';
 import PieChart from '../../components/charts/PieChart';
 import HeatMap from '../../components/charts/HeatMap';
 import SpendingAnalytics from '../../components/SpendingAnalytics';
+import AdvancedChart from '../../components/AdvancedChart';
 import {
   TrendingUp,
   PieChart as PieIcon,
@@ -79,7 +80,7 @@ const TIME_RANGES: { value: AnalyticsTimeRange; label: string }[] = [
 const Analytics: React.FC = () => {
   const [timeRange, setTimeRange] = useState<AnalyticsTimeRange>('30d');
   const [loading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'spending'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'spending' | 'advanced'>('overview');
   const proposalChartRef = useRef<HTMLDivElement>(null);
   const spendingChartRef = useRef<HTMLDivElement>(null);
   const treasuryChartRef = useRef<HTMLDivElement>(null);
@@ -213,11 +214,48 @@ const Analytics: React.FC = () => {
         >
           Spending Analytics
         </button>
+        <button
+          onClick={() => setActiveTab('advanced')}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'advanced'
+              ? 'text-purple-400 border-b-2 border-purple-400'
+              : 'text-gray-400 hover:text-gray-300'
+          }`}
+        >
+          Advanced Chart
+        </button>
       </div>
 
       {loading && (
         <div className="flex justify-center py-12">
           <div className="animate-spin rounded-full h-10 w-10 border-2 border-purple-500 border-t-transparent" />
+        </div>
+      )}
+
+      {!loading && analytics && activeTab === 'advanced' && (
+        <div className="space-y-6">
+          <AdvancedChart
+            data={analytics.proposalTrends as unknown as Record<string, unknown>[]}
+            xKey="date"
+            series={[
+              { dataKey: 'created', name: 'Created', color: '#818cf8' },
+              { dataKey: 'approved', name: 'Approved', color: '#34d399' },
+              { dataKey: 'executed', name: 'Executed', color: '#22c55e' },
+            ]}
+            title="Proposal trends (advanced)"
+            height={360}
+            valueKey="created"
+            configKey="proposal-trends"
+          />
+          <AdvancedChart
+            data={analytics.treasuryBalance as unknown as Record<string, unknown>[]}
+            xKey="date"
+            series={[{ dataKey: 'total', name: 'Cumulative volume', color: '#8b5cf6' }]}
+            title="Treasury / cumulative volume (advanced)"
+            height={360}
+            valueKey="total"
+            configKey="treasury-balance"
+          />
         </div>
       )}
 
@@ -247,7 +285,7 @@ const Analytics: React.FC = () => {
           </div>
 
           {/* Stats cards */}
-          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex items-center gap-3">
               <div className="p-2 rounded-lg bg-purple-500/20">
                 <BarChart3 size={20} className="text-purple-400" />

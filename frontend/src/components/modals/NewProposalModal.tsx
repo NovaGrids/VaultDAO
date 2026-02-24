@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useVaultContract } from '../../hooks/useVaultContract';
+import FileUploader, { type UploadedAttachment } from '../FileUploader';
 
 export interface NewProposalFormData {
   recipient: string;
   token: string;
   amount: string;
   memo: string;
+  attachments?: UploadedAttachment[];
 }
 
 interface NewProposalModalProps {
@@ -16,6 +18,7 @@ interface NewProposalModalProps {
   onClose: () => void;
   onSubmit: (event: React.FormEvent) => void;
   onFieldChange: (field: keyof NewProposalFormData, value: string) => void;
+  onAttachmentsChange?: (attachments: UploadedAttachment[]) => void;
   onOpenTemplateSelector: () => void;
   onSaveAsTemplate: () => void;
 }
@@ -28,6 +31,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   onClose,
   onSubmit,
   onFieldChange,
+  onAttachmentsChange,
   onOpenTemplateSelector,
   onSaveAsTemplate,
 }) => {
@@ -144,6 +148,16 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
             placeholder="Memo"
             className="h-24 w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
+
+          <div>
+            <p className="mb-2 text-sm font-medium text-gray-300">Attachments (invoices, receipts, contracts)</p>
+            <FileUploader
+              value={formData.attachments ?? []}
+              onChange={(attachments) => onAttachmentsChange?.(attachments)}
+              maxFiles={10}
+              disabled={loading}
+            />
+          </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
             <div className="flex flex-col gap-2 sm:flex-row">

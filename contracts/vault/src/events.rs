@@ -12,17 +12,25 @@ pub fn emit_initialized(env: &Env, admin: &Address, threshold: u32) {
     );
 }
 
-/// Emit when a new proposal is created
+/// Emit when a new proposal is created (enhanced: includes token and insurance)
 pub fn emit_proposal_created(
     env: &Env,
     proposal_id: u64,
     proposer: &Address,
     recipient: &Address,
+    token: &Address,
     amount: i128,
+    insurance_amount: i128,
 ) {
     env.events().publish(
         (Symbol::new(env, "proposal_created"), proposal_id),
-        (proposer.clone(), recipient.clone(), amount),
+        (
+            proposer.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+            insurance_amount,
+        ),
     );
 }
 
@@ -40,31 +48,75 @@ pub fn emit_proposal_approved(
     );
 }
 
-/// Emit when a proposal reaches threshold and is ready for execution
-pub fn emit_proposal_ready(env: &Env, proposal_id: u64) {
-    env.events()
-        .publish((Symbol::new(env, "proposal_ready"), proposal_id), ());
+/// Emit when a signer explicitly abstains from a proposal.
+///
+/// # Arguments
+/// * `proposal_id` - The proposal being abstained from.
+/// * `abstainer` - The signer recording an abstention.
+/// * `abstention_count` - Total abstentions recorded so far (after this one).
+/// * `quorum_votes` - Combined approvals + abstentions after this vote (quorum progress).
+pub fn emit_proposal_abstained(
+    env: &Env,
+    proposal_id: u64,
+    abstainer: &Address,
+    abstention_count: u32,
+    quorum_votes: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_abstained"), proposal_id),
+        (abstainer.clone(), abstention_count, quorum_votes),
+    );
 }
 
-/// Emit when a proposal is executed
+/// Emit when a proposal reaches threshold and is ready for execution
+pub fn emit_proposal_ready(env: &Env, proposal_id: u64, unlock_ledger: u64) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_ready"), proposal_id),
+        unlock_ledger,
+    );
+}
+
+/// Emit when a proposal is executed (enhanced: includes token and ledger)
 pub fn emit_proposal_executed(
     env: &Env,
     proposal_id: u64,
     executor: &Address,
     recipient: &Address,
+    token: &Address,
     amount: i128,
+    ledger: u64,
 ) {
     env.events().publish(
         (Symbol::new(env, "proposal_executed"), proposal_id),
-        (executor.clone(), recipient.clone(), amount),
+        (
+            executor.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+            ledger,
+        ),
     );
 }
 
-/// Emit when a proposal is rejected
-pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address) {
+/// Emit when a proposal is rejected (enhanced: includes proposer)
+pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address, proposer: &Address) {
     env.events().publish(
         (Symbol::new(env, "proposal_rejected"), proposal_id),
-        rejector.clone(),
+        (rejector.clone(), proposer.clone()),
+    );
+}
+
+/// Emit when a proposal is cancelled with a refund
+pub fn emit_proposal_cancelled(
+    env: &Env,
+    proposal_id: u64,
+    cancelled_by: &Address,
+    reason: &Symbol,
+    refunded_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_cancelled"), proposal_id),
+        (cancelled_by.clone(), reason.clone(), refunded_amount),
     );
 }
 
@@ -117,6 +169,92 @@ pub fn emit_signer_removed(env: &Env, signer: &Address, total_signers: u32) {
     );
 }
 
+// ============================================================================
+// Insurance Events (feature/proposal-insurance)
+// ============================================================================
+
+/// Emit when insurance stake is locked on proposal creation
+pub fn emit_insurance_locked(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    amount: i128,
+    token: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "insurance_locked"), proposal_id),
+        (proposer.clone(), amount, token.clone()),
+    );
+}
+
+/// Emit when insurance stake is slashed on rejection
+pub fn emit_insurance_slashed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    slashed_amount: i128,
+    returned_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "insurance_slashed"), proposal_id),
+        (proposer.clone(), slashed_amount, returned_amount),
+    );
+}
+
+/// Emit when insurance stake is fully returned on successful execution
+pub fn emit_insurance_returned(env: &Env, proposal_id: u64, proposer: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "insurance_returned"), proposal_id),
+        (proposer.clone(), amount),
+    );
+}
+
+// ============================================================================
+// Reputation Events (feature/reputation-system)
+// ============================================================================
+
+/// Emit when a user's reputation score is updated
+pub fn emit_reputation_updated(
+    env: &Env,
+    addr: &Address,
+    old_score: u32,
+    new_score: u32,
+    reason: Symbol,
+) {
+    env.events().publish(
+        (Symbol::new(env, "reputation_updated"),),
+        (addr.clone(), old_score, new_score, reason),
+    );
+}
+
+// ============================================================================
+// Batch Execution Events (feature/batch-optimization)
+// ============================================================================
+
+/// Emit when a batch execution completes
+pub fn emit_batch_executed(env: &Env, executor: &Address, executed_count: u32, failed_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "batch_executed"),),
+        (executor.clone(), executed_count, failed_count),
+    );
+}
+
+// ============================================================================
+// Notification Events (feature/execution-notifications)
+// ============================================================================
+
+/// Emit when notification preferences are updated
+pub fn emit_notification_prefs_updated(env: &Env, addr: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "notif_prefs_updated"),), addr.clone());
+}
+
+/// Emit when insurance config is updated by admin
+pub fn emit_insurance_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "insurance_cfg_updated"),), admin.clone());
+}
+
 /// Emit when a comment is added
 pub fn emit_comment_added(env: &Env, comment_id: u64, proposal_id: u64, author: &Address) {
     env.events().publish(
@@ -130,5 +268,123 @@ pub fn emit_comment_edited(env: &Env, comment_id: u64, author: &Address) {
     env.events().publish(
         (Symbol::new(env, "comment_edited"), comment_id),
         author.clone(),
+    );
+}
+
+// ============================================================================
+// DEX/AMM Events (feature/amm-integration)
+// ============================================================================
+
+/// Emit when DEX configuration is updated
+pub fn emit_dex_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "dex_config_updated"),), admin.clone());
+}
+
+/// Emit when a swap is executed
+pub fn emit_swap_executed(
+    env: &Env,
+    proposal_id: u64,
+    dex: &Address,
+    amount_in: i128,
+    amount_out: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "swap_executed"), proposal_id),
+        (dex.clone(), amount_in, amount_out),
+    );
+}
+
+/// Emit when liquidity is added
+pub fn emit_liquidity_added(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
+    env.events().publish(
+        (Symbol::new(env, "liquidity_added"), proposal_id),
+        (dex.clone(), lp_tokens),
+    );
+}
+
+/// Emit when liquidity is removed
+pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
+    env.events().publish(
+        (Symbol::new(env, "liquidity_removed"), proposal_id),
+        (dex.clone(), lp_tokens),
+    );
+}
+
+/// Emit when LP tokens are staked
+pub fn emit_lp_staked(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "lp_staked"), proposal_id),
+        (farm.clone(), amount),
+    );
+}
+
+/// Emit when rewards are claimed
+pub fn emit_rewards_claimed(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "rewards_claimed"), proposal_id),
+        (farm.clone(), amount),
+    );
+}
+
+// ============================================================================
+// Gas Limit Events (feature/gas-limits)
+// ============================================================================
+
+/// Emit when a proposal execution is blocked by its gas limit
+pub fn emit_gas_limit_exceeded(env: &Env, proposal_id: u64, gas_used: u64, gas_limit: u64) {
+    env.events().publish(
+        (Symbol::new(env, "gas_limit_exceeded"), proposal_id),
+        (gas_used, gas_limit),
+    );
+}
+
+/// Emit when gas configuration is updated by admin
+pub fn emit_gas_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "gas_cfg_updated"),), admin.clone());
+}
+
+// ============================================================================
+// Performance Metrics Events (feature/performance-metrics)
+// ============================================================================
+
+/// Emit when vault-wide metrics are updated
+pub fn emit_metrics_updated(
+    env: &Env,
+    executed: u64,
+    rejected: u64,
+    expired: u64,
+    success_rate_bps: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "metrics_updated"),),
+        (executed, rejected, expired, success_rate_bps),
+    );
+}
+
+// ============================================================================
+// Voting Deadline Events
+// ============================================================================
+
+/// Emit when a proposal's voting deadline is extended
+pub fn emit_voting_deadline_extended(
+    env: &Env,
+    proposal_id: u64,
+    old_deadline: u64,
+    new_deadline: u64,
+    admin: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "deadline_extended"), proposal_id),
+        (old_deadline, new_deadline, admin.clone()),
+    );
+}
+
+/// Emit when a proposal is auto-rejected due to voting deadline
+pub fn emit_proposal_deadline_rejected(env: &Env, proposal_id: u64, deadline: u64) {
+    env.events().publish(
+        (Symbol::new(env, "deadline_rejected"), proposal_id),
+        deadline,
     );
 }
