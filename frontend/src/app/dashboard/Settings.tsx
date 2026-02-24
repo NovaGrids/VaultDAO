@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   getExportHistory,
   clearExportHistory,
@@ -7,6 +7,9 @@ import {
 import { Download, Trash2, FileText, Shield } from 'lucide-react';
 import RecipientListManagement from '../../components/RecipientListManagement';
 import RoleManagement from '../../components/RoleManagement';
+import EmergencyControls from '../../components/EmergencyControls';
+import { useWallet } from '../../context/WalletContext';
+import { useVaultContract } from '../../hooks/useVaultContract';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -58,6 +61,33 @@ function reDownloadItem(item: ExportItemWithContent): void {
 const Settings: React.FC = () => {
   const [history, setHistory] = useState<ExportHistoryItem[]>(() => getExportHistory());
   const [showRecipientLists, setShowRecipientLists] = useState(false);
+  const { address: walletAddress } = useWallet();
+  const { getUserRole, getAllRoles } = useVaultContract();
+  const [userRole, setUserRole] = useState<number>(0);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [isSigner, setIsSigner] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkRoles = async () => {
+      if (!walletAddress) {
+        setIsAdmin(false);
+        setIsSigner(false);
+        return;
+      }
+      try {
+        const role = await getUserRole(walletAddress);
+        setUserRole(role);
+        // Role 1 = Admin, Role 2 = Treasurer (signer)
+        setIsAdmin(role === 1);
+        setIsSigner(role === 1 || role === 2);
+      } catch (err) {
+        console.error('Failed to get user role:', err);
+        setIsAdmin(false);
+        setIsSigner(false);
+      }
+    };
+    checkRoles();
+  }, [walletAddress, getUserRole]);
 
   const handleClearHistory = () => {
     clearExportHistory();
@@ -71,6 +101,15 @@ const Settings: React.FC = () => {
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-bold">Settings</h2>
+
+      {/* Emergency Controls Section */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <EmergencyControls 
+          contractId="CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" 
+          isAdmin={isAdmin}
+          isSigner={isSigner}
+        />
+      </div>
 
       {/* Role Management Section */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">

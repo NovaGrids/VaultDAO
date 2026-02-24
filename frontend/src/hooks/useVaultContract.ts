@@ -571,6 +571,234 @@ export const useVaultContract = () => {
         return Promise.resolve();
     }, []);
 
+    // Pause-related function definitions
+    const getUnpauseRequired = useCallback(async () => {
+        if (!address) throw new Error("Wallet not connected");
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "get_unpause_required",
+                            args: [],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) {
+                throw new Error(`Simulation failed: ${simulation.error}`);
+            }
+            const result = simulation.result?.retval;
+            if (result) {
+                return scValToNative(result) as number;
+            }
+            return 0;
+        } catch (e) {
+            console.error('Failed to get unpause required:', e);
+            return 0;
+        }
+    }, [address]);
+
+    const getPauseInfo = useCallback(async () => {
+        if (!address) throw new Error("Wallet not connected");
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "get_pause_info",
+                            args: [],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) {
+                throw new Error(`Simulation failed: ${simulation.error}`);
+            }
+            const result = simulation.result?.retval;
+            if (result) {
+                const parsed = scValToNative(result);
+                if (parsed && typeof parsed === 'object') {
+                    return {
+                        state: parsed.state === 1 ? 'Paused' : 'Active',
+                        pauser: parsed.pauser || '',
+                        reason: parsed.reason || '',
+                        paused_at: Number(parsed.paused_at) || 0,
+                        unpause_votes: Number(parsed.unpause_votes) || 0,
+                        voting_started_at: Number(parsed.voting_started_at) || 0,
+                    };
+                }
+                return null;
+            }
+            return null;
+        } catch (e) {
+            console.error('Failed to get pause info:', e);
+            return null;
+        }
+    }, [address]);
+
+    const getPauseHistory = useCallback(async () => {
+        if (!address) throw new Error("Wallet not connected");
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "get_pause_history",
+                            args: [],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) {
+                throw new Error(`Simulation failed: ${simulation.error}`);
+            }
+            const result = simulation.result?.retval;
+            if (result) {
+                const parsed = scValToNative(result);
+                if (Array.isArray(parsed)) {
+                    return parsed.map((entry: any) => ({
+                        is_pause: entry.is_pause,
+                        actor: entry.actor || '',
+                        reason: entry.reason || '',
+                        timestamp: Number(entry.timestamp) || 0,
+                    }));
+                }
+            }
+            return [];
+        } catch (e) {
+            console.error('Failed to get pause history:', e);
+            return [];
+        }
+    }, [address]);
+
+    const isPaused = useCallback(async () => {
+        if (!address) return false;
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "is_paused",
+                            args: [],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) {
+                return false;
+            }
+            const result = simulation.result?.retval;
+            if (result) {
+                return scValToNative(result) as boolean;
+            }
+            return false;
+        } catch (e) {
+            console.error('Failed to check pause state:', e);
+            return false;
+        }
+    }, [address]);
+
+    const emergencyPause = useCallback(async (reason: string) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "emergency_pause",
+                            args: [
+                                new Address(address).toScVal(),
+                                xdr.ScVal.scvSymbol(reason),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
+        }
+    }, [address, isConnected]);
+
+    const voteUnpause = useCallback(async () => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "vote_unpause",
+                            args: [
+                                new Address(address).toScVal(),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            const result = simulation.result?.retval;
+            return result ? scValToNative(result) as boolean : false;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
+        }
+    }, [address, isConnected]);
+
     return {
         proposeTransfer,
         approveProposal,
@@ -598,5 +826,12 @@ export const useVaultContract = () => {
         getAllRoles: async () => [],
         setRole: async (_address: string, _role: number) => { },
         getUserRole: async (_address: string) => 0,
+        // Pause-related functions
+        isPaused,
+        getPauseInfo,
+        getPauseHistory,
+        getUnpauseRequired,
+        emergencyPause,
+        voteUnpause,
     };
 };

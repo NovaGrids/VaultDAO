@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -16,16 +16,38 @@ import {
   BarChart3,
   Files,
   RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 // Fixed Import: Pointing to the actual hook location
 import { useWallet } from "../../hooks/useWallet"; 
+import { useVaultContract } from "../../hooks/useVaultContract";
 import CopyButton from '../CopyButton';
 
+// Global pause state (can be managed via context in production)
 const DashboardLayout: React.FC = () => {
   const { isConnected, address, network, connect, disconnect } = useWallet();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  // In production, this would come from the contract
+  const { isPaused: contractIsPaused, getPauseInfo } = useVaultContract();
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+
+  // Fetch pause state from contract
+  useEffect(() => {
+    const checkPauseState = async () => {
+      try {
+        const paused = await contractIsPaused();
+        setIsPaused(paused);
+      } catch (error) {
+        console.error('Failed to fetch pause state:', error);
+      }
+    };
+    checkPauseState();
+    // Poll every 10 seconds
+    const interval = setInterval(checkPauseState, 10000);
+    return () => clearInterval(interval);
+  }, [contractIsPaused]);
 
   const shortenAddress = (addr: string, chars = 4) => {
     return `${addr.slice(0, chars)}...${addr.slice(-chars)}`;
@@ -50,7 +72,25 @@ const DashboardLayout: React.FC = () => {
         />
       )}
 
-      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-gray-800/50 backdrop-blur-md border-r border-gray-700/50 transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}>
+      {/* Pause Banner */}
+      {isPaused && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-red-600/90 backdrop-blur-sm border-b border-red-500/50">
+          <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-center gap-2">
+            <AlertTriangle size={18} className="text-white" />
+            <span className="text-white font-medium text-sm">
+              VAULT IS PAUSED - Operations are frozen. Vote to unpause in Settings.
+            </span>
+            <Link 
+              to="/dashboard/settings" 
+              className="ml-4 px-3 py-1 bg-white/20 hover:bg-white/30 text-white text-xs font-medium rounded"
+            >
+              Go to Settings
+            </Link>
+          </div>
+        </div>
+      )}
+
+      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-gray-800/50 backdrop-blur-md border-r border-gray-700/50 transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 ${isPaused ? 'mt-12' : ''}`}>
         <div className="p-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600">
             VaultDAO
@@ -74,7 +114,7 @@ const DashboardLayout: React.FC = () => {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <header className="bg-gray-800/30 backdrop-blur-md border-b border-gray-700/50 h-20 flex items-center justify-between px-6 z-30">
+        <header className={`bg-gray-800/30 backdrop-blur-md border-b border-gray-700/50 h-20 flex items-center justify-between px-6 z-30 ${isPaused ? 'mt-12' : ''}`}>
           <button className="md:hidden text-gray-400 hover:text-white p-2 hover:bg-gray-700/50 rounded-lg transition-colors" onClick={() => setIsSidebarOpen(true)}>
             <Menu size={24} />
           </button>

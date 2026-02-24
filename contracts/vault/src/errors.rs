@@ -79,4 +79,34 @@ pub enum VaultError {
     BalanceConditionFailed = 701,
     /// Date condition not satisfied
     DateConditionFailed = 702,
+
+    // Pause errors (8xx)
+    /// Contract is currently paused
+    ContractPaused = 800,
+    /// Contract is not paused
+    ContractNotPaused = 801,
+    /// Not authorized to pause the contract
+    NotAuthorizedToPause = 802,
+    /// Already voted for unpause
+    AlreadyVotedUnpause = 803,
+    /// Unpause voting not started
+    UnpauseVotingNotActive = 804,
+    /// Unpause vote rejected - insufficient votes
+    UnpauseVoteRejected = 805,
+
+    // List management errors (9xx)
+    /// Address already on list
+    AddressAlreadyOnList = 900,
+    /// Address not on list
+    AddressNotOnList = 901,
+    /// Recipient not whitelisted
+    RecipientNotWhitelisted = 902,
+    /// Recipient is blacklisted
+    RecipientBlacklisted = 903,
+
+    // Comment errors (10xx)
+    /// Comment too long
+    CommentTooLong = 1000,
+    /// Not the comment author
+    NotCommentAuthor = 1001,
 }

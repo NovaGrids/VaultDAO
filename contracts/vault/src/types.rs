@@ -173,3 +173,79 @@ pub struct VelocityConfig {
     /// The time window in seconds (e.g., 3600 for 1 hour)
     pub window: u64,
 }
+
+/// Emergency pause state for the vault
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum PauseState {
+    /// Vault is operational
+    Active = 0,
+    /// Vault operations are frozen
+    Paused = 1,
+}
+
+/// Information about the current pause state
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseInfo {
+    /// Current pause state
+    pub state: PauseState,
+    /// Address that triggered the pause
+    pub pauser: Address,
+    /// Reason for pause (stored as symbol)
+    pub reason: Symbol,
+    /// Ledger timestamp when paused
+    pub paused_at: u64,
+    /// Current unpause vote count
+    pub unpause_votes: u32,
+    /// Ledger when unpause voting started (0 if not voting)
+    pub voting_started_at: u64,
+}
+
+/// A record of pause/unpause history
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseHistoryEntry {
+    /// Whether this was a pause (true) or unpause (false)
+    pub is_pause: bool,
+    /// Address that triggered the action
+    pub actor: Address,
+    /// Reason for the action
+    pub reason: Symbol,
+    /// Ledger timestamp
+    pub timestamp: u64,
+}
+
+/// Recipient list mode for whitelist/blacklist functionality
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ListMode {
+    /// No restrictions on recipients
+    Disabled = 0,
+    /// Only whitelisted addresses can receive funds
+    Whitelist = 1,
+    /// Blacklisted addresses cannot receive funds
+    Blacklist = 2,
+}
+
+/// Comment on a proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Comment {
+    /// Unique comment ID
+    pub id: u64,
+    /// Proposal this comment belongs to
+    pub proposal_id: u64,
+    /// Author of the comment
+    pub author: Address,
+    /// Comment text
+    pub text: Symbol,
+    /// Parent comment ID (0 if top-level)
+    pub parent_id: u64,
+    /// Ledger when created
+    pub created_at: u64,
+    /// Ledger when last edited (0 if never edited)
+    pub edited_at: u64,
+}

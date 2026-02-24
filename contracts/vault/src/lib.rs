@@ -16,7 +16,7 @@ pub use types::InitConfig;
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{Config, ListMode, Proposal, ProposalStatus, Role};
+use types::{Comment, Config, ListMode, Proposal, ProposalStatus, Role};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -27,6 +27,9 @@ pub struct VaultDAO;
 
 /// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
+
+/// Super-majority threshold for unpause voting (80%)
+const UNPAUSE_THRESHOLD_PERCENT: u32 = 80;
 
 #[contractimpl]
 impl VaultDAO {
@@ -122,6 +125,13 @@ impl VaultDAO {
         // 2. Check initialization and load config
         let config = storage::get_config(&env)?;
 
+        // 2.5 Check pause state
+        if let Some(pause_info) = storage::get_pause_info(&env) {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
+        }
+
         // 3. Check role
         let role = storage::get_role(&env, &proposer);
         if role != Role::Treasurer && role != Role::Admin {
@@ -181,7 +191,6 @@ impl VaultDAO {
         };
 
         storage::set_proposal(&env, &proposal);
-        storage::add_to_priority_queue(&env, priority as u32, proposal_id);
 
         // Extend TTL to ensure persistent data stays alive
         storage::extend_instance_ttl(&env);
@@ -204,6 +213,13 @@ impl VaultDAO {
     pub fn approve_proposal(env: Env, signer: Address, proposal_id: u64) -> Result<(), VaultError> {
         // Verify identity - CRITICAL for security
         signer.require_auth();
+
+        // Check pause state
+        if let Some(pause_info) = storage::get_pause_info(&env) {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
+        }
 
         // Get config and validate signer
         let config = storage::get_config(&env)?;
@@ -292,6 +308,13 @@ impl VaultDAO {
         // Executor must authorize (to prevent griefing)
         executor.require_auth();
 
+        // Check pause state
+        if let Some(pause_info) = storage::get_pause_info(&env) {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
+        }
+
         // Get proposal
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
@@ -351,6 +374,13 @@ impl VaultDAO {
         proposal_id: u64,
     ) -> Result<(), VaultError> {
         rejector.require_auth();
+
+        // Check pause state
+        if let Some(pause_info) = storage::get_pause_info(&env) {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
+        }
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
@@ -550,6 +580,13 @@ impl VaultDAO {
     ) -> Result<u64, VaultError> {
         proposer.require_auth();
 
+        // Check pause state
+        if let Some(pause_info) = storage::get_pause_info(&env) {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
+        }
+
         let role = storage::get_role(&env, &proposer);
         if role != Role::Treasurer && role != Role::Admin {
             return Err(VaultError::InsufficientRole);
@@ -594,6 +631,13 @@ impl VaultDAO {
     ///
     /// Can be called by anyone (keeper/bot) if the schedule is due.
     pub fn execute_recurring_payment(env: Env, payment_id: u64) -> Result<(), VaultError> {
+        // Check pause state
+        if let Some(pause_info) = storage::get_pause_info(&env) {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
+        }
+
         let mut payment = storage::get_recurring_payment(&env, payment_id)?;
 
         if !payment.is_active {
@@ -838,13 +882,6 @@ impl VaultDAO {
         // Verify proposal exists
         let _ = storage::get_proposal(&env, proposal_id)?;
 
-        // Validate text length (Symbol max is 32 bytes, for longer use String type)
-        // Here we'll enforce 500 char limit via the Symbol constraint
-        let text_str = text.to_string();
-        if text_str.len() > 500 {
-            return Err(VaultError::CommentTooLong);
-        }
-
         // If parent_id is provided, verify parent comment exists
         if parent_id > 0 {
             let _ = storage::get_comment(&env, parent_id)?;
@@ -888,12 +925,6 @@ impl VaultDAO {
             return Err(VaultError::NotCommentAuthor);
         }
 
-        // Validate text length
-        let text_str = new_text.to_string();
-        if text_str.len() > 500 {
-            return Err(VaultError::CommentTooLong);
-        }
-
         comment.text = new_text;
         comment.edited_at = env.ledger().sequence() as u64;
 
@@ -927,107 +958,180 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Comments
+    // Emergency Pause
     // ========================================================================
 
-    /// Add a comment to a proposal
-    pub fn add_comment(
+    /// Emergency pause the vault - admin only
+    ///
+    /// This freezes all vault operations in case of security threats.
+    /// Anyone can still read the state when paused.
+    pub fn emergency_pause(
         env: Env,
-        author: Address,
-        proposal_id: u64,
-        text: Symbol,
-        parent_id: u64,
-    ) -> Result<u64, VaultError> {
-        author.require_auth();
+        admin: Address,
+        reason: Symbol,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
 
-        // Verify proposal exists
-        let _ = storage::get_proposal(&env, proposal_id)?;
-
-        // Validate text length (Symbol max is 32 bytes, for longer use String type)
-        // Here we'll enforce 500 char limit via the Symbol constraint
-        let text_str = text.to_string();
-        if text_str.len() > 500 {
-            return Err(VaultError::CommentTooLong);
+        // Check admin role
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
         }
 
-        // If parent_id is provided, verify parent comment exists
-        if parent_id > 0 {
-            let _ = storage::get_comment(&env, parent_id)?;
+        // Get current pause state
+        let current = storage::get_pause_info(&env);
+
+        // Already paused?
+        if let Some(pause_info) = current {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
         }
 
-        let comment_id = storage::increment_comment_id(&env);
         let current_ledger = env.ledger().sequence() as u64;
 
-        let comment = Comment {
-            id: comment_id,
-            proposal_id,
-            author: author.clone(),
-            text,
-            parent_id,
-            created_at: current_ledger,
-            edited_at: 0,
+        // Create pause info
+        let pause_info = types::PauseInfo {
+            state: types::PauseState::Paused,
+            pauser: admin.clone(),
+            reason: reason.clone(),
+            paused_at: current_ledger,
+            unpause_votes: 0,
+            voting_started_at: 0,
         };
 
-        storage::set_comment(&env, &comment);
-        storage::add_comment_to_proposal(&env, proposal_id, comment_id);
-        storage::extend_instance_ttl(&env);
+        storage::set_pause_info(&env, &pause_info);
 
-        events::emit_comment_added(&env, comment_id, proposal_id, &author);
+        // Add to history
+        let history_entry = types::PauseHistoryEntry {
+            is_pause: true,
+            actor: admin.clone(),
+            reason,
+            timestamp: current_ledger,
+        };
+        storage::add_pause_history(&env, &history_entry);
 
-        Ok(comment_id)
-    }
-
-    /// Edit a comment
-    pub fn edit_comment(
-        env: Env,
-        author: Address,
-        comment_id: u64,
-        new_text: Symbol,
-    ) -> Result<(), VaultError> {
-        author.require_auth();
-
-        let mut comment = storage::get_comment(&env, comment_id)?;
-
-        // Only author can edit
-        if comment.author != author {
-            return Err(VaultError::NotCommentAuthor);
-        }
-
-        // Validate text length
-        let text_str = new_text.to_string();
-        if text_str.len() > 500 {
-            return Err(VaultError::CommentTooLong);
-        }
-
-        comment.text = new_text;
-        comment.edited_at = env.ledger().sequence() as u64;
-
-        storage::set_comment(&env, &comment);
-        storage::extend_instance_ttl(&env);
-
-        events::emit_comment_edited(&env, comment_id, &author);
+        events::emit_paused(&env, &admin, &pause_info.reason);
 
         Ok(())
     }
 
-    /// Get all comments for a proposal
-    pub fn get_proposal_comments(env: Env, proposal_id: u64) -> Vec<Comment> {
-        let comment_ids = storage::get_proposal_comments(&env, proposal_id);
-        let mut comments = Vec::new(&env);
+    /// Vote to unpause the vault - signer only
+    ///
+    /// Requires 80% super-majority of signers to unpause.
+    /// Each signer can only vote once until they change their vote.
+    pub fn vote_unpause(env: Env, signer: Address) -> Result<bool, VaultError> {
+        signer.require_auth();
 
-        for i in 0..comment_ids.len() {
-            if let Some(comment_id) = comment_ids.get(i) {
-                if let Ok(comment) = storage::get_comment(&env, comment_id) {
-                    comments.push_back(comment);
-                }
+        // Must be paused first
+        let mut pause_info = storage::get_pause_info(&env)
+            .ok_or(VaultError::ContractNotPaused)?;
+
+        if pause_info.state != types::PauseState::Paused {
+            return Err(VaultError::ContractNotPaused);
+        }
+
+        // Check signer is authorized
+        let config = storage::get_config(&env)?;
+        let is_signer = config.signers.iter().any(|s| s == signer);
+        if !is_signer {
+            return Err(VaultError::NotASigner);
+        }
+
+        // Check if already voted
+        if storage::has_voted_unpause(&env, &signer) {
+            return Err(VaultError::AlreadyVotedUnpause);
+        }
+
+        // Record vote
+        storage::set_voted_unpause(&env, &signer);
+        pause_info.unpause_votes += 1;
+
+        // Start voting if first vote
+        if pause_info.voting_started_at == 0 {
+            pause_info.voting_started_at = env.ledger().sequence() as u64;
+        }
+
+        // Calculate required votes (80% of signers)
+        let total_signers = config.signers.len();
+        let required_votes = (total_signers as u32 * UNPAUSE_THRESHOLD_PERCENT + 99) / 100;
+
+        events::emit_unpause_vote(&env, &signer, pause_info.unpause_votes, required_votes);
+
+        // Check if threshold reached
+        if pause_info.unpause_votes >= required_votes {
+            // Unpause the contract
+            pause_info.state = types::PauseState::Active;
+            pause_info.unpause_votes = 0;
+            pause_info.voting_started_at = 0;
+
+            storage::set_pause_info(&env, &pause_info);
+
+            // Clear all votes
+            storage::clear_unpause_votes(&env, &config.signers);
+
+            // Add to history
+            let history_entry = types::PauseHistoryEntry {
+                is_pause: false,
+                actor: signer.clone(),
+                reason: Symbol::new(&env, "unpause"),
+                timestamp: env.ledger().sequence() as u64,
+            };
+            storage::add_pause_history(&env, &history_entry);
+
+            events::emit_unpaused(&env, &signer);
+
+            return Ok(true);
+        }
+
+        // Update vote count but keep paused
+        storage::set_pause_info(&env, &pause_info);
+
+        Ok(false)
+    }
+
+    /// Check if the vault is currently paused
+    pub fn is_paused(env: Env) -> bool {
+        if let Some(pause_info) = storage::get_pause_info(&env) {
+            pause_info.state == types::PauseState::Paused
+        } else {
+            false
+        }
+    }
+
+    /// Get current pause information
+    pub fn get_pause_info(env: Env) -> Option<types::PauseInfo> {
+        storage::get_pause_info(&env)
+    }
+
+    /// Get pause history
+    pub fn get_pause_history(env: Env) -> Vec<types::PauseHistoryEntry> {
+        let count = storage::get_pause_history_count(&env);
+        let mut history = Vec::new(&env);
+
+        for i in 0..count {
+            if let Some(entry) = storage::get_pause_history(&env, i) {
+                history.push_back(entry);
             }
         }
 
-        comments
+        history
     }
 
-    /// Get a single comment by ID
-    pub fn get_comment(env: Env, comment_id: u64) -> Result<Comment, VaultError> {
-        storage::get_comment(&env, comment_id)
+    /// Get required votes for unpause (80% of signers)
+    pub fn get_unpause_required(env: Env) -> Result<u32, VaultError> {
+        let config = storage::get_config(&env)?;
+        let total_signers = config.signers.len() as u32;
+        Ok((total_signers * UNPAUSE_THRESHOLD_PERCENT + 99) / 100)
+    }
+
+    /// Internal: Check if not paused and return error if paused
+    fn check_not_paused(env: &Env) -> Result<(), VaultError> {
+        if let Some(pause_info) = storage::get_pause_info(env) {
+            if pause_info.state == types::PauseState::Paused {
+                return Err(VaultError::ContractPaused);
+            }
+        }
+        Ok(())
     }
 }

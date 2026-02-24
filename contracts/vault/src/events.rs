@@ -111,3 +111,27 @@ pub fn emit_comment_edited(env: &Env, comment_id: u64, author: &Address) {
         author.clone(),
     );
 }
+
+/// Emit when the contract is paused
+pub fn emit_paused(env: &Env, pauser: &Address, reason: &Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "paused"),),
+        (pauser.clone(), reason.clone()),
+    );
+}
+
+/// Emit when the contract is unpaused
+pub fn emit_unpaused(env: &Env, actor: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "unpaused"),),
+        actor.clone(),
+    );
+}
+
+/// Emit when a vote for unpause is cast
+pub fn emit_unpause_vote(env: &Env, voter: &Address, vote_count: u32, required: u32) {
+    env.events().publish(
+        (Symbol::new(env, "unpause_vote"),),
+        (voter.clone(), vote_count, required),
+    );
+}
