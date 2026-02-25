@@ -967,6 +967,188 @@ pub struct Escrow {
 }
 
 // ============================================================================
+// Funding Rounds (Issue: feature/funding-rounds)
+// ============================================================================
+
+/// Milestone status for funding rounds
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FundingMilestoneStatus {
+    /// Milestone not yet started
+    Pending = 0,
+    /// Milestone in progress
+    InProgress = 1,
+    /// Milestone completed and verified
+    Completed = 2,
+    /// Milestone failed verification
+    Failed = 3,
+}
+
+/// Individual milestone within a funding round
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingMilestone {
+    /// Unique milestone ID within the round
+    pub id: u64,
+    /// Description of the milestone
+    pub description: Symbol,
+    /// Amount to be released upon completion
+    pub amount: i128,
+    /// Deadline ledger for completion
+    pub deadline: u64,
+    /// Current status
+    pub status: FundingMilestoneStatus,
+    /// Ledger when milestone was completed
+    pub completed_at: u64,
+    /// Address that verified completion
+    pub verified_by: Address,
+    /// Evidence/proof of completion (IPFS hash or similar)
+    pub evidence: String,
+}
+
+/// Funding round status
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FundingRoundStatus {
+    /// Round created, awaiting approval
+    Pending = 0,
+    /// Round approved, milestones can be worked on
+    Active = 1,
+    /// All milestones completed, round finished
+    Completed = 2,
+    /// Round cancelled by admin or proposer
+    Cancelled = 3,
+    /// Round failed (deadline passed or milestones failed)
+    Failed = 4,
+}
+
+/// Funding round for phased project funding
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingRound {
+    /// Unique round ID
+    pub id: u64,
+    /// Associated proposal ID (if any)
+    pub proposal_id: u64,
+    /// Project/recipient address
+    pub recipient: Address,
+    /// Proposer address
+    pub proposer: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Total funding amount across all milestones
+    pub total_amount: i128,
+    /// Amount already released
+    pub released_amount: i128,
+    /// Milestones for this round
+    pub milestones: Vec<FundingMilestone>,
+    /// Current round status
+    pub status: FundingRoundStatus,
+    /// Addresses that have approved this round
+    pub approvals: Vec<Address>,
+    /// Required approvals for round activation
+    pub required_approvals: u32,
+    /// Ledger when round was created
+    pub created_at: u64,
+    /// Ledger when round expires (0 = no expiration)
+    pub expires_at: u64,
+    /// Ledger when round was completed/cancelled
+    pub finalized_at: u64,
+    /// Round metadata
+    pub metadata: Map<Symbol, String>,
+}
+
+impl FundingRound {
+    /// Calculate total milestone amounts
+    pub fn total_milestone_amount(&self) -> i128 {
+        let mut total = 0i128;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                total = total.saturating_add(m.amount);
+            }
+        }
+        total
+    }
+
+    /// Count completed milestones
+    pub fn completed_milestone_count(&self) -> u32 {
+        let mut count = 0u32;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.status == FundingMilestoneStatus::Completed {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// Calculate amount available for release based on completed milestones
+    pub fn releasable_amount(&self) -> i128 {
+        let mut releasable = 0i128;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.status == FundingMilestoneStatus::Completed {
+                    releasable = releasable.saturating_add(m.amount);
+                }
+            }
+        }
+        releasable.saturating_sub(self.released_amount)
+    }
+
+    /// Check if all milestones are completed
+    pub fn all_milestones_completed(&self) -> bool {
+        if self.milestones.is_empty() {
+            return false;
+        }
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.status != FundingMilestoneStatus::Completed {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Configuration for funding rounds system
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingRoundConfig {
+    /// Whether funding rounds are enabled
+    pub enabled: bool,
+    /// Minimum number of milestones per round
+    pub min_milestones: u32,
+    /// Maximum number of milestones per round
+    pub max_milestones: u32,
+    /// Minimum amount per milestone
+    pub min_milestone_amount: i128,
+    /// Maximum total amount per round
+    pub max_round_amount: i128,
+    /// Default round expiration in ledgers (0 = no expiration)
+    pub default_expiration: u64,
+    /// Whether milestone verification is required
+    pub require_verification: bool,
+}
+
+impl FundingRoundConfig {
+    pub fn default() -> Self {
+        FundingRoundConfig {
+            enabled: false,
+            min_milestones: 2,
+            max_milestones: 10,
+            min_milestone_amount: 100,
+            max_round_amount: 1_000_000,
+            default_expiration: 0,
+            require_verification: true,
+        }
+    }
+}
+
+// ============================================================================
 // Time-Weighted Voting (Issue: feature/time-weighted-voting)
 // ============================================================================
 

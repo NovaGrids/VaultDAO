@@ -7166,3 +7166,626 @@ fn test_time_weighted_voting_disabled() {
     let voting_power = client.get_voting_power(&user);
     assert_eq!(voting_power, 1);
 }
+
+// ============================================================================
+// Funding Rounds Tests
+// ============================================================================
+
+#[test]
+fn test_create_funding_round() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Enable funding rounds
+    let fr_config = types::FundingRoundConfig {
+        enabled: true,
+        min_milestones: 2,
+        max_milestones: 10,
+        min_milestone_amount: 100,
+        max_round_amount: 10_000,
+        default_expiration: 0,
+        require_verification: true,
+    };
+    client.set_funding_round_config(&admin, &fr_config);
+
+    // Create milestones
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 2000,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    // Create funding round
+    let round_id = client.create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+
+    // Verify round was created
+    let round = client.get_funding_round(&round_id);
+    assert_eq!(round.proposer, proposer);
+    assert_eq!(round.recipient, recipient);
+    assert_eq!(round.total_amount, 3000);
+    assert_eq!(round.status, types::FundingRoundStatus::Pending);
+    assert_eq!(round.milestones.len(), 2);
+}
+
+#[test]
+fn test_approve_and_activate_funding_round() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let approver = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    signers.push_back(approver.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &approver, &Role::Treasurer);
+
+    // Enable funding rounds
+    let fr_config = types::FundingRoundConfig {
+        enabled: true,
+        min_milestones: 2,
+        max_milestones: 10,
+        min_milestone_amount: 100,
+        max_round_amount: 10_000,
+        default_expiration: 0,
+        require_verification: true,
+    };
+    client.set_funding_round_config(&admin, &fr_config);
+
+    // Create milestones
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 2000,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    // Create funding round
+    let round_id = client.create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+
+    // Approve round
+    client.approve_funding_round(&approver, &round_id);
+
+    // Verify round is now active
+    let round = client.get_funding_round(&round_id);
+    assert_eq!(round.status, types::FundingRoundStatus::Active);
+    assert_eq!(round.approvals.len(), 1);
+}
+
+#[test]
+fn test_milestone_submission_and_verification() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    signers.push_back(verifier.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &verifier, &Role::Treasurer);
+
+    // Enable funding rounds
+    let fr_config = types::FundingRoundConfig {
+        enabled: true,
+        min_milestones: 2,
+        max_milestones: 10,
+        min_milestone_amount: 100,
+        max_round_amount: 10_000,
+        default_expiration: 0,
+        require_verification: true,
+    };
+    client.set_funding_round_config(&admin, &fr_config);
+
+    // Create milestones
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 2000,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    // Create and activate funding round
+    let round_id = client.create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+    client.approve_funding_round(&verifier, &round_id);
+
+    // Submit milestone completion
+    let evidence = String::from_str(&env, "ipfs://proof");
+    client.submit_milestone_completion(&recipient, &round_id, &1, &evidence);
+
+    // Verify milestone status changed to InProgress
+    let round = client.get_funding_round(&round_id);
+    let milestone = round.milestones.get(0).unwrap();
+    assert_eq!(milestone.status, types::FundingMilestoneStatus::InProgress);
+
+    // Verify milestone
+    client.verify_milestone(&verifier, &round_id, &1, &true);
+
+    // Check milestone is completed
+    let round = client.get_funding_round(&round_id);
+    let milestone = round.milestones.get(0).unwrap();
+    assert_eq!(milestone.status, types::FundingMilestoneStatus::Completed);
+}
+
+#[test]
+fn test_release_milestone_funds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    signers.push_back(verifier.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &verifier, &Role::Treasurer);
+
+    // Enable funding rounds
+    let fr_config = types::FundingRoundConfig {
+        enabled: true,
+        min_milestones: 2,
+        max_milestones: 10,
+        min_milestone_amount: 100,
+        max_round_amount: 10_000,
+        default_expiration: 0,
+        require_verification: true,
+    };
+    client.set_funding_round_config(&admin, &fr_config);
+
+    // Fund the vault
+    token_client.mint(&contract_id, &10_000);
+
+    // Create milestones
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 2000,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    // Create and activate funding round
+    let round_id = client.create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+    client.approve_funding_round(&verifier, &round_id);
+
+    // Complete and verify first milestone
+    let evidence = String::from_str(&env, "ipfs://proof");
+    client.submit_milestone_completion(&recipient, &round_id, &1, &evidence);
+    client.verify_milestone(&verifier, &round_id, &1, &true);
+
+    // Release funds
+    let released = client.release_milestone_funds(&admin, &round_id);
+    assert_eq!(released, 1000);
+
+    // Check round state
+    let round = client.get_funding_round(&round_id);
+    assert_eq!(round.released_amount, 1000);
+
+    // Check recipient balance
+    let recipient_balance = token_client.balance(&recipient);
+    assert_eq!(recipient_balance, 1000);
+}
+
+#[test]
+fn test_complete_all_milestones() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    signers.push_back(verifier.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+    client.set_role(&admin, &verifier, &Role::Treasurer);
+
+    // Enable funding rounds
+    let fr_config = types::FundingRoundConfig {
+        enabled: true,
+        min_milestones: 2,
+        max_milestones: 10,
+        min_milestone_amount: 100,
+        max_round_amount: 10_000,
+        default_expiration: 0,
+        require_verification: true,
+    };
+    client.set_funding_round_config(&admin, &fr_config);
+
+    // Fund the vault
+    token_client.mint(&contract_id, &10_000);
+
+    // Create milestones
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 2000,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    // Create and activate funding round
+    let round_id = client.create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+    client.approve_funding_round(&verifier, &round_id);
+
+    // Complete both milestones
+    let evidence = String::from_str(&env, "ipfs://proof1");
+    client.submit_milestone_completion(&recipient, &round_id, &1, &evidence);
+    client.verify_milestone(&verifier, &round_id, &1, &true);
+
+    let evidence2 = String::from_str(&env, "ipfs://proof2");
+    client.submit_milestone_completion(&recipient, &round_id, &2, &evidence2);
+    client.verify_milestone(&verifier, &round_id, &2, &true);
+
+    // Check round is completed
+    let round = client.get_funding_round(&round_id);
+    assert_eq!(round.status, types::FundingRoundStatus::Completed);
+
+    // Release all funds
+    let released = client.release_milestone_funds(&admin, &round_id);
+    assert_eq!(released, 3000);
+
+    // Check final balances
+    let recipient_balance = token_client.balance(&recipient);
+    assert_eq!(recipient_balance, 3000);
+}
+
+#[test]
+fn test_cancel_funding_round() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Enable funding rounds
+    let fr_config = types::FundingRoundConfig {
+        enabled: true,
+        min_milestones: 2,
+        max_milestones: 10,
+        min_milestone_amount: 100,
+        max_round_amount: 10_000,
+        default_expiration: 0,
+        require_verification: true,
+    };
+    client.set_funding_round_config(&admin, &fr_config);
+
+    // Create milestones
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 2000,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    // Create funding round
+    let round_id = client.create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+
+    // Cancel round
+    let reason = Symbol::new(&env, "cancelled");
+    client.cancel_funding_round(&proposer, &round_id, &reason);
+
+    // Verify round is cancelled
+    let round = client.get_funding_round(&round_id);
+    assert_eq!(round.status, types::FundingRoundStatus::Cancelled);
+}
+
+#[test]
+fn test_milestone_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Enable funding rounds
+    let fr_config = types::FundingRoundConfig {
+        enabled: true,
+        min_milestones: 2,
+        max_milestones: 10,
+        min_milestone_amount: 100,
+        max_round_amount: 10_000,
+        default_expiration: 0,
+        require_verification: true,
+    };
+    client.set_funding_round_config(&admin, &fr_config);
+
+    // Try to create with too few milestones
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    let result = client.try_create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+    assert!(result.is_err());
+
+    // Try with milestone amount too small
+    let mut milestones2 = Vec::new(&env);
+    milestones2.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 50, // Below minimum
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones2.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 100,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    let result2 = client.try_create_funding_round(&proposer, &recipient, &token, &milestones2, &1, &0);
+    assert!(result2.is_err());
+}
+
+#[test]
+fn test_funding_rounds_disabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Funding rounds disabled by default
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(types::FundingMilestone {
+        id: 1,
+        description: Symbol::new(&env, "phase1"),
+        amount: 1000,
+        deadline: 1000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+    milestones.push_back(types::FundingMilestone {
+        id: 2,
+        description: Symbol::new(&env, "phase2"),
+        amount: 2000,
+        deadline: 2000,
+        status: types::FundingMilestoneStatus::Pending,
+        completed_at: 0,
+        verified_by: Address::generate(&env),
+        evidence: String::from_str(&env, ""),
+    });
+
+    // Try to create funding round - should fail
+    let result = client.try_create_funding_round(&proposer, &recipient, &token, &milestones, &1, &0);
+    assert!(result.is_err());
+}

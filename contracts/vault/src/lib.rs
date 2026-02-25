@@ -4530,6 +4530,11 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         events::emit_lock_extended(&env, &owner, new_total_duration, lock.power_multiplier_bps);
+
+        Ok(())
+    }
+
+    // ========================================================================
     // Wallet Recovery (Issue: feature/wallet-recovery)
     // ========================================================================
 
@@ -4763,6 +4768,420 @@ impl VaultDAO {
     /// Get time-weighted voting configuration
     pub fn get_time_weighted_config(env: Env) -> types::TimeWeightedConfig {
         storage::get_time_weighted_config(&env)
+    }
+
+    // ========================================================================
+    // Funding Rounds
+    // ========================================================================
+
+    /// Create a new funding round with milestones
+    ///
+    /// # Arguments
+    /// * `proposer` - Address creating the funding round
+    /// * `recipient` - Project/recipient address
+    /// * `token` - Token contract address
+    /// * `milestones` - Vector of milestones with amounts and deadlines
+    /// * `required_approvals` - Number of approvals needed to activate
+    /// * `expires_at` - Expiration ledger (0 = no expiration)
+    pub fn create_funding_round(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token: Address,
+        milestones: Vec<types::FundingMilestone>,
+        required_approvals: u32,
+        expires_at: u64,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+
+        let config = storage::get_funding_round_config(&env);
+        
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Check role
+        let role = storage::get_role(&env, &proposer);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // Validate milestones
+        if milestones.len() < config.min_milestones || milestones.len() > config.max_milestones {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut total_amount = 0i128;
+        for i in 0..milestones.len() {
+            let milestone = milestones.get(i).unwrap();
+            if milestone.amount < config.min_milestone_amount {
+                return Err(VaultError::InvalidAmount);
+            }
+            total_amount = total_amount.saturating_add(milestone.amount);
+        }
+
+        if total_amount > config.max_round_amount {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        // Validate recipient
+        Self::validate_recipient(&env, &recipient)?;
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let round_id = storage::increment_funding_round_id(&env);
+
+        let round = types::FundingRound {
+            id: round_id,
+            proposal_id: 0, // Can be linked to a proposal later
+            recipient: recipient.clone(),
+            proposer: proposer.clone(),
+            token: token.clone(),
+            total_amount,
+            released_amount: 0,
+            milestones,
+            status: types::FundingRoundStatus::Pending,
+            approvals: Vec::new(&env),
+            required_approvals,
+            created_at: current_ledger,
+            expires_at: if expires_at > 0 {
+                expires_at
+            } else if config.default_expiration > 0 {
+                current_ledger + config.default_expiration
+            } else {
+                0
+            },
+            finalized_at: 0,
+            metadata: Map::new(&env),
+        };
+
+        storage::set_funding_round(&env, &round);
+        storage::add_proposer_round(&env, &proposer, round_id);
+        storage::add_recipient_round(&env, &recipient, round_id);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_funding_round_created(&env, round_id, &proposer, &recipient, total_amount);
+
+        Ok(round_id)
+    }
+
+    /// Approve a funding round
+    ///
+    /// # Arguments
+    /// * `approver` - Address approving the round
+    /// * `round_id` - ID of the funding round
+    pub fn approve_funding_round(
+        env: Env,
+        approver: Address,
+        round_id: u64,
+    ) -> Result<(), VaultError> {
+        approver.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&approver) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let role = storage::get_role(&env, &approver);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut round = storage::get_funding_round(&env, round_id)?;
+
+        if round.status != types::FundingRoundStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Check expiration
+        let current_ledger = env.ledger().sequence() as u64;
+        if round.expires_at > 0 && current_ledger > round.expires_at {
+            round.status = types::FundingRoundStatus::Failed;
+            storage::set_funding_round(&env, &round);
+            return Err(VaultError::ProposalExpired);
+        }
+
+        // Prevent double approval
+        if round.approvals.contains(&approver) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        round.approvals.push_back(approver.clone());
+
+        // Check if threshold met
+        if round.approvals.len() >= round.required_approvals {
+            round.status = types::FundingRoundStatus::Active;
+            events::emit_funding_round_activated(&env, round_id);
+        }
+
+        storage::set_funding_round(&env, &round);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_funding_round_approved(&env, round_id, &approver, round.approvals.len());
+
+        Ok(())
+    }
+
+    /// Complete a milestone and mark it for verification
+    ///
+    /// # Arguments
+    /// * `submitter` - Address submitting milestone completion (usually recipient)
+    /// * `round_id` - ID of the funding round
+    /// * `milestone_id` - ID of the milestone within the round
+    /// * `evidence` - Proof of completion (IPFS hash, etc.)
+    pub fn submit_milestone_completion(
+        env: Env,
+        submitter: Address,
+        round_id: u64,
+        milestone_id: u64,
+        evidence: String,
+    ) -> Result<(), VaultError> {
+        submitter.require_auth();
+
+        let mut round = storage::get_funding_round(&env, round_id)?;
+
+        if round.status != types::FundingRoundStatus::Active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Only recipient can submit milestone completion
+        if submitter != round.recipient {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Find and update milestone
+        let mut found = false;
+        let mut updated_milestones = Vec::new(&env);
+        for i in 0..round.milestones.len() {
+            let mut milestone = round.milestones.get(i).unwrap();
+            if milestone.id == milestone_id {
+                if milestone.status != types::FundingMilestoneStatus::Pending
+                    && milestone.status != types::FundingMilestoneStatus::InProgress
+                {
+                    return Err(VaultError::ProposalNotPending);
+                }
+                milestone.status = types::FundingMilestoneStatus::InProgress;
+                milestone.evidence = evidence.clone();
+                found = true;
+            }
+            updated_milestones.push_back(milestone);
+        }
+
+        if !found {
+            return Err(VaultError::ProposalNotFound);
+        }
+
+        round.milestones = updated_milestones;
+        storage::set_funding_round(&env, &round);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_milestone_submitted(&env, round_id, milestone_id, &submitter);
+
+        Ok(())
+    }
+
+    /// Verify milestone completion
+    ///
+    /// # Arguments
+    /// * `verifier` - Address verifying the milestone (must be signer)
+    /// * `round_id` - ID of the funding round
+    /// * `milestone_id` - ID of the milestone
+    /// * `approved` - Whether the milestone is approved
+    pub fn verify_milestone(
+        env: Env,
+        verifier: Address,
+        round_id: u64,
+        milestone_id: u64,
+        approved: bool,
+    ) -> Result<(), VaultError> {
+        verifier.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&verifier) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let role = storage::get_role(&env, &verifier);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut round = storage::get_funding_round(&env, round_id)?;
+
+        if round.status != types::FundingRoundStatus::Active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Find and update milestone
+        let mut found = false;
+        let mut updated_milestones = Vec::new(&env);
+        for i in 0..round.milestones.len() {
+            let mut milestone = round.milestones.get(i).unwrap();
+            if milestone.id == milestone_id {
+                if milestone.status != types::FundingMilestoneStatus::InProgress {
+                    return Err(VaultError::ProposalNotPending);
+                }
+                milestone.status = if approved {
+                    types::FundingMilestoneStatus::Completed
+                } else {
+                    types::FundingMilestoneStatus::Failed
+                };
+                milestone.completed_at = current_ledger;
+                milestone.verified_by = verifier.clone();
+                found = true;
+            }
+            updated_milestones.push_back(milestone);
+        }
+
+        if !found {
+            return Err(VaultError::ProposalNotFound);
+        }
+
+        round.milestones = updated_milestones;
+
+        // Check if all milestones completed
+        if round.all_milestones_completed() {
+            round.status = types::FundingRoundStatus::Completed;
+            round.finalized_at = current_ledger;
+        }
+
+        storage::set_funding_round(&env, &round);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_milestone_verified(&env, round_id, milestone_id, &verifier, approved);
+
+        Ok(())
+    }
+
+    /// Release funds for completed milestones
+    ///
+    /// # Arguments
+    /// * `executor` - Address executing the release
+    /// * `round_id` - ID of the funding round
+    pub fn release_milestone_funds(
+        env: Env,
+        executor: Address,
+        round_id: u64,
+    ) -> Result<i128, VaultError> {
+        executor.require_auth();
+
+        let mut round = storage::get_funding_round(&env, round_id)?;
+
+        if round.status != types::FundingRoundStatus::Active
+            && round.status != types::FundingRoundStatus::Completed
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let releasable = round.releasable_amount();
+        if releasable <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Check vault balance
+        let balance = token::balance(&env, &round.token);
+        if balance < releasable {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        // Transfer funds
+        token::transfer(&env, &round.token, &round.recipient, releasable);
+
+        round.released_amount = round.released_amount.saturating_add(releasable);
+        storage::set_funding_round(&env, &round);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_milestone_funds_released(&env, round_id, &round.recipient, releasable);
+
+        Ok(releasable)
+    }
+
+    /// Cancel a funding round
+    ///
+    /// # Arguments
+    /// * `canceller` - Address cancelling the round (admin or proposer)
+    /// * `round_id` - ID of the funding round
+    /// * `reason` - Reason for cancellation
+    pub fn cancel_funding_round(
+        env: Env,
+        canceller: Address,
+        round_id: u64,
+        reason: Symbol,
+    ) -> Result<(), VaultError> {
+        canceller.require_auth();
+
+        let mut round = storage::get_funding_round(&env, round_id)?;
+
+        // Only proposer or admin can cancel
+        let role = storage::get_role(&env, &canceller);
+        if canceller != round.proposer && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if round.status == types::FundingRoundStatus::Completed
+            || round.status == types::FundingRoundStatus::Cancelled
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        round.status = types::FundingRoundStatus::Cancelled;
+        round.finalized_at = current_ledger;
+
+        storage::set_funding_round(&env, &round);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_funding_round_cancelled(&env, round_id, &canceller, &reason);
+
+        Ok(())
+    }
+
+    /// Get funding round details
+    pub fn get_funding_round(env: Env, round_id: u64) -> Result<types::FundingRound, VaultError> {
+        storage::get_funding_round(&env, round_id)
+    }
+
+    /// Get funding rounds by proposer
+    pub fn get_proposer_funding_rounds(env: Env, proposer: Address) -> Vec<u64> {
+        storage::get_proposer_rounds(&env, &proposer)
+    }
+
+    /// Get funding rounds by recipient
+    pub fn get_recipient_funding_rounds(env: Env, recipient: Address) -> Vec<u64> {
+        storage::get_recipient_rounds(&env, &recipient)
+    }
+
+    /// Configure funding rounds system
+    ///
+    /// Admin only function to enable/disable and configure funding rounds.
+    pub fn set_funding_round_config(
+        env: Env,
+        admin: Address,
+        config: types::FundingRoundConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        storage::set_funding_round_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get funding round configuration
+    pub fn get_funding_round_config(env: Env) -> types::FundingRoundConfig {
+        storage::get_funding_round_config(&env)
+    }
+
+    // ========================================================================
+    // Recovery Proposals
+    // ========================================================================
+
     /// Execute an approved recovery proposal
     pub fn execute_recovery(env: Env, proposal_id: u64) -> Result<(), VaultError> {
         let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;

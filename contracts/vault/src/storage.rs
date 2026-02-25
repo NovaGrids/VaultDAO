@@ -131,6 +131,16 @@ pub enum DataKey {
     TimeWeightedConfig,
     /// Total locked tokens by address -> i128
     TotalLocked(Address),
+    /// Funding round by ID -> FundingRound
+    FundingRound(u64),
+    /// Next funding round ID counter -> u64
+    NextFundingRoundId,
+    /// Funding rounds by proposer -> Vec<u64>
+    ProposerRounds(Address),
+    /// Funding rounds by recipient -> Vec<u64>
+    RecipientRounds(Address),
+    /// Funding round configuration -> FundingRoundConfig
+    FundingRoundConfig,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1170,8 +1180,10 @@ pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {
         // No lock = base voting power of 1
         1
     }
+}
+
 // ============================================================================
-// Wallet Recovery (Issue: feature/wallet-recovery)
+// Funding Rounds (Issue: feature/funding-rounds)
 // ============================================================================
 
 pub fn get_recovery_proposal(env: &Env, id: u64) -> Result<RecoveryProposal, VaultError> {
@@ -1202,4 +1214,102 @@ pub fn increment_recovery_id(env: &Env) -> u64 {
         .instance()
         .set(&DataKey::NextRecoveryId, &(id + 1));
     id
+}
+
+// ============================================================================
+// Funding Rounds (Issue: feature/funding-rounds)
+// ============================================================================
+
+use crate::types::{FundingRound, FundingRoundConfig};
+
+/// Get funding round configuration
+pub fn get_funding_round_config(env: &Env) -> FundingRoundConfig {
+    env.storage()
+        .instance()
+        .get(&DataKey::FundingRoundConfig)
+        .unwrap_or_else(FundingRoundConfig::default)
+}
+
+/// Set funding round configuration
+pub fn set_funding_round_config(env: &Env, config: &FundingRoundConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::FundingRoundConfig, config);
+}
+
+/// Get next funding round ID
+pub fn get_next_funding_round_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextFundingRoundId)
+        .unwrap_or(1)
+}
+
+/// Increment and return next funding round ID
+pub fn increment_funding_round_id(env: &Env) -> u64 {
+    let id = get_next_funding_round_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextFundingRoundId, &(id + 1));
+    id
+}
+
+/// Get funding round by ID
+pub fn get_funding_round(env: &Env, id: u64) -> Result<FundingRound, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::FundingRound(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+/// Set funding round
+pub fn set_funding_round(env: &Env, round: &FundingRound) {
+    let key = DataKey::FundingRound(round.id);
+    env.storage().persistent().set(&key, round);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Check if funding round exists
+pub fn funding_round_exists(env: &Env, id: u64) -> bool {
+    env.storage().persistent().has(&DataKey::FundingRound(id))
+}
+
+/// Get funding rounds by proposer
+pub fn get_proposer_rounds(env: &Env, proposer: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ProposerRounds(proposer.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add funding round to proposer's list
+pub fn add_proposer_round(env: &Env, proposer: &Address, round_id: u64) {
+    let mut rounds = get_proposer_rounds(env, proposer);
+    rounds.push_back(round_id);
+    let key = DataKey::ProposerRounds(proposer.clone());
+    env.storage().persistent().set(&key, &rounds);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+/// Get funding rounds by recipient
+pub fn get_recipient_rounds(env: &Env, recipient: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecipientRounds(recipient.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add funding round to recipient's list
+pub fn add_recipient_round(env: &Env, recipient: &Address, round_id: u64) {
+    let mut rounds = get_recipient_rounds(env, recipient);
+    rounds.push_back(round_id);
+    let key = DataKey::RecipientRounds(recipient.clone());
+    env.storage().persistent().set(&key, &rounds);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }

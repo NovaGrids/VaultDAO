@@ -728,3 +728,95 @@ pub fn emit_early_unlock(env: &Env, owner: &Address, returned_amount: i128, pena
         (owner.clone(), returned_amount, penalty),
     );
 }
+
+// ============================================================================
+// Funding Rounds Events
+// ============================================================================
+
+/// Emit when a funding round is created
+pub fn emit_funding_round_created(
+    env: &Env,
+    round_id: u64,
+    proposer: &Address,
+    recipient: &Address,
+    total_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "round_created"), round_id),
+        (proposer.clone(), recipient.clone(), total_amount),
+    );
+}
+
+/// Emit when a funding round is approved
+pub fn emit_funding_round_approved(
+    env: &Env,
+    round_id: u64,
+    approver: &Address,
+    approval_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "round_approved"), round_id),
+        (approver.clone(), approval_count),
+    );
+}
+
+/// Emit when a funding round is activated
+pub fn emit_funding_round_activated(env: &Env, round_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "round_activated"), round_id),
+        (),
+    );
+}
+
+/// Emit when a milestone is submitted for verification
+pub fn emit_milestone_submitted(
+    env: &Env,
+    round_id: u64,
+    milestone_id: u64,
+    submitter: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "milestone_submitted"), round_id, milestone_id),
+        submitter.clone(),
+    );
+}
+
+/// Emit when a milestone is verified
+pub fn emit_milestone_verified(
+    env: &Env,
+    round_id: u64,
+    milestone_id: u64,
+    verifier: &Address,
+    approved: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "milestone_verified"), round_id, milestone_id),
+        (verifier.clone(), approved),
+    );
+}
+
+/// Emit when milestone funds are released
+pub fn emit_milestone_funds_released(
+    env: &Env,
+    round_id: u64,
+    recipient: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "funds_released"), round_id),
+        (recipient.clone(), amount),
+    );
+}
+
+/// Emit when a funding round is cancelled
+pub fn emit_funding_round_cancelled(
+    env: &Env,
+    round_id: u64,
+    canceller: &Address,
+    reason: &Symbol,
+) {
+    env.events().publish(
+        (Symbol::new(env, "round_cancelled"), round_id),
+        (canceller.clone(), reason.clone()),
+    );
+}
