@@ -729,7 +729,7 @@ pub fn emit_funding_released(
 /// Emit when a funding round is cancelled
 pub fn emit_funding_round_cancelled(env: &Env, round_id: u64, canceller: &Address) {
     env.events().publish(
-        (Symbol::new(env, "funding_round_cancelled"), round_id),
+        (Symbol::new(env, "funding_round_cancelled"), round_id),}
 // ============================================================================
 // Wallet Recovery Events (feature/wallet-recovery)
 // ============================================================================
@@ -770,7 +770,7 @@ pub fn emit_funding_round_completed(env: &Env, round_id: u64, total_released: i1
         (Symbol::new(env, "funding_round_completed"), round_id),
         total_released,
     );
-/// Emit when recovery configuration is updated
+/// Emit when recovery configuration is updated}
 pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "recovery_cfg_updated"),), admin.clone());
