@@ -4873,7 +4873,7 @@ impl VaultDAO {
         }
 
         let delegation = types::DelegatedPermission {
-            permission: permission.clone(),
+            permission,
             delegator: delegator.clone(),
             delegatee: delegatee.clone(),
             granted_at: env.ledger().sequence() as u64,
