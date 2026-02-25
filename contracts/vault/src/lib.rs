@@ -19,11 +19,11 @@ pub use types::InitConfig;
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
-    CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, GasConfig, InsuranceConfig,
-    ListMode, NotificationPreferences, Priority, Proposal, ProposalAmendment, ProposalStatus,
+    Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
+    NotificationPreferences, Priority, Proposal, ProposalAmendment, ProposalStatus,
     ProposalTemplate, Reputation, RetryConfig, RetryState, Role, StreamStatus, StreamingPayment,
-    TemplateOverrides, ThresholdStrategy, VaultAction, VaultMetrics,
+    Subscription, SubscriptionPayment, SubscriptionStatus, SubscriptionTier, TemplateOverrides,
+    ThresholdStrategy, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -42,7 +42,8 @@ const MAX_BATCH_SIZE: u32 = 10;
 /// Maximum metadata entries stored per proposal
 const MAX_METADATA_ENTRIES: u32 = 16;
 
-/// Maximum actions in a cross-vault proposal
+/// Maximum actions in a cross-vault proposal (unused - feature not implemented)
+#[allow(dead_code)]
 const MAX_CROSS_VAULT_ACTIONS: u32 = 5;
 
 /// Maximum length for a single metadata value
@@ -1644,6 +1645,61 @@ impl VaultDAO {
         Ok(id)
     }
 
+    // ========================================================================
+    // Subscription System
+    // ========================================================================
+
+    /// Create a new subscription
+    pub fn create_subscription(
+        env: Env,
+        subscriber: Address,
+        service_provider: Address,
+        tier: SubscriptionTier,
+        token: Address,
+        amount_per_period: i128,
+        interval_ledgers: u64,
+        auto_renew: bool,
+    ) -> Result<u64, VaultError> {
+        subscriber.require_auth();
+
+        if amount_per_period <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        if interval_ledgers < 720 {
+            return Err(VaultError::IntervalTooShort);
+        }
+
+        Self::validate_recipient(&env, &service_provider)?;
+
+        let id = storage::increment_subscription_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let subscription = Subscription {
+            id,
+            subscriber: subscriber.clone(),
+            service_provider,
+            tier: tier.clone(),
+            token: token.clone(),
+            amount_per_period,
+            interval_ledgers,
+            next_renewal_ledger: current_ledger + interval_ledgers,
+            created_at: current_ledger,
+            status: SubscriptionStatus::Active,
+            total_payments: 0,
+            last_payment_ledger: 0,
+            auto_renew,
+        };
+
+        storage::set_subscription(&env, &subscription);
+        storage::add_subscriber_subscription(&env, &subscriber, id);
+
+        let tier_u32 = tier as u32;
+        events::emit_subscription_created(&env, id, &subscriber, tier_u32, amount_per_period);
+
+        Ok(id)
+    }
+
     /// Pause an active stream.
     ///
     /// Only sender, recipient, or Admin can pause.
@@ -1751,6 +1807,73 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Renew a subscription (automatic or manual)
+    pub fn renew_subscription(env: Env, subscription_id: u64) -> Result<(), VaultError> {
+        let mut subscription = storage::get_subscription(&env, subscription_id)?;
+
+        if subscription.status != SubscriptionStatus::Active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger < subscription.next_renewal_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        let config = storage::get_config(&env)?;
+        let today = storage::get_day_number(&env);
+        let spent_today = storage::get_daily_spent(&env, today);
+        if spent_today + subscription.amount_per_period > config.daily_limit {
+            return Err(VaultError::ExceedsDailyLimit);
+        }
+
+        let week = storage::get_week_number(&env);
+        let spent_week = storage::get_weekly_spent(&env, week);
+        if spent_week + subscription.amount_per_period > config.weekly_limit {
+            return Err(VaultError::ExceedsWeeklyLimit);
+        }
+
+        let balance = token::balance(&env, &subscription.token);
+        if balance < subscription.amount_per_period {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        token::transfer(
+            &env,
+            &subscription.token,
+            &subscription.service_provider,
+            subscription.amount_per_period,
+        );
+
+        storage::add_daily_spent(&env, today, subscription.amount_per_period);
+        storage::add_weekly_spent(&env, week, subscription.amount_per_period);
+
+        subscription.total_payments += 1;
+        subscription.last_payment_ledger = current_ledger;
+        subscription.next_renewal_ledger = current_ledger + subscription.interval_ledgers;
+
+        let payment = SubscriptionPayment {
+            subscription_id,
+            payment_number: subscription.total_payments,
+            amount: subscription.amount_per_period,
+            paid_at: current_ledger,
+            period_start: current_ledger,
+            period_end: subscription.next_renewal_ledger,
+        };
+
+        storage::add_subscription_payment(&env, &payment);
+        storage::set_subscription(&env, &subscription);
+
+        events::emit_subscription_renewed(
+            &env,
+            subscription_id,
+            subscription.total_payments,
+            subscription.amount_per_period,
+        );
+
+        Ok(())
+    }
+
     /// Claim accrued tokens from a stream.
     pub fn claim_stream(env: Env, recipient: Address, stream_id: u64) -> Result<(), VaultError> {
         recipient.require_auth();
@@ -1791,6 +1914,33 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Cancel a subscription
+    pub fn cancel_subscription(
+        env: Env,
+        caller: Address,
+        subscription_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut subscription = storage::get_subscription(&env, subscription_id)?;
+
+        if subscription.status == SubscriptionStatus::Cancelled {
+            return Err(VaultError::ProposalAlreadyCancelled);
+        }
+
+        let role = storage::get_role(&env, &caller);
+        if caller != subscription.subscriber && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        subscription.status = SubscriptionStatus::Cancelled;
+        storage::set_subscription(&env, &subscription);
+
+        events::emit_subscription_cancelled(&env, subscription_id, &caller);
+
+        Ok(())
+    }
+
     /// View current stream details.
     pub fn get_stream(env: Env, stream_id: u64) -> Result<StreamingPayment, VaultError> {
         storage::get_streaming_payment(&env, stream_id)
@@ -1819,6 +1969,68 @@ impl VaultDAO {
         let total_claimable = total_claimable.min(stream.total_amount);
 
         total_claimable.saturating_sub(stream.claimed_amount)
+    }
+
+    /// Upgrade subscription tier
+    pub fn upgrade_subscription(
+        env: Env,
+        subscriber: Address,
+        subscription_id: u64,
+        new_tier: types::SubscriptionTier,
+        new_amount: i128,
+    ) -> Result<(), VaultError> {
+        subscriber.require_auth();
+
+        let mut subscription = storage::get_subscription(&env, subscription_id)?;
+
+        if subscription.subscriber != subscriber {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if subscription.status != types::SubscriptionStatus::Active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        if new_amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let old_tier = subscription.tier.clone();
+        subscription.tier = new_tier.clone();
+        subscription.amount_per_period = new_amount;
+
+        storage::set_subscription(&env, &subscription);
+
+        events::emit_subscription_upgraded(
+            &env,
+            subscription_id,
+            old_tier as u32,
+            new_tier as u32,
+            new_amount,
+        );
+
+        Ok(())
+    }
+
+    /// Get subscription details
+    pub fn get_subscription(
+        env: Env,
+        subscription_id: u64,
+    ) -> Result<types::Subscription, VaultError> {
+        storage::get_subscription(&env, subscription_id)
+    }
+
+    /// Get subscription payment history
+    pub fn get_subscription_payments(
+        env: Env,
+        subscription_id: u64,
+    ) -> Vec<types::SubscriptionPayment> {
+        storage::get_subscription_payments(&env, subscription_id)
+    }
+
+    /// Get all subscriptions for a subscriber
+    pub fn get_subscriber_subscriptions(env: Env, subscriber: Address) -> Vec<u64> {
+        storage::get_subscriber_subscriptions(&env, &subscriber)
     }
 
     // ========================================================================
@@ -3413,9 +3625,11 @@ impl VaultDAO {
         storage::get_swap_result(&env, proposal_id)
     }
 
+    /*
     // ========================================================================
     // Cross-Vault Proposal Coordination (Issue: feature/cross-vault-coordination)
     // ========================================================================
+    // TODO: Implement cross-vault types and storage functions before enabling
 
     /// Configure cross-vault participation for this vault.
     ///
@@ -3883,6 +4097,7 @@ impl VaultDAO {
     pub fn get_proposal_dispute(env: Env, proposal_id: u64) -> Option<u64> {
         storage::get_proposal_dispute(&env, proposal_id)
     }
+    */
 
     // ========================================================================
     // Retry Helpers (private)
