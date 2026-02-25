@@ -22,9 +22,10 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, Escrow, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
-    Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role,
-    Subscription, SubscriptionPayment, VaultMetrics, VelocityConfig,
+    Comment, Config, DelegatedPermission, Escrow, GasConfig, InsuranceConfig, ListMode,
+    NotificationPreferences, PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate,
+    RecoveryProposal, Reputation, RetryState, Role, Subscription, SubscriptionPayment,
+    VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -119,6 +120,10 @@ pub enum DataKey {
     NextRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
+    /// Permission grants for address -> Vec<PermissionGrant>
+    Permissions(Address),
+    /// Delegated permissions (delegatee, delegator, permission) -> DelegatedPermission
+    DelegatedPermission(Address, Address, u32),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1077,4 +1082,58 @@ pub fn increment_recovery_id(env: &Env) -> u64 {
         .instance()
         .set(&DataKey::NextRecoveryId, &(id + 1));
     id
+}
+
+// ============================================================================
+// Permissions (Issue: feature/advanced-permissions)
+// ============================================================================
+
+pub fn get_permissions(env: &Env, addr: &Address) -> Vec<PermissionGrant> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Permissions(addr.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_permissions(env: &Env, addr: &Address, permissions: Vec<PermissionGrant>) {
+    let key = DataKey::Permissions(addr.clone());
+    env.storage().persistent().set(&key, &permissions);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_delegated_permission(
+    env: &Env,
+    delegatee: &Address,
+    delegator: &Address,
+    permission: u32,
+) -> Option<DelegatedPermission> {
+    env.storage().persistent().get(&DataKey::DelegatedPermission(
+        delegatee.clone(),
+        delegator.clone(),
+        permission,
+    ))
+}
+
+pub fn set_delegated_permission(env: &Env, delegation: &DelegatedPermission) {
+    let key = DataKey::DelegatedPermission(
+        delegation.delegatee.clone(),
+        delegation.delegator.clone(),
+        delegation.permission.clone() as u32,
+    );
+    env.storage().persistent().set(&key, delegation);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn remove_delegated_permission(
+    env: &Env,
+    delegatee: &Address,
+    delegator: &Address,
+    permission: u32,
+) {
+    let key = DataKey::DelegatedPermission(delegatee.clone(), delegator.clone(), permission);
+    env.storage().persistent().remove(&key);
 }

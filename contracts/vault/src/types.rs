@@ -160,6 +160,48 @@ pub enum Role {
     Admin = 2,
 }
 
+/// Granular permissions for fine-grained access control
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Permission {
+    CreateProposal = 0,
+    ApproveProposal = 1,
+    ExecuteProposal = 2,
+    CancelProposal = 3,
+    ManageRoles = 4,
+    ManageSigners = 5,
+    ManageConfig = 6,
+    ManageRecurring = 7,
+    ManageLists = 8,
+    ManageTemplates = 9,
+    ManageEscrow = 10,
+    ManageSubscriptions = 11,
+    ViewMetrics = 12,
+    ManageRecovery = 13,
+}
+
+/// Permission grant with optional expiry
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PermissionGrant {
+    pub permission: Permission,
+    pub granted_by: Address,
+    pub granted_at: u64,
+    pub expires_at: Option<u64>,
+}
+
+/// Delegated permission with expiry
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DelegatedPermission {
+    pub permission: Permission,
+    pub delegator: Address,
+    pub delegatee: Address,
+    pub granted_at: u64,
+    pub expires_at: u64,
+}
+
 /// The lifecycle states of a proposal.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -230,10 +230,9 @@ impl VaultDAO {
         // 2. Check initialization and load config (single read — gas optimization)
         let config = storage::get_config(&env)?;
 
-        // 3. Check role
-        let role = storage::get_role(&env, &proposer);
-        if role != Role::Treasurer && role != Role::Admin {
-            return Err(VaultError::InsufficientRole);
+        // 3. Check permission
+        if !Self::check_permission(&env, &proposer, &types::Permission::CreateProposal) {
+            return Err(VaultError::PermissionDenied);
         }
 
         // 4. Validate recipient against lists
@@ -632,10 +631,9 @@ impl VaultDAO {
             return Err(VaultError::NotASigner);
         }
 
-        // Check role (must be Treasurer or Admin)
-        let role = storage::get_role(&env, &signer);
-        if role != Role::Treasurer && role != Role::Admin {
-            return Err(VaultError::InsufficientRole);
+        // Check permission
+        if !Self::check_permission(&env, &signer, &types::Permission::ApproveProposal) {
+            return Err(VaultError::PermissionDenied);
         }
 
         // Get proposal
@@ -1146,9 +1144,8 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         admin.require_auth();
 
-        let caller_role = storage::get_role(&env, &admin);
-        if caller_role != Role::Admin {
-            return Err(VaultError::Unauthorized);
+        if !Self::check_permission(&env, &admin, &types::Permission::ManageRoles) {
+            return Err(VaultError::PermissionDenied);
         }
 
         storage::set_role(&env, &target, role.clone());
@@ -1165,9 +1162,8 @@ impl VaultDAO {
     pub fn add_signer(env: Env, admin: Address, new_signer: Address) -> Result<(), VaultError> {
         admin.require_auth();
 
-        let role = storage::get_role(&env, &admin);
-        if role != Role::Admin {
-            return Err(VaultError::Unauthorized);
+        if !Self::check_permission(&env, &admin, &types::Permission::ManageSigners) {
+            return Err(VaultError::PermissionDenied);
         }
 
         let mut config = storage::get_config(&env)?;
@@ -1192,9 +1188,8 @@ impl VaultDAO {
     pub fn remove_signer(env: Env, admin: Address, signer: Address) -> Result<(), VaultError> {
         admin.require_auth();
 
-        let role = storage::get_role(&env, &admin);
-        if role != Role::Admin {
-            return Err(VaultError::Unauthorized);
+        if !Self::check_permission(&env, &admin, &types::Permission::ManageSigners) {
+            return Err(VaultError::PermissionDenied);
         }
 
         let mut config = storage::get_config(&env)?;
@@ -4785,5 +4780,192 @@ impl VaultDAO {
     /// Get recovery proposal details
     pub fn get_recovery_proposal(env: Env, id: u64) -> Result<types::RecoveryProposal, VaultError> {
         storage::get_recovery_proposal(&env, id)
+    }
+
+    // ========================================================================
+    // Advanced Permissions (Issue: feature/advanced-permissions)
+    // ========================================================================
+
+    /// Grant a specific permission to an address
+    pub fn grant_permission(
+        env: Env,
+        granter: Address,
+        target: Address,
+        permission: types::Permission,
+        expires_at: Option<u64>,
+    ) -> Result<(), VaultError> {
+        granter.require_auth();
+
+        if !Self::check_permission(&env, &granter, &types::Permission::ManageRoles) {
+            return Err(VaultError::PermissionDenied);
+        }
+
+        let mut permissions = storage::get_permissions(&env, &target);
+        
+        // Check if permission already exists
+        for p in permissions.iter() {
+            if p.permission == permission {
+                return Err(VaultError::PermissionAlreadyGranted);
+            }
+        }
+
+        let grant = types::PermissionGrant {
+            permission,
+            granted_by: granter,
+            granted_at: env.ledger().sequence() as u64,
+            expires_at,
+        };
+
+        permissions.push_back(grant);
+        storage::set_permissions(&env, &target, permissions);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Revoke a specific permission from an address
+    pub fn revoke_permission(
+        env: Env,
+        revoker: Address,
+        target: Address,
+        permission: types::Permission,
+    ) -> Result<(), VaultError> {
+        revoker.require_auth();
+
+        if !Self::check_permission(&env, &revoker, &types::Permission::ManageRoles) {
+            return Err(VaultError::PermissionDenied);
+        }
+
+        let permissions = storage::get_permissions(&env, &target);
+        let mut found = false;
+        let mut new_permissions = Vec::new(&env);
+
+        for p in permissions.iter() {
+            if p.permission != permission {
+                new_permissions.push_back(p);
+            } else {
+                found = true;
+            }
+        }
+
+        if !found {
+            return Err(VaultError::PermissionNotFound);
+        }
+
+        storage::set_permissions(&env, &target, new_permissions);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Delegate a permission to another address temporarily
+    pub fn delegate_permission(
+        env: Env,
+        delegator: Address,
+        delegatee: Address,
+        permission: types::Permission,
+        expires_at: u64,
+    ) -> Result<(), VaultError> {
+        delegator.require_auth();
+
+        if !Self::check_permission(&env, &delegator, &permission) {
+            return Err(VaultError::PermissionDenied);
+        }
+
+        let delegation = types::DelegatedPermission {
+            permission: permission.clone(),
+            delegator: delegator.clone(),
+            delegatee: delegatee.clone(),
+            granted_at: env.ledger().sequence() as u64,
+            expires_at,
+        };
+
+        storage::set_delegated_permission(&env, &delegation);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Revoke a delegated permission
+    pub fn revoke_delegation(
+        env: Env,
+        delegator: Address,
+        delegatee: Address,
+        permission: types::Permission,
+    ) -> Result<(), VaultError> {
+        delegator.require_auth();
+
+        storage::remove_delegated_permission(&env, &delegatee, &delegator, permission as u32);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Check if an address has a specific permission
+    pub fn has_permission(env: Env, addr: Address, permission: types::Permission) -> bool {
+        Self::check_permission(&env, &addr, &permission)
+    }
+
+    /// Internal permission check helper
+    fn check_permission(env: &Env, addr: &Address, permission: &types::Permission) -> bool {
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Check role-based permissions (inheritance)
+        let role = storage::get_role(env, addr);
+        if Self::role_has_permission(&role, permission) {
+            return true;
+        }
+
+        // Check direct permission grants
+        let permissions = storage::get_permissions(env, addr);
+        for p in permissions.iter() {
+            if p.permission == *permission {
+                if let Some(expires) = p.expires_at {
+                    if current_ledger >= expires {
+                        continue;
+                    }
+                }
+                return true;
+            }
+        }
+
+        // Check delegated permissions
+        if let Ok(config) = storage::get_config(env) {
+            for signer in config.signers.iter() {
+                if let Some(delegation) =
+                    storage::get_delegated_permission(env, addr, &signer, *permission as u32)
+                {
+                    if current_ledger < delegation.expires_at {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Map role to inherited permissions
+    fn role_has_permission(role: &Role, permission: &types::Permission) -> bool {
+        use types::Permission::*;
+        match role {
+            Role::Admin => true, // Admin has all permissions
+            Role::Treasurer => matches!(
+                permission,
+                CreateProposal
+                    | ApproveProposal
+                    | ExecuteProposal
+                    | ViewMetrics
+                    | ManageRecurring
+                    | ManageEscrow
+                    | ManageSubscriptions
+            ),
+            Role::Member => matches!(permission, ViewMetrics),
+        }
+    }
+
+    /// Get all permissions for an address
+    pub fn get_permissions(env: Env, addr: Address) -> Vec<types::PermissionGrant> {
+        storage::get_permissions(&env, &addr)
     }
 }

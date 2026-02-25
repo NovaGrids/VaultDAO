@@ -95,4 +95,10 @@ pub enum VaultError {
     TemplateNotFound = 210,
     TemplateInactive = 211,
     TemplateValidationFailed = 212,
+
+    // Permission errors
+    PermissionDenied = 220,
+    PermissionExpired = 221,
+    PermissionAlreadyGranted = 222,
+    PermissionNotFound = 223,
 }
