@@ -3,12 +3,13 @@
 use super::*;
 use crate::types::{
     CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution, DisputeStatus, RetryConfig,
-    SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction, VelocityConfig,
+    StreamStatus, SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction,
+    VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token::StellarAssetClient,
+    token::{self, StellarAssetClient},
     Env, Symbol, Vec,
 };
 
@@ -6727,4 +6728,131 @@ fn test_insurance_pool_withdrawal() {
     // Cannot withdraw anymore
     let result = client.try_withdraw_insurance_pool(&admin, &token_addr, &withdraw_target, &1);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_stream_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Register token
+    let token_admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(token_admin);
+    let token_client = token::Client::new(&env, &token_id.address());
+    let token_admin_client = StellarAssetClient::new(&env, &token_id.address());
+    let token_id_addr = token_id.address();
+
+    // Initialize vault
+    let signers = Vec::from_array(&env, [admin.clone()]);
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Give sender some tokens
+    token_admin_client.mint(&sender, &1000);
+    assert_eq!(token_client.balance(&sender), 1000);
+
+    // 1. Create stream: 100 tokens over 100 seconds (rate = 1 token/sec)
+    let stream_id = client.create_stream(&sender, &recipient, &token_id_addr, &100, &100);
+    assert_eq!(token_client.balance(&sender), 900);
+    assert_eq!(token_client.balance(&contract_id), 100);
+
+    // 2. Wait 10 seconds
+    env.ledger().with_mut(|li| li.timestamp += 10);
+
+    // Check stream status
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Active);
+
+    // 3. Claim: should be 10 tokens
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 10);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.claimed_amount, 10);
+
+    // 4. Pause stream
+    client.pause_stream(&sender, &stream_id);
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Paused);
+    assert_eq!(stream.accumulated_seconds, 10);
+
+    // 5. Wait 20 seconds while paused
+    env.ledger().with_mut(|li| li.timestamp += 20);
+
+    // Claim should give 0 more tokens
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 10);
+
+    // 6. Resume stream
+    client.resume_stream(&sender, &stream_id);
+
+    // 7. Wait 10 seconds
+    env.ledger().with_mut(|li| li.timestamp += 10);
+
+    // Total active time = 10 (before pause) + 10 (after resume) = 20
+    // Total claimable = 20. Claimed = 10. New claim = 10.
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 20);
+
+    // 8. Wait till end (another 80 seconds)
+    env.ledger().with_mut(|li| li.timestamp += 80);
+
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 100);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Completed);
+}
+
+#[test]
+fn test_stream_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Register token
+    let token_admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(token_admin);
+    let token_client = token::Client::new(&env, &token_id.address());
+    let token_admin_client = StellarAssetClient::new(&env, &token_id.address());
+    let token_id_addr = token_id.address();
+
+    // Initialize vault
+    let signers = Vec::from_array(&env, [admin.clone()]);
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Give sender tokens
+    token_admin_client.mint(&sender, &1000);
+
+    // Create stream: 100 tokens over 100 seconds
+    let stream_id = client.create_stream(&sender, &recipient, &token_id_addr, &100, &100);
+
+    // Wait 40 seconds
+    env.ledger().with_mut(|li| li.timestamp += 40);
+
+    // Cancel stream
+    client.cancel_stream(&sender, &stream_id);
+
+    // Recipient should have gotten 40 tokens
+    assert_eq!(token_client.balance(&recipient), 40);
+    // Sender should have gotten 60 tokens back (900 + 60 = 960)
+    assert_eq!(token_client.balance(&sender), 960);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+    assert_eq!(stream.claimed_amount, 40);
 }

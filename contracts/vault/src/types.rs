@@ -317,6 +317,55 @@ pub struct RecurringPayment {
     pub is_active: bool,
 }
 
+// ============================================================================
+// Streaming Payments (Issue: feature/streaming-payments)
+// ============================================================================
+
+/// Status of a token stream
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum StreamStatus {
+    /// Stream is active and accumulating claimable tokens
+    Active = 0,
+    /// Stream is paused; no tokens accumulate until resumed
+    Paused = 1,
+    /// Stream was cancelled; any remaining tokens returned to sender
+    Cancelled = 2,
+    /// Stream has reached its end time and all tokens are claimed
+    Completed = 3,
+}
+
+/// Continuous token transfer over time
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StreamingPayment {
+    /// Unique stream ID
+    pub id: u64,
+    /// Address that created and funded the stream
+    pub sender: Address,
+    /// Address receiving the tokens
+    pub recipient: Address,
+    /// Token contract address
+    pub token_addr: Address,
+    /// Tokens per second (scaled to token decimals)
+    pub rate: i128,
+    /// Total amount committed to the stream
+    pub total_amount: i128,
+    /// Total amount already claimed by recipient
+    pub claimed_amount: i128,
+    /// Ledger timestamp when the stream was created
+    pub start_timestamp: u64,
+    /// Ledger timestamp when the stream will finish
+    pub end_timestamp: u64,
+    /// Ledger timestamp of the last status update or claim
+    pub last_update_timestamp: u64,
+    /// Total active seconds accumulated before the last pause
+    pub accumulated_seconds: u64,
+    /// Current status
+    pub status: StreamStatus,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct VelocityConfig {

@@ -720,3 +720,45 @@ pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "recovery_cfg_updated"),), admin.clone());
 }
+
+// ============================================================================
+// Streaming Events (feature/streaming-payments)
+// ============================================================================
+
+/// Emit when a new token stream is created
+pub fn emit_stream_created(
+    env: &Env,
+    stream_id: u64,
+    sender: &Address,
+    recipient: &Address,
+    token: &Address,
+    amount: i128,
+    rate: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_created"), stream_id),
+        (
+            sender.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+            rate,
+        ),
+    );
+}
+
+/// Emit when a stream status is updated (paused, resumed, or cancelled)
+pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, updated_by: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "stream_status"), stream_id),
+        (status, updated_by.clone()),
+    );
+}
+
+/// Emit when tokens are claimed from a stream
+pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "stream_claimed"), stream_id),
+        (recipient.clone(), amount),
+    );
+}
