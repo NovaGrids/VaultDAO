@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useWallet } from '../../context/WalletContextProps';
-import type { ActivityLike } from '../../types/analytics';
 import ExportModal, { type ExportDatasets } from '../../components/modals/ExportModal';
 import { saveExportHistoryItem } from '../../utils/exportHistory';
 import AuditLog from '../../components/AuditLog';
+import TransactionHistory from '../../components/TransactionHistory';
+import type { VaultActivity } from '../../types/activity';
 
 /** Define an interface for the export metadata */
 interface ExportMeta {
@@ -16,91 +17,40 @@ interface ExportMeta {
 
 type ActivityTab = 'activity' | 'audit';
 
-function getMockActivities(): ActivityLike[] {
-  const now = Date.now();
-  const day = 24 * 60 * 60 * 1000;
-  const activities: ActivityLike[] = [];
-  const signers = ['GAAA...1111', 'GBBB...2222', 'GCCC...3333'];
-  const recipients = ['GDEF...ABC1', 'GHIJ...DEF2', 'GKLM...GHI3'];
-  for (let i = 0; i < 20; i++) {
-    const d = new Date(now - (19 - i) * day);
-    if (i % 3 === 0) {
-      activities.push({
-        id: `c-${i}`,
-        type: 'proposal_created',
-        timestamp: d.toISOString(),
-        actor: signers[i % signers.length],
-        details: { ledger: String(i), amount: 100 * (i + 1), recipient: recipients[i % 3] },
-      });
-    }
-    if (i % 2 === 0 && i > 0) {
-      activities.push({
-        id: `a-${i}`,
-        type: 'proposal_approved',
-        timestamp: new Date(d.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-        actor: signers[(i + 1) % signers.length],
-        details: { ledger: String(i - 1), approval_count: 1, threshold: 2 },
-      });
-    }
-    if (i % 4 === 0 && i >= 2) {
-      activities.push({
-        id: `e-${i}`,
-        type: 'proposal_executed',
-        timestamp: new Date(d.getTime() + 5 * 60 * 60 * 1000).toISOString(),
-        actor: signers[0],
-        details: { amount: 500 + i * 10, recipient: recipients[i % 3] },
-      });
-    }
-    if (i === 5 || i === 12) {
-      activities.push({
-        id: `r-${i}`,
-        type: 'proposal_rejected',
-        timestamp: d.toISOString(),
-        actor: signers[2],
-        details: {},
-      });
-    }
-  }
-  return activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-}
-
-const TYPE_LABELS: Record<string, string> = {
-  proposal_created: 'Proposal Created',
-  proposal_approved: 'Proposal Approved',
-  proposal_executed: 'Proposal Executed',
-  proposal_rejected: 'Proposal Rejected',
-};
-
 const Activity: React.FC = () => {
   const { address } = useWallet();
-  const [activities] = useState<ActivityLike[]>(() => getMockActivities());
+  const [loadedTransactions, setLoadedTransactions] = useState<VaultActivity[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
   const [activeTab, setActiveTab] = useState<ActivityTab>('activity');
 
   const exportDatasets: ExportDatasets = useMemo(() => {
-    const activityRows = activities.map((a) => ({
-      id: a.id,
-      type: a.type,
-      timestamp: a.timestamp,
-      actor: a.actor,
-      ...a.details,
+    const activityRows = loadedTransactions.map((tx) => ({
+      id: tx.id,
+      type: tx.type,
+      timestamp: tx.timestamp,
+      actor: tx.actor,
+      ledger: tx.ledger,
+      eventId: tx.eventId,
+      txHash: tx.txHash ?? '',
+      ...tx.details,
     }));
-    const transactionRows = activities
-      .filter((a) => a.type === 'proposal_executed')
-      .map((a) => ({
-        id: a.id,
-        type: a.type,
-        timestamp: a.timestamp,
-        actor: a.actor,
-        amount: a.details?.amount ?? 0,
-        recipient: a.details?.recipient ?? '',
-      }));
+    const transactionRows = loadedTransactions.map((tx) => ({
+      id: tx.id,
+      type: tx.type,
+      timestamp: tx.timestamp,
+      actor: tx.actor,
+      amount: tx.details?.amount ?? 0,
+      recipient: tx.details?.recipient ?? '',
+      status: tx.details?.status ?? '',
+      ledger: tx.ledger,
+      txHash: tx.txHash ?? '',
+    }));
     return {
       proposals: [],
       activity: activityRows,
       transactions: transactionRows,
     };
-  }, [activities]);
+  }, [loadedTransactions]);
 
   return (
     <div className="space-y-6">
@@ -109,7 +59,8 @@ const Activity: React.FC = () => {
         {activeTab === 'activity' && (
           <button
             onClick={() => setShowExportModal(true)}
-            className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium min-h-[44px] sm:min-h-0"
+            disabled={loadedTransactions.length === 0}
+            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium min-h-[44px] sm:min-h-0"
           >
             Export
           </button>
@@ -143,53 +94,14 @@ const Activity: React.FC = () => {
       {/* Content */}
       {activeTab === 'activity' ? (
         <>
-          <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-            {activities.length === 0 ? (
-              <div className="p-8 text-center text-gray-400">
-                <p>No activity found.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-700/50 text-gray-300">
-                      <th className="px-4 py-3 text-left font-medium">Date</th>
-                      <th className="px-4 py-3 text-left font-medium">Type</th>
-                      <th className="px-4 py-3 text-left font-medium">Actor</th>
-                      <th className="px-4 py-3 text-left font-medium">Details</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-700">
-                    {activities.map((a) => (
-                      <tr key={a.id} className="hover:bg-gray-700/30">
-                        <td className="px-4 py-3 text-gray-300">
-                          {new Date(a.timestamp).toLocaleDateString()}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-600 text-gray-200">
-                            {TYPE_LABELS[a.type] ?? a.type}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-400">{a.actor}</td>
-                        <td className="px-4 py-3 text-gray-400 max-w-xs truncate">
-                          {Object.keys(a.details).length > 0
-                            ? JSON.stringify(a.details)
-                            : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <TransactionHistory onTransactionsLoaded={setLoadedTransactions} />
 
           <ExportModal
             isOpen={showExportModal}
             onClose={() => setShowExportModal(false)}
             vaultName="VaultDAO"
             vaultAddress={address ?? 'G000000000000000000000000000000000'}
-            initialDataType="activity"
+            initialDataType="transactions"
             datasets={exportDatasets}
             onExported={(meta: ExportMeta) =>
               saveExportHistoryItem({

@@ -403,6 +403,68 @@ pub fn emit_proposal_deadline_rejected(env: &Env, proposal_id: u64, deadline: u6
 }
 
 // ============================================================================
+// Proposal Template Events (feature/contract-templates)
+// ============================================================================
+
+/// Emit when a new template is created
+#[allow(dead_code)]
+pub fn emit_template_created(
+    env: &Env,
+    template_id: u64,
+    name: &soroban_sdk::Symbol,
+    creator: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_created"), template_id),
+        (name.clone(), creator.clone()),
+    );
+}
+
+/// Emit when a template is updated
+#[allow(dead_code)]
+pub fn emit_template_updated(
+    env: &Env,
+    template_id: u64,
+    name: &soroban_sdk::Symbol,
+    version: u32,
+    updater: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_updated"), template_id),
+        (name.clone(), version, updater.clone()),
+    );
+}
+
+/// Emit when a template's active status changes
+#[allow(dead_code)]
+pub fn emit_template_status_changed(
+    env: &Env,
+    template_id: u64,
+    name: &soroban_sdk::Symbol,
+    is_active: bool,
+    admin: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_status"), template_id),
+        (name.clone(), is_active, admin.clone()),
+    );
+}
+
+/// Emit when a proposal is created from a template
+pub fn emit_proposal_from_template(
+    env: &Env,
+    proposal_id: u64,
+    template_id: u64,
+    template_name: &soroban_sdk::Symbol,
+    proposer: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_from_template"), proposal_id),
+        (template_id, template_name.clone(), proposer.clone()),
+    );
+}
+
+// ============================================================================
 // Retry Events (feature/execution-retry)
 // ============================================================================
 

@@ -14,6 +14,7 @@ import {
     ChevronUp,
     ExternalLink,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { VaultActivity, VaultEventType } from '../types/activity';
 import { formatRelativeTime, formatDateTime } from '../utils/dateUtils';
 
@@ -21,7 +22,7 @@ const STELLAR_EXPERT_TESTNET = 'https://stellar.expert/explorer/testnet';
 
 const EVENT_CONFIG: Record<
     VaultEventType,
-    { label: string; icon: React.ComponentType<{ size?: number; className?: string }>; color: string }
+    { label: string; icon: LucideIcon; color: string }
 > = {
     proposal_created: { label: 'Proposal Created', icon: Plus, color: 'text-blue-400 bg-blue-400/20' },
     proposal_approved: { label: 'Approved', icon: Check, color: 'text-green-400 bg-green-400/20' },

@@ -14,7 +14,6 @@ pub enum VaultError {
     // Threshold / Quorum
     ThresholdTooLow = 4,
     ThresholdTooHigh = 5,
-    /// The configured quorum exceeds the total number of signers.
     QuorumTooHigh = 6,
 
     // Authorization
@@ -76,26 +75,24 @@ pub enum VaultError {
     // Recurring payments
     IntervalTooShort = 150,
 
-    // DEX/AMM
+    // DEX/AMM - consolidated
     DexNotEnabled = 160,
-    SlippageExceeded = 161,
-    PriceImpactExceeded = 162,
-    InvalidSwapParams = 163,
-    InsufficientLiquidity = 164,
+    DexOperationFailed = 161, // Consolidates SlippageExceeded, PriceImpactExceeded, InvalidSwapParams, InsufficientLiquidity
 
-    // Bridge
-    BridgeNotConfigured = 171,
-    ChainNotSupported = 173,
-    ExceedsBridgeLimit = 175,
+    // Bridge - consolidated
+    BridgeError = 165, // Consolidates BridgeNotConfigured, ChainNotSupported, ExceedsBridgeLimit
 
-    // Retry errors
-    MaxRetriesExceeded = 190,
-    RetryBackoffNotElapsed = 191,
-    RetryNotEnabled = 192,
+    // Retry errors - consolidated
+    RetryError = 168, // Consolidates MaxRetriesExceeded, RetryBackoffNotElapsed, RetryNotEnabled
 
     // Cross-vault errors
     XVaultNotEnabled = 200,
 
     // Quorum runtime checks
     QuorumNotReached = 8,
+
+    // Template errors
+    TemplateNotFound = 210,
+    TemplateInactive = 211,
+    TemplateValidationFailed = 212,
 }

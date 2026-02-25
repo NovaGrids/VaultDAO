@@ -89,6 +89,12 @@ pub enum DataKey {
     GasConfig,
     /// Vault-wide performance metrics -> VaultMetrics
     Metrics,
+    /// Proposal template by ID -> ProposalTemplate
+    Template(u64),
+    /// Next template ID counter -> u64
+    NextTemplateId,
+    /// Template name to ID mapping -> u64
+    TemplateName(soroban_sdk::Symbol),
     /// Retry state for a proposal -> RetryState
     RetryState(u64),
     /// Cross-vault proposal by ID -> CrossVaultProposal
@@ -115,6 +121,8 @@ pub enum DataKey {
     RecoveryProposal(u64),
     /// Next recovery proposal ID counter -> u64
     NextRecoveryId,
+    /// Insurance pool accumulated slashed funds (Token Address) -> i128
+    InsurancePool(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -662,6 +670,35 @@ pub fn set_insurance_config(env: &Env, config: &InsuranceConfig) {
         .set(&DataKey::InsuranceConfig, config);
 }
 
+pub fn get_insurance_pool(env: &Env, token_addr: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::InsurancePool(token_addr.clone()))
+        .unwrap_or(0)
+}
+
+pub fn add_to_insurance_pool(env: &Env, token_addr: &Address, amount: i128) {
+    let current = get_insurance_pool(env, token_addr);
+    let key = DataKey::InsurancePool(token_addr.clone());
+    env.storage().persistent().set(&key, &(current + amount));
+    // extend TTL
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL); // Keeps pool persistent
+}
+
+#[allow(dead_code)]
+pub fn subtract_from_insurance_pool(env: &Env, token_addr: &Address, amount: i128) {
+    let current = get_insurance_pool(env, token_addr);
+    let key = DataKey::InsurancePool(token_addr.clone());
+    env.storage()
+        .persistent()
+        .set(&key, &(current.saturating_sub(amount).max(0)));
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
 // ============================================================================
 // Notification Preferences (Issue: feature/execution-notifications)
 // ============================================================================
@@ -785,6 +822,79 @@ pub fn metrics_on_expiry(env: &Env) {
     m.expired_count += 1;
     m.last_updated_ledger = env.ledger().sequence() as u64;
     set_metrics(env, &m);
+}
+
+// ============================================================================
+// Proposal Templates (Issue: feature/contract-templates)
+// ============================================================================
+
+/// Get the next template ID counter
+pub fn get_next_template_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextTemplateId)
+        .unwrap_or(1)
+}
+
+/// Increment and return the next template ID
+pub fn increment_template_id(env: &Env) -> u64 {
+    let id = get_next_template_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextTemplateId, &(id + 1));
+    id
+}
+
+/// Store a proposal template
+pub fn set_template(env: &Env, template: &ProposalTemplate) {
+    let key = DataKey::Template(template.id);
+    env.storage().persistent().set(&key, template);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Get a proposal template by ID
+pub fn get_template(env: &Env, id: u64) -> Result<ProposalTemplate, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Template(id))
+        .ok_or(VaultError::TemplateNotFound)
+}
+
+/// Check if a template exists
+#[allow(dead_code)]
+pub fn template_exists(env: &Env, id: u64) -> bool {
+    env.storage().persistent().has(&DataKey::Template(id))
+}
+
+/// Get template ID by name
+pub fn get_template_id_by_name(env: &Env, name: &soroban_sdk::Symbol) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&DataKey::TemplateName(name.clone()))
+}
+
+/// Set template name to ID mapping
+pub fn set_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol, id: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TemplateName(name.clone()), &id);
+}
+
+/// Remove template name mapping
+#[allow(dead_code)]
+pub fn remove_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::TemplateName(name.clone()));
+}
+
+/// Check if a template name already exists
+pub fn template_name_exists(env: &Env, name: &soroban_sdk::Symbol) -> bool {
+    env.storage()
+        .instance()
+        .has(&DataKey::TemplateName(name.clone()))
 }
 
 // ============================================================================

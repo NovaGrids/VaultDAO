@@ -22,7 +22,8 @@ use types::{
     Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
     CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, GasConfig, InsuranceConfig,
     ListMode, NotificationPreferences, Priority, Proposal, ProposalAmendment, ProposalStatus,
-    Reputation, RetryConfig, RetryState, Role, ThresholdStrategy, VaultAction, VaultMetrics,
+    ProposalTemplate, Reputation, RetryConfig, RetryState, Role, TemplateOverrides,
+    ThresholdStrategy, VaultAction, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -777,11 +778,11 @@ impl VaultDAO {
                 if config.retry_config.enabled
                     && retry_state.retry_count >= config.retry_config.max_retries
                 {
-                    return Err(VaultError::MaxRetriesExceeded);
+                    return Err(VaultError::RetryError);
                 }
                 // Check backoff period
                 if current_ledger < retry_state.next_retry_ledger {
-                    return Err(VaultError::RetryBackoffNotElapsed);
+                    return Err(VaultError::RetryError);
                 }
             }
         }
@@ -864,7 +865,7 @@ impl VaultDAO {
 
         let config = storage::get_config(&env)?;
         if !config.retry_config.enabled {
-            return Err(VaultError::RetryNotEnabled);
+            return Err(VaultError::RetryError);
         }
 
         let retry_state = storage::get_retry_state(&env, proposal_id).unwrap_or(RetryState {
@@ -874,12 +875,12 @@ impl VaultDAO {
         });
 
         if retry_state.retry_count >= config.retry_config.max_retries {
-            return Err(VaultError::MaxRetriesExceeded);
+            return Err(VaultError::RetryError);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
         if retry_state.retry_count > 0 && current_ledger < retry_state.next_retry_ledger {
-            return Err(VaultError::RetryBackoffNotElapsed);
+            return Err(VaultError::RetryError);
         }
 
         // Emit retry attempt event
@@ -927,6 +928,11 @@ impl VaultDAO {
             // Return remainder to proposer (slash stays in vault as penalty)
             if return_amount > 0 {
                 token::transfer(&env, &proposal.token, &proposal.proposer, return_amount);
+            }
+
+            // Track slashed funds into the insurance pool independently from general vault treasury
+            if slash_amount > 0 {
+                storage::add_to_insurance_pool(&env, &proposal.token, slash_amount);
             }
 
             events::emit_insurance_slashed(
@@ -1347,6 +1353,40 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Admin withdraws slashed insurance funds
+    pub fn withdraw_insurance_pool(
+        env: Env,
+        admin: Address,
+        token_addr: Address,
+        recipient: Address,
+        amount: i128,
+    ) -> Result<(), VaultError> {
+        // Implementation from original logic before the issue.
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let current_pool = storage::get_insurance_pool(&env, &token_addr);
+        if amount > current_pool {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        // Subtracted from the independent pool tracker
+        storage::subtract_from_insurance_pool(&env, &token_addr, amount);
+
+        // Execute actual token transfer from vault mapping
+        token::transfer(&env, &token_addr, &recipient, amount);
+
+        Ok(())
+    }
+
     // ========================================================================
     // View Functions
     // ========================================================================
@@ -1354,6 +1394,11 @@ impl VaultDAO {
     /// Get proposal by ID
     pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, VaultError> {
         storage::get_proposal(&env, proposal_id)
+    }
+
+    /// Get current pooled slash insurance balance
+    pub fn get_insurance_pool(env: Env, token_addr: Address) -> i128 {
+        storage::get_insurance_pool(&env, &token_addr)
     }
 
     /// Get role for an address
@@ -2847,8 +2892,8 @@ impl VaultDAO {
 
         // Get swap operation
         let swap_op =
-            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::InvalidSwapParams)?;
-        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexNotEnabled)?;
+            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexOperationFailed)?;
+        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexOperationFailed)?;
 
         // Execute based on operation type
         let result = match swap_op {
@@ -2938,12 +2983,12 @@ impl VaultDAO {
 
         // Validate slippage
         if expected_out < min_amount_out {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexOperationFailed);
         }
 
         // Validate price impact
         if price_impact > dex_config.max_price_impact_bps {
-            return Err(VaultError::PriceImpactExceeded);
+            return Err(VaultError::DexOperationFailed);
         }
 
         // Execute swap via DEX contract
@@ -2981,7 +3026,7 @@ impl VaultDAO {
         let lp_tokens = (amount_a + amount_b) / 2;
 
         if lp_tokens < min_lp_tokens {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexOperationFailed);
         }
 
         events::emit_liquidity_added(env, 0, dex, lp_tokens);
@@ -3008,7 +3053,7 @@ impl VaultDAO {
         let token_b_out = amount / 2;
 
         if token_a_out < min_token_a || token_b_out < min_token_b {
-            return Err(VaultError::SlippageExceeded);
+            return Err(VaultError::DexOperationFailed);
         }
 
         events::emit_liquidity_removed(env, 0, dex, amount);
@@ -3097,7 +3142,7 @@ impl VaultDAO {
         let denominator = reserve_in + amount_in_with_fee;
 
         if denominator == 0 {
-            return Err(VaultError::InsufficientLiquidity);
+            return Err(VaultError::DexOperationFailed);
         }
 
         Ok(numerator / denominator)
@@ -3657,6 +3702,336 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Create a new proposal template
+    ///
+    /// Templates allow pre-approved proposal configurations to be stored on-chain,
+    /// enabling quick creation of common proposals like monthly payroll.
+    ///
+    /// # Arguments
+    /// * `creator` - Address creating the template (must be Admin)
+    /// * `name` - Human-readable template name (must be unique)
+    /// * `description` - Template description
+    /// * `recipient` - Default recipient address
+    /// * `token` - Token contract address
+    /// * `amount` - Default amount
+    /// * `memo` - Default memo/description
+    /// * `min_amount` - Minimum allowed amount (0 = no minimum)
+    /// * `max_amount` - Maximum allowed amount (0 = no maximum)
+    ///
+    /// # Returns
+    /// The unique ID of the newly created template
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_template(
+        env: Env,
+        creator: Address,
+        name: Symbol,
+        description: Symbol,
+        recipient: Address,
+        token: Address,
+        amount: i128,
+        memo: Symbol,
+        min_amount: i128,
+        max_amount: i128,
+    ) -> Result<u64, VaultError> {
+        creator.require_auth();
+
+        // Check role - only Admin can create templates
+        let role = storage::get_role(&env, &creator);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // Check if template name already exists
+        if storage::template_name_exists(&env, &name) {
+            return Err(VaultError::AlreadyInitialized); // Reusing error for duplicate name
+        }
+
+        // Validate parameters
+        if !Self::validate_template_params(env.clone(), amount, min_amount, max_amount) {
+            return Err(VaultError::TemplateValidationFailed);
+        }
+
+        // Create template
+        let template_id = storage::increment_template_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let template = ProposalTemplate {
+            id: template_id,
+            name: name.clone(),
+            description,
+            recipient,
+            token,
+            amount,
+            memo,
+            creator: creator.clone(),
+            version: 1,
+            is_active: true,
+            created_at: current_ledger,
+            updated_at: current_ledger,
+            min_amount,
+            max_amount,
+        };
+
+        storage::set_template(&env, &template);
+        storage::set_template_name_mapping(&env, &name, template_id);
+        storage::extend_instance_ttl(&env);
+
+        Ok(template_id)
+    }
+
+    /// Set template active status
+    ///
+    /// Allows admins to activate or deactivate templates.
+    ///
+    /// # Arguments
+    /// * `admin` - Address performing the action (must be Admin)
+    /// * `template_id` - ID of the template to modify
+    /// * `is_active` - New active status
+    pub fn set_template_status(
+        env: Env,
+        admin: Address,
+        template_id: u64,
+        is_active: bool,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        // Check role - only Admin can modify templates
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // Get and update template
+        let mut template = storage::get_template(&env, template_id)?;
+        template.is_active = is_active;
+        template.updated_at = env.ledger().sequence() as u64;
+        template.version += 1;
+
+        storage::set_template(&env, &template);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get a template by ID
+    ///
+    /// # Arguments
+    /// * `template_id` - ID of the template to retrieve
+    ///
+    /// # Returns
+    /// The template data
+    pub fn get_template(env: Env, template_id: u64) -> Result<ProposalTemplate, VaultError> {
+        storage::get_template(&env, template_id)
+    }
+
+    /// Get template ID by name
+    ///
+    /// # Arguments
+    /// * `name` - Name of the template to look up
+    ///
+    /// # Returns
+    /// The template ID if found
+    pub fn get_template_id_by_name(env: Env, name: Symbol) -> Option<u64> {
+        storage::get_template_id_by_name(&env, &name)
+    }
+
+    /// Create a proposal from a template
+    ///
+    /// Creates a new proposal using a pre-configured template with optional overrides.
+    ///
+    /// # Arguments
+    /// * `proposer` - Address creating the proposal
+    /// * `template_id` - ID of the template to use
+    /// * `overrides` - Optional overrides for template defaults
+    ///
+    /// # Returns
+    /// The unique ID of the newly created proposal
+    pub fn create_from_template(
+        env: Env,
+        proposer: Address,
+        template_id: u64,
+        overrides: TemplateOverrides,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+
+        // Get and validate template
+        let template = storage::get_template(&env, template_id)?;
+
+        if !template.is_active {
+            return Err(VaultError::TemplateInactive);
+        }
+
+        // Check role
+        let role = storage::get_role(&env, &proposer);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // Apply overrides
+        let recipient = if overrides.override_recipient {
+            overrides.recipient.clone()
+        } else {
+            template.recipient.clone()
+        };
+        let amount = if overrides.override_amount {
+            overrides.amount
+        } else {
+            template.amount
+        };
+        let memo = if overrides.override_memo {
+            overrides.memo.clone()
+        } else {
+            template.memo.clone()
+        };
+        let priority = if overrides.override_priority {
+            overrides.priority
+        } else {
+            Priority::Normal
+        };
+
+        // Validate amount is within template bounds
+        if template.min_amount > 0 && amount < template.min_amount {
+            return Err(VaultError::TemplateValidationFailed);
+        }
+        if template.max_amount > 0 && amount > template.max_amount {
+            return Err(VaultError::TemplateValidationFailed);
+        }
+
+        // Load config for validation
+        let config = storage::get_config(&env)?;
+
+        // Velocity limit check
+        if !storage::check_and_update_velocity(&env, &proposer, &config.velocity_limit) {
+            return Err(VaultError::VelocityLimitExceeded);
+        }
+
+        // Validate amount
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Check per-proposal spending limit
+        if amount > config.spending_limit {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        // Check daily aggregate limit
+        let today = storage::get_day_number(&env);
+        let spent_today = storage::get_daily_spent(&env, today);
+        if spent_today + amount > config.daily_limit {
+            return Err(VaultError::ExceedsDailyLimit);
+        }
+
+        // Check weekly aggregate limit
+        let week = storage::get_week_number(&env);
+        let spent_week = storage::get_weekly_spent(&env, week);
+        if spent_week + amount > config.weekly_limit {
+            return Err(VaultError::ExceedsWeeklyLimit);
+        }
+
+        // Reserve spending
+        storage::add_daily_spent(&env, today, amount);
+        storage::add_weekly_spent(&env, week, amount);
+
+        // Create proposal
+        let proposal_id = storage::increment_proposal_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Calculate expiry
+        let expires_at = if config.default_voting_deadline > 0 {
+            current_ledger + config.default_voting_deadline
+        } else {
+            current_ledger + 100000 // Default ~6 days
+        };
+
+        // Calculate unlock ledger for timelock
+        let unlock_ledger = if amount >= config.timelock_threshold {
+            current_ledger + config.timelock_delay
+        } else {
+            0
+        };
+
+        let proposal = Proposal {
+            id: proposal_id,
+            proposer: proposer.clone(),
+            recipient,
+            token: template.token,
+            amount,
+            memo,
+            metadata: Map::new(&env),
+            tags: Vec::new(&env),
+            approvals: Vec::new(&env),
+            abstentions: Vec::new(&env),
+            attachments: Vec::new(&env),
+            status: ProposalStatus::Pending,
+            priority,
+            conditions: Vec::new(&env),
+            condition_logic: ConditionLogic::And,
+            created_at: current_ledger,
+            expires_at,
+            unlock_ledger,
+            insurance_amount: 0,
+            gas_limit: 0,
+            gas_used: 0,
+            snapshot_ledger: current_ledger,
+            snapshot_signers: config.signers.clone(),
+            depends_on: Vec::new(&env),
+            is_swap: false,
+            voting_deadline: 0,
+        };
+
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_proposal_from_template(
+            &env,
+            proposal_id,
+            template_id,
+            &template.name,
+            &proposer,
+        );
+
+        Ok(proposal_id)
+    }
+
+    /// Validate template parameters
+    ///
+    /// Helper function to validate template parameters before creation/update.
+    ///
+    /// # Arguments
+    /// * `amount` - Default amount
+    /// * `min_amount` - Minimum allowed amount
+    /// * `max_amount` - Maximum allowed amount
+    ///
+    /// # Returns
+    /// true if parameters are valid
+    pub fn validate_template_params(
+        _env: Env,
+        amount: i128,
+        min_amount: i128,
+        max_amount: i128,
+    ) -> bool {
+        // Validate amount is positive
+        if amount <= 0 {
+            return false;
+        }
+
+        // Validate bounds relationship
+        if min_amount > 0 && max_amount > 0 && min_amount > max_amount {
+            return false;
+        }
+
+        // Validate default amount is within bounds
+        if min_amount > 0 && amount < min_amount {
+            return false;
+        }
+        if max_amount > 0 && amount > max_amount {
+            return false;
+        }
+
+        true
+    }
+
     /// Check if an error is retryable (transient failure).
     fn is_retryable_error(err: &VaultError) -> bool {
         matches!(
@@ -3686,7 +4061,7 @@ impl VaultDAO {
 
         if retry_state.retry_count > retry_config.max_retries {
             events::emit_retries_exhausted(env, proposal_id, retry_state.retry_count);
-            return Err(VaultError::MaxRetriesExceeded);
+            return Err(VaultError::RetryError);
         }
 
         // Exponential backoff: initial_backoff * 2^(retry_count - 1), capped at 2^10

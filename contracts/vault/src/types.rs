@@ -630,6 +630,69 @@ pub struct TransferDetails {
 }
 
 // ============================================================================
+// Proposal Templates (Issue: feature/contract-templates)
+// ============================================================================
+
+/// Proposal template for recurring operations
+///
+/// Templates allow pre-approved proposal configurations to be stored on-chain,
+/// enabling quick creation of common proposals like monthly payroll.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalTemplate {
+    /// Unique template identifier
+    pub id: u64,
+    /// Human-readable template name
+    pub name: Symbol,
+    /// Template description
+    pub description: Symbol,
+    /// Default recipient address (optional - can be overridden)
+    pub recipient: Address,
+    /// Default token contract address
+    pub token: Address,
+    /// Default amount (can be overridden within min/max bounds)
+    pub amount: i128,
+    /// Default memo/description
+    pub memo: Symbol,
+    /// Address that created the template
+    pub creator: Address,
+    /// Template version number (incremented on updates)
+    pub version: u32,
+    /// Whether the template is active and usable
+    pub is_active: bool,
+    /// Ledger sequence when template was created
+    pub created_at: u64,
+    /// Ledger sequence when template was last updated
+    pub updated_at: u64,
+    /// Minimum allowed amount (0 = no minimum)
+    pub min_amount: i128,
+    /// Maximum allowed amount (0 = no maximum)
+    pub max_amount: i128,
+}
+
+/// Overrides for creating a proposal from a template
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TemplateOverrides {
+    /// Whether to override recipient
+    pub override_recipient: bool,
+    /// Override recipient address (only used if override_recipient is true)
+    pub recipient: Address,
+    /// Whether to override amount
+    pub override_amount: bool,
+    /// Override amount (only used if override_amount is true, must be within template bounds)
+    pub amount: i128,
+    /// Whether to override memo
+    pub override_memo: bool,
+    /// Override memo (only used if override_memo is true)
+    pub memo: Symbol,
+    /// Whether to override priority
+    pub override_priority: bool,
+    /// Override priority level (only used if override_priority is true)
+    pub priority: Priority,
+}
+
+// ============================================================================
 // Execution Retry (Issue: feature/execution-retry)
 // ============================================================================
 

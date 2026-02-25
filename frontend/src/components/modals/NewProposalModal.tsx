@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import FileUploader, { type UploadedAttachment } from '../FileUploader';
 import FormRenderer from '../FormRenderer';
+import VoiceToText from '../VoiceToText';
 import type { FormConfig, FormSubmissionData } from '../../types/formBuilder';
 
 export interface NewProposalFormData {
@@ -180,10 +181,9 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
 
         <form onSubmit={onSubmit} className="space-y-3">
           <div>
-            <input
-              type="text"
+            <VoiceToText
               value={formData.recipient}
-              onChange={(event) => onFieldChange('recipient', event.target.value)}
+              onChange={(value) => onFieldChange('recipient', value)}
               placeholder="Recipient address"
               className={`w-full rounded-lg border ${recipientError ? 'border-red-500' : 'border-gray-600'
                 } bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none`}
@@ -192,24 +192,22 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
               <p className="mt-1 text-sm text-red-400">{recipientError}</p>
             )}
           </div>
-          <input
-            type="text"
+          <VoiceToText
             value={formData.token}
-            onChange={(event) => onFieldChange('token', event.target.value)}
+            onChange={(value) => onFieldChange('token', value)}
             placeholder="Token address"
             className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
-          <input
-            type="text"
+          <VoiceToText
             value={formData.amount}
-            onChange={(event) => onFieldChange('amount', event.target.value)}
+            onChange={(value) => onFieldChange('amount', value)}
             placeholder="Amount"
             className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
           <textarea
             value={formData.memo}
             onChange={(event) => onFieldChange('memo', event.target.value)}
-            placeholder="Memo"
+            placeholder="Memo (or click mic icon for voice input)"
             className="h-24 w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
 

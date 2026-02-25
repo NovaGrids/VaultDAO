@@ -1,13 +1,30 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   getExportHistory,
   clearExportHistory,
   type ExportHistoryItem,
 } from '../../utils/exportHistory';
-import { Download, Trash2, FileText, Shield } from 'lucide-react';
+import {
+  Download,
+  Trash2,
+  FileText,
+  Shield,
+  Users,
+  Key,
+  Wallet,
+  Clock,
+  User,
+  AlertTriangle,
+  Loader2,
+  RefreshCw,
+} from 'lucide-react';
 import RecipientListManagement from '../../components/RecipientListManagement';
 import RoleManagement from '../../components/RoleManagement';
 import WalletComparison from '../../components/WalletComparison';
+import CopyButton from '../../components/CopyButton';
+import { useVaultContract } from '../../hooks/useVaultContract';
+import { useWallet } from '../../context/WalletContextProps';
+import { formatTokenAmount, truncateAddress } from '../../utils/formatters';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -57,8 +74,30 @@ function reDownloadItem(item: ExportItemWithContent): void {
 }
 
 const Settings: React.FC = () => {
+  const { getVaultConfig } = useVaultContract();
+  const { address } = useWallet();
   const [history, setHistory] = useState<ExportHistoryItem[]>(() => getExportHistory());
   const [showRecipientLists, setShowRecipientLists] = useState(false);
+  const [vaultConfig, setVaultConfig] = useState<Awaited<ReturnType<typeof getVaultConfig>> | null>(null);
+  const [configLoading, setConfigLoading] = useState(true);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  const loadVaultConfig = useCallback(async () => {
+    setConfigLoading(true);
+    setConfigError(null);
+    try {
+      const config = await getVaultConfig();
+      setVaultConfig(config);
+    } catch (error: unknown) {
+      setConfigError(error instanceof Error ? error.message : 'Failed to load vault configuration');
+    } finally {
+      setConfigLoading(false);
+    }
+  }, [getVaultConfig]);
+
+  useEffect(() => {
+    loadVaultConfig();
+  }, [loadVaultConfig]);
 
   const handleClearHistory = () => {
     clearExportHistory();
@@ -69,9 +108,166 @@ const Settings: React.FC = () => {
     if (hasStoredContent(item)) reDownloadItem(item);
   };
 
+  const roleInfo = useMemo(() => {
+    if (!vaultConfig) return { label: 'Member', color: 'text-gray-300' };
+    if (vaultConfig.currentUserRole === 2) return { label: 'Admin', color: 'text-purple-300' };
+    if (vaultConfig.currentUserRole === 1) return { label: 'Treasurer', color: 'text-blue-300' };
+    if (vaultConfig.isCurrentUserSigner) return { label: 'Signer', color: 'text-emerald-300' };
+    return { label: 'Member', color: 'text-gray-300' };
+  }, [vaultConfig]);
+
+  const signerAddresses = useMemo(
+    () => (vaultConfig?.signers ?? []).filter((signer) => Boolean(signer)),
+    [vaultConfig],
+  );
+
+  const formatTimelockDelay = (delayLedgers: number): string => {
+    if (!delayLedgers || delayLedgers < 1) return 'No delay';
+    const totalSeconds = delayLedgers * 5;
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  };
+
+  const isCurrentUserSigner = (signer: string): boolean => {
+    if (!address) return false;
+    return signer === address;
+  };
+
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-bold">Settings</h2>
+
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold">Vault Configuration</h3>
+            <p className="text-gray-400 text-sm mt-1">
+              Current multisig settings, signer set, limits, and timelock rules.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={loadVaultConfig}
+            disabled={configLoading}
+            className="min-h-[44px] px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-60 disabled:cursor-not-allowed text-sm flex items-center justify-center gap-2 touch-manipulation"
+          >
+            {configLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+            Refresh
+          </button>
+        </div>
+
+        {configLoading && !vaultConfig ? (
+          <div className="flex items-center gap-2 text-gray-300 py-4">
+            <Loader2 size={16} className="animate-spin" />
+            Loading vault configuration...
+          </div>
+        ) : null}
+
+        {configError ? (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-red-200 text-sm flex items-start gap-2">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <span>{configError}</span>
+          </div>
+        ) : null}
+
+        {vaultConfig ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
+              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
+                <User size={14} />
+                Your Role
+              </p>
+              <p className={`text-lg font-semibold ${roleInfo.color}`}>{roleInfo.label}</p>
+              <p className="text-xs text-gray-500 mt-2">
+                {vaultConfig.isCurrentUserSigner ? 'You are in the signer set.' : 'You are not in the signer set.'}
+              </p>
+            </div>
+
+            <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
+              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
+                <Key size={14} />
+                Threshold
+              </p>
+              <p className="text-lg font-semibold">
+                {vaultConfig.threshold} of {Math.max(signerAddresses.length, vaultConfig.signers.length)} signatures required
+              </p>
+              <p className="text-xs text-gray-500 mt-2">Approvals needed before execution is possible.</p>
+            </div>
+
+            <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
+              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
+                <Clock size={14} />
+                Timelock
+              </p>
+              <p className="text-sm text-gray-200">
+                Trigger: <span className="font-semibold">{formatTokenAmount(vaultConfig.timelockThreshold)}</span>
+              </p>
+              <p className="text-sm text-gray-200 mt-1">
+                Delay: <span className="font-semibold">{formatTimelockDelay(vaultConfig.timelockDelay)}</span>
+                <span className="text-gray-500"> ({vaultConfig.timelockDelay} ledgers)</span>
+              </p>
+            </div>
+
+            <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4 md:col-span-2 xl:col-span-2">
+              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
+                <Users size={14} />
+                Signers ({signerAddresses.length})
+              </p>
+              {signerAddresses.length > 0 ? (
+                <ul className="space-y-2">
+                  {signerAddresses.map((signer) => (
+                    <li
+                      key={signer}
+                      className={`rounded-md border px-3 py-2 flex items-center justify-between gap-3 ${
+                        isCurrentUserSigner(signer)
+                          ? 'border-blue-500/50 bg-blue-500/10'
+                          : 'border-gray-700 bg-gray-800/50'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm truncate" title={signer}>
+                          {truncateAddress(signer, 8, 6)}
+                        </p>
+                        {isCurrentUserSigner(signer) ? (
+                          <p className="text-xs text-blue-300 mt-0.5">Current wallet</p>
+                        ) : null}
+                      </div>
+                      <CopyButton text={signer} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-400">Signer list not available from current contract view methods.</p>
+              )}
+            </div>
+
+            <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
+              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
+                <Wallet size={14} />
+                Spending Limits
+              </p>
+              <dl className="space-y-1.5 text-sm text-gray-200">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-gray-400">Per-proposal</dt>
+                  <dd className="font-semibold">{formatTokenAmount(vaultConfig.spendingLimit)}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-gray-400">Daily</dt>
+                  <dd className="font-semibold">{formatTokenAmount(vaultConfig.dailyLimit)}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-gray-400">Weekly</dt>
+                  <dd className="font-semibold">{formatTokenAmount(vaultConfig.weeklyLimit)}</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       {/* Wallet Comparison */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
@@ -173,7 +369,9 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <p className="text-gray-400">Configuration options will appear here.</p>
+        <p className="text-gray-400">
+          Configuration editing is not enabled yet. Admin updates will be added in a future release.
+        </p>
       </div>
     </div>
   );
