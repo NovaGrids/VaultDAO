@@ -88,7 +88,13 @@ pub enum VaultError {
     MaxRetriesExceeded = 190,
     RetryBackoffNotElapsed = 191,
     RetryNotEnabled = 192,
+    RetryError = 193,
 
     // Cross-vault errors
     XVaultNotEnabled = 200,
+
+    // Delegation errors
+    DelegationError = 210,
+    CircularDelegation = 211,
+    DelegationChainTooLong = 212,
 }

@@ -517,3 +517,49 @@ pub fn emit_arbitrators_updated(env: &Env, admin: &Address, count: u32) {
         (admin.clone(), count),
     );
 }
+
+// ============================================================================
+// Vote Delegation Events (feature/vote-delegation)
+// ============================================================================
+
+/// Emit when a delegation is created
+pub fn emit_delegation_created(
+    env: &Env,
+    delegator: &Address,
+    delegate: &Address,
+    expiry_ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "delegation_created"),),
+        (delegator.clone(), delegate.clone(), expiry_ledger),
+    );
+}
+
+/// Emit when a delegation is revoked
+pub fn emit_delegation_revoked(env: &Env, delegator: &Address, delegate: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "delegation_revoked"),),
+        (delegator.clone(), delegate.clone()),
+    );
+}
+
+/// Emit when a delegation expires
+pub fn emit_delegation_expired(env: &Env, delegator: &Address, delegate: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "delegation_expired"),),
+        (delegator.clone(), delegate.clone()),
+    );
+}
+
+/// Emit when a delegated vote is cast
+pub fn emit_delegated_vote(
+    env: &Env,
+    proposal_id: u64,
+    effective_voter: &Address,
+    original_signer: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "delegated_vote"), proposal_id),
+        (effective_voter.clone(), original_signer.clone()),
+    );
+}

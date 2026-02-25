@@ -729,3 +729,41 @@ pub struct Dispute {
     /// Ledger when dispute was resolved (0 if unresolved)
     pub resolved_at: u64,
 }
+
+// ============================================================================
+// Vote Delegation (Issue: feature/vote-delegation)
+// ============================================================================
+
+/// Vote delegation record
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Delegation {
+    /// Address delegating their vote
+    pub delegator: Address,
+    /// Address receiving the delegated vote
+    pub delegate: Address,
+    /// Ledger when delegation was created
+    pub created_at: u64,
+    /// Ledger when delegation expires (0 = no expiration)
+    pub expiry_ledger: u64,
+    /// Whether delegation is currently active
+    pub is_active: bool,
+}
+
+/// Historical record of delegation changes
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DelegationHistory {
+    /// Unique history entry ID
+    pub id: u64,
+    /// Address that delegated
+    pub delegator: Address,
+    /// Address that received delegation
+    pub delegate: Address,
+    /// Ledger when this delegation was created
+    pub created_at: u64,
+    /// Ledger when this delegation ended (0 if still active)
+    pub ended_at: u64,
+    /// Whether delegation was explicitly revoked (vs expired)
+    pub was_revoked: bool,
+}
