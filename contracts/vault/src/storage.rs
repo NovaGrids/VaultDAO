@@ -123,6 +123,10 @@ pub enum DataKey {
     NextRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
+    /// Child proposal IDs for a parent proposal -> Vec<u64>
+    ProposalChildren(u64),
+    /// Inheritance chain for a proposal (list of ancestor IDs) -> Vec<u64>
+    InheritanceChain(u64),
     /// Batch transaction by ID -> BatchTransaction
     Batch(u64),
     /// Batch execution result by ID -> BatchExecutionResult
