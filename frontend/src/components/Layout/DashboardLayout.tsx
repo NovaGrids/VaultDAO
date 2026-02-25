@@ -17,14 +17,11 @@ import {
   Files,
   RefreshCw,
   AlertTriangle,
-} from "lucide-react";
-// Fixed Import: Pointing to the actual hook location
-import { useWallet } from "../../hooks/useWallet"; 
-import { useVaultContract } from "../../hooks/useVaultContract";
   AlertCircle,
   HelpCircle,
 } from "lucide-react";
 import { useWallet } from "../../hooks/useWallet";
+import { useVaultContract } from "../../hooks/useVaultContract";
 import type { WalletAdapter } from "../../adapters";
 import { WalletSwitcher } from "../WalletSwitcher";
 import CopyButton from '../CopyButton';
@@ -36,17 +33,16 @@ import { useOnboarding } from "../../context/OnboardingProvider";
 import { ONBOARDING_CONFIG } from "../../constants/onboarding";
 import VoiceCommands from "../VoiceCommands";
 import VoiceNavigation from "../VoiceNavigation";
-
-// Global pause state (can be managed via context in production)
 const DashboardLayout: React.FC = () => {
   const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
   const onboarding = useOnboarding();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  // In production, this would come from the contract
-  const { isPaused: contractIsPaused, getPauseInfo } = useVaultContract();
+  const { isPaused: contractIsPaused } = useVaultContract();
   const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
 
   // Fetch pause state from contract
   useEffect(() => {
@@ -59,12 +55,9 @@ const DashboardLayout: React.FC = () => {
       }
     };
     checkPauseState();
-    // Poll every 10 seconds
     const interval = setInterval(checkPauseState, 10000);
     return () => clearInterval(interval);
   }, [contractIsPaused]);
-  const [isHelpOpen, setIsHelpOpen] = useState(false);
-  const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
 
   // Auto-show onboarding prompt for new users
   useEffect(() => {
@@ -120,9 +113,8 @@ const DashboardLayout: React.FC = () => {
         </div>
       )}
 
-      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-gray-800/50 backdrop-blur-md border-r border-gray-700/50 transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 ${isPaused ? 'mt-12' : ''}`}>
       {/* Sidebar */}
-      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800/50 backdrop-blur-md border-r border-slate-200 dark:border-gray-700/50 transform transition-all duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}>
+      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800/50 backdrop-blur-md border-r border-slate-200 dark:border-gray-700/50 transform transition-all duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 ${isPaused ? 'mt-12' : ''}`}>
         <div className="p-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-pink-600 dark:from-purple-400 dark:to-pink-600">
             VaultDAO
@@ -156,13 +148,7 @@ const DashboardLayout: React.FC = () => {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <header className={`bg-gray-800/30 backdrop-blur-md border-b border-gray-700/50 h-20 flex items-center justify-between px-6 z-30 ${isPaused ? 'mt-12' : ''}`}>
-          <button className="md:hidden text-gray-400 hover:text-white p-2 hover:bg-gray-700/50 rounded-lg transition-colors" onClick={() => setIsSidebarOpen(true)}>
-            <Menu size={24} />
-          </button>
-          <div className="flex-1 hidden md:block">
-            <p className="text-gray-400 text-sm font-medium">Welcome back to VaultDAO</p>
-        <header className="bg-white/80 dark:bg-gray-800/30 backdrop-blur-md border-b border-slate-200 dark:border-gray-700/50 h-20 flex items-center justify-between px-6 z-30 transition-colors">
+        <header className={`bg-white/80 dark:bg-gray-800/30 backdrop-blur-md border-b border-slate-200 dark:border-gray-700/50 h-20 flex items-center justify-between px-6 z-30 transition-colors ${isPaused ? 'mt-12' : ''}`}>
           <div className="flex items-center gap-4">
             <button className="md:hidden text-slate-600 dark:text-gray-400 p-2 hover:bg-slate-100 dark:hover:bg-gray-700/50 rounded-lg" onClick={() => setIsSidebarOpen(true)}>
               <Menu size={24} />
@@ -176,7 +162,7 @@ const DashboardLayout: React.FC = () => {
             {/* Help Button */}
             <button
               onClick={() => setIsHelpOpen(true)}
-              className="p-2 hover:bg-gray-700/50 rounded-lg transition-colors text-gray-400 hover:text-white"
+              className="p-2 hover:bg-slate-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white"
               aria-label="Open help center"
               title="Help Center"
             >
@@ -185,13 +171,13 @@ const DashboardLayout: React.FC = () => {
 
             {isConnected && address ? (
               <div className="relative">
-                <button onClick={() => setIsUserMenuOpen(!isUserMenuOpen)} className="flex items-center space-x-3 bg-gray-800 border border-gray-700 hover:border-purple-500/50 px-3 py-2 md:px-4 rounded-xl transition-all duration-200">
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center font-bold text-xs">
+                <button onClick={() => setIsUserMenuOpen(!isUserMenuOpen)} className="flex items-center space-x-3 bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700 hover:border-purple-500/50 px-3 py-2 md:px-4 rounded-xl transition-all duration-200">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center font-bold text-xs text-white">
                     {address.slice(0, 2)}
                   </div>
                   <div className="hidden sm:block text-left">
-                    <p className="text-xs text-gray-400 leading-none mb-1">Stellar Account</p>
-                    <p className="text-sm font-bold">{shortenAddress(address, 6)}</p>
+                    <p className="text-xs text-slate-500 dark:text-gray-400 leading-none mb-1">Stellar Account</p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{shortenAddress(address, 6)}</p>
                   </div>
                 </button>
                 {isUserMenuOpen && (

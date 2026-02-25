@@ -1,4 +1,3 @@
-import React, { useState, useEffect } from 'react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   getExportHistory,
@@ -26,8 +25,6 @@ import { useWallet } from '../../context/WalletContext';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import WalletComparison from '../../components/WalletComparison';
 import CopyButton from '../../components/CopyButton';
-import { useVaultContract } from '../../hooks/useVaultContract';
-import { useWallet } from '../../context/WalletContextProps';
 import { formatTokenAmount, truncateAddress } from '../../utils/formatters';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
@@ -179,6 +176,8 @@ const Settings: React.FC = () => {
           isAdmin={isAdmin}
           isSigner={isSigner}
         />
+      </div>
+
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
           <div>
@@ -414,6 +413,5 @@ const Settings: React.FC = () => {
     </div>
   );
 };
-
 
 export default Settings;
