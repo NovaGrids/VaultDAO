@@ -720,3 +720,22 @@ pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "recovery_cfg_updated"),), admin.clone());
 }
+
+// ============================================================================
+// Proposal Inheritance and Forking Events (feature/proposal-inheritance)
+// ============================================================================
+
+/// Emit when a proposal is forked from a parent proposal
+pub fn emit_proposal_forked(
+    env: &Env,
+    child_id: u64,
+    parent_id: u64,
+    forker: &Address,
+    recipient: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_forked"), child_id),
+        (parent_id, forker.clone(), recipient.clone(), amount),
+    );
+}

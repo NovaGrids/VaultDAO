@@ -123,6 +123,10 @@ pub enum DataKey {
     NextRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
+    /// Child proposal IDs for a parent proposal -> Vec<u64>
+    ProposalChildren(u64),
+    /// Inheritance chain for a proposal (list of ancestor IDs) -> Vec<u64>
+    InheritanceChain(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1099,4 +1103,43 @@ pub fn increment_recovery_id(env: &Env) -> u64 {
         .instance()
         .set(&DataKey::NextRecoveryId, &(id + 1));
     id
+}
+// ============================================================================
+// Proposal Inheritance and Forking (Issue: feature/proposal-inheritance)
+// ============================================================================
+
+/// Get child proposal IDs for a parent proposal
+pub fn get_proposal_children(env: &Env, parent_id: u64) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ProposalChildren(parent_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add a child proposal to a parent's children list
+pub fn add_proposal_child(env: &Env, parent_id: u64, child_id: u64) {
+    let mut children = get_proposal_children(env, parent_id);
+    children.push_back(child_id);
+    let key = DataKey::ProposalChildren(parent_id);
+    env.storage().persistent().set(&key, &children);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get the full inheritance chain for a proposal (list of ancestor IDs from oldest to newest)
+pub fn get_inheritance_chain(env: &Env, proposal_id: u64) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::InheritanceChain(proposal_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Set the inheritance chain for a proposal
+pub fn set_inheritance_chain(env: &Env, proposal_id: u64, chain: &Vec<u64>) {
+    let key = DataKey::InheritanceChain(proposal_id);
+    env.storage().persistent().set(&key, chain);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }

@@ -367,6 +367,7 @@ impl VaultDAO {
             } else {
                 0
             },
+            parent_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -575,6 +576,7 @@ impl VaultDAO {
                 } else {
                     0
                 },
+                parent_id: 0,
             };
 
             storage::set_proposal(&env, &proposal);
@@ -1129,6 +1131,221 @@ impl VaultDAO {
     /// Get amendment history for a proposal.
     pub fn get_proposal_amendments(env: Env, proposal_id: u64) -> Vec<ProposalAmendment> {
         storage::get_amendment_history(&env, proposal_id)
+    }
+
+    // ========================================================================
+    // Proposal Inheritance and Forking
+    // ========================================================================
+
+    /// Fork an existing proposal to create an alternative version.
+    ///
+    /// Creates a new proposal that inherits fields from the parent proposal,
+    /// allowing for alternative versions with different parameters. The forked
+    /// proposal maintains a link to its parent and builds an inheritance chain.
+    ///
+    /// # Arguments
+    /// * `forker` - Address creating the fork (must authorize and have Treasurer/Admin role)
+    /// * `parent_id` - ID of the proposal to fork
+    /// * `new_recipient` - Optional new recipient (None = inherit from parent)
+    /// * `new_amount` - Optional new amount (None = inherit from parent)
+    /// * `new_memo` - Optional new memo (None = inherit from parent)
+    /// * `new_priority` - Optional new priority (None = inherit from parent)
+    ///
+    /// # Returns
+    /// The unique ID of the newly forked proposal
+    #[allow(clippy::too_many_arguments)]
+    pub fn fork_proposal(
+        env: Env,
+        forker: Address,
+        parent_id: u64,
+        new_recipient: Option<Address>,
+        new_amount: Option<i128>,
+        new_memo: Option<Symbol>,
+        new_priority: Option<Priority>,
+    ) -> Result<u64, VaultError> {
+        // 1. Verify identity
+        forker.require_auth();
+
+        // 2. Check role
+        let role = storage::get_role(&env, &forker);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // 3. Get parent proposal
+        let parent = storage::get_proposal(&env, parent_id)?;
+
+        // 4. Inherit fields from parent, applying overrides
+        let recipient = new_recipient.unwrap_or(parent.recipient.clone());
+        let amount = new_amount.unwrap_or(parent.amount);
+        let memo = new_memo.unwrap_or(parent.memo.clone());
+        let priority = new_priority.unwrap_or(parent.priority.clone());
+
+        // 5. Validate inherited/overridden values
+        Self::validate_recipient(&env, &recipient)?;
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let config = storage::get_config(&env)?;
+
+        // 6. Check spending limits for the forked proposal
+        let rep = storage::get_reputation(&env, &forker);
+        storage::apply_reputation_decay(&env, &mut rep.clone());
+        let adjusted_spending_limit = if rep.score >= 900 {
+            config.spending_limit * 3
+        } else if rep.score >= 800 {
+            config.spending_limit * 2
+        } else {
+            config.spending_limit
+        };
+        if amount > adjusted_spending_limit {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        let today = storage::get_day_number(&env);
+        let spent_today = storage::get_daily_spent(&env, today);
+        let adjusted_daily_limit = if rep.score >= 750 {
+            (config.daily_limit * 3) / 2
+        } else {
+            config.daily_limit
+        };
+        if spent_today + amount > adjusted_daily_limit {
+            return Err(VaultError::ExceedsDailyLimit);
+        }
+
+        let week = storage::get_week_number(&env);
+        let spent_week = storage::get_weekly_spent(&env, week);
+        let adjusted_weekly_limit = if rep.score >= 750 {
+            (config.weekly_limit * 3) / 2
+        } else {
+            config.weekly_limit
+        };
+        if spent_week + amount > adjusted_weekly_limit {
+            return Err(VaultError::ExceedsWeeklyLimit);
+        }
+
+        // 7. Reserve spending
+        storage::add_daily_spent(&env, today, amount);
+        storage::add_weekly_spent(&env, week, amount);
+
+        // 8. Build inheritance chain
+        let mut inheritance_chain = storage::get_inheritance_chain(&env, parent_id);
+        inheritance_chain.push_back(parent_id);
+
+        // 9. Create forked proposal
+        let proposal_id = storage::increment_proposal_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let gas_cfg = storage::get_gas_config(&env);
+        let proposal_gas_limit = if gas_cfg.enabled {
+            gas_cfg.default_gas_limit
+        } else {
+            0
+        };
+
+        let forked_proposal = Proposal {
+            id: proposal_id,
+            proposer: forker.clone(),
+            recipient: recipient.clone(),
+            token: parent.token.clone(),
+            amount,
+            memo: memo.clone(),
+            metadata: parent.metadata.clone(),
+            tags: parent.tags.clone(),
+            approvals: Vec::new(&env),
+            abstentions: Vec::new(&env),
+            attachments: parent.attachments.clone(),
+            status: ProposalStatus::Pending,
+            priority: priority.clone(),
+            conditions: parent.conditions.clone(),
+            condition_logic: parent.condition_logic.clone(),
+            created_at: current_ledger,
+            expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+            unlock_ledger: 0,
+            insurance_amount: 0, // Forked proposals start with no insurance
+            gas_limit: proposal_gas_limit,
+            gas_used: 0,
+            snapshot_ledger: current_ledger,
+            snapshot_signers: config.signers.clone(),
+            depends_on: Vec::new(&env), // Forked proposals don't inherit dependencies
+            is_swap: parent.is_swap,
+            voting_deadline: if config.default_voting_deadline > 0 {
+                current_ledger + config.default_voting_deadline
+            } else {
+                0
+            },
+            parent_id,
+        };
+
+        // 10. Store proposal and inheritance tracking
+        storage::set_proposal(&env, &forked_proposal);
+        storage::add_to_priority_queue(&env, priority as u32, proposal_id);
+        storage::add_proposal_child(&env, parent_id, proposal_id);
+        storage::set_inheritance_chain(&env, proposal_id, &inheritance_chain);
+
+        storage::extend_instance_ttl(&env);
+
+        // 11. Emit events
+        events::emit_proposal_forked(
+            &env,
+            proposal_id,
+            parent_id,
+            &forker,
+            &recipient,
+            amount,
+        );
+        events::emit_proposal_created(
+            &env,
+            proposal_id,
+            &forker,
+            &recipient,
+            &parent.token,
+            amount,
+            0,
+        );
+
+        // 12. Update reputation
+        Self::update_reputation_on_propose(&env, &forker);
+
+        // 13. Update metrics
+        storage::metrics_on_proposal(&env);
+
+        Ok(proposal_id)
+    }
+
+    /// Get all child proposals (forks) of a parent proposal.
+    ///
+    /// Returns a vector of proposal IDs that were forked from the given parent.
+    pub fn get_proposal_children(env: Env, parent_id: u64) -> Vec<u64> {
+        storage::get_proposal_children(&env, parent_id)
+    }
+
+    /// Get the full inheritance chain for a proposal.
+    ///
+    /// Returns a vector of ancestor proposal IDs from oldest to newest,
+    /// showing the complete lineage of the proposal.
+    pub fn get_inheritance_chain(env: Env, proposal_id: u64) -> Vec<u64> {
+        storage::get_inheritance_chain(&env, proposal_id)
+    }
+
+    /// Compare a forked proposal with its parent.
+    ///
+    /// Returns a tuple of (parent_proposal, child_proposal) for easy comparison.
+    /// Useful for understanding what changed between the parent and fork.
+    pub fn compare_fork(
+        env: Env,
+        child_id: u64,
+    ) -> Result<(Proposal, Proposal), VaultError> {
+        let child = storage::get_proposal(&env, child_id)?;
+        
+        if child.parent_id == 0 {
+            return Err(VaultError::ProposalNotFound);
+        }
+
+        let parent = storage::get_proposal(&env, child.parent_id)?;
+        
+        Ok((parent, child))
     }
 
     // ========================================================================
@@ -2852,6 +3069,7 @@ impl VaultDAO {
             } else {
                 0
             },
+            parent_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -3285,6 +3503,7 @@ impl VaultDAO {
             } else {
                 0
             },
+            parent_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -3978,6 +4197,7 @@ impl VaultDAO {
             depends_on: Vec::new(&env),
             is_swap: false,
             voting_deadline: 0,
+            parent_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);

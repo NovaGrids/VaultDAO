@@ -281,6 +281,8 @@ pub struct Proposal {
     pub is_swap: bool,
     /// Ledger sequence when voting must complete (0 = no deadline)
     pub voting_deadline: u64,
+    /// Parent proposal ID for inheritance/forking (0 = no parent)
+    pub parent_id: u64,
 }
 
 /// On-chain comment on a proposal
