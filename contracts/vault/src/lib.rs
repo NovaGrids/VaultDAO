@@ -1828,13 +1828,10 @@ impl VaultDAO {
                 if entry.prev_hash != prev_entry.hash {
                     return Ok(false);
                 }
-                threshold
-            }
-            ThresholdStrategy::TimeBased(tb) => {
-                // Simplified: use initial threshold (reduction checked at execution time)
-                tb.initial_threshold
             }
         }
+
+        Ok(true)
     }
 
     // ========================================================================
