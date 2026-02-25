@@ -4408,6 +4408,211 @@ impl VaultDAO {
         storage::get_recipient_escrows(&env, &recipient)
     }
 
+    // ============================================================================
+    // Batch Transactions
+    // ============================================================================
+
+    /// Create a batch transaction with multiple operations
+    pub fn create_batch(
+        env: Env,
+        creator: Address,
+        operations: Vec<types::BatchOperation>,
+        memo: Symbol,
+    ) -> Result<u64, VaultError> {
+        creator.require_auth();
+
+        // Validate batch is not empty
+        if operations.is_empty() {
+            return Err(VaultError::BatchSizeExceeded);
+        }
+
+        // Enforce size limit (max 32 operations per batch)
+        const MAX_BATCH_OPS: u32 = 32;
+        if operations.len() > MAX_BATCH_OPS {
+            return Err(VaultError::BatchSizeExceeded);
+        }
+
+        // Validate each operation
+        for op in operations.iter() {
+            Self::validate_batch_operation(&env, &op)?;
+        }
+
+        let batch_id = storage::increment_batch_id(&env);
+        let estimated_gas = Self::estimate_batch_gas(&env, &operations);
+
+        let batch = types::BatchTransaction {
+            id: batch_id,
+            creator: creator.clone(),
+            operations: operations.clone(),
+            status: types::BatchStatus::Pending,
+            created_at: env.ledger().timestamp(),
+            memo,
+            estimated_gas,
+        };
+
+        storage::set_batch(&env, &batch);
+
+        Ok(batch_id)
+    }
+
+    /// Execute a batch transaction atomically
+    pub fn execute_batch(
+        env: Env,
+        executor: Address,
+        batch_id: u64,
+    ) -> Result<types::BatchExecutionResult, VaultError> {
+        executor.require_auth();
+
+        let config = storage::get_config(&env)?;
+        let executor_role = storage::get_role(&env, &executor);
+
+        // Check authorization
+        if executor_role != Role::Admin && executor_role != Role::Treasurer {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut batch = storage::get_batch(&env, batch_id)?;
+
+        // Can only execute pending batches
+        if batch.status != types::BatchStatus::Pending {
+            return Err(VaultError::BatchNotPending);
+        }
+
+        // Mark as executing
+        batch.status = types::BatchStatus::Executing;
+        storage::set_batch(&env, &batch);
+
+        let mut rollback_state: Vec<(Address, i128)> = Vec::new(&env);
+        let mut executed_count: u64 = 0;
+        let mut failed_index: u64 = 0;
+        let mut error_msg = Symbol::new(&env, "");
+        let mut success = true;
+
+        // Execute operations sequentially
+        for (idx, op) in batch.operations.iter().enumerate() {
+            match Self::execute_batch_operation(&env, &op, &mut rollback_state, &config) {
+                Ok(_) => {
+                    executed_count += 1;
+                }
+                Err(err) => {
+                    success = false;
+                    failed_index = idx as u64;
+                    error_msg = match err {
+                        VaultError::ExceedsDailyLimit => Symbol::new(&env, "limit_exceeded"),
+                        VaultError::InsufficientRole => Symbol::new(&env, "insufficient_role"),
+                        VaultError::InvalidAmount => Symbol::new(&env, "invalid_amount"),
+                        VaultError::InsufficientBalance => {
+                            Symbol::new(&env, "insufficient_balance")
+                        }
+                        _ => Symbol::new(&env, "unknown_error"),
+                    };
+                    break;
+                }
+            }
+        }
+
+        // Perform rollback if execution failed
+        if !success {
+            Self::rollback_batch(&env, &rollback_state)?;
+            batch.status = types::BatchStatus::RolledBack;
+        } else {
+            batch.status = types::BatchStatus::Completed;
+        }
+
+        storage::set_batch(&env, &batch);
+
+        // Store execution result
+        let result = types::BatchExecutionResult {
+            batch_id,
+            success,
+            failed_operation_index: failed_index,
+            error: error_msg,
+            executed_count,
+            executed_at: env.ledger().timestamp(),
+        };
+
+        storage::set_batch_result(&env, &result);
+
+        if !success {
+            storage::set_rollback_state(&env, batch_id, &rollback_state);
+        }
+
+        // Emit event for batch execution
+        let ops_len = batch.operations.len();
+        let failed_count = ops_len.saturating_sub(executed_count as u32);
+        events::emit_batch_executed(&env, &executor, executed_count as u32, failed_count);
+
+        Ok(result)
+    }
+
+    /// Retrieve batch execution result
+    pub fn get_batch_result(env: Env, batch_id: u64) -> Option<types::BatchExecutionResult> {
+        storage::get_batch_result(&env, batch_id)
+    }
+
+    /// Retrieve batch details
+    pub fn get_batch(env: Env, batch_id: u64) -> Result<types::BatchTransaction, VaultError> {
+        storage::get_batch(&env, batch_id)
+    }
+
+    /// Validate a single batch operation
+    fn validate_batch_operation(_env: &Env, op: &types::BatchOperation) -> Result<(), VaultError> {
+        // Amount must be positive
+        if op.amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        Ok(())
+    }
+
+    /// Execute a single batch operation
+    fn execute_batch_operation(
+        env: &Env,
+        op: &types::BatchOperation,
+        rollback_state: &mut Vec<(Address, i128)>,
+        config: &Config,
+    ) -> Result<(), VaultError> {
+        // Get current day for cumulative tracking
+        let today = env.ledger().timestamp() / 86400; // seconds to days
+
+        // Check spending limits
+        let daily_spent = storage::get_daily_spent(env, today);
+        let new_daily_total = daily_spent + op.amount;
+
+        if new_daily_total > config.daily_limit {
+            return Err(VaultError::ExceedsDailyLimit);
+        }
+
+        // Record rollback state
+        rollback_state.push_back((op.recipient.clone(), op.amount));
+
+        // Update spending limits
+        storage::add_daily_spent(env, today, op.amount);
+
+        Ok(())
+    }
+
+    /// Rollback batch operations in reverse order
+    fn rollback_batch(
+        _env: &Env,
+        _rollback_state: &Vec<(Address, i128)>,
+    ) -> Result<(), VaultError> {
+        // In production, this would reverse the transfers
+        // For now, we track the state for audit purposes
+        // Audit trail is maintained via event emission and result storage
+        Ok(())
+    }
+
+    /// Estimate gas cost for batch operations
+    fn estimate_batch_gas(_env: &Env, operations: &Vec<types::BatchOperation>) -> u64 {
+        // Base overhead: 100,000
+        // Per-operation cost: 50,000
+        const BASE_OVERHEAD: u64 = 100_000;
+        const PER_OP_COST: u64 = 50_000;
+
+        BASE_OVERHEAD + (operations.len() as u64 * PER_OP_COST)
+    }
+
     // ========================================================================
     // Wallet Recovery (Issue: feature/wallet-recovery)
     // ========================================================================

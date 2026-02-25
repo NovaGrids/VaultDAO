@@ -22,9 +22,9 @@ const mockSynthesis = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (global as any).SpeechRecognition = vi.fn(() => mockRecognition);
-  (global as any).webkitSpeechRecognition = vi.fn(() => mockRecognition);
-  (global as any).speechSynthesis = mockSynthesis;
+  Object.defineProperty(global, 'SpeechRecognition', { value: vi.fn(() => mockRecognition), writable: true });
+  Object.defineProperty(global, 'webkitSpeechRecognition', { value: vi.fn(() => mockRecognition), writable: true });
+  Object.defineProperty(global, 'speechSynthesis', { value: mockSynthesis, writable: true });
 });
 
 describe('VoiceRecognitionService', () => {
@@ -109,9 +109,11 @@ describe('VoiceToText', () => {
       getTracks: () => [{ stop: vi.fn() }]
     });
     
-    (global.navigator as any).mediaDevices = {
-      getUserMedia: mockGetUserMedia
-    };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: mockGetUserMedia },
+      writable: true,
+      configurable: true
+    });
 
     const hasPermission = await voiceService.requestPermission();
     expect(hasPermission).toBe(true);
@@ -121,9 +123,11 @@ describe('VoiceToText', () => {
   it('should handle permission denial', async () => {
     const mockGetUserMedia = vi.fn().mockRejectedValue(new Error('Permission denied'));
     
-    (global.navigator as any).mediaDevices = {
-      getUserMedia: mockGetUserMedia
-    };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: mockGetUserMedia },
+      writable: true,
+      configurable: true
+    });
 
     const hasPermission = await voiceService.requestPermission();
     expect(hasPermission).toBe(false);
