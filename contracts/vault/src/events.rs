@@ -739,3 +739,58 @@ pub fn emit_proposal_forked(
         (parent_id, forker.clone(), recipient.clone(), amount),
     );
 }
+
+// ============================================================================
+// Proposal Matching and Pairing Events (feature/proposal-matching)
+// ============================================================================
+
+/// Emit when two proposals are matched
+pub fn emit_proposals_matched(
+    env: &Env,
+    match_id: u64,
+    proposal_a: u64,
+    proposal_b: u64,
+    agreed_rate_bps: u32,
+    matched_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposals_matched"), match_id),
+        (proposal_a, proposal_b, agreed_rate_bps, matched_amount),
+    );
+}
+
+/// Emit when a matched pair is executed
+pub fn emit_match_executed(
+    env: &Env,
+    match_id: u64,
+    proposal_a: u64,
+    proposal_b: u64,
+    executor: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "match_executed"), match_id),
+        (proposal_a, proposal_b, executor.clone()),
+    );
+}
+
+/// Emit when a match is cancelled/unmatched
+pub fn emit_match_cancelled(env: &Env, match_id: u64, canceller: &Address, reason: &Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "match_cancelled"), match_id),
+        (canceller.clone(), reason.clone()),
+    );
+}
+
+/// Emit when a proposal is added to matching queue
+pub fn emit_proposal_queued_for_matching(
+    env: &Env,
+    proposal_id: u64,
+    direction: u32,
+    offer_token: &Address,
+    request_token: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "queued_for_matching"), proposal_id),
+        (direction, offer_token.clone(), request_token.clone()),
+    );
+}

@@ -368,6 +368,8 @@ impl VaultDAO {
                 0
             },
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -577,6 +579,8 @@ impl VaultDAO {
                     0
                 },
                 parent_id: 0,
+                has_matching_criteria: false,
+                match_id: 0,
             };
 
             storage::set_proposal(&env, &proposal);
@@ -1276,6 +1280,8 @@ impl VaultDAO {
                 0
             },
             parent_id,
+            has_matching_criteria: false, // Forked proposals don't inherit matching criteria
+            match_id: 0,
         };
 
         // 10. Store proposal and inheritance tracking
@@ -1336,6 +1342,395 @@ impl VaultDAO {
         let parent = storage::get_proposal(&env, child.parent_id)?;
 
         Ok((parent, child))
+    }
+
+    // ========================================================================
+    // Proposal Matching and Pairing
+    // ========================================================================
+
+    /// Create a matchable proposal with matching criteria.
+    ///
+    /// This creates a proposal that can be automatically matched with complementary
+    /// proposals for paired execution (e.g., buy/sell orders).
+    ///
+    /// # Arguments
+    /// * `proposer` - Address creating the proposal
+    /// * `recipient` - Recipient address
+    /// * `token` - Token contract address
+    /// * `amount` - Amount to transfer
+    /// * `memo` - Description
+    /// * `priority` - Urgency level
+    /// * `matching_criteria` - Criteria for matching with other proposals
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_matchable_proposal(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        matching_criteria: types::MatchingCriteria,
+    ) -> Result<u64, VaultError> {
+        // Validate matching criteria
+        if matching_criteria.direction == types::MatchDirection::None {
+            return Err(VaultError::InvalidAmount); // Reusing error for invalid criteria
+        }
+        if matching_criteria.min_rate_bps > matching_criteria.max_rate_bps {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Create proposal using standard transfer function (auth is handled there)
+        let proposal_id = Self::propose_transfer(
+            env.clone(),
+            proposer.clone(),
+            recipient,
+            token,
+            amount,
+            memo,
+            priority.clone(),
+            Vec::new(&env),
+            ConditionLogic::And,
+            0,
+        )?;
+
+        // Update proposal with matching criteria
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        proposal.has_matching_criteria = true;
+        storage::set_proposal(&env, &proposal);
+        storage::set_matching_criteria(&env, proposal_id, &matching_criteria);
+
+        // Add to matching queue if matchable
+        if matching_criteria.matchable {
+            storage::add_to_matching_queue(&env, matching_criteria.direction.clone(), proposal_id);
+            events::emit_proposal_queued_for_matching(
+                &env,
+                proposal_id,
+                matching_criteria.direction as u32,
+                &matching_criteria.offer_token,
+                &matching_criteria.request_token,
+            );
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        Ok(proposal_id)
+    }
+
+    /// Find and create matches for proposals in the matching queue.
+    ///
+    /// Scans the matching queues for complementary proposals and creates matches
+    /// when criteria are satisfied. Returns the number of matches created.
+    pub fn match_proposals(env: Env, matcher: Address) -> Result<u32, VaultError> {
+        matcher.require_auth();
+
+        let role = storage::get_role(&env, &matcher);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut matches_created = 0u32;
+
+        // Get buy and sell queues
+        let buy_queue = storage::get_matching_queue(&env, types::MatchDirection::Buy);
+        let sell_queue = storage::get_matching_queue(&env, types::MatchDirection::Sell);
+
+        // Try to match each buy order with sell orders
+        for i in 0..buy_queue.len() {
+            let buy_id = buy_queue.get(i).unwrap();
+            let buy_proposal = match storage::get_proposal(&env, buy_id) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            // Skip if already matched or not pending
+            if buy_proposal.match_id != 0 || buy_proposal.status != ProposalStatus::Pending {
+                continue;
+            }
+
+            let buy_criteria = match storage::get_matching_criteria(&env, buy_id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            if !buy_criteria.matchable {
+                continue;
+            }
+
+            // Try to find a matching sell order
+            for j in 0..sell_queue.len() {
+                let sell_id = sell_queue.get(j).unwrap();
+                let sell_proposal = match storage::get_proposal(&env, sell_id) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+
+                // Skip if already matched or not pending
+                if sell_proposal.match_id != 0 || sell_proposal.status != ProposalStatus::Pending {
+                    continue;
+                }
+
+                let sell_criteria = match storage::get_matching_criteria(&env, sell_id) {
+                    Some(c) => c,
+                    None => continue,
+                };
+
+                if !sell_criteria.matchable {
+                    continue;
+                }
+
+                // Check if proposals are compatible
+                if Self::can_match(&buy_criteria, &sell_criteria) {
+                    // Create the match
+                    let match_result = Self::create_match_internal(
+                        &env,
+                        buy_id,
+                        sell_id,
+                        &buy_proposal,
+                        &sell_proposal,
+                        &buy_criteria,
+                        &sell_criteria,
+                    );
+
+                    if match_result.is_ok() {
+                        matches_created += 1;
+                        break; // Move to next buy order
+                    }
+                }
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        Ok(matches_created)
+    }
+
+    /// Check if two proposals can be matched based on their criteria.
+    fn can_match(
+        buy_criteria: &types::MatchingCriteria,
+        sell_criteria: &types::MatchingCriteria,
+    ) -> bool {
+        // Tokens must be complementary
+        if buy_criteria.request_token != sell_criteria.offer_token {
+            return false;
+        }
+        if buy_criteria.offer_token != sell_criteria.request_token {
+            return false;
+        }
+
+        // Rate ranges must overlap
+        let rate_compatible = buy_criteria.max_rate_bps >= sell_criteria.min_rate_bps
+            && buy_criteria.min_rate_bps <= sell_criteria.max_rate_bps;
+
+        rate_compatible
+    }
+
+    /// Create a match between two proposals.
+    #[allow(clippy::too_many_arguments)]
+    fn create_match_internal(
+        env: &Env,
+        buy_id: u64,
+        sell_id: u64,
+        buy_proposal: &Proposal,
+        sell_proposal: &Proposal,
+        buy_criteria: &types::MatchingCriteria,
+        sell_criteria: &types::MatchingCriteria,
+    ) -> Result<u64, VaultError> {
+        // Calculate agreed rate (midpoint of overlapping range)
+        let min_agreed = buy_criteria.min_rate_bps.max(sell_criteria.min_rate_bps);
+        let max_agreed = buy_criteria.max_rate_bps.min(sell_criteria.max_rate_bps);
+        let agreed_rate_bps = (min_agreed + max_agreed) / 2;
+
+        // Calculate matched amount (minimum of both proposals)
+        let matched_amount = buy_proposal.amount.min(sell_proposal.amount);
+
+        // Create match record
+        let match_id = storage::increment_match_id(env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let proposal_match = types::ProposalMatch {
+            id: match_id,
+            proposal_a: buy_id,
+            proposal_b: sell_id,
+            agreed_rate_bps,
+            matched_amount,
+            status: types::MatchStatus::Pending,
+            matched_at: current_ledger,
+            executed_at: 0,
+        };
+
+        storage::set_proposal_match(env, &proposal_match);
+
+        // Update proposals with match ID
+        let mut buy_updated = buy_proposal.clone();
+        buy_updated.match_id = match_id;
+        storage::set_proposal(env, &buy_updated);
+
+        let mut sell_updated = sell_proposal.clone();
+        sell_updated.match_id = match_id;
+        storage::set_proposal(env, &sell_updated);
+
+        // Add match to both proposals' match lists
+        storage::add_proposal_match(env, buy_id, match_id);
+        storage::add_proposal_match(env, sell_id, match_id);
+
+        // Remove from matching queues
+        storage::remove_from_matching_queue(env, types::MatchDirection::Buy, buy_id);
+        storage::remove_from_matching_queue(env, types::MatchDirection::Sell, sell_id);
+
+        // Emit event
+        events::emit_proposals_matched(
+            env,
+            match_id,
+            buy_id,
+            sell_id,
+            agreed_rate_bps,
+            matched_amount,
+        );
+
+        Ok(match_id)
+    }
+
+    /// Execute a matched pair of proposals.
+    ///
+    /// Both proposals in the match must be approved before execution.
+    /// Executes both proposals atomically.
+    pub fn execute_matched_proposals(
+        env: Env,
+        executor: Address,
+        match_id: u64,
+    ) -> Result<(), VaultError> {
+        executor.require_auth();
+
+        // Get match
+        let mut proposal_match =
+            storage::get_proposal_match(&env, match_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check match status
+        if proposal_match.status != types::MatchStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Get both proposals
+        let proposal_a = storage::get_proposal(&env, proposal_match.proposal_a)?;
+        let proposal_b = storage::get_proposal(&env, proposal_match.proposal_b)?;
+
+        // Both must be approved
+        if proposal_a.status != ProposalStatus::Approved
+            || proposal_b.status != ProposalStatus::Approved
+        {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        // Execute both proposals
+        Self::execute_proposal(env.clone(), executor.clone(), proposal_match.proposal_a)?;
+        Self::execute_proposal(env.clone(), executor.clone(), proposal_match.proposal_b)?;
+
+        // Update match status
+        proposal_match.status = types::MatchStatus::Executed;
+        proposal_match.executed_at = env.ledger().sequence() as u64;
+        storage::set_proposal_match(&env, &proposal_match);
+
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_match_executed(
+            &env,
+            match_id,
+            proposal_match.proposal_a,
+            proposal_match.proposal_b,
+            &executor,
+        );
+
+        Ok(())
+    }
+
+    /// Unmatch a proposal pair.
+    ///
+    /// Cancels a match and returns both proposals to the matching queue if still valid.
+    pub fn unmatch_proposals(
+        env: Env,
+        unmatcher: Address,
+        match_id: u64,
+        reason: Symbol,
+    ) -> Result<(), VaultError> {
+        unmatcher.require_auth();
+
+        let role = storage::get_role(&env, &unmatcher);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Get match
+        let mut proposal_match =
+            storage::get_proposal_match(&env, match_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Can only unmatch pending matches
+        if proposal_match.status != types::MatchStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Update match status
+        proposal_match.status = types::MatchStatus::Cancelled;
+        storage::set_proposal_match(&env, &proposal_match);
+
+        // Update proposals - clear match_id
+        let mut proposal_a = storage::get_proposal(&env, proposal_match.proposal_a)?;
+        proposal_a.match_id = 0;
+        storage::set_proposal(&env, &proposal_a);
+
+        let mut proposal_b = storage::get_proposal(&env, proposal_match.proposal_b)?;
+        proposal_b.match_id = 0;
+        storage::set_proposal(&env, &proposal_b);
+
+        // Return to matching queues if still matchable and pending
+        if proposal_a.status == ProposalStatus::Pending {
+            if let Some(criteria) = storage::get_matching_criteria(&env, proposal_match.proposal_a)
+            {
+                if criteria.matchable {
+                    storage::add_to_matching_queue(
+                        &env,
+                        criteria.direction.clone(),
+                        proposal_match.proposal_a,
+                    );
+                }
+            }
+        }
+
+        if proposal_b.status == ProposalStatus::Pending {
+            if let Some(criteria) = storage::get_matching_criteria(&env, proposal_match.proposal_b)
+            {
+                if criteria.matchable {
+                    storage::add_to_matching_queue(
+                        &env,
+                        criteria.direction.clone(),
+                        proposal_match.proposal_b,
+                    );
+                }
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_match_cancelled(&env, match_id, &unmatcher, &reason);
+
+        Ok(())
+    }
+
+    /// Get a proposal match by ID.
+    pub fn get_proposal_match(env: Env, match_id: u64) -> Option<types::ProposalMatch> {
+        storage::get_proposal_match(&env, match_id)
+    }
+
+    /// Get all matches for a specific proposal.
+    pub fn get_matches_for_proposal(env: Env, proposal_id: u64) -> Vec<u64> {
+        storage::get_proposal_matches(&env, proposal_id)
+    }
+
+    /// Get the matching queue for a specific direction.
+    pub fn get_matching_queue(env: Env, direction: types::MatchDirection) -> Vec<u64> {
+        storage::get_matching_queue(&env, direction)
     }
 
     // ========================================================================
@@ -3060,6 +3455,8 @@ impl VaultDAO {
                 0
             },
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -3494,6 +3891,8 @@ impl VaultDAO {
                 0
             },
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -4188,6 +4587,8 @@ impl VaultDAO {
             is_swap: false,
             voting_deadline: 0,
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);

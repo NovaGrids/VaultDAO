@@ -23,8 +23,9 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, GasConfig,
-    InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment,
-    ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    InsuranceConfig, ListMode, MatchDirection, MatchingCriteria, NotificationPreferences, Proposal,
+    ProposalAmendment, ProposalMatch, ProposalTemplate, RecoveryProposal, Reputation, RetryState,
+    Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -127,6 +128,24 @@ pub enum DataKey {
     ProposalChildren(u64),
     /// Inheritance chain for a proposal (list of ancestor IDs) -> Vec<u64>
     InheritanceChain(u64),
+    /// Matching-related data (sub-key, id) -> various types
+    Matching(MatchingDataKey, u64),
+}
+
+/// Sub-keys for matching-related data
+#[contracttype]
+#[derive(Clone)]
+pub enum MatchingDataKey {
+    /// Proposal match by ID -> ProposalMatch
+    Match,
+    /// Next match ID counter -> u64
+    NextMatchId,
+    /// Matching queue by direction -> Vec<u64>
+    Queue,
+    /// Matches for a proposal -> Vec<u64>
+    ProposalMatches,
+    /// Matching criteria for a proposal -> MatchingCriteria
+    Criteria,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1139,6 +1158,118 @@ pub fn get_inheritance_chain(env: &Env, proposal_id: u64) -> Vec<u64> {
 pub fn set_inheritance_chain(env: &Env, proposal_id: u64, chain: &Vec<u64>) {
     let key = DataKey::InheritanceChain(proposal_id);
     env.storage().persistent().set(&key, chain);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Proposal Matching and Pairing (Issue: feature/proposal-matching)
+// ============================================================================
+
+/// Get matching criteria for a proposal
+pub fn get_matching_criteria(env: &Env, proposal_id: u64) -> Option<MatchingCriteria> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Matching(MatchingDataKey::Criteria, proposal_id))
+}
+
+/// Set matching criteria for a proposal
+pub fn set_matching_criteria(env: &Env, proposal_id: u64, criteria: &MatchingCriteria) {
+    let key = DataKey::Matching(MatchingDataKey::Criteria, proposal_id);
+    env.storage().persistent().set(&key, criteria);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get the next match ID counter
+pub fn get_next_match_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::Matching(MatchingDataKey::NextMatchId, 0))
+        .unwrap_or(1)
+}
+
+/// Increment and return the next match ID
+pub fn increment_match_id(env: &Env) -> u64 {
+    let id = get_next_match_id(env);
+    env.storage().instance().set(
+        &DataKey::Matching(MatchingDataKey::NextMatchId, 0),
+        &(id + 1),
+    );
+    id
+}
+
+/// Get a proposal match by ID
+pub fn get_proposal_match(env: &Env, match_id: u64) -> Option<ProposalMatch> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Matching(MatchingDataKey::Match, match_id))
+}
+
+/// Store a proposal match
+pub fn set_proposal_match(env: &Env, proposal_match: &ProposalMatch) {
+    let key = DataKey::Matching(MatchingDataKey::Match, proposal_match.id);
+    env.storage().persistent().set(&key, proposal_match);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get the matching queue for a specific direction
+pub fn get_matching_queue(env: &Env, direction: MatchDirection) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Matching(MatchingDataKey::Queue, direction as u64))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add a proposal to the matching queue
+pub fn add_to_matching_queue(env: &Env, direction: MatchDirection, proposal_id: u64) {
+    let mut queue = get_matching_queue(env, direction.clone());
+    queue.push_back(proposal_id);
+    let key = DataKey::Matching(MatchingDataKey::Queue, direction as u64);
+    env.storage().persistent().set(&key, &queue);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Remove a proposal from the matching queue
+pub fn remove_from_matching_queue(env: &Env, direction: MatchDirection, proposal_id: u64) {
+    let queue = get_matching_queue(env, direction.clone());
+    let mut new_queue: Vec<u64> = Vec::new(env);
+    for i in 0..queue.len() {
+        let id = queue.get(i).unwrap();
+        if id != proposal_id {
+            new_queue.push_back(id);
+        }
+    }
+    let key = DataKey::Matching(MatchingDataKey::Queue, direction as u64);
+    env.storage().persistent().set(&key, &new_queue);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get all matches for a specific proposal
+pub fn get_proposal_matches(env: &Env, proposal_id: u64) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Matching(
+            MatchingDataKey::ProposalMatches,
+            proposal_id,
+        ))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add a match to a proposal's match list
+pub fn add_proposal_match(env: &Env, proposal_id: u64, match_id: u64) {
+    let mut matches = get_proposal_matches(env, proposal_id);
+    matches.push_back(match_id);
+    let key = DataKey::Matching(MatchingDataKey::ProposalMatches, proposal_id);
+    env.storage().persistent().set(&key, &matches);
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);

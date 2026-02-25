@@ -7250,3 +7250,415 @@ fn test_fork_independent_approvals() {
     assert_eq!(child.status, ProposalStatus::Pending);
     assert_eq!(child.approvals.len(), 0);
 }
+
+// ============================================================================
+// Proposal Matching and Pairing Tests
+// ============================================================================
+
+#[test]
+fn test_create_matchable_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Create a buy order
+    let matching_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let proposal_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy_order"),
+        &Priority::Normal,
+        &matching_criteria,
+    );
+
+    // Verify proposal was created
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.id, proposal_id);
+    assert_eq!(proposal.has_matching_criteria, true);
+    assert_eq!(proposal.match_id, 0);
+}
+
+#[test]
+fn test_match_proposals_basic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create a buy order
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let buy_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    // Create a sell order
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 9500,
+        max_rate_bps: 10500,
+        matchable: true,
+    };
+
+    let sell_id = client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    // Match proposals
+    let matches_created = client.match_proposals(&signer1);
+    assert_eq!(matches_created, 1);
+
+    // Verify proposals are matched
+    let buy_proposal = client.get_proposal(&buy_id);
+    let sell_proposal = client.get_proposal(&sell_id);
+    assert!(buy_proposal.match_id > 0);
+    assert_eq!(buy_proposal.match_id, sell_proposal.match_id);
+}
+
+#[test]
+fn test_get_matching_queue() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Initially empty
+    let buy_queue = client.get_matching_queue(&types::MatchDirection::Buy);
+    assert_eq!(buy_queue.len(), 0);
+
+    // Create a buy order
+    let matching_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let proposal_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &matching_criteria,
+    );
+
+    // Verify it's in the queue
+    let buy_queue = client.get_matching_queue(&types::MatchDirection::Buy);
+    assert_eq!(buy_queue.len(), 1);
+    assert_eq!(buy_queue.get(0).unwrap(), proposal_id);
+}
+
+#[test]
+fn test_unmatch_proposals() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create and match proposals
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let buy_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 9500,
+        max_rate_bps: 10500,
+        matchable: true,
+    };
+
+    let sell_id = client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    client.match_proposals(&signer1);
+
+    let buy_proposal = client.get_proposal(&buy_id);
+    let match_id = buy_proposal.match_id;
+    assert!(match_id > 0);
+
+    // Unmatch
+    client.unmatch_proposals(&admin, &match_id, &Symbol::new(&env, "test"));
+
+    // Verify proposals are unmatched
+    let buy_proposal = client.get_proposal(&buy_id);
+    let sell_proposal = client.get_proposal(&sell_id);
+    assert_eq!(buy_proposal.match_id, 0);
+    assert_eq!(sell_proposal.match_id, 0);
+
+    // Verify they're back in the queue
+    let buy_queue = client.get_matching_queue(&types::MatchDirection::Buy);
+    let sell_queue = client.get_matching_queue(&types::MatchDirection::Sell);
+    assert_eq!(buy_queue.len(), 1);
+    assert_eq!(sell_queue.len(), 1);
+}
+
+#[test]
+fn test_match_incompatible_rates() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create a buy order with low rate
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 8000,
+        max_rate_bps: 9000,
+        matchable: true,
+    };
+
+    client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    // Create a sell order with high rate (no overlap)
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 10000,
+        max_rate_bps: 12000,
+        matchable: true,
+    };
+
+    client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    // Try to match - should create 0 matches
+    let matches_created = client.match_proposals(&signer1);
+    assert_eq!(matches_created, 0);
+}
+
+#[test]
+fn test_get_matches_for_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create and match proposals
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let buy_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 9500,
+        max_rate_bps: 10500,
+        matchable: true,
+    };
+
+    client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    client.match_proposals(&signer1);
+
+    // Get matches for buy proposal
+    let matches = client.get_matches_for_proposal(&buy_id);
+    assert_eq!(matches.len(), 1);
+}
