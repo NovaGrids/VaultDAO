@@ -7,7 +7,7 @@ use crate::types::{BridgeConfig, ChainId, CrossChainAsset, CrossChainProposal};
 
 pub fn validate_bridge_config(config: &BridgeConfig) -> Result<(), VaultError> {
     if config.enabled_chains.is_empty() {
-        return Err(VaultError::BridgeNotConfigured);
+        return Err(VaultError::BridgeError);
     }
     if config.max_bridge_amount <= 0 {
         return Err(VaultError::InvalidAmount);
@@ -40,13 +40,13 @@ pub fn validate_crosschain_proposal(
     proposal: &CrossChainProposal,
 ) -> Result<(), VaultError> {
     if !is_chain_supported(config, &proposal.target_chain) {
-        return Err(VaultError::ChainNotSupported);
+        return Err(VaultError::BridgeError);
     }
     if proposal.amount <= 0 {
         return Err(VaultError::InvalidAmount);
     }
     if proposal.amount > config.max_bridge_amount {
-        return Err(VaultError::ExceedsBridgeLimit);
+        return Err(VaultError::BridgeError);
     }
     Ok(())
 }

@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import FileUploader, { type UploadedAttachment } from '../FileUploader';
+import FormRenderer from '../FormRenderer';
+import VoiceToText from '../VoiceToText';
+import type { FormConfig, FormSubmissionData } from '../../types/formBuilder';
 
 export interface NewProposalFormData {
   recipient: string;
@@ -21,6 +24,8 @@ interface NewProposalModalProps {
   onAttachmentsChange?: (attachments: UploadedAttachment[]) => void;
   onOpenTemplateSelector: () => void;
   onSaveAsTemplate: () => void;
+  useCustomForm?: boolean;
+  customFormConfig?: FormConfig;
 }
 
 const NewProposalModal: React.FC<NewProposalModalProps> = ({
@@ -34,6 +39,8 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   onAttachmentsChange,
   onOpenTemplateSelector,
   onSaveAsTemplate,
+  useCustomForm = false,
+  customFormConfig,
 }) => {
   const { getListMode, isWhitelisted, isBlacklisted } = useVaultContract();
   const [recipientError, setRecipientError] = useState<string | null>(null);
@@ -80,6 +87,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       loadListMode().catch(console.error);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, loadListMode]);
 
   useEffect(() => {
@@ -89,10 +97,65 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
     } else {
       setRecipientError(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.recipient, listMode, validateRecipient]);
 
   if (!isOpen) {
     return null;
+  }
+
+  // Use custom form if provided
+  if (useCustomForm && customFormConfig) {
+    const handleCustomFormSubmit = (data: FormSubmissionData) => {
+      // Map custom form data to proposal form data
+      const mappedData: NewProposalFormData = {
+        recipient: String(data['recipient-address'] ?? ''),
+        token: String(data['token-address'] ?? 'native'),
+        amount: String(data['amount'] ?? ''),
+        memo: String(data['memo'] ?? ''),
+      };
+
+      // Update form data
+      Object.entries(mappedData).forEach(([key, value]) => {
+        onFieldChange(key as keyof NewProposalFormData, value);
+      });
+
+      // Trigger submit
+      const syntheticEvent = {
+        preventDefault: () => { },
+        stopPropagation: () => { },
+      } as React.FormEvent;
+      onSubmit(syntheticEvent);
+    };
+
+    return (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
+        <div className="w-full max-w-2xl rounded-xl border border-gray-700 bg-gray-900 p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="text-xl font-semibold text-white">Create New Proposal</h3>
+            {selectedTemplateName ? (
+              <span className="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs text-purple-300">
+                Template: {selectedTemplateName}
+              </span>
+            ) : null}
+          </div>
+
+          <FormRenderer
+            config={customFormConfig}
+            onSubmit={handleCustomFormSubmit}
+            loading={loading}
+            submitButtonText={loading ? 'Submitting...' : 'Submit Proposal'}
+          />
+
+          <button
+            onClick={onClose}
+            className="mt-4 w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -118,10 +181,9 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
 
         <form onSubmit={onSubmit} className="space-y-3">
           <div>
-            <input
-              type="text"
+            <VoiceToText
               value={formData.recipient}
-              onChange={(event) => onFieldChange('recipient', event.target.value)}
+              onChange={(value) => onFieldChange('recipient', value)}
               placeholder="Recipient address"
               className={`w-full rounded-lg border ${recipientError ? 'border-red-500' : 'border-gray-600'
                 } bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none`}
@@ -130,24 +192,22 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
               <p className="mt-1 text-sm text-red-400">{recipientError}</p>
             )}
           </div>
-          <input
-            type="text"
+          <VoiceToText
             value={formData.token}
-            onChange={(event) => onFieldChange('token', event.target.value)}
+            onChange={(value) => onFieldChange('token', value)}
             placeholder="Token address"
             className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
-          <input
-            type="text"
+          <VoiceToText
             value={formData.amount}
-            onChange={(event) => onFieldChange('amount', event.target.value)}
+            onChange={(value) => onFieldChange('amount', value)}
             placeholder="Amount"
             className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
           <textarea
             value={formData.memo}
             onChange={(event) => onFieldChange('memo', event.target.value)}
-            placeholder="Memo"
+            placeholder="Memo (or click mic icon for voice input)"
             className="h-24 w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
 

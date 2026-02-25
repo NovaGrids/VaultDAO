@@ -4,13 +4,25 @@ A decentralized application frontend built with React, TypeScript, and Vite for 
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+## Features
+
+- 🎤 **Voice Commands** - Hands-free navigation and actions with Web Speech API
+- 🎯 **Voice-to-Text** - Speech input for all form fields
+- 🔊 **Voice Feedback** - Audio confirmation of actions
+- 📱 **Mobile Responsive** - Full voice support on mobile devices
+- ♿ **Accessibility** - Enhanced accessibility with voice controls
+
+See [VOICE_COMMANDS.md](./VOICE_COMMANDS.md) for detailed voice feature documentation.
+
 ## Table of Contents
+- [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Environment Setup](#environment-setup)
 - [Installation](#installation)
 - [Running the Project](#running-the-project)
 - [Building for Production](#building-for-production)
 - [Stellar Testnet Setup](#stellar-testnet-setup)
+- [Voice Commands](#voice-commands)
 - [Troubleshooting](#troubleshooting)
 - [Development Tools](#development-tools)
 - [Contributing](#contributing)
@@ -343,6 +355,40 @@ export default defineConfig([
   },
 ])
 ```
+
+## Voice Commands
+
+VaultDAO includes comprehensive voice command support for accessibility and hands-free operation.
+
+### Quick Start
+
+1. Click the microphone button in the bottom-right corner
+2. Grant microphone permission when prompted
+3. Say a command like "proposals" or "create proposal"
+4. Voice feedback confirms your action
+
+### Available Commands
+
+**Navigation:**
+- "dashboard", "home", "overview" - Go to dashboard
+- "proposals" - View proposals
+- "activity" - View activity
+- "analytics" - View analytics
+- "settings" - Open settings
+
+**Actions:**
+- "create proposal", "new proposal" - Create new proposal
+- "approve" - Approve selected proposal
+- "reject" - Reject selected proposal
+
+### Voice-to-Text
+
+Form inputs support voice-to-text. Click the microphone icon in any input field to speak your input.
+
+### Documentation
+
+- [VOICE_COMMANDS.md](./VOICE_COMMANDS.md) - Complete voice features documentation
+- [VOICE_EXAMPLES.md](./VOICE_EXAMPLES.md) - Usage examples and code snippets
 
 ## Contributing
 

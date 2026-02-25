@@ -79,6 +79,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const id = preferred && getAdapterById(preferred) ? preferred : wallets[0]?.id ?? null;
       if (id) setSelectedWalletId(id);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detectWallets]);
 
   useEffect(() => {
@@ -92,6 +93,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }, 3000);
       return () => clearInterval(interval);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWalletId, connected, updateWalletState]);
 
   useEffect(() => {
