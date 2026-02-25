@@ -794,3 +794,101 @@ pub fn emit_proposal_queued_for_matching(
         (direction, offer_token.clone(), request_token.clone()),
     );
 }
+
+// ============================================================================
+// Bounty System Events (feature/bounty-system)
+// ============================================================================
+
+/// Emit when a bounty is created
+pub fn emit_bounty_created(
+    env: &Env,
+    bounty_id: u64,
+    creator: &Address,
+    reward_token: &Address,
+    reward_amount: i128,
+    expires_at: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bounty_created"), bounty_id),
+        (
+            creator.clone(),
+            reward_token.clone(),
+            reward_amount,
+            expires_at,
+        ),
+    );
+}
+
+/// Emit when a claim is submitted for a bounty
+pub fn emit_claim_submitted(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    claimant: &Address,
+    proof: &soroban_sdk::String,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_submitted"), claim_id),
+        (bounty_id, claimant.clone(), proof.clone()),
+    );
+}
+
+/// Emit when a claim is approved
+pub fn emit_claim_approved(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    claimant: &Address,
+    reviewer: &Address,
+    reward_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_approved"), claim_id),
+        (bounty_id, claimant.clone(), reviewer.clone(), reward_amount),
+    );
+}
+
+/// Emit when a claim is rejected
+pub fn emit_claim_rejected(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    claimant: &Address,
+    reviewer: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_rejected"), claim_id),
+        (bounty_id, claimant.clone(), reviewer.clone()),
+    );
+}
+
+/// Emit when a bounty expires
+pub fn emit_bounty_expired(env: &Env, bounty_id: u64, creator: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "bounty_expired"), bounty_id),
+        creator.clone(),
+    );
+}
+
+/// Emit when a bounty is cancelled
+pub fn emit_bounty_cancelled(env: &Env, bounty_id: u64, creator: &Address, reason: &Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "bounty_cancelled"), bounty_id),
+        (creator.clone(), reason.clone()),
+    );
+}
+
+/// Emit when a claim approval is added
+pub fn emit_claim_approval_added(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    approver: &Address,
+    approval_count: u32,
+    required: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_approval_added"), claim_id),
+        (bounty_id, approver.clone(), approval_count, required),
+    );
+}

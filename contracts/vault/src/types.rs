@@ -361,6 +361,98 @@ pub enum MatchStatus {
     Failed = 3,
 }
 
+// ============================================================================
+// Bounty System (Issue: feature/bounty-system)
+// ============================================================================
+
+/// Bounty status lifecycle
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BountyStatus {
+    /// Bounty is active and accepting claims
+    Active = 0,
+    /// Bounty has been claimed and awaiting verification
+    Claimed = 1,
+    /// Bounty has been completed and reward distributed
+    Completed = 2,
+    /// Bounty expired without completion
+    Expired = 3,
+    /// Bounty was cancelled
+    Cancelled = 4,
+}
+
+/// Claim status for bounty submissions
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ClaimStatus {
+    /// Claim submitted, awaiting review
+    Pending = 0,
+    /// Claim approved, reward distributed
+    Approved = 1,
+    /// Claim rejected
+    Rejected = 2,
+}
+
+/// Bounty with requirements and rewards
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Bounty {
+    /// Unique bounty ID
+    pub id: u64,
+    /// Address that created the bounty
+    pub creator: Address,
+    /// Title/description of the bounty
+    pub title: Symbol,
+    /// Detailed requirements (IPFS hash or on-chain text)
+    pub requirements: String,
+    /// Token contract address for reward
+    pub reward_token: Address,
+    /// Reward amount
+    pub reward_amount: i128,
+    /// Current status
+    pub status: BountyStatus,
+    /// Ledger when bounty was created
+    pub created_at: u64,
+    /// Ledger when bounty expires
+    pub expires_at: u64,
+    /// Address that claimed the bounty (zero if unclaimed)
+    pub claimer: Address,
+    /// Ledger when bounty was claimed
+    pub claimed_at: u64,
+    /// Number of approvals required for claim verification
+    pub required_approvals: u32,
+    /// Addresses that have approved the claim
+    pub claim_approvals: Vec<Address>,
+    /// Associated proposal ID (0 if standalone bounty)
+    pub proposal_id: u64,
+}
+
+/// Claim submission for a bounty
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BountyClaim {
+    /// Unique claim ID
+    pub id: u64,
+    /// Bounty ID this claim is for
+    pub bounty_id: u64,
+    /// Address submitting the claim
+    pub claimant: Address,
+    /// Proof of completion (IPFS hash, URL, or description)
+    pub proof: String,
+    /// Additional notes
+    pub notes: Symbol,
+    /// Claim status
+    pub status: ClaimStatus,
+    /// Ledger when claim was submitted
+    pub submitted_at: u64,
+    /// Ledger when claim was reviewed (0 if not reviewed)
+    pub reviewed_at: u64,
+    /// Address that reviewed the claim (zero if not reviewed)
+    pub reviewer: Address,
+}
+
 /// On-chain comment on a proposal
 #[contracttype]
 #[derive(Clone, Debug)]

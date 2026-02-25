@@ -22,10 +22,10 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, GasConfig,
-    InsuranceConfig, ListMode, MatchDirection, MatchingCriteria, NotificationPreferences, Proposal,
-    ProposalAmendment, ProposalMatch, ProposalTemplate, RecoveryProposal, Reputation, RetryState,
-    Role, VaultMetrics, VelocityConfig,
+    Bounty, BountyClaim, Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow,
+    GasConfig, InsuranceConfig, ListMode, MatchDirection, MatchingCriteria,
+    NotificationPreferences, Proposal, ProposalAmendment, ProposalMatch, ProposalTemplate,
+    RecoveryProposal, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -80,48 +80,18 @@ pub enum DataKey {
     InsuranceConfig,
     /// Per-user notification preferences -> NotificationPreferences
     NotificationPrefs(Address),
-    /// DEX configuration -> DexConfig
-    DexConfig,
-    /// Swap proposal by ID -> SwapProposal
-    SwapProposal(u64),
-    /// Swap result by proposal ID -> SwapResult
-    SwapResult(u64),
     /// Gas execution limit configuration -> GasConfig
     GasConfig,
     /// Vault-wide performance metrics -> VaultMetrics
     Metrics,
-    /// Proposal template by ID -> ProposalTemplate
-    Template(u64),
-    /// Next template ID counter -> u64
-    NextTemplateId,
-    /// Template name to ID mapping -> u64
-    TemplateName(soroban_sdk::Symbol),
     /// Retry state for a proposal -> RetryState
     RetryState(u64),
     /// Cross-vault proposal by ID -> CrossVaultProposal
     CrossVaultProposal(u64),
     /// Cross-vault configuration -> CrossVaultConfig
     CrossVaultConfig,
-    /// Dispute by ID -> Dispute
-    Dispute(u64),
-    /// Dispute ID for a proposal -> u64
-    ProposalDispute(u64),
-    /// Next dispute ID counter -> u64
-    NextDisputeId,
     /// Arbitrator addresses -> Vec<Address>
     Arbitrators,
-    /// Escrow agreement by ID -> Escrow
-    Escrow(u64),
-    /// Next escrow ID counter -> u64
-    NextEscrowId,
-    /// Escrow IDs by funder address -> Vec<u64>
-    FunderEscrows(Address),
-    /// Escrow IDs by recipient address -> Vec<u64>
-    RecipientEscrows(Address),
-    /// Recovery proposal by ID -> RecoveryProposal
-    RecoveryProposal(u64),
-    /// Next recovery proposal ID counter -> u64
-    NextRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
     /// Child proposal IDs for a parent proposal -> Vec<u64>
@@ -130,6 +100,24 @@ pub enum DataKey {
     InheritanceChain(u64),
     /// Matching-related data (sub-key, id) -> various types
     Matching(MatchingDataKey, u64),
+    /// Bounty-related data (sub-key, id) -> various types
+    Bounty(BountyDataKey, u64),
+    /// Batch transaction data (sub-key, id) -> various types
+    Batch(BatchDataKey, u64),
+    /// DEX and swap-related data (sub-key, id) -> various types
+    Dex(DexDataKey, u64),
+    /// Template-related data (sub-key, id) -> various types
+    Template(TemplateDataKey, u64),
+    /// Template name to ID mapping (name) -> u64
+    TemplateByName(soroban_sdk::Symbol),
+    /// Escrow-related data (sub-key, id) -> various types
+    Escrow(EscrowDataKey, u64),
+    /// Escrow lists by address (sub-key, address) -> Vec<u64>
+    EscrowByAddress(EscrowDataKey, Address),
+    /// Dispute-related data (sub-key, id) -> various types
+    Dispute(DisputeDataKey, u64),
+    /// Recovery-related data (sub-key, id) -> various types
+    Recovery(RecoveryDataKey, u64),
 }
 
 /// Sub-keys for matching-related data
@@ -146,6 +134,98 @@ pub enum MatchingDataKey {
     ProposalMatches,
     /// Matching criteria for a proposal -> MatchingCriteria
     Criteria,
+}
+
+/// Sub-keys for bounty-related data
+#[contracttype]
+#[derive(Clone)]
+pub enum BountyDataKey {
+    /// Bounty by ID -> Bounty
+    Bounty,
+    /// Next bounty ID counter -> u64
+    NextBountyId,
+    /// Claim by ID -> BountyClaim
+    Claim,
+    /// Next claim ID counter -> u64
+    NextClaimId,
+    /// Claims for a bounty -> Vec<u64>
+    BountyClaims,
+    /// Active bounties list -> Vec<u64>
+    ActiveBounties,
+    /// Bounties by creator -> Vec<u64>
+    CreatorBounties,
+}
+
+/// Sub-keys for batch transaction data
+#[contracttype]
+#[derive(Clone)]
+pub enum BatchDataKey {
+    /// Batch transaction by ID
+    Batch,
+    /// Next batch ID counter
+    NextBatchId,
+    /// Batch result
+    Result,
+    /// Batch rollback state
+    Rollback,
+}
+
+/// Sub-keys for DEX and swap-related data
+#[contracttype]
+#[derive(Clone)]
+pub enum DexDataKey {
+    /// DEX configuration
+    Config,
+    /// Swap proposal by ID
+    SwapProposal,
+    /// Swap result by proposal ID
+    SwapResult,
+}
+
+/// Sub-keys for template-related data
+#[contracttype]
+#[derive(Clone)]
+pub enum TemplateDataKey {
+    /// Proposal template by ID
+    Template,
+    /// Next template ID counter
+    NextTemplateId,
+}
+
+/// Sub-keys for escrow-related data
+#[contracttype]
+#[derive(Clone)]
+pub enum EscrowDataKey {
+    /// Escrow agreement by ID
+    Escrow,
+    /// Next escrow ID counter
+    NextEscrowId,
+    /// Escrow IDs by funder address
+    FunderEscrows,
+    /// Escrow IDs by recipient address
+    RecipientEscrows,
+}
+
+/// Sub-keys for dispute-related data
+#[contracttype]
+#[derive(Clone)]
+pub enum DisputeDataKey {
+    /// Dispute by ID
+    Dispute,
+    /// Dispute ID for a proposal
+    ProposalDispute,
+    /// Next dispute ID counter
+    NextDisputeId,
+}
+
+/// Sub-keys for recovery-related data
+#[contracttype]
+#[derive(Clone)]
+pub enum RecoveryDataKey {
+    /// Recovery proposal by ID
+    RecoveryProposal,
+    /// Next recovery proposal ID counter
+    NextRecoveryId,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -748,15 +828,19 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
 use crate::types::{DexConfig, SwapProposal, SwapResult};
 
 pub fn set_dex_config(env: &Env, config: &DexConfig) {
-    env.storage().instance().set(&DataKey::DexConfig, config);
+    env.storage()
+        .instance()
+        .set(&DataKey::Dex(DexDataKey::Config, 0), config);
 }
 
 pub fn get_dex_config(env: &Env) -> Option<DexConfig> {
-    env.storage().instance().get(&DataKey::DexConfig)
+    env.storage()
+        .instance()
+        .get(&DataKey::Dex(DexDataKey::Config, 0))
 }
 
 pub fn set_swap_proposal(env: &Env, proposal_id: u64, swap: &SwapProposal) {
-    let key = DataKey::SwapProposal(proposal_id);
+    let key = DataKey::Dex(DexDataKey::SwapProposal, proposal_id);
     env.storage().persistent().set(&key, swap);
     env.storage()
         .persistent()
@@ -766,11 +850,11 @@ pub fn set_swap_proposal(env: &Env, proposal_id: u64, swap: &SwapProposal) {
 pub fn get_swap_proposal(env: &Env, proposal_id: u64) -> Option<SwapProposal> {
     env.storage()
         .persistent()
-        .get(&DataKey::SwapProposal(proposal_id))
+        .get(&DataKey::Dex(DexDataKey::SwapProposal, proposal_id))
 }
 
 pub fn set_swap_result(env: &Env, proposal_id: u64, result: &SwapResult) {
-    let key = DataKey::SwapResult(proposal_id);
+    let key = DataKey::Dex(DexDataKey::SwapResult, proposal_id);
     env.storage().persistent().set(&key, result);
     env.storage()
         .persistent()
@@ -780,7 +864,7 @@ pub fn set_swap_result(env: &Env, proposal_id: u64, result: &SwapResult) {
 pub fn get_swap_result(env: &Env, proposal_id: u64) -> Option<SwapResult> {
     env.storage()
         .persistent()
-        .get(&DataKey::SwapResult(proposal_id))
+        .get(&DataKey::Dex(DexDataKey::SwapResult, proposal_id))
 }
 
 // ============================================================================
@@ -855,22 +939,23 @@ pub fn metrics_on_expiry(env: &Env) {
 pub fn get_next_template_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .get(&DataKey::NextTemplateId)
+        .get(&DataKey::Template(TemplateDataKey::NextTemplateId, 0))
         .unwrap_or(1)
 }
 
 /// Increment and return the next template ID
 pub fn increment_template_id(env: &Env) -> u64 {
     let id = get_next_template_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextTemplateId, &(id + 1));
+    env.storage().instance().set(
+        &DataKey::Template(TemplateDataKey::NextTemplateId, 0),
+        &(id + 1),
+    );
     id
 }
 
 /// Store a proposal template
 pub fn set_template(env: &Env, template: &ProposalTemplate) {
-    let key = DataKey::Template(template.id);
+    let key = DataKey::Template(TemplateDataKey::Template, template.id);
     env.storage().persistent().set(&key, template);
     env.storage()
         .persistent()
@@ -881,28 +966,30 @@ pub fn set_template(env: &Env, template: &ProposalTemplate) {
 pub fn get_template(env: &Env, id: u64) -> Result<ProposalTemplate, VaultError> {
     env.storage()
         .persistent()
-        .get(&DataKey::Template(id))
+        .get(&DataKey::Template(TemplateDataKey::Template, id))
         .ok_or(VaultError::TemplateNotFound)
 }
 
 /// Check if a template exists
 #[allow(dead_code)]
 pub fn template_exists(env: &Env, id: u64) -> bool {
-    env.storage().persistent().has(&DataKey::Template(id))
+    env.storage()
+        .persistent()
+        .has(&DataKey::Template(TemplateDataKey::Template, id))
 }
 
 /// Get template ID by name
 pub fn get_template_id_by_name(env: &Env, name: &soroban_sdk::Symbol) -> Option<u64> {
     env.storage()
         .instance()
-        .get(&DataKey::TemplateName(name.clone()))
+        .get(&DataKey::TemplateByName(name.clone()))
 }
 
 /// Set template name to ID mapping
 pub fn set_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol, id: u64) {
     env.storage()
         .instance()
-        .set(&DataKey::TemplateName(name.clone()), &id);
+        .set(&DataKey::TemplateByName(name.clone()), &id);
 }
 
 /// Remove template name mapping
@@ -910,14 +997,14 @@ pub fn set_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol, id: u64)
 pub fn remove_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol) {
     env.storage()
         .instance()
-        .remove(&DataKey::TemplateName(name.clone()));
+        .remove(&DataKey::TemplateByName(name.clone()));
 }
 
 /// Check if a template name already exists
 pub fn template_name_exists(env: &Env, name: &soroban_sdk::Symbol) -> bool {
     env.storage()
         .instance()
-        .has(&DataKey::TemplateName(name.clone()))
+        .has(&DataKey::TemplateByName(name.clone()))
 }
 
 // ============================================================================
@@ -986,24 +1073,27 @@ pub fn set_arbitrators(env: &Env, arbitrators: &Vec<Address>) {
 pub fn get_next_dispute_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .get(&DataKey::NextDisputeId)
+        .get(&DataKey::Dispute(DisputeDataKey::NextDisputeId, 0))
         .unwrap_or(1)
 }
 
 pub fn increment_dispute_id(env: &Env) -> u64 {
     let id = get_next_dispute_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextDisputeId, &(id + 1));
+    env.storage().instance().set(
+        &DataKey::Dispute(DisputeDataKey::NextDisputeId, 0),
+        &(id + 1),
+    );
     id
 }
 
 pub fn get_dispute(env: &Env, id: u64) -> Option<Dispute> {
-    env.storage().persistent().get(&DataKey::Dispute(id))
+    env.storage()
+        .persistent()
+        .get(&DataKey::Dispute(DisputeDataKey::Dispute, id))
 }
 
 pub fn set_dispute(env: &Env, dispute: &Dispute) {
-    let key = DataKey::Dispute(dispute.id);
+    let key = DataKey::Dispute(DisputeDataKey::Dispute, dispute.id);
     env.storage().persistent().set(&key, dispute);
     env.storage()
         .persistent()
@@ -1011,13 +1101,14 @@ pub fn set_dispute(env: &Env, dispute: &Dispute) {
 }
 
 pub fn get_proposal_dispute(env: &Env, proposal_id: u64) -> Option<u64> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::ProposalDispute(proposal_id))
+    env.storage().persistent().get(&DataKey::Dispute(
+        DisputeDataKey::ProposalDispute,
+        proposal_id,
+    ))
 }
 
 pub fn set_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
-    let key = DataKey::ProposalDispute(proposal_id);
+    let key = DataKey::Dispute(DisputeDataKey::ProposalDispute, proposal_id);
     env.storage().persistent().set(&key, &dispute_id);
     env.storage()
         .persistent()
@@ -1030,7 +1121,7 @@ pub fn set_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
 pub fn get_next_escrow_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .get(&DataKey::NextEscrowId)
+        .get(&DataKey::Escrow(EscrowDataKey::NextEscrowId, 0))
         .unwrap_or(1)
 }
 
@@ -1038,19 +1129,19 @@ pub fn increment_escrow_id(env: &Env) -> u64 {
     let id = get_next_escrow_id(env);
     env.storage()
         .instance()
-        .set(&DataKey::NextEscrowId, &(id + 1));
+        .set(&DataKey::Escrow(EscrowDataKey::NextEscrowId, 0), &(id + 1));
     id
 }
 
 pub fn get_escrow(env: &Env, id: u64) -> Result<Escrow, VaultError> {
     env.storage()
         .persistent()
-        .get(&DataKey::Escrow(id))
+        .get(&DataKey::Escrow(EscrowDataKey::Escrow, id))
         .ok_or(VaultError::ProposalNotFound)
 }
 
 pub fn set_escrow(env: &Env, escrow: &Escrow) {
-    let key = DataKey::Escrow(escrow.id);
+    let key = DataKey::Escrow(EscrowDataKey::Escrow, escrow.id);
     env.storage().persistent().set(&key, escrow);
     env.storage()
         .persistent()
@@ -1060,14 +1151,17 @@ pub fn set_escrow(env: &Env, escrow: &Escrow) {
 pub fn get_funder_escrows(env: &Env, funder: &Address) -> Vec<u64> {
     env.storage()
         .persistent()
-        .get(&DataKey::FunderEscrows(funder.clone()))
+        .get(&DataKey::EscrowByAddress(
+            EscrowDataKey::FunderEscrows,
+            funder.clone(),
+        ))
         .unwrap_or_else(|| Vec::new(env))
 }
 
 pub fn add_funder_escrow(env: &Env, funder: &Address, escrow_id: u64) {
     let mut escrows = get_funder_escrows(env, funder);
     escrows.push_back(escrow_id);
-    let key = DataKey::FunderEscrows(funder.clone());
+    let key = DataKey::EscrowByAddress(EscrowDataKey::FunderEscrows, funder.clone());
     env.storage().persistent().set(&key, &escrows);
     env.storage()
         .persistent()
@@ -1077,14 +1171,17 @@ pub fn add_funder_escrow(env: &Env, funder: &Address, escrow_id: u64) {
 pub fn get_recipient_escrows(env: &Env, recipient: &Address) -> Vec<u64> {
     env.storage()
         .persistent()
-        .get(&DataKey::RecipientEscrows(recipient.clone()))
+        .get(&DataKey::EscrowByAddress(
+            EscrowDataKey::RecipientEscrows,
+            recipient.clone(),
+        ))
         .unwrap_or_else(|| Vec::new(env))
 }
 
 pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
     let mut escrows = get_recipient_escrows(env, recipient);
     escrows.push_back(escrow_id);
-    let key = DataKey::RecipientEscrows(recipient.clone());
+    let key = DataKey::EscrowByAddress(EscrowDataKey::RecipientEscrows, recipient.clone());
     env.storage().persistent().set(&key, &escrows);
     env.storage()
         .persistent()
@@ -1098,7 +1195,7 @@ pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
 pub fn get_next_batch_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .get::<DataKey, u64>(&DataKey::BatchIdCounter)
+        .get::<DataKey, u64>(&DataKey::Batch(BatchDataKey::NextBatchId, 0))
         .unwrap_or(0)
 }
 
@@ -1107,13 +1204,13 @@ pub fn increment_batch_id(env: &Env) -> u64 {
     let next = current + 1;
     env.storage()
         .instance()
-        .set(&DataKey::BatchIdCounter, &next);
+        .set(&DataKey::Batch(BatchDataKey::NextBatchId, 0), &next);
     extend_instance_ttl(env);
     next
 }
 
 pub fn set_batch(env: &Env, batch: &crate::types::BatchTransaction) {
-    let key = DataKey::Batch(batch.id);
+    let key = DataKey::Batch(BatchDataKey::Batch, batch.id);
     env.storage().persistent().set(&key, batch);
     env.storage()
         .persistent()
@@ -1121,7 +1218,7 @@ pub fn set_batch(env: &Env, batch: &crate::types::BatchTransaction) {
 }
 
 pub fn get_batch(env: &Env, batch_id: u64) -> Result<crate::types::BatchTransaction, VaultError> {
-    let key = DataKey::Batch(batch_id);
+    let key = DataKey::Batch(BatchDataKey::Batch, batch_id);
     env.storage()
         .persistent()
         .get(&key)
@@ -1130,7 +1227,7 @@ pub fn get_batch(env: &Env, batch_id: u64) -> Result<crate::types::BatchTransact
 }
 
 pub fn set_batch_result(env: &Env, result: &crate::types::BatchExecutionResult) {
-    let key = DataKey::BatchResult(result.batch_id);
+    let key = DataKey::Batch(BatchDataKey::Result, result.batch_id);
     env.storage().persistent().set(&key, result);
     env.storage()
         .persistent()
@@ -1138,13 +1235,13 @@ pub fn set_batch_result(env: &Env, result: &crate::types::BatchExecutionResult) 
 }
 
 pub fn get_batch_result(env: &Env, batch_id: u64) -> Option<crate::types::BatchExecutionResult> {
-    let key = DataKey::BatchResult(batch_id);
+    let key = DataKey::Batch(BatchDataKey::Result, batch_id);
     env.storage().persistent().get(&key).flatten()
 }
 
 #[allow(dead_code)]
 pub fn get_rollback_state(env: &Env, batch_id: u64) -> Vec<(Address, i128)> {
-    let key = DataKey::BatchRollback(batch_id);
+    let key = DataKey::Batch(BatchDataKey::Rollback, batch_id);
     env.storage()
         .persistent()
         .get(&key)
@@ -1153,7 +1250,7 @@ pub fn get_rollback_state(env: &Env, batch_id: u64) -> Vec<(Address, i128)> {
 }
 
 pub fn set_rollback_state(env: &Env, batch_id: u64, state: &Vec<(Address, i128)>) {
-    let key = DataKey::BatchRollback(batch_id);
+    let key = DataKey::Batch(BatchDataKey::Rollback, batch_id);
     env.storage().persistent().set(&key, state);
     env.storage()
         .persistent()
@@ -1167,12 +1264,12 @@ pub fn set_rollback_state(env: &Env, batch_id: u64, state: &Vec<(Address, i128)>
 pub fn get_recovery_proposal(env: &Env, id: u64) -> Result<RecoveryProposal, VaultError> {
     env.storage()
         .persistent()
-        .get(&DataKey::RecoveryProposal(id))
+        .get(&DataKey::Recovery(RecoveryDataKey::RecoveryProposal, id))
         .ok_or(VaultError::ProposalNotFound)
 }
 
 pub fn set_recovery_proposal(env: &Env, proposal: &RecoveryProposal) {
-    let key = DataKey::RecoveryProposal(proposal.id);
+    let key = DataKey::Recovery(RecoveryDataKey::RecoveryProposal, proposal.id);
     env.storage().persistent().set(&key, proposal);
     env.storage()
         .persistent()
@@ -1182,15 +1279,16 @@ pub fn set_recovery_proposal(env: &Env, proposal: &RecoveryProposal) {
 pub fn get_next_recovery_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .get(&DataKey::NextRecoveryId)
+        .get(&DataKey::Recovery(RecoveryDataKey::NextRecoveryId, 0))
         .unwrap_or(1)
 }
 
 pub fn increment_recovery_id(env: &Env) -> u64 {
     let id = get_next_recovery_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextRecoveryId, &(id + 1));
+    env.storage().instance().set(
+        &DataKey::Recovery(RecoveryDataKey::NextRecoveryId, 0),
+        &(id + 1),
+    );
     id
 }
 // ============================================================================
@@ -1343,4 +1441,154 @@ pub fn add_proposal_match(env: &Env, proposal_id: u64, match_id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Bounty System (Issue: feature/bounty-system)
+// ============================================================================
+
+/// Get the next bounty ID counter
+pub fn get_next_bounty_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::Bounty(BountyDataKey::NextBountyId, 0))
+        .unwrap_or(1)
+}
+
+/// Increment and return the next bounty ID
+pub fn increment_bounty_id(env: &Env) -> u64 {
+    let id = get_next_bounty_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::Bounty(BountyDataKey::NextBountyId, 0), &(id + 1));
+    id
+}
+
+/// Get a bounty by ID
+pub fn get_bounty(env: &Env, bounty_id: u64) -> Option<Bounty> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Bounty(BountyDataKey::Bounty, bounty_id))
+}
+
+/// Store a bounty
+pub fn set_bounty(env: &Env, bounty: &Bounty) {
+    let key = DataKey::Bounty(BountyDataKey::Bounty, bounty.id);
+    env.storage().persistent().set(&key, bounty);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get the next claim ID counter
+pub fn get_next_claim_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::Bounty(BountyDataKey::NextClaimId, 0))
+        .unwrap_or(1)
+}
+
+/// Increment and return the next claim ID
+pub fn increment_claim_id(env: &Env) -> u64 {
+    let id = get_next_claim_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::Bounty(BountyDataKey::NextClaimId, 0), &(id + 1));
+    id
+}
+
+/// Get a claim by ID
+pub fn get_claim(env: &Env, claim_id: u64) -> Option<BountyClaim> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Bounty(BountyDataKey::Claim, claim_id))
+}
+
+/// Store a claim
+pub fn set_claim(env: &Env, claim: &BountyClaim) {
+    let key = DataKey::Bounty(BountyDataKey::Claim, claim.id);
+    env.storage().persistent().set(&key, claim);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get all claims for a bounty
+pub fn get_bounty_claims(env: &Env, bounty_id: u64) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Bounty(BountyDataKey::BountyClaims, bounty_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add a claim to a bounty's claim list
+pub fn add_bounty_claim(env: &Env, bounty_id: u64, claim_id: u64) {
+    let mut claims = get_bounty_claims(env, bounty_id);
+    claims.push_back(claim_id);
+    let key = DataKey::Bounty(BountyDataKey::BountyClaims, bounty_id);
+    env.storage().persistent().set(&key, &claims);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get list of active bounties
+pub fn get_active_bounties(env: &Env) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Bounty(BountyDataKey::ActiveBounties, 0))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add a bounty to active list
+pub fn add_active_bounty(env: &Env, bounty_id: u64) {
+    let mut bounties = get_active_bounties(env);
+    bounties.push_back(bounty_id);
+    let key = DataKey::Bounty(BountyDataKey::ActiveBounties, 0);
+    env.storage().persistent().set(&key, &bounties);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Remove a bounty from active list
+pub fn remove_active_bounty(env: &Env, bounty_id: u64) {
+    let bounties = get_active_bounties(env);
+    let mut new_bounties: Vec<u64> = Vec::new(env);
+    for i in 0..bounties.len() {
+        let id = bounties.get(i).unwrap();
+        if id != bounty_id {
+            new_bounties.push_back(id);
+        }
+    }
+    let key = DataKey::Bounty(BountyDataKey::ActiveBounties, 0);
+    env.storage().persistent().set(&key, &new_bounties);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+/// Get bounties created by an address
+pub fn get_creator_bounties(env: &Env, creator: &Address) -> Vec<u64> {
+    // For now, scan all bounties - can be optimized later
+    // This is a simple implementation that works
+    let mut result = Vec::new(env);
+    let next_id = get_next_bounty_id(env);
+
+    for i in 1..next_id {
+        if let Some(bounty) = get_bounty(env, i) {
+            if bounty.creator == *creator {
+                result.push_back(i);
+            }
+        }
+    }
+
+    result
+}
+
+/// Add a bounty to creator's list
+pub fn add_creator_bounty(env: &Env, _creator: &Address, _bounty_id: u64) {
+    // No-op for now since we scan in get_creator_bounties
+    // This keeps the API consistent
+    extend_instance_ttl(env);
 }

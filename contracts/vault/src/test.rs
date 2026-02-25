@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::types::{
-    CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution, DisputeStatus, RetryConfig,
-    SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction, VelocityConfig,
+    BountyStatus, ClaimStatus, CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution,
+    DisputeStatus, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction,
+    VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -7661,4 +7662,261 @@ fn test_get_matches_for_proposal() {
     // Get matches for buy proposal
     let matches = client.get_matches_for_proposal(&buy_id);
     assert_eq!(matches.len(), 1);
+}
+
+// ============================================================================
+
+// ============================================================================
+// Bounty System Tests
+// ============================================================================
+
+#[test]
+fn test_create_bounty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let token_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+    };
+    client.initialize(&admin, &config);
+
+    let creator = Address::generate(&env);
+    let reward_amount = 1_000_000i128;
+
+    // Mint tokens to creator
+    token_client.mint(&creator, &reward_amount);
+
+    // Create bounty
+    let bounty_id = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "test_bounty"),
+        &String::from_str(&env, "Complete this task"),
+        &token_addr,
+        &reward_amount,
+        &1000, // duration in ledgers
+        &2,    // required approvals
+        &0,    // no associated proposal
+    );
+
+    assert_eq!(bounty_id, 1);
+
+    // Verify bounty was created
+    let bounty = client.get_bounty(&bounty_id).unwrap();
+    assert_eq!(bounty.creator, creator);
+    assert_eq!(bounty.reward_amount, reward_amount);
+    assert_eq!(bounty.status, BountyStatus::Active);
+}
+
+#[test]
+fn test_submit_and_approve_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let token_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+    };
+    client.initialize(&admin, &config);
+
+    let creator = Address::generate(&env);
+    let claimer = Address::generate(&env);
+    let reward_amount = 1_000_000i128;
+
+    token_client.mint(&creator, &reward_amount);
+
+    let bounty_id = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "test_bounty"),
+        &String::from_str(&env, "Complete this task"),
+        &token_addr,
+        &reward_amount,
+        &1000,
+        &2,
+        &0,
+    );
+
+    // Submit claim
+    let claim_id = client.submit_claim(
+        &claimer,
+        &bounty_id,
+        &String::from_str(&env, "https://proof.com/evidence"),
+        &Symbol::new(&env, "completed"),
+    );
+
+    assert_eq!(claim_id, 1);
+
+    // Verify claim was created
+    let claim = client.get_claim(&claim_id).unwrap();
+    assert_eq!(claim.claimant, claimer);
+    assert_eq!(claim.bounty_id, bounty_id);
+    assert_eq!(claim.status, ClaimStatus::Pending);
+
+    // First approval
+    client.approve_claim(&signer1, &claim_id);
+
+    let bounty = client.get_bounty(&bounty_id).unwrap();
+    assert_eq!(bounty.claim_approvals.len(), 1);
+
+    // Second approval - should trigger reward distribution
+    client.approve_claim(&signer2, &claim_id);
+
+    let claim = client.get_claim(&claim_id).unwrap();
+    assert_eq!(claim.status, ClaimStatus::Approved);
+
+    let bounty = client.get_bounty(&bounty_id).unwrap();
+    assert_eq!(bounty.claim_approvals.len(), 2);
+    assert_eq!(bounty.status, BountyStatus::Completed);
+}
+
+#[test]
+fn test_cancel_and_expire_bounty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let token_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+    };
+    client.initialize(&admin, &config);
+
+    let creator = Address::generate(&env);
+    let reward_amount = 1_000_000i128;
+
+    token_client.mint(&creator, &(reward_amount * 2));
+
+    // Create bounty for cancellation test
+    let bounty_id1 = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "bounty1"),
+        &String::from_str(&env, "Task 1"),
+        &token_addr,
+        &reward_amount,
+        &1000,
+        &2,
+        &0,
+    );
+
+    // Cancel bounty
+    client.cancel_bounty(&creator, &bounty_id1, &Symbol::new(&env, "cancelled"));
+
+    let bounty = client.get_bounty(&bounty_id1).unwrap();
+    assert_eq!(bounty.status, BountyStatus::Cancelled);
+
+    // Create bounty for expiration test
+    let bounty_id2 = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "bounty2"),
+        &String::from_str(&env, "Task 2"),
+        &token_addr,
+        &reward_amount,
+        &10, // short duration
+        &2,
+        &0,
+    );
+
+    // Move time forward
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 20;
+    });
+
+    // Expire bounties
+    client.expire_bounties(&admin);
+
+    let bounty = client.get_bounty(&bounty_id2).unwrap();
+    assert_eq!(bounty.status, BountyStatus::Expired);
 }
