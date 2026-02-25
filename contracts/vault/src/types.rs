@@ -1,6 +1,21 @@
 //! VaultDAO - Type Definitions
 //!
 //! Core data structures for the multisig treasury contract.
+//!
+//! # Gas Optimization Notes
+//!
+//! This module implements several gas optimization techniques:
+//!
+//! 1. **Type Size Optimization**: Using smaller integer types (u32 instead of u64) where
+//!    values won't exceed the smaller type's range. This reduces storage and serialization costs.
+//!
+//! 2. **Storage Packing**: Related fields are grouped in `Packed*` structs to minimize
+//!    the number of storage operations. A single storage read/write is cheaper than multiple.
+//!
+//! 3. **Lazy Loading**: Large optional fields (attachments, conditions) are stored separately
+//!    to avoid paying for their serialization when not needed.
+//!
+//! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
 use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
 
@@ -45,6 +60,8 @@ pub struct Config {
     /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
     /// Set to 0 to disable quorum enforcement.
     pub quorum: u32,
+    /// Quorum requirement as a percentage of total signers.
+    pub quorum_percentage: u32,
     /// Maximum amount per proposal (in stroops)
     pub spending_limit: i128,
     /// Maximum aggregate daily spending (in stroops)
@@ -73,6 +90,21 @@ pub struct CancellationRecord {
     pub reason: Symbol,
     pub cancelled_at_ledger: u64,
     pub refunded_amount: i128,
+}
+
+/// Audit record for a proposal amendment
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalAmendment {
+    pub proposal_id: u64,
+    pub amended_by: Address,
+    pub amended_at_ledger: u64,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -239,6 +271,8 @@ pub struct Proposal {
     pub snapshot_ledger: u64,
     /// Voting power snapshot — addresses eligible to vote at creation time
     pub snapshot_signers: Vec<Address>,
+    /// Proposal IDs that must be executed before this proposal can execute
+    pub depends_on: Vec<u64>,
     /// Flag indicating if this is a swap proposal
     pub is_swap: bool,
     /// Ledger sequence when voting must complete (0 = no deadline)
@@ -346,6 +380,69 @@ pub struct Comment {
     pub parent_id: u64,
     pub created_at: u64,
     pub edited_at: u64,
+}
+
+// ============================================================================
+// Proposal Templates (Issue: feature/contract-templates)
+// ============================================================================
+
+/// Proposal template for recurring operations
+///
+/// Templates allow pre-approved proposal configurations to be stored on-chain,
+/// enabling quick creation of common proposals like monthly payroll.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalTemplate {
+    /// Unique template identifier
+    pub id: u64,
+    /// Human-readable template name
+    pub name: Symbol,
+    /// Template description
+    pub description: Symbol,
+    /// Default recipient address (optional - can be overridden)
+    pub recipient: Address,
+    /// Default token contract address
+    pub token: Address,
+    /// Default amount (can be overridden within min/max bounds)
+    pub amount: i128,
+    /// Default memo/description
+    pub memo: Symbol,
+    /// Address that created the template
+    pub creator: Address,
+    /// Template version number (incremented on updates)
+    pub version: u32,
+    /// Whether the template is active and usable
+    pub is_active: bool,
+    /// Ledger sequence when template was created
+    pub created_at: u64,
+    /// Ledger sequence when template was last updated
+    pub updated_at: u64,
+    /// Minimum allowed amount (0 = no minimum)
+    pub min_amount: i128,
+    /// Maximum allowed amount (0 = no maximum)
+    pub max_amount: i128,
+}
+
+/// Overrides for creating a proposal from a template
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TemplateOverrides {
+    /// Whether to override recipient
+    pub override_recipient: bool,
+    /// Override recipient address (only used if override_recipient is true)
+    pub recipient: Address,
+    /// Whether to override amount
+    pub override_amount: bool,
+    /// Override amount (only used if override_amount is true, must be within template bounds)
+    pub amount: i128,
+    /// Whether to override memo
+    pub override_memo: bool,
+    /// Override memo (only used if override_memo is true)
+    pub memo: Symbol,
+    /// Whether to override priority
+    pub override_priority: bool,
+    /// Override priority level (only used if override_priority is true)
+    pub priority: Priority,
 }
 
 // ============================================================================
@@ -494,4 +591,100 @@ pub struct Dispute {
     pub filed_at: u64,
     /// Ledger when dispute was resolved (0 if unresolved)
     pub resolved_at: u64,
+}
+// ============================================================================
+// Escrow System (Issue: feature/escrow-system)
+// ============================================================================
+
+/// Status lifecycle of an escrow
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EscrowStatus {
+    /// Escrow created, awaiting funding
+    Pending = 0,
+    /// Funds locked, milestone phase active
+    Active = 1,
+    /// All milestones completed, funds ready for release
+    MilestonesComplete = 2,
+    /// Funds released to recipient
+    Released = 3,
+    /// Refunded to funder (on failure or dispute)
+    Refunded = 4,
+    /// Disputed, awaiting arbitration
+    Disputed = 5,
+}
+
+/// Milestone tracking unit for progressive fund release
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Milestone {
+    /// Unique milestone ID
+    pub id: u64,
+    /// Percentage of total escrow amount (0-100)
+    pub percentage: u32,
+    /// Ledger when this milestone can be marked complete
+    pub release_ledger: u64,
+    /// Whether this milestone has been verified as complete
+    pub is_completed: bool,
+    /// Ledger when milestone was completed (0 if not completed)
+    pub completion_ledger: u64,
+}
+
+/// Escrow agreement holding funds with milestone-based releases
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Escrow {
+    /// Unique escrow ID
+    pub id: u64,
+    /// Address that funded the escrow
+    pub funder: Address,
+    /// Address that receives funds on completion
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Total escrow amount (in token's smallest unit)
+    pub total_amount: i128,
+    /// Amount already released
+    pub released_amount: i128,
+    /// Milestones for progressive fund release
+    pub milestones: Vec<Milestone>,
+    /// Current escrow status
+    pub status: EscrowStatus,
+    /// Arbitrator for dispute resolution
+    pub arbitrator: Address,
+    /// Optional dispute details if disputed
+    pub dispute_reason: Symbol,
+    /// Ledger when escrow was created
+    pub created_at: u64,
+    /// Ledger when escrow expires (full refund if not completed)
+    pub expires_at: u64,
+    /// Ledger when escrow was released/refunded (0 if still active)
+    pub finalized_at: u64,
+}
+
+impl Escrow {
+    /// Calculate total percentage from all milestones
+    pub fn total_milestone_percentage(&self) -> u32 {
+        let mut total: u32 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                total = total.saturating_add(m.percentage);
+            }
+        }
+        total
+    }
+
+    /// Calculate amount available for immediate release
+    pub fn amount_to_release(&self) -> i128 {
+        let mut completed_percentage: u32 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.is_completed {
+                    completed_percentage = completed_percentage.saturating_add(m.percentage);
+                }
+            }
+        }
+        (self.total_amount * completed_percentage as i128) / 100 - self.released_amount
+    }
 }

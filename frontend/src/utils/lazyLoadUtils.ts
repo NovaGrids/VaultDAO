@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import type { ComponentType } from 'react';
+import type { ComponentType, LazyExoticComponent } from 'react';
 
 /**
  * Lazy load a component with a fallback UI
@@ -8,7 +8,7 @@ import type { ComponentType } from 'react';
 export function lazyLoadComponent<P extends object>(
   importFunc: () => Promise<{ default: ComponentType<P> }>,
   componentName: string
-): ComponentType<P> {
+): LazyExoticComponent<ComponentType<P>> {
   return lazy(async () => {
     try {
       return await importFunc();
