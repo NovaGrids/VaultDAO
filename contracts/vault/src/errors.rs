@@ -95,4 +95,9 @@ pub enum VaultError {
     TemplateNotFound = 210,
     TemplateInactive = 211,
     TemplateValidationFailed = 212,
+
+    // Batch transaction errors (consolidated)
+    BatchNotFound = 220,
+    BatchNotPending = 221,
+    BatchSizeExceeded = 222,
 }

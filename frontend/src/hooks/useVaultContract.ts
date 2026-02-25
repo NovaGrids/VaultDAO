@@ -8,7 +8,7 @@ import {
     nativeToScVal,
     scValToNative
 } from 'stellar-sdk';
-import { useWallet } from '../context/WalletContextProps';
+import { useWallet } from './useWallet';
 import { parseError } from '../utils/errorParser';
 import { withRetry } from '../utils/retryUtils';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';

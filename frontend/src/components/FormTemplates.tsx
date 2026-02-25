@@ -62,7 +62,7 @@ const FormTemplates: React.FC<FormTemplatesProps> = ({ onSelectTemplate }: FormT
         } else {
           alert('Invalid template format');
         }
-      } catch (error) {
+      } catch {
         alert('Failed to import template');
       }
     };
@@ -119,7 +119,7 @@ const FormTemplates: React.FC<FormTemplatesProps> = ({ onSelectTemplate }: FormT
             />
             <select
               value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value as any)}
+              onChange={(e) => setFilterCategory(e.target.value as typeof filterCategory)}
               className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-purple-500"
             >
               {categoryOptions.map(opt => (
