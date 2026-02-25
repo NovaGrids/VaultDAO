@@ -1,16 +1,8 @@
 import React, { useState } from 'react';
 import { MessageCircle, Edit2, Check, X } from 'lucide-react';
+import type { Comment } from '../types';
 
-export interface Comment {
-  id: string;
-  proposalId: string;
-  author: string;
-  text: string;
-  parentId: string;
-  createdAt: string;
-  editedAt: string;
-  replies?: Comment[];
-}
+export type { Comment };
 
 interface CommentThreadProps {
   comments: Comment[];

@@ -1,7 +1,6 @@
 // frontend/src/App.tsx
 
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from './components/Layout/DashboardLayout';
 import Overview from './app/dashboard/Overview';
 import Proposals from './app/dashboard/Proposals';
@@ -27,9 +26,6 @@ function App() {
           <Route path="settings" element={<Settings />} />
           <Route path="errors" element={<ErrorDashboard />} />
         </Route>
-
-        {/* Toast Demo Route */}
-        {/* <Route path="/toast-demo" element={<ToastDemo />} /> */}
       </Routes>
     </BrowserRouter>
   );

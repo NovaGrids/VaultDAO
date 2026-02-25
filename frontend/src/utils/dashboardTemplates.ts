@@ -83,11 +83,11 @@ export const getTemplate = (id: string): DashboardTemplate | undefined => {
   return dashboardTemplates.find(t => t.id === id);
 };
 
-export const saveDashboardLayout = (layout: any) => {
+export const saveDashboardLayout = (layout: unknown) => {
   localStorage.setItem('vaultdao-dashboard-layout', JSON.stringify(layout));
 };
 
-export const loadDashboardLayout = (): any | null => {
+export const loadDashboardLayout = (): unknown | null => {
   const saved = localStorage.getItem('vaultdao-dashboard-layout');
   return saved ? JSON.parse(saved) : null;
 };

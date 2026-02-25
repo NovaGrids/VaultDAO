@@ -35,13 +35,24 @@ export function FilePreview({ file, onRemove, className = '' }: FilePreviewProps
   const isPdf = file.type === 'application/pdf';
 
   useEffect(() => {
+    let isMounted = true;
+    
     if ((isImage || isPdf) && file.file) {
       const url = file.objectUrl ?? URL.createObjectURL(file.file);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPreviewUrl(url);
       return () => {
+        isMounted = false;
         if (!file.objectUrl) URL.revokeObjectURL(url);
       };
+    } else if (isMounted) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPreviewUrl(null);
     }
+    
+    return () => {
+      isMounted = false;
+    };
   }, [file.file, file.objectUrl, isImage, isPdf]);
 
   const handleRemove = () => {

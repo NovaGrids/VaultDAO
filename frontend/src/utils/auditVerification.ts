@@ -4,7 +4,7 @@ export interface AuditEntry {
   ledger: string;
   user: string;
   action: string;
-  details: Record<string, any>;
+  details: Record<string, unknown>;
   transactionHash: string;
   previousHash?: string;
   hash?: string;

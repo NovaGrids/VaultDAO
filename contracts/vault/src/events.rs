@@ -2,6 +2,7 @@
 //!
 //! Standardized events for proposal lifecycle and admin actions.
 
+use crate::types::ProposalAmendment;
 use soroban_sdk::{Address, Env, Symbol};
 
 /// Emit when contract is initialized
@@ -120,6 +121,23 @@ pub fn emit_proposal_cancelled(
     );
 }
 
+/// Emit when a proposal is amended.
+pub fn emit_proposal_amended(env: &Env, amendment: &ProposalAmendment) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_amended"), amendment.proposal_id),
+        (
+            amendment.amended_by.clone(),
+            amendment.old_recipient.clone(),
+            amendment.new_recipient.clone(),
+            amendment.old_amount,
+            amendment.new_amount,
+            amendment.old_memo.clone(),
+            amendment.new_memo.clone(),
+            amendment.amended_at_ledger,
+        ),
+    );
+}
+
 /// Emit when a role is assigned
 pub fn emit_role_assigned(env: &Env, addr: &Address, role: u32) {
     env.events()
@@ -130,6 +148,22 @@ pub fn emit_role_assigned(env: &Env, addr: &Address, role: u32) {
 pub fn emit_config_updated(env: &Env, updater: &Address) {
     env.events()
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
+}
+
+/// Emit when quorum configuration is updated by admin
+pub fn emit_quorum_updated(env: &Env, admin: &Address, old_quorum: u32, new_quorum: u32) {
+    env.events().publish(
+        (Symbol::new(env, "quorum_updated"),),
+        (admin.clone(), old_quorum, new_quorum),
+    );
+}
+
+/// Emit when a proposal reaches quorum participation threshold.
+pub fn emit_quorum_reached(env: &Env, proposal_id: u64, quorum_votes: u32, required_quorum: u32) {
+    env.events().publish(
+        (Symbol::new(env, "quorum_reached"), proposal_id),
+        (quorum_votes, required_quorum),
+    );
 }
 
 /// Emit when a signer is added
@@ -369,6 +403,68 @@ pub fn emit_proposal_deadline_rejected(env: &Env, proposal_id: u64, deadline: u6
 }
 
 // ============================================================================
+// Proposal Template Events (feature/contract-templates)
+// ============================================================================
+
+/// Emit when a new template is created
+#[allow(dead_code)]
+pub fn emit_template_created(
+    env: &Env,
+    template_id: u64,
+    name: &soroban_sdk::Symbol,
+    creator: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_created"), template_id),
+        (name.clone(), creator.clone()),
+    );
+}
+
+/// Emit when a template is updated
+#[allow(dead_code)]
+pub fn emit_template_updated(
+    env: &Env,
+    template_id: u64,
+    name: &soroban_sdk::Symbol,
+    version: u32,
+    updater: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_updated"), template_id),
+        (name.clone(), version, updater.clone()),
+    );
+}
+
+/// Emit when a template's active status changes
+#[allow(dead_code)]
+pub fn emit_template_status_changed(
+    env: &Env,
+    template_id: u64,
+    name: &soroban_sdk::Symbol,
+    is_active: bool,
+    admin: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_status"), template_id),
+        (name.clone(), is_active, admin.clone()),
+    );
+}
+
+/// Emit when a proposal is created from a template
+pub fn emit_proposal_from_template(
+    env: &Env,
+    proposal_id: u64,
+    template_id: u64,
+    template_name: &soroban_sdk::Symbol,
+    proposer: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_from_template"), proposal_id),
+        (template_id, template_name.clone(), proposer.clone()),
+    );
+}
+
+// ============================================================================
 // Retry Events (feature/execution-retry)
 // ============================================================================
 
@@ -399,5 +495,189 @@ pub fn emit_retries_exhausted(env: &Env, proposal_id: u64, total_attempts: u32) 
     env.events().publish(
         (Symbol::new(env, "retries_exhausted"), proposal_id),
         total_attempts,
+    );
+}
+
+// ============================================================================
+// Cross-Vault Events (feature/cross-vault-coordination)
+// ============================================================================
+
+/// Emit when a cross-vault proposal is created
+pub fn emit_cross_vault_proposed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_proposed"), proposal_id),
+        (proposer.clone(), num_actions),
+    );
+}
+
+/// Emit when cross-vault execution starts
+pub fn emit_cross_vault_execution_started(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_exec_start"), proposal_id),
+        (executor.clone(), num_actions),
+    );
+}
+
+/// Emit when a single cross-vault action is executed
+pub fn emit_cross_vault_action_executed(
+    env: &Env,
+    proposal_id: u64,
+    action_index: u32,
+    vault_address: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_action"), proposal_id),
+        (action_index, vault_address.clone(), amount),
+    );
+}
+
+/// Emit when all cross-vault actions complete successfully
+pub fn emit_cross_vault_executed(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    num_actions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_executed"), proposal_id),
+        (executor.clone(), num_actions),
+    );
+}
+
+/// Emit when a participant vault receives and executes a cross-vault action
+pub fn emit_cross_vault_action_received(
+    env: &Env,
+    coordinator: &Address,
+    recipient: &Address,
+    token: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "xvault_received"),),
+        (
+            coordinator.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+        ),
+    );
+}
+
+/// Emit when cross-vault configuration is updated
+pub fn emit_cross_vault_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "xvault_cfg_updated"),), admin.clone());
+}
+
+// ============================================================================
+// Dispute Resolution Events (feature/dispute-resolution)
+// ============================================================================
+
+/// Emit when a dispute is filed against a proposal
+pub fn emit_dispute_filed(env: &Env, dispute_id: u64, proposal_id: u64, disputer: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_filed"), dispute_id),
+        (proposal_id, disputer.clone()),
+    );
+}
+
+/// Emit when a dispute is resolved by an arbitrator
+pub fn emit_dispute_resolved(
+    env: &Env,
+    dispute_id: u64,
+    proposal_id: u64,
+    arbitrator: &Address,
+    resolution: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_resolved"), dispute_id),
+        (proposal_id, arbitrator.clone(), resolution),
+    );
+}
+
+/// Emit when arbitrator list is updated
+pub fn emit_arbitrators_updated(env: &Env, admin: &Address, count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "arbitrators_updated"),),
+        (admin.clone(), count),
+    );
+}
+// ============================================================================
+// Escrow Events (feature/escrow-system)
+// ============================================================================
+
+/// Emit when an escrow agreement is created
+pub fn emit_escrow_created(
+    env: &Env,
+    escrow_id: u64,
+    funder: &Address,
+    recipient: &Address,
+    token: &Address,
+    amount: i128,
+    duration_ledgers: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_created"), escrow_id),
+        (
+            funder.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+            duration_ledgers,
+        ),
+    );
+}
+
+/// Emit when a milestone is completed
+pub fn emit_milestone_completed(env: &Env, escrow_id: u64, milestone_id: u64, completer: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "milestone_complete"), escrow_id),
+        (milestone_id, completer.clone()),
+    );
+}
+
+/// Emit when escrow funds are released
+pub fn emit_escrow_released(
+    env: &Env,
+    escrow_id: u64,
+    recipient: &Address,
+    amount: i128,
+    is_refund: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_released"), escrow_id),
+        (recipient.clone(), amount, is_refund),
+    );
+}
+
+/// Emit when an escrow is disputed
+pub fn emit_escrow_disputed(env: &Env, escrow_id: u64, disputer: &Address, reason: &Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_disputed"), escrow_id),
+        (disputer.clone(), reason.clone()),
+    );
+}
+
+/// Emit when an escrow dispute is resolved
+pub fn emit_escrow_dispute_resolved(
+    env: &Env,
+    escrow_id: u64,
+    arbitrator: &Address,
+    released_to_recipient: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_resolved"), escrow_id),
+        (arbitrator.clone(), released_to_recipient),
     );
 }
