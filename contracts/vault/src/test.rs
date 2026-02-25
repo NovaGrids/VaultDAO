@@ -6901,23 +6901,9 @@ fn test_get_proposal_children() {
     assert_eq!(children.len(), 0);
 
     // Fork twice
-    let child1_id = client.fork_proposal(
-        &signer2,
-        &parent_id,
-        &None,
-        &Some(150i128),
-        &None,
-        &None,
-    );
+    let child1_id = client.fork_proposal(&signer2, &parent_id, &None, &Some(150i128), &None, &None);
 
-    let child2_id = client.fork_proposal(
-        &signer2,
-        &parent_id,
-        &None,
-        &Some(200i128),
-        &None,
-        &None,
-    );
+    let child2_id = client.fork_proposal(&signer2, &parent_id, &None, &Some(200i128), &None, &None);
 
     // Verify children list
     let children = client.get_proposal_children(&parent_id);
@@ -6970,14 +6956,7 @@ fn test_inheritance_chain() {
         &None,
     );
 
-    let child_id = client.fork_proposal(
-        &signer1,
-        &parent_id,
-        &None,
-        &Some(200i128),
-        &None,
-        &None,
-    );
+    let child_id = client.fork_proposal(&signer1, &parent_id, &None, &Some(200i128), &None, &None);
 
     // Verify inheritance chains
     let grandparent_chain = client.get_inheritance_chain(&grandparent_id);
@@ -7088,14 +7067,7 @@ fn test_fork_proposal_unauthorized() {
     );
 
     // Try to fork as member (should fail)
-    let result = client.try_fork_proposal(
-        &member,
-        &parent_id,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
+    let result = client.try_fork_proposal(&member, &parent_id, &None, &None, &None, &None);
 
     assert!(result.is_err());
     assert_eq!(result.err(), Some(Ok(VaultError::InsufficientRole)));
@@ -7122,14 +7094,7 @@ fn test_fork_nonexistent_proposal() {
     client.set_role(&admin, &signer1, &Role::Treasurer);
 
     // Try to fork non-existent proposal
-    let result = client.try_fork_proposal(
-        &signer1,
-        &999u64,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
+    let result = client.try_fork_proposal(&signer1, &999u64, &None, &None, &None, &None);
 
     assert!(result.is_err());
     assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotFound)));
@@ -7175,14 +7140,7 @@ fn test_fork_inherits_metadata_and_tags() {
     client.add_proposal_tag(&signer1, &parent_id, &Symbol::new(&env, "payroll"));
 
     // Fork the proposal
-    let child_id = client.fork_proposal(
-        &signer1,
-        &parent_id,
-        &None,
-        &Some(150i128),
-        &None,
-        &None,
-    );
+    let child_id = client.fork_proposal(&signer1, &parent_id, &None, &Some(150i128), &None, &None);
 
     // Verify child inherits tags
     let child = client.get_proposal(&child_id);
@@ -7285,14 +7243,7 @@ fn test_fork_independent_approvals() {
     assert_eq!(parent.status, ProposalStatus::Approved);
 
     // Fork the proposal
-    let child_id = client.fork_proposal(
-        &signer1,
-        &parent_id,
-        &None,
-        &Some(150i128),
-        &None,
-        &None,
-    );
+    let child_id = client.fork_proposal(&signer1, &parent_id, &None, &Some(150i128), &None, &None);
 
     // Verify child has no approvals (independent voting)
     let child = client.get_proposal(&child_id);

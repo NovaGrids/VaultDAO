@@ -1287,14 +1287,7 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         // 11. Emit events
-        events::emit_proposal_forked(
-            &env,
-            proposal_id,
-            parent_id,
-            &forker,
-            &recipient,
-            amount,
-        );
+        events::emit_proposal_forked(&env, proposal_id, parent_id, &forker, &recipient, amount);
         events::emit_proposal_created(
             &env,
             proposal_id,
@@ -1333,18 +1326,15 @@ impl VaultDAO {
     ///
     /// Returns a tuple of (parent_proposal, child_proposal) for easy comparison.
     /// Useful for understanding what changed between the parent and fork.
-    pub fn compare_fork(
-        env: Env,
-        child_id: u64,
-    ) -> Result<(Proposal, Proposal), VaultError> {
+    pub fn compare_fork(env: Env, child_id: u64) -> Result<(Proposal, Proposal), VaultError> {
         let child = storage::get_proposal(&env, child_id)?;
-        
+
         if child.parent_id == 0 {
             return Err(VaultError::ProposalNotFound);
         }
 
         let parent = storage::get_proposal(&env, child.parent_id)?;
-        
+
         Ok((parent, child))
     }
 
