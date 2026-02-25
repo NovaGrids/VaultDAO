@@ -176,7 +176,7 @@ fn test_unauthorized_proposal() {
     );
 
     assert!(res.is_err());
-    assert_eq!(res.err(), Some(Ok(VaultError::InsufficientRole)));
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
 
 #[test]
@@ -5367,16 +5367,21 @@ fn test_reputation_decay_over_time() {
     let rep_after = client.get_reputation(&proposer);
 
     // Score should drift toward neutral (500)
-    if rep_before.score > 500 {
-        assert!(
-            rep_after.score < rep_before.score,
-            "Decay should decrease score above 500"
-        );
-    } else if rep_before.score < 500 {
-        assert!(
-            rep_after.score > rep_before.score,
-            "Decay should increase score below 500"
-        );
+    use core::cmp::Ordering;
+    match rep_before.score.cmp(&500) {
+        Ordering::Greater => {
+            assert!(
+                rep_after.score < rep_before.score,
+                "Decay should decrease score above 500"
+            );
+        }
+        Ordering::Less => {
+            assert!(
+                rep_after.score > rep_before.score,
+                "Decay should increase score below 500"
+            );
+        }
+        Ordering::Equal => {}
     }
 }
 

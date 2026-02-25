@@ -231,10 +231,9 @@ impl VaultDAO {
         // 2. Check initialization and load config (single read — gas optimization)
         let config = storage::get_config(&env)?;
 
-        // 3. Check role
-        let role = storage::get_role(&env, &proposer);
-        if role != Role::Treasurer && role != Role::Admin {
-            return Err(VaultError::InsufficientRole);
+        // 3. Check permission
+        if !Self::check_permission(&env, &proposer, &types::Permission::CreateProposal) {
+            return Err(VaultError::Unauthorized);
         }
 
         // 4. Validate recipient against lists
@@ -371,6 +370,7 @@ impl VaultDAO {
         };
 
         storage::set_proposal(&env, &proposal);
+        Self::persist_execution_fee_estimate(&env, &proposal);
         storage::add_to_priority_queue(&env, priority as u32, proposal_id);
 
         // Extend TTL to ensure persistent data stays alive
@@ -579,6 +579,7 @@ impl VaultDAO {
             };
 
             storage::set_proposal(&env, &proposal);
+            Self::persist_execution_fee_estimate(&env, &proposal);
             storage::add_to_priority_queue(&env, priority.clone() as u32, proposal_id);
             proposal_ids.push_back(proposal_id);
 
@@ -633,10 +634,9 @@ impl VaultDAO {
             return Err(VaultError::NotASigner);
         }
 
-        // Check role (must be Treasurer or Admin)
-        let role = storage::get_role(&env, &signer);
-        if role != Role::Treasurer && role != Role::Admin {
-            return Err(VaultError::InsufficientRole);
+        // Check permission
+        if !Self::check_permission(&env, &signer, &types::Permission::ApproveProposal) {
+            return Err(VaultError::Unauthorized);
         }
 
         // Get proposal
@@ -814,11 +814,9 @@ impl VaultDAO {
                 Self::update_reputation_on_execution(&env, &proposal);
 
                 // Update performance metrics
-                let gas_cfg = storage::get_gas_config(&env);
-                let estimated_gas =
-                    gas_cfg.base_cost + proposal.conditions.len() as u64 * gas_cfg.condition_cost;
                 let execution_time = current_ledger.saturating_sub(proposal.created_at);
-                storage::metrics_on_execution(&env, estimated_gas, execution_time);
+                storage::metrics_on_execution(&env, proposal.gas_used, execution_time);
+                events::emit_execution_fee_used(&env, proposal_id, proposal.gas_used);
                 let metrics = storage::get_metrics(&env);
                 events::emit_metrics_updated(
                     &env,
@@ -1077,25 +1075,30 @@ impl VaultDAO {
         }
 
         // Keep reserved spending in sync with amended amount.
-        if new_amount > proposal.amount {
-            let increase = new_amount - proposal.amount;
-            let today = storage::get_day_number(&env);
-            let week = storage::get_week_number(&env);
+        use core::cmp::Ordering;
+        match new_amount.cmp(&proposal.amount) {
+            Ordering::Greater => {
+                let increase = new_amount - proposal.amount;
+                let today = storage::get_day_number(&env);
+                let week = storage::get_week_number(&env);
 
-            let spent_today = storage::get_daily_spent(&env, today);
-            if spent_today + increase > config.daily_limit {
-                return Err(VaultError::ExceedsDailyLimit);
-            }
-            let spent_week = storage::get_weekly_spent(&env, week);
-            if spent_week + increase > config.weekly_limit {
-                return Err(VaultError::ExceedsWeeklyLimit);
-            }
+                let spent_today = storage::get_daily_spent(&env, today);
+                if spent_today + increase > config.daily_limit {
+                    return Err(VaultError::ExceedsDailyLimit);
+                }
+                let spent_week = storage::get_weekly_spent(&env, week);
+                if spent_week + increase > config.weekly_limit {
+                    return Err(VaultError::ExceedsWeeklyLimit);
+                }
 
-            storage::add_daily_spent(&env, today, increase);
-            storage::add_weekly_spent(&env, week, increase);
-        } else if proposal.amount > new_amount {
-            let decrease = proposal.amount - new_amount;
-            storage::refund_spending_limits(&env, decrease);
+                storage::add_daily_spent(&env, today, increase);
+                storage::add_weekly_spent(&env, week, increase);
+            }
+            Ordering::Less => {
+                let decrease = proposal.amount - new_amount;
+                storage::refund_spending_limits(&env, decrease);
+            }
+            Ordering::Equal => {}
         }
 
         let amendment = ProposalAmendment {
@@ -1147,8 +1150,7 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         admin.require_auth();
 
-        let caller_role = storage::get_role(&env, &admin);
-        if caller_role != Role::Admin {
+        if !Self::check_permission(&env, &admin, &types::Permission::ManageRoles) {
             return Err(VaultError::Unauthorized);
         }
 
@@ -1166,8 +1168,7 @@ impl VaultDAO {
     pub fn add_signer(env: Env, admin: Address, new_signer: Address) -> Result<(), VaultError> {
         admin.require_auth();
 
-        let role = storage::get_role(&env, &admin);
-        if role != Role::Admin {
+        if !Self::check_permission(&env, &admin, &types::Permission::ManageSigners) {
             return Err(VaultError::Unauthorized);
         }
 
@@ -1193,8 +1194,7 @@ impl VaultDAO {
     pub fn remove_signer(env: Env, admin: Address, signer: Address) -> Result<(), VaultError> {
         admin.require_auth();
 
-        let role = storage::get_role(&env, &admin);
-        if role != Role::Admin {
+        if !Self::check_permission(&env, &admin, &types::Permission::ManageSigners) {
             return Err(VaultError::Unauthorized);
         }
 
@@ -2156,7 +2156,6 @@ impl VaultDAO {
 
         // Load config once (gas optimization — avoids repeated storage reads)
         let config = storage::get_config(&env)?;
-        let gas_cfg = storage::get_gas_config(&env);
 
         let current_ledger = env.ledger().sequence() as u64;
         let mut executed = Vec::new(&env);
@@ -2213,9 +2212,8 @@ impl VaultDAO {
             }
 
             // Skip if gas limit would be exceeded
-            let estimated_gas =
-                gas_cfg.base_cost + proposal.conditions.len() as u64 * gas_cfg.condition_cost;
-            if proposal.gas_limit > 0 && estimated_gas > proposal.gas_limit {
+            let fee_estimate = Self::calculate_execution_fee(&env, &proposal);
+            if proposal.gas_limit > 0 && fee_estimate.total_fee > proposal.gas_limit {
                 failed_count += 1;
                 continue;
             }
@@ -2246,7 +2244,7 @@ impl VaultDAO {
                 );
             }
 
-            proposal.gas_used = estimated_gas;
+            proposal.gas_used = fee_estimate.total_fee;
             proposal.status = ProposalStatus::Executed;
             storage::set_proposal(&env, &proposal);
 
@@ -2262,7 +2260,8 @@ impl VaultDAO {
 
             Self::update_reputation_on_execution(&env, &proposal);
             let exec_time = current_ledger.saturating_sub(proposal.created_at);
-            storage::metrics_on_execution(&env, estimated_gas, exec_time);
+            storage::metrics_on_execution(&env, fee_estimate.total_fee, exec_time);
+            events::emit_execution_fee_used(&env, proposal_id, fee_estimate.total_fee);
             executed.push_back(proposal_id);
         }
 
@@ -2747,6 +2746,20 @@ impl VaultDAO {
     /// Get the current gas configuration.
     pub fn get_gas_config(env: Env) -> GasConfig {
         storage::get_gas_config(&env)
+    }
+
+    /// Estimate execution fees for a proposal and persist the breakdown.
+    pub fn estimate_execution_fee(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<ExecutionFeeEstimate, VaultError> {
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        Ok(Self::persist_execution_fee_estimate(&env, &proposal))
+    }
+
+    /// Fetch the latest stored fee estimate for a proposal.
+    pub fn get_execution_fee_estimate(env: Env, proposal_id: u64) -> Option<ExecutionFeeEstimate> {
+        storage::get_execution_fee_estimate(&env, proposal_id)
     }
 
     // ========================================================================
@@ -3270,6 +3283,7 @@ impl VaultDAO {
         };
 
         storage::set_proposal(&env, &proposal);
+        Self::persist_execution_fee_estimate(&env, &proposal);
         storage::set_swap_proposal(&env, proposal_id, &swap_op);
         storage::add_to_priority_queue(&env, priority as u32, proposal_id);
         events::emit_proposal_created(
@@ -3705,6 +3719,7 @@ impl VaultDAO {
         };
 
         storage::set_proposal(&env, &proposal);
+        Self::persist_execution_fee_estimate(&env, &proposal);
         storage::add_to_priority_queue(&env, priority as u32, proposal_id);
 
         // Store companion cross-vault proposal
@@ -3820,6 +3835,7 @@ impl VaultDAO {
         let estimated_gas = gas_cfg.base_cost + num_actions as u64 * gas_cfg.condition_cost;
         let execution_time = current_ledger.saturating_sub(proposal.created_at);
         storage::metrics_on_execution(&env, estimated_gas, execution_time);
+        events::emit_execution_fee_used(&env, proposal_id, estimated_gas);
 
         Ok(())
     }
@@ -4081,11 +4097,14 @@ impl VaultDAO {
         }
 
         // Gas limit check
-        let gas_cfg = storage::get_gas_config(env);
-        let estimated_gas =
-            gas_cfg.base_cost + proposal.conditions.len() as u64 * gas_cfg.condition_cost;
-        if proposal.gas_limit > 0 && estimated_gas > proposal.gas_limit {
-            events::emit_gas_limit_exceeded(env, proposal.id, estimated_gas, proposal.gas_limit);
+        let fee_estimate = Self::calculate_execution_fee(env, proposal);
+        if proposal.gas_limit > 0 && fee_estimate.total_fee > proposal.gas_limit {
+            events::emit_gas_limit_exceeded(
+                env,
+                proposal.id,
+                fee_estimate.total_fee,
+                proposal.gas_limit,
+            );
             return Err(VaultError::GasLimitExceeded);
         }
 
@@ -4123,10 +4142,47 @@ impl VaultDAO {
             );
         }
 
-        // Record gas used
-        proposal.gas_used = estimated_gas;
+        // Record estimated fee used for execution.
+        proposal.gas_used = fee_estimate.total_fee;
 
         Ok(())
+    }
+
+    fn calculate_execution_fee(env: &Env, proposal: &Proposal) -> ExecutionFeeEstimate {
+        let gas_cfg = storage::get_gas_config(env);
+        let mut operation_count: u32 = 1; // Core transfer step.
+        operation_count = operation_count.saturating_add(proposal.conditions.len());
+        if proposal.insurance_amount > 0 {
+            operation_count = operation_count.saturating_add(1);
+        }
+        if proposal.is_swap {
+            operation_count = operation_count.saturating_add(1);
+        }
+
+        let resource_fee = gas_cfg
+            .condition_cost
+            .saturating_mul(operation_count as u64);
+        let total_fee = gas_cfg.base_cost.saturating_add(resource_fee);
+
+        ExecutionFeeEstimate {
+            base_fee: gas_cfg.base_cost,
+            resource_fee,
+            total_fee,
+            operation_count,
+        }
+    }
+
+    fn persist_execution_fee_estimate(env: &Env, proposal: &Proposal) -> ExecutionFeeEstimate {
+        let estimate = Self::calculate_execution_fee(env, proposal);
+        storage::set_execution_fee_estimate(env, proposal.id, &estimate);
+        events::emit_execution_fee_estimated(
+            env,
+            proposal.id,
+            estimate.base_fee,
+            estimate.resource_fee,
+            estimate.total_fee,
+        );
+        estimate
     }
 
     /// Create a new proposal template
@@ -4408,6 +4464,7 @@ impl VaultDAO {
         };
 
         storage::set_proposal(&env, &proposal);
+        Self::persist_execution_fee_estimate(&env, &proposal);
         storage::extend_instance_ttl(&env);
 
         events::emit_proposal_from_template(
@@ -5203,5 +5260,192 @@ impl VaultDAO {
     /// Get recovery proposal details
     pub fn get_recovery_proposal(env: Env, id: u64) -> Result<types::RecoveryProposal, VaultError> {
         storage::get_recovery_proposal(&env, id)
+    }
+
+    // ========================================================================
+    // Advanced Permissions (Issue: feature/advanced-permissions)
+    // ========================================================================
+
+    /// Grant a specific permission to an address
+    pub fn grant_permission(
+        env: Env,
+        granter: Address,
+        target: Address,
+        permission: types::Permission,
+        expires_at: Option<u64>,
+    ) -> Result<(), VaultError> {
+        granter.require_auth();
+
+        if !Self::check_permission(&env, &granter, &types::Permission::ManageRoles) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut permissions = storage::get_permissions(&env, &target);
+
+        // Check if permission already exists
+        for p in permissions.iter() {
+            if p.permission == permission {
+                return Err(VaultError::AlreadyApproved);
+            }
+        }
+
+        let grant = types::PermissionGrant {
+            permission,
+            granted_by: granter,
+            granted_at: env.ledger().sequence() as u64,
+            expires_at,
+        };
+
+        permissions.push_back(grant);
+        storage::set_permissions(&env, &target, permissions);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Revoke a specific permission from an address
+    pub fn revoke_permission(
+        env: Env,
+        revoker: Address,
+        target: Address,
+        permission: types::Permission,
+    ) -> Result<(), VaultError> {
+        revoker.require_auth();
+
+        if !Self::check_permission(&env, &revoker, &types::Permission::ManageRoles) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let permissions = storage::get_permissions(&env, &target);
+        let mut found = false;
+        let mut new_permissions = Vec::new(&env);
+
+        for p in permissions.iter() {
+            if p.permission != permission {
+                new_permissions.push_back(p);
+            } else {
+                found = true;
+            }
+        }
+
+        if !found {
+            return Err(VaultError::ProposalNotFound);
+        }
+
+        storage::set_permissions(&env, &target, new_permissions);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Delegate a permission to another address temporarily
+    pub fn delegate_permission(
+        env: Env,
+        delegator: Address,
+        delegatee: Address,
+        permission: types::Permission,
+        expires_at: u64,
+    ) -> Result<(), VaultError> {
+        delegator.require_auth();
+
+        if !Self::check_permission(&env, &delegator, &permission) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let delegation = types::DelegatedPermission {
+            permission,
+            delegator: delegator.clone(),
+            delegatee: delegatee.clone(),
+            granted_at: env.ledger().sequence() as u64,
+            expires_at,
+        };
+
+        storage::set_delegated_permission(&env, &delegation);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Revoke a delegated permission
+    pub fn revoke_delegation(
+        env: Env,
+        delegator: Address,
+        delegatee: Address,
+        permission: types::Permission,
+    ) -> Result<(), VaultError> {
+        delegator.require_auth();
+
+        storage::remove_delegated_permission(&env, &delegatee, &delegator, permission as u32);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Check if an address has a specific permission
+    pub fn has_permission(env: Env, addr: Address, permission: types::Permission) -> bool {
+        Self::check_permission(&env, &addr, &permission)
+    }
+
+    /// Internal permission check helper
+    fn check_permission(env: &Env, addr: &Address, permission: &types::Permission) -> bool {
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Check role-based permissions (inheritance)
+        let role = storage::get_role(env, addr);
+        if Self::role_has_permission(&role, permission) {
+            return true;
+        }
+
+        // Check direct permission grants
+        let permissions = storage::get_permissions(env, addr);
+        for p in permissions.iter() {
+            if p.permission == *permission {
+                if let Some(expires) = p.expires_at {
+                    if current_ledger >= expires {
+                        continue;
+                    }
+                }
+                return true;
+            }
+        }
+
+        // Check delegated permissions
+        if let Ok(config) = storage::get_config(env) {
+            for signer in config.signers.iter() {
+                if let Some(delegation) =
+                    storage::get_delegated_permission(env, addr, &signer, *permission as u32)
+                {
+                    if current_ledger < delegation.expires_at {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Map role to inherited permissions
+    fn role_has_permission(role: &Role, permission: &types::Permission) -> bool {
+        use types::Permission::*;
+        match role {
+            Role::Admin => true, // Admin has all permissions
+            Role::Treasurer => matches!(
+                permission,
+                CreateProposal
+                    | ApproveProposal
+                    | ExecuteProposal
+                    | ViewMetrics
+                    | ManageRecurring
+                    | ManageEscrow
+                    | ManageSubscriptions
+            ),
+            Role::Member => matches!(permission, ViewMetrics),
+        }
+    }
+
+    /// Get all permissions for an address
+    pub fn get_permissions(env: Env, addr: Address) -> Vec<types::PermissionGrant> {
+        storage::get_permissions(&env, &addr)
     }
 }

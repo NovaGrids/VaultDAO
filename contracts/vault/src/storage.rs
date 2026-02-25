@@ -87,6 +87,8 @@ pub enum DataKey {
     SwapResult(u64),
     /// Gas execution limit configuration -> GasConfig
     GasConfig,
+    /// Cached fee estimate for proposal execution -> ExecutionFeeEstimate
+    ExecutionFeeEstimate(u64),
     /// Vault-wide performance metrics -> VaultMetrics
     Metrics,
     /// Proposal template by ID -> ProposalTemplate
@@ -724,7 +726,7 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
 // DEX/AMM Integration (Issue: feature/amm-integration)
 // ============================================================================
 
-use crate::types::{DexConfig, SwapProposal, SwapResult};
+use crate::types::{SwapProposal, SwapResult};
 
 pub fn set_dex_config(env: &Env, config: &DexConfig) {
     env.storage().instance().set(&DataKey::DexConfig, config);
@@ -775,6 +777,20 @@ pub fn get_gas_config(env: &Env) -> GasConfig {
 
 pub fn set_gas_config(env: &Env, config: &GasConfig) {
     env.storage().instance().set(&DataKey::GasConfig, config);
+}
+
+pub fn get_execution_fee_estimate(env: &Env, proposal_id: u64) -> Option<ExecutionFeeEstimate> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ExecutionFeeEstimate(proposal_id))
+}
+
+pub fn set_execution_fee_estimate(env: &Env, proposal_id: u64, estimate: &ExecutionFeeEstimate) {
+    let key = DataKey::ExecutionFeeEstimate(proposal_id);
+    env.storage().persistent().set(&key, estimate);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
 // ============================================================================
