@@ -108,12 +108,12 @@ pub enum DataKey {
     Dex(DexDataKey, u64),
     /// Template-related data (sub-key, id) -> various types
     Template(TemplateDataKey, u64),
-    /// Template name to ID mapping (name) -> u64
-    TemplateByName(soroban_sdk::Symbol),
+    /// Template name to ID mapping
+    TemplateName(soroban_sdk::Symbol),
     /// Escrow-related data (sub-key, id) -> various types
     Escrow(EscrowDataKey, u64),
-    /// Escrow lists by address (sub-key, address) -> Vec<u64>
-    EscrowByAddress(EscrowDataKey, Address),
+    /// Escrow lists by address
+    EscrowAddr(EscrowDataKey, Address),
     /// Dispute-related data (sub-key, id) -> various types
     Dispute(DisputeDataKey, u64),
     /// Recovery-related data (sub-key, id) -> various types
@@ -982,14 +982,14 @@ pub fn template_exists(env: &Env, id: u64) -> bool {
 pub fn get_template_id_by_name(env: &Env, name: &soroban_sdk::Symbol) -> Option<u64> {
     env.storage()
         .instance()
-        .get(&DataKey::TemplateByName(name.clone()))
+        .get(&DataKey::TemplateName(name.clone()))
 }
 
 /// Set template name to ID mapping
 pub fn set_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol, id: u64) {
     env.storage()
         .instance()
-        .set(&DataKey::TemplateByName(name.clone()), &id);
+        .set(&DataKey::TemplateName(name.clone()), &id);
 }
 
 /// Remove template name mapping
@@ -997,14 +997,14 @@ pub fn set_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol, id: u64)
 pub fn remove_template_name_mapping(env: &Env, name: &soroban_sdk::Symbol) {
     env.storage()
         .instance()
-        .remove(&DataKey::TemplateByName(name.clone()));
+        .remove(&DataKey::TemplateName(name.clone()));
 }
 
 /// Check if a template name already exists
 pub fn template_name_exists(env: &Env, name: &soroban_sdk::Symbol) -> bool {
     env.storage()
         .instance()
-        .has(&DataKey::TemplateByName(name.clone()))
+        .has(&DataKey::TemplateName(name.clone()))
 }
 
 // ============================================================================
@@ -1151,7 +1151,7 @@ pub fn set_escrow(env: &Env, escrow: &Escrow) {
 pub fn get_funder_escrows(env: &Env, funder: &Address) -> Vec<u64> {
     env.storage()
         .persistent()
-        .get(&DataKey::EscrowByAddress(
+        .get(&DataKey::EscrowAddr(
             EscrowDataKey::FunderEscrows,
             funder.clone(),
         ))
@@ -1161,7 +1161,7 @@ pub fn get_funder_escrows(env: &Env, funder: &Address) -> Vec<u64> {
 pub fn add_funder_escrow(env: &Env, funder: &Address, escrow_id: u64) {
     let mut escrows = get_funder_escrows(env, funder);
     escrows.push_back(escrow_id);
-    let key = DataKey::EscrowByAddress(EscrowDataKey::FunderEscrows, funder.clone());
+    let key = DataKey::EscrowAddr(EscrowDataKey::FunderEscrows, funder.clone());
     env.storage().persistent().set(&key, &escrows);
     env.storage()
         .persistent()
@@ -1171,7 +1171,7 @@ pub fn add_funder_escrow(env: &Env, funder: &Address, escrow_id: u64) {
 pub fn get_recipient_escrows(env: &Env, recipient: &Address) -> Vec<u64> {
     env.storage()
         .persistent()
-        .get(&DataKey::EscrowByAddress(
+        .get(&DataKey::EscrowAddr(
             EscrowDataKey::RecipientEscrows,
             recipient.clone(),
         ))
@@ -1181,7 +1181,7 @@ pub fn get_recipient_escrows(env: &Env, recipient: &Address) -> Vec<u64> {
 pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
     let mut escrows = get_recipient_escrows(env, recipient);
     escrows.push_back(escrow_id);
-    let key = DataKey::EscrowByAddress(EscrowDataKey::RecipientEscrows, recipient.clone());
+    let key = DataKey::EscrowAddr(EscrowDataKey::RecipientEscrows, recipient.clone());
     env.storage().persistent().set(&key, &escrows);
     env.storage()
         .persistent()
