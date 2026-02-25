@@ -82,6 +82,8 @@ pub enum DataKey {
     NotificationPrefs(Address),
     /// Gas execution limit configuration -> GasConfig
     GasConfig,
+    /// Cached fee estimate for proposal execution -> ExecutionFeeEstimate
+    ExecutionFeeEstimate(u64),
     /// Vault-wide performance metrics -> VaultMetrics
     Metrics,
     /// Retry state for a proposal -> RetryState
@@ -825,7 +827,7 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
 // DEX/AMM Integration (Issue: feature/amm-integration)
 // ============================================================================
 
-use crate::types::{DexConfig, SwapProposal, SwapResult};
+use crate::types::{SwapProposal, SwapResult};
 
 pub fn set_dex_config(env: &Env, config: &DexConfig) {
     env.storage()
@@ -880,6 +882,20 @@ pub fn get_gas_config(env: &Env) -> GasConfig {
 
 pub fn set_gas_config(env: &Env, config: &GasConfig) {
     env.storage().instance().set(&DataKey::GasConfig, config);
+}
+
+pub fn get_execution_fee_estimate(env: &Env, proposal_id: u64) -> Option<ExecutionFeeEstimate> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ExecutionFeeEstimate(proposal_id))
+}
+
+pub fn set_execution_fee_estimate(env: &Env, proposal_id: u64, estimate: &ExecutionFeeEstimate) {
+    let key = DataKey::ExecutionFeeEstimate(proposal_id);
+    env.storage().persistent().set(&key, estimate);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
 // ============================================================================
@@ -1026,41 +1042,43 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 }
 
 // ============================================================================
-// Cross-Vault Coordination (Issue: feature/cross-vault-coordination)
+// Subscription System (Issue: feature/subscription-system)
 // ============================================================================
 
-pub fn get_cross_vault_config(env: &Env) -> Option<CrossVaultConfig> {
-    env.storage().instance().get(&DataKey::CrossVaultConfig)
-}
-
-pub fn set_cross_vault_config(env: &Env, config: &CrossVaultConfig) {
+pub fn get_next_subscription_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .set(&DataKey::CrossVaultConfig, config);
+        .get(&DataKey::NextSubscriptionId)
+        .unwrap_or(1)
 }
 
-pub fn get_cross_vault_proposal(env: &Env, proposal_id: u64) -> Option<CrossVaultProposal> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::CrossVaultProposal(proposal_id))
-}
-
-pub fn set_cross_vault_proposal(env: &Env, proposal_id: u64, proposal: &CrossVaultProposal) {
-    let key = DataKey::CrossVaultProposal(proposal_id);
-    env.storage().persistent().set(&key, proposal);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
-}
-
-// ============================================================================
-// Dispute Resolution (Issue: feature/dispute-resolution)
-// ============================================================================
-
-pub fn get_arbitrators(env: &Env) -> Vec<Address> {
+pub fn increment_subscription_id(env: &Env) -> u64 {
+    let id = get_next_subscription_id(env);
     env.storage()
         .instance()
-        .get(&DataKey::Arbitrators)
+        .set(&DataKey::NextSubscriptionId, &(id + 1));
+    id
+}
+
+pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Subscription(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn set_subscription(env: &Env, subscription: &Subscription) {
+    let key = DataKey::Subscription(subscription.id);
+    env.storage().persistent().set(&key, subscription);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_subscription_payments(env: &Env, subscription_id: u64) -> Vec<SubscriptionPayment> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SubscriptionPayments(subscription_id))
         .unwrap_or_else(|| Vec::new(env))
 }
 
@@ -1097,7 +1115,7 @@ pub fn set_dispute(env: &Env, dispute: &Dispute) {
     env.storage().persistent().set(&key, dispute);
     env.storage()
         .persistent()
-        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
 pub fn get_proposal_dispute(env: &Env, proposal_id: u64) -> Option<u64> {
@@ -1112,7 +1130,7 @@ pub fn set_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
     env.storage().persistent().set(&key, &dispute_id);
     env.storage()
         .persistent()
-        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 // ============================================================================
 // Escrow (Issue: feature/escrow-system)
