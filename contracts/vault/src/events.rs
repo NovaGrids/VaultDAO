@@ -681,3 +681,50 @@ pub fn emit_escrow_dispute_resolved(
         (arbitrator.clone(), released_to_recipient),
     );
 }
+
+// ============================================================================
+// Time-Weighted Voting Events
+// ============================================================================
+
+/// Emit when tokens are locked for voting power
+pub fn emit_tokens_locked(
+    env: &Env,
+    owner: &Address,
+    amount: i128,
+    duration: u64,
+    power_multiplier_bps: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "tokens_locked"),),
+        (owner.clone(), amount, duration, power_multiplier_bps),
+    );
+}
+
+/// Emit when a token lock is extended
+pub fn emit_lock_extended(
+    env: &Env,
+    owner: &Address,
+    new_duration: u64,
+    power_multiplier_bps: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "lock_extended"),),
+        (owner.clone(), new_duration, power_multiplier_bps),
+    );
+}
+
+/// Emit when tokens are unlocked after lock period
+pub fn emit_tokens_unlocked(env: &Env, owner: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "tokens_unlocked"),),
+        (owner.clone(), amount),
+    );
+}
+
+/// Emit when tokens are unlocked early with penalty
+pub fn emit_early_unlock(env: &Env, owner: &Address, returned_amount: i128, penalty: i128) {
+    env.events().publish(
+        (Symbol::new(env, "early_unlock"),),
+        (owner.clone(), returned_amount, penalty),
+    );
+}

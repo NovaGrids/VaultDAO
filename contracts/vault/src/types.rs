@@ -906,6 +906,109 @@ pub struct Escrow {
     pub finalized_at: u64,
 }
 
+// ============================================================================
+// Time-Weighted Voting (Issue: feature/time-weighted-voting)
+// ============================================================================
+
+/// Token lock for time-weighted voting power
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TokenLock {
+    /// Address that locked the tokens
+    pub owner: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Amount of tokens locked
+    pub amount: i128,
+    /// Ledger when tokens were locked
+    pub locked_at: u64,
+    /// Duration of the lock in ledgers
+    pub duration: u64,
+    /// Ledger when tokens can be unlocked
+    pub unlock_at: u64,
+    /// Whether the lock is active
+    pub is_active: bool,
+    /// Voting power multiplier (basis points, e.g., 10000 = 1x, 20000 = 2x)
+    pub power_multiplier_bps: u32,
+}
+
+impl TokenLock {
+    /// Calculate voting power based on locked amount and duration
+    /// Longer locks get higher multipliers:
+    /// - < 30 days: 1.0x (10000 bps)
+    /// - 30-90 days: 1.5x (15000 bps)
+    /// - 90-180 days: 2.0x (20000 bps)
+    /// - 180-365 days: 3.0x (30000 bps)
+    /// - > 365 days: 4.0x (40000 bps)
+    pub fn calculate_voting_power(&self) -> i128 {
+        if !self.is_active {
+            return 0;
+        }
+        (self.amount * self.power_multiplier_bps as i128) / 10_000
+    }
+
+    /// Calculate power multiplier based on lock duration
+    pub fn calculate_multiplier(duration_ledgers: u64) -> u32 {
+        const DAY_LEDGERS: u64 = 17_280; // ~24 hours at 5 sec/ledger
+        
+        if duration_ledgers < 30 * DAY_LEDGERS {
+            10_000 // 1.0x
+        } else if duration_ledgers < 90 * DAY_LEDGERS {
+            15_000 // 1.5x
+        } else if duration_ledgers < 180 * DAY_LEDGERS {
+            20_000 // 2.0x
+        } else if duration_ledgers < 365 * DAY_LEDGERS {
+            30_000 // 3.0x
+        } else {
+            40_000 // 4.0x
+        }
+    }
+
+    /// Calculate remaining voting power with time decay
+    /// Power decays linearly as lock approaches expiration
+    pub fn calculate_decayed_power(&self, current_ledger: u64) -> i128 {
+        if !self.is_active || current_ledger >= self.unlock_at {
+            return 0;
+        }
+
+        let _elapsed = current_ledger.saturating_sub(self.locked_at);
+        let remaining = self.unlock_at.saturating_sub(current_ledger);
+        
+        // Linear decay: power = base_power * (remaining / duration)
+        let base_power = self.calculate_voting_power();
+        (base_power * remaining as i128) / self.duration as i128
+    }
+}
+
+/// Time-weighted voting configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TimeWeightedConfig {
+    /// Whether time-weighted voting is enabled
+    pub enabled: bool,
+    /// Minimum lock duration in ledgers
+    pub min_lock_duration: u64,
+    /// Maximum lock duration in ledgers
+    pub max_lock_duration: u64,
+    /// Whether to apply time decay to voting power
+    pub apply_decay: bool,
+    /// Penalty for early unlock (basis points, e.g., 1000 = 10%)
+    pub early_unlock_penalty_bps: u32,
+}
+
+impl TimeWeightedConfig {
+    pub fn default() -> Self {
+        const DAY_LEDGERS: u64 = 17_280;
+        TimeWeightedConfig {
+            enabled: false,
+            min_lock_duration: 7 * DAY_LEDGERS,      // 7 days minimum
+            max_lock_duration: 730 * DAY_LEDGERS,    // 2 years maximum
+            apply_decay: true,
+            early_unlock_penalty_bps: 1000,          // 10% penalty
+        }
+    }
+}
+
 impl Escrow {
     /// Calculate total percentage from all milestones
     pub fn total_milestone_percentage(&self) -> u32 {

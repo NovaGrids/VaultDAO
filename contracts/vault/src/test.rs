@@ -6534,3 +6534,441 @@ fn test_insurance_pool_withdrawal() {
     let result = client.try_withdraw_insurance_pool(&admin, &token_addr, &withdraw_target, &1);
     assert!(result.is_err());
 }
+
+// ============================================================================
+// Time-Weighted Voting Tests
+// ============================================================================
+
+#[test]
+fn test_lock_tokens_basic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 7 * 17_280,      // 7 days
+        max_lock_duration: 730 * 17_280,    // 2 years
+        apply_decay: false,
+        early_unlock_penalty_bps: 1000,     // 10%
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    // Mint tokens to user
+    token_client.mint(&user, &1000);
+
+    // Lock tokens for 60 days (should get 1.5x multiplier)
+    let lock_duration = 60 * 17_280;
+    client.lock_tokens(&user, &token, &100, &lock_duration);
+
+    // Check lock was created
+    let lock = client.get_token_lock(&user);
+    assert!(lock.is_some());
+    let lock = lock.unwrap();
+    assert_eq!(lock.amount, 100);
+    assert_eq!(lock.duration, lock_duration);
+    assert_eq!(lock.power_multiplier_bps, 15_000); // 1.5x
+    assert!(lock.is_active);
+
+    // Check voting power
+    let voting_power = client.get_voting_power(&user);
+    assert_eq!(voting_power, 150); // 100 * 1.5
+}
+
+#[test]
+fn test_lock_tokens_multipliers() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 7 * 17_280,
+        max_lock_duration: 730 * 17_280,
+        apply_decay: false,
+        early_unlock_penalty_bps: 1000,
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    // Test different lock durations and their multipliers
+    let test_cases = [
+        (20 * 17_280, 10_000),   // < 30 days: 1.0x
+        (60 * 17_280, 15_000),   // 30-90 days: 1.5x
+        (120 * 17_280, 20_000),  // 90-180 days: 2.0x
+        (270 * 17_280, 30_000),  // 180-365 days: 3.0x
+        (400 * 17_280, 40_000),  // > 365 days: 4.0x
+    ];
+
+    for (i, (duration, expected_multiplier)) in test_cases.iter().enumerate() {
+        let user = Address::generate(&env);
+        token_client.mint(&user, &1000);
+        
+        client.lock_tokens(&user, &token, &100, duration);
+        
+        let lock = client.get_token_lock(&user).unwrap();
+        assert_eq!(
+            lock.power_multiplier_bps, *expected_multiplier,
+            "Test case {} failed: duration={}, expected={}, got={}",
+            i, duration, expected_multiplier, lock.power_multiplier_bps
+        );
+    }
+}
+
+#[test]
+fn test_extend_lock() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 7 * 17_280,
+        max_lock_duration: 730 * 17_280,
+        apply_decay: false,
+        early_unlock_penalty_bps: 1000,
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    // Mint and lock tokens for 60 days (1.5x multiplier)
+    token_client.mint(&user, &1000);
+    let initial_duration = 60 * 17_280;
+    client.lock_tokens(&user, &token, &100, &initial_duration);
+
+    let lock_before = client.get_token_lock(&user).unwrap();
+    assert_eq!(lock_before.power_multiplier_bps, 15_000); // 1.5x
+
+    // Extend by 100 days (total 160 days -> 2.0x multiplier)
+    let extension = 100 * 17_280;
+    client.extend_lock(&user, &extension);
+
+    let lock_after = client.get_token_lock(&user).unwrap();
+    assert_eq!(lock_after.power_multiplier_bps, 20_000); // 2.0x
+    assert!(lock_after.unlock_at > lock_before.unlock_at);
+}
+
+#[test]
+fn test_unlock_tokens() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 10,              // Very short for testing
+        max_lock_duration: 730 * 17_280,    // 2 years
+        apply_decay: false,
+        early_unlock_penalty_bps: 1000,
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    // Mint and lock tokens
+    token_client.mint(&user, &1000);
+    let lock_duration = 100;  // Short duration for testing
+    client.lock_tokens(&user, &token, &100, &lock_duration);
+
+    // Try to unlock before expiry - should fail
+    let result = client.try_unlock_tokens(&user);
+    assert!(result.is_err());
+
+    // Advance ledger past unlock time
+    env.ledger().set_sequence_number(200);
+
+    // Now unlock should succeed
+    let returned = client.unlock_tokens(&user);
+    assert_eq!(returned, 100);
+
+    // Check lock is deactivated
+    let lock = client.get_token_lock(&user).unwrap();
+    assert!(!lock.is_active);
+
+    // Voting power should be 1 (no lock)
+    let voting_power = client.get_voting_power(&user);
+    assert_eq!(voting_power, 1);
+}
+
+#[test]
+fn test_early_unlock_with_penalty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting with 10% penalty
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 10,              // Very short for testing
+        max_lock_duration: 730 * 17_280,    // 2 years
+        apply_decay: false,
+        early_unlock_penalty_bps: 1000,  // 10%
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    // Mint and lock tokens
+    token_client.mint(&user, &1000);
+    let lock_duration = 1000;
+    client.lock_tokens(&user, &token, &100, &lock_duration);
+
+    // Unlock early
+    let returned = client.unlock_early(&user);
+    assert_eq!(returned, 90); // 100 - 10% penalty
+
+    // Check lock is deactivated
+    let lock = client.get_token_lock(&user).unwrap();
+    assert!(!lock.is_active);
+}
+
+#[test]
+fn test_voting_power_decay() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting WITH decay
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 10,              // Very short for testing
+        max_lock_duration: 730 * 17_280,    // 2 years
+        apply_decay: true,  // Enable decay
+        early_unlock_penalty_bps: 1000,
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    // Mint and lock tokens for 1000 ledgers (short for testing)
+    token_client.mint(&user, &1000);
+    env.ledger().set_sequence_number(100);
+    let lock_duration = 1000; // Short duration for testing
+    client.lock_tokens(&user, &token, &100, &lock_duration);
+
+    // Initial voting power (at start of lock)
+    let initial_power = client.get_voting_power(&user);
+    assert_eq!(initial_power, 100); // 100 * 1.0x (< 30 days)
+
+    // Advance halfway through lock period
+    env.ledger().set_sequence_number(100 + 500);
+    let halfway_power = client.get_voting_power(&user);
+    
+    // Power should be approximately half due to linear decay
+    assert!(halfway_power < initial_power);
+    assert!(halfway_power >= 45 && halfway_power <= 55); // ~50 expected
+
+    // Advance to near end of lock
+    env.ledger().set_sequence_number(100 + 900);
+    let near_end_power = client.get_voting_power(&user);
+    
+    // Power should be much lower
+    assert!(near_end_power < halfway_power);
+    assert!(near_end_power >= 5 && near_end_power <= 15); // ~10 expected
+}
+
+#[test]
+fn test_cannot_lock_twice() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 7 * 17_280,
+        max_lock_duration: 730 * 17_280,
+        apply_decay: false,
+        early_unlock_penalty_bps: 1000,
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    // Mint tokens
+    token_client.mint(&user, &1000);
+
+    // First lock succeeds
+    client.lock_tokens(&user, &token, &100, &(30 * 17_280));
+
+    // Second lock should fail
+    let result = client.try_lock_tokens(&user, &token, &100, &(30 * 17_280));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_lock_duration_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable time-weighted voting
+    let tw_config = types::TimeWeightedConfig {
+        enabled: true,
+        min_lock_duration: 7 * 17_280,
+        max_lock_duration: 730 * 17_280,
+        apply_decay: false,
+        early_unlock_penalty_bps: 1000,
+    };
+    client.set_time_weighted_config(&admin, &tw_config);
+
+    token_client.mint(&user, &1000);
+
+    // Too short duration - should fail
+    let result = client.try_lock_tokens(&user, &token, &100, &(5 * 17_280));
+    assert!(result.is_err());
+
+    // Too long duration - should fail
+    let result = client.try_lock_tokens(&user, &token, &100, &(800 * 17_280));
+    assert!(result.is_err());
+
+    // Valid duration - should succeed
+    let result = client.try_lock_tokens(&user, &token, &100, &(30 * 17_280));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_time_weighted_voting_disabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = StellarAssetClient::new(&env, &token);
+
+    // Initialize vault
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Time-weighted voting is disabled by default
+    token_client.mint(&user, &1000);
+
+    // Try to lock tokens - should fail
+    let result = client.try_lock_tokens(&user, &token, &100, &(30 * 17_280));
+    assert!(result.is_err());
+
+    // Voting power should be 1 (equal for all)
+    let voting_power = client.get_voting_power(&user);
+    assert_eq!(voting_power, 1);
+}

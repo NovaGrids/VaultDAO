@@ -4406,4 +4406,267 @@ impl VaultDAO {
     pub fn get_recipient_escrows(env: Env, recipient: Address) -> Vec<u64> {
         storage::get_recipient_escrows(&env, &recipient)
     }
+
+    // ========================================================================
+    // Time-Weighted Voting
+    // ========================================================================
+
+    /// Lock tokens to gain increased voting power
+    ///
+    /// Locks tokens for a specified duration, granting voting power multipliers:
+    /// - < 30 days: 1.0x
+    /// - 30-90 days: 1.5x
+    /// - 90-180 days: 2.0x
+    /// - 180-365 days: 3.0x
+    /// - > 365 days: 4.0x
+    ///
+    /// # Arguments
+    /// * `owner` - Address locking the tokens
+    /// * `token` - Token contract address
+    /// * `amount` - Amount of tokens to lock
+    /// * `duration` - Lock duration in ledgers
+    pub fn lock_tokens(
+        env: Env,
+        owner: Address,
+        token: Address,
+        amount: i128,
+        duration: u64,
+    ) -> Result<(), VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+        
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        if duration < config.min_lock_duration || duration > config.max_lock_duration {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Check if user already has an active lock
+        if let Some(existing_lock) = storage::get_token_lock(&env, &owner) {
+            if existing_lock.is_active {
+                return Err(VaultError::AlreadyApproved); // Reusing error for "already locked"
+            }
+        }
+
+        // Transfer tokens to vault
+        token::transfer_to_vault(&env, &token, &owner, amount);
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let unlock_at = current_ledger + duration;
+        let power_multiplier_bps = types::TokenLock::calculate_multiplier(duration);
+
+        let lock = types::TokenLock {
+            owner: owner.clone(),
+            token: token.clone(),
+            amount,
+            locked_at: current_ledger,
+            duration,
+            unlock_at,
+            is_active: true,
+            power_multiplier_bps,
+        };
+
+        storage::set_token_lock(&env, &lock);
+        storage::set_total_locked(&env, &owner, amount);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_tokens_locked(&env, &owner, amount, duration, power_multiplier_bps);
+
+        Ok(())
+    }
+
+    /// Extend an existing token lock duration
+    ///
+    /// Extends the lock duration, potentially increasing the voting power multiplier.
+    /// The new duration is added to the remaining time.
+    ///
+    /// # Arguments
+    /// * `owner` - Address that owns the lock
+    /// * `additional_duration` - Additional ledgers to add to the lock
+    pub fn extend_lock(
+        env: Env,
+        owner: Address,
+        additional_duration: u64,
+    ) -> Result<(), VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+        
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut lock = storage::get_token_lock(&env, &owner)
+            .ok_or(VaultError::ProposalNotFound)?;
+
+        if !lock.is_active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        
+        // Calculate new total duration from current time
+        let remaining = lock.unlock_at.saturating_sub(current_ledger);
+        let new_total_duration = remaining + additional_duration;
+
+        if new_total_duration > config.max_lock_duration {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Update lock
+        lock.unlock_at = current_ledger + new_total_duration;
+        lock.duration = new_total_duration;
+        lock.power_multiplier_bps = types::TokenLock::calculate_multiplier(new_total_duration);
+
+        storage::set_token_lock(&env, &lock);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_lock_extended(&env, &owner, new_total_duration, lock.power_multiplier_bps);
+
+        Ok(())
+    }
+
+    /// Unlock tokens early with penalty
+    ///
+    /// Allows early unlock of tokens before the lock period expires.
+    /// A penalty is applied based on the configuration.
+    ///
+    /// # Arguments
+    /// * `owner` - Address that owns the lock
+    pub fn unlock_early(env: Env, owner: Address) -> Result<i128, VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+        
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut lock = storage::get_token_lock(&env, &owner)
+            .ok_or(VaultError::ProposalNotFound)?;
+
+        if !lock.is_active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        
+        // Check if lock has naturally expired
+        if current_ledger >= lock.unlock_at {
+            return Self::unlock_tokens(env, owner);
+        }
+
+        // Calculate penalty
+        let penalty_amount = (lock.amount * config.early_unlock_penalty_bps as i128) / 10_000;
+        let return_amount = lock.amount - penalty_amount;
+
+        // Transfer tokens back to owner (minus penalty)
+        token::transfer(&env, &lock.token, &owner, return_amount);
+
+        // Penalty goes to insurance pool
+        if penalty_amount > 0 {
+            storage::add_to_insurance_pool(&env, &lock.token, penalty_amount);
+        }
+
+        // Deactivate lock
+        lock.is_active = false;
+        storage::set_token_lock(&env, &lock);
+        storage::set_total_locked(&env, &owner, 0);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_early_unlock(&env, &owner, return_amount, penalty_amount);
+
+        Ok(return_amount)
+    }
+
+    /// Unlock tokens after lock period expires
+    ///
+    /// Returns all locked tokens to the owner without penalty.
+    ///
+    /// # Arguments
+    /// * `owner` - Address that owns the lock
+    pub fn unlock_tokens(env: Env, owner: Address) -> Result<i128, VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+        
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut lock = storage::get_token_lock(&env, &owner)
+            .ok_or(VaultError::ProposalNotFound)?;
+
+        if !lock.is_active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        
+        // Check if lock period has expired
+        if current_ledger < lock.unlock_at {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        let amount = lock.amount;
+
+        // Transfer tokens back to owner
+        token::transfer(&env, &lock.token, &owner, amount);
+
+        // Deactivate lock
+        lock.is_active = false;
+        storage::set_token_lock(&env, &lock);
+        storage::set_total_locked(&env, &owner, 0);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_tokens_unlocked(&env, &owner, amount);
+
+        Ok(amount)
+    }
+
+    /// Get token lock information for an address
+    pub fn get_token_lock(env: Env, owner: Address) -> Option<types::TokenLock> {
+        storage::get_token_lock(&env, &owner)
+    }
+
+    /// Get voting power for an address
+    ///
+    /// Returns the current voting power including time-weighted multipliers
+    /// and decay if enabled.
+    pub fn get_voting_power(env: Env, owner: Address) -> i128 {
+        storage::calculate_voting_power(&env, &owner)
+    }
+
+    /// Configure time-weighted voting system
+    ///
+    /// Admin only function to enable/disable and configure time-weighted voting.
+    pub fn set_time_weighted_config(
+        env: Env,
+        admin: Address,
+        config: types::TimeWeightedConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        storage::set_time_weighted_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get time-weighted voting configuration
+    pub fn get_time_weighted_config(env: Env) -> types::TimeWeightedConfig {
+        storage::get_time_weighted_config(&env)
+    }
 }

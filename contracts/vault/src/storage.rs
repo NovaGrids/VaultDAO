@@ -119,6 +119,14 @@ pub enum DataKey {
     RecipientEscrows(Address),
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
+    /// Token lock by owner address -> TokenLock
+    TokenLock(Address),
+    /// Next token lock ID counter -> u64
+    NextTokenLockId,
+    /// Time-weighted voting configuration -> TimeWeightedConfig
+    TimeWeightedConfig,
+    /// Total locked tokens by address -> i128
+    TotalLocked(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1062,4 +1070,100 @@ pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// Time-Weighted Voting (Issue: feature/time-weighted-voting)
+// ============================================================================
+
+use crate::types::{TimeWeightedConfig, TokenLock};
+
+/// Get time-weighted voting configuration
+pub fn get_time_weighted_config(env: &Env) -> TimeWeightedConfig {
+    env.storage()
+        .instance()
+        .get(&DataKey::TimeWeightedConfig)
+        .unwrap_or_else(TimeWeightedConfig::default)
+}
+
+/// Set time-weighted voting configuration
+pub fn set_time_weighted_config(env: &Env, config: &TimeWeightedConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TimeWeightedConfig, config);
+}
+
+/// Get token lock for an address
+pub fn get_token_lock(env: &Env, owner: &Address) -> Option<TokenLock> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TokenLock(owner.clone()))
+}
+
+/// Set token lock for an address
+pub fn set_token_lock(env: &Env, lock: &TokenLock) {
+    let key = DataKey::TokenLock(lock.owner.clone());
+    env.storage().persistent().set(&key, lock);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+/// Remove token lock for an address
+#[allow(dead_code)]
+pub fn remove_token_lock(env: &Env, owner: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::TokenLock(owner.clone()));
+}
+
+/// Get total locked tokens for an address
+#[allow(dead_code)]
+pub fn get_total_locked(env: &Env, owner: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TotalLocked(owner.clone()))
+        .unwrap_or(0)
+}
+
+/// Set total locked tokens for an address
+pub fn set_total_locked(env: &Env, owner: &Address, amount: i128) {
+    let key = DataKey::TotalLocked(owner.clone());
+    env.storage().persistent().set(&key, &amount);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+/// Calculate voting power for an address including time-weighted locks
+pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {
+    let config = get_time_weighted_config(env);
+    
+    if !config.enabled {
+        // If time-weighted voting is disabled, return 1 (equal voting power)
+        return 1;
+    }
+
+    if let Some(lock) = get_token_lock(env, addr) {
+        let current_ledger = env.ledger().sequence() as u64;
+        
+        if config.apply_decay {
+            let power = lock.calculate_decayed_power(current_ledger);
+            if power > 0 {
+                power
+            } else {
+                1 // Base voting power when lock expired or inactive
+            }
+        } else {
+            let power = lock.calculate_voting_power();
+            if power > 0 {
+                power
+            } else {
+                1 // Base voting power when lock inactive
+            }
+        }
+    } else {
+        // No lock = base voting power of 1
+        1
+    }
 }
