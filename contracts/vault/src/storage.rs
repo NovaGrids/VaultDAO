@@ -1090,6 +1090,76 @@ pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
+
+// ============================================================================
+// Batch Transactions
+// ============================================================================
+
+pub fn get_next_batch_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get::<DataKey, u64>(&DataKey::BatchIdCounter)
+        .unwrap_or(0)
+}
+
+pub fn increment_batch_id(env: &Env) -> u64 {
+    let current = get_next_batch_id(env);
+    let next = current + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::BatchIdCounter, &next);
+    extend_instance_ttl(env);
+    next
+}
+
+pub fn set_batch(env: &Env, batch: &crate::types::BatchTransaction) {
+    let key = DataKey::Batch(batch.id);
+    env.storage().persistent().set(&key, batch);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_batch(env: &Env, batch_id: u64) -> Result<crate::types::BatchTransaction, VaultError> {
+    let key = DataKey::Batch(batch_id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .flatten()
+        .ok_or(VaultError::BatchNotFound)
+}
+
+pub fn set_batch_result(env: &Env, result: &crate::types::BatchExecutionResult) {
+    let key = DataKey::BatchResult(result.batch_id);
+    env.storage().persistent().set(&key, result);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_batch_result(env: &Env, batch_id: u64) -> Option<crate::types::BatchExecutionResult> {
+    let key = DataKey::BatchResult(batch_id);
+    env.storage().persistent().get(&key).flatten()
+}
+
+#[allow(dead_code)]
+pub fn get_rollback_state(env: &Env, batch_id: u64) -> Vec<(Address, i128)> {
+    let key = DataKey::BatchRollback(batch_id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .flatten()
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_rollback_state(env: &Env, batch_id: u64, state: &Vec<(Address, i128)>) {
+    let key = DataKey::BatchRollback(batch_id);
+    env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
 // ============================================================================
 // Wallet Recovery (Issue: feature/wallet-recovery)
 // ============================================================================

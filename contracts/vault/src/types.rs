@@ -1069,3 +1069,74 @@ impl Escrow {
         (self.total_amount * completed_percentage as i128) / 100 - self.released_amount
     }
 }
+
+/// A single operation within a batch transaction
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchOperation {
+    /// Operation type (e.g., "transfer", "swap", "liquidity")
+    pub op_type: Symbol,
+    /// Recipient address
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Amount for the operation
+    pub amount: i128,
+    /// Optional data for operation (e.g., swap params)
+    pub data: String,
+}
+
+/// Status of a batch transaction
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BatchStatus {
+    /// Awaiting execution
+    Pending = 0,
+    /// Currently executing
+    Executing = 1,
+    /// Successfully completed
+    Completed = 2,
+    /// Failed during execution
+    Failed = 3,
+    /// Rolled back due to failure
+    RolledBack = 4,
+}
+
+/// Atomic batch transaction containing multiple operations
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchTransaction {
+    /// Unique batch ID
+    pub id: u64,
+    /// Creator of the batch
+    pub creator: Address,
+    /// List of operations to execute atomically
+    pub operations: Vec<BatchOperation>,
+    /// Current status
+    pub status: BatchStatus,
+    /// Timestamp when created
+    pub created_at: u64,
+    /// Memo for the batch
+    pub memo: Symbol,
+    /// Gas estimate for the batch
+    pub estimated_gas: u64,
+}
+
+/// Result of a batch transaction execution
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchExecutionResult {
+    /// Batch ID
+    pub batch_id: u64,
+    /// Whether execution succeeded
+    pub success: bool,
+    /// Index of failed operation (if any)
+    pub failed_operation_index: u64,
+    /// Error message if failed
+    pub error: Symbol,
+    /// Number of operations executed before failure
+    pub executed_count: u64,
+    /// Ledger when executed
+    pub executed_at: u64,
+}

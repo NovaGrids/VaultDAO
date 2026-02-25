@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useWallet } from '../../context/WalletContextProps';
+import { useWallet } from '../../hooks/useWallet';
 import ExportModal, { type ExportDatasets } from '../../components/modals/ExportModal';
 import { saveExportHistoryItem } from '../../utils/exportHistory';
 import AuditLog from '../../components/AuditLog';
