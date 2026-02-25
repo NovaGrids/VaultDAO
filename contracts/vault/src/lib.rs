@@ -4436,7 +4436,7 @@ impl VaultDAO {
         owner.require_auth();
 
         let config = storage::get_time_weighted_config(&env);
-        
+
         if !config.enabled {
             return Err(VaultError::Unauthorized);
         }
@@ -4499,20 +4499,19 @@ impl VaultDAO {
         owner.require_auth();
 
         let config = storage::get_time_weighted_config(&env);
-        
+
         if !config.enabled {
             return Err(VaultError::Unauthorized);
         }
 
-        let mut lock = storage::get_token_lock(&env, &owner)
-            .ok_or(VaultError::ProposalNotFound)?;
+        let mut lock = storage::get_token_lock(&env, &owner).ok_or(VaultError::ProposalNotFound)?;
 
         if !lock.is_active {
             return Err(VaultError::ProposalNotPending);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
-        
+
         // Calculate new total duration from current time
         let remaining = lock.unlock_at.saturating_sub(current_ledger);
         let new_total_duration = remaining + additional_duration;
@@ -4530,6 +4529,11 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         events::emit_lock_extended(&env, &owner, new_total_duration, lock.power_multiplier_bps);
+
+        Ok(())
+    }
+
+    // ========================================================================
     // Wallet Recovery (Issue: feature/wallet-recovery)
     // ========================================================================
 
@@ -4639,20 +4643,19 @@ impl VaultDAO {
         owner.require_auth();
 
         let config = storage::get_time_weighted_config(&env);
-        
+
         if !config.enabled {
             return Err(VaultError::Unauthorized);
         }
 
-        let mut lock = storage::get_token_lock(&env, &owner)
-            .ok_or(VaultError::ProposalNotFound)?;
+        let mut lock = storage::get_token_lock(&env, &owner).ok_or(VaultError::ProposalNotFound)?;
 
         if !lock.is_active {
             return Err(VaultError::ProposalNotPending);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
-        
+
         // Check if lock has naturally expired
         if current_ledger >= lock.unlock_at {
             return Self::unlock_tokens(env, owner);
@@ -4691,20 +4694,19 @@ impl VaultDAO {
         owner.require_auth();
 
         let config = storage::get_time_weighted_config(&env);
-        
+
         if !config.enabled {
             return Err(VaultError::Unauthorized);
         }
 
-        let mut lock = storage::get_token_lock(&env, &owner)
-            .ok_or(VaultError::ProposalNotFound)?;
+        let mut lock = storage::get_token_lock(&env, &owner).ok_or(VaultError::ProposalNotFound)?;
 
         if !lock.is_active {
             return Err(VaultError::ProposalNotPending);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
-        
+
         // Check if lock period has expired
         if current_ledger < lock.unlock_at {
             return Err(VaultError::TimelockNotExpired);
@@ -4763,6 +4765,12 @@ impl VaultDAO {
     /// Get time-weighted voting configuration
     pub fn get_time_weighted_config(env: Env) -> types::TimeWeightedConfig {
         storage::get_time_weighted_config(&env)
+    }
+
+    // ========================================================================
+    // Recovery Proposals
+    // ========================================================================
+
     /// Execute an approved recovery proposal
     pub fn execute_recovery(env: Env, proposal_id: u64) -> Result<(), VaultError> {
         let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;

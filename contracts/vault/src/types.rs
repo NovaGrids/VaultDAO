@@ -1010,7 +1010,7 @@ impl TokenLock {
     /// Calculate power multiplier based on lock duration
     pub fn calculate_multiplier(duration_ledgers: u64) -> u32 {
         const DAY_LEDGERS: u64 = 17_280; // ~24 hours at 5 sec/ledger
-        
+
         if duration_ledgers < 30 * DAY_LEDGERS {
             10_000 // 1.0x
         } else if duration_ledgers < 90 * DAY_LEDGERS {
@@ -1033,7 +1033,7 @@ impl TokenLock {
 
         let _elapsed = current_ledger.saturating_sub(self.locked_at);
         let remaining = self.unlock_at.saturating_sub(current_ledger);
-        
+
         // Linear decay: power = base_power * (remaining / duration)
         let base_power = self.calculate_voting_power();
         (base_power * remaining as i128) / self.duration as i128
@@ -1061,10 +1061,10 @@ impl TimeWeightedConfig {
         const DAY_LEDGERS: u64 = 17_280;
         TimeWeightedConfig {
             enabled: false,
-            min_lock_duration: 7 * DAY_LEDGERS,      // 7 days minimum
-            max_lock_duration: 730 * DAY_LEDGERS,    // 2 years maximum
+            min_lock_duration: 7 * DAY_LEDGERS,   // 7 days minimum
+            max_lock_duration: 730 * DAY_LEDGERS, // 2 years maximum
             apply_decay: true,
-            early_unlock_penalty_bps: 1000,          // 10% penalty
+            early_unlock_penalty_bps: 1000, // 10% penalty
         }
     }
 }

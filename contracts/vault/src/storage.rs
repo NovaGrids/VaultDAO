@@ -1142,7 +1142,7 @@ pub fn set_total_locked(env: &Env, owner: &Address, amount: i128) {
 /// Calculate voting power for an address including time-weighted locks
 pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {
     let config = get_time_weighted_config(env);
-    
+
     if !config.enabled {
         // If time-weighted voting is disabled, return 1 (equal voting power)
         return 1;
@@ -1150,7 +1150,7 @@ pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {
 
     if let Some(lock) = get_token_lock(env, addr) {
         let current_ledger = env.ledger().sequence() as u64;
-        
+
         if config.apply_decay {
             let power = lock.calculate_decayed_power(current_ledger);
             if power > 0 {
@@ -1170,6 +1170,8 @@ pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {
         // No lock = base voting power of 1
         1
     }
+}
+
 // ============================================================================
 // Wallet Recovery (Issue: feature/wallet-recovery)
 // ============================================================================

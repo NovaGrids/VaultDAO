@@ -728,3 +728,43 @@ pub fn emit_early_unlock(env: &Env, owner: &Address, returned_amount: i128, pena
         (owner.clone(), returned_amount, penalty),
     );
 }
+
+// ============================================================================
+// Recovery Events
+// ============================================================================
+
+/// Emit when recovery configuration is updated
+pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_config"),), admin.clone());
+}
+
+/// Emit when a recovery proposal is created
+pub fn emit_recovery_proposed(env: &Env, proposal_id: u64, new_threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_proposed"), proposal_id),
+        new_threshold,
+    );
+}
+
+/// Emit when a recovery proposal is approved
+pub fn emit_recovery_approved(env: &Env, proposal_id: u64, guardian: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_approved"), proposal_id),
+        guardian.clone(),
+    );
+}
+
+/// Emit when a recovery proposal is executed
+pub fn emit_recovery_executed(env: &Env, proposal_id: u64) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_executed"), proposal_id), ());
+}
+
+/// Emit when a recovery proposal is cancelled
+pub fn emit_recovery_cancelled(env: &Env, proposal_id: u64, canceller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_cancelled"), proposal_id),
+        canceller.clone(),
+    );
+}

@@ -6757,10 +6757,10 @@ fn test_lock_tokens_basic() {
     // Enable time-weighted voting
     let tw_config = types::TimeWeightedConfig {
         enabled: true,
-        min_lock_duration: 7 * 17_280,      // 7 days
-        max_lock_duration: 730 * 17_280,    // 2 years
+        min_lock_duration: 7 * 17_280,   // 7 days
+        max_lock_duration: 730 * 17_280, // 2 years
         apply_decay: false,
-        early_unlock_penalty_bps: 1000,     // 10%
+        early_unlock_penalty_bps: 1000, // 10%
     };
     client.set_time_weighted_config(&admin, &tw_config);
 
@@ -6817,19 +6817,19 @@ fn test_lock_tokens_multipliers() {
 
     // Test different lock durations and their multipliers
     let test_cases = [
-        (20 * 17_280, 10_000),   // < 30 days: 1.0x
-        (60 * 17_280, 15_000),   // 30-90 days: 1.5x
-        (120 * 17_280, 20_000),  // 90-180 days: 2.0x
-        (270 * 17_280, 30_000),  // 180-365 days: 3.0x
-        (400 * 17_280, 40_000),  // > 365 days: 4.0x
+        (20 * 17_280, 10_000),  // < 30 days: 1.0x
+        (60 * 17_280, 15_000),  // 30-90 days: 1.5x
+        (120 * 17_280, 20_000), // 90-180 days: 2.0x
+        (270 * 17_280, 30_000), // 180-365 days: 3.0x
+        (400 * 17_280, 40_000), // > 365 days: 4.0x
     ];
 
     for (i, (duration, expected_multiplier)) in test_cases.iter().enumerate() {
         let user = Address::generate(&env);
         token_client.mint(&user, &1000);
-        
+
         client.lock_tokens(&user, &token, &100, duration);
-        
+
         let lock = client.get_token_lock(&user).unwrap();
         assert_eq!(
             lock.power_multiplier_bps, *expected_multiplier,
@@ -6911,8 +6911,8 @@ fn test_unlock_tokens() {
     // Enable time-weighted voting
     let tw_config = types::TimeWeightedConfig {
         enabled: true,
-        min_lock_duration: 10,              // Very short for testing
-        max_lock_duration: 730 * 17_280,    // 2 years
+        min_lock_duration: 10,           // Very short for testing
+        max_lock_duration: 730 * 17_280, // 2 years
         apply_decay: false,
         early_unlock_penalty_bps: 1000,
     };
@@ -6920,7 +6920,7 @@ fn test_unlock_tokens() {
 
     // Mint and lock tokens
     token_client.mint(&user, &1000);
-    let lock_duration = 100;  // Short duration for testing
+    let lock_duration = 100; // Short duration for testing
     client.lock_tokens(&user, &token, &100, &lock_duration);
 
     // Try to unlock before expiry - should fail
@@ -6967,10 +6967,10 @@ fn test_early_unlock_with_penalty() {
     // Enable time-weighted voting with 10% penalty
     let tw_config = types::TimeWeightedConfig {
         enabled: true,
-        min_lock_duration: 10,              // Very short for testing
-        max_lock_duration: 730 * 17_280,    // 2 years
+        min_lock_duration: 10,           // Very short for testing
+        max_lock_duration: 730 * 17_280, // 2 years
         apply_decay: false,
-        early_unlock_penalty_bps: 1000,  // 10%
+        early_unlock_penalty_bps: 1000, // 10%
     };
     client.set_time_weighted_config(&admin, &tw_config);
 
@@ -7012,9 +7012,9 @@ fn test_voting_power_decay() {
     // Enable time-weighted voting WITH decay
     let tw_config = types::TimeWeightedConfig {
         enabled: true,
-        min_lock_duration: 10,              // Very short for testing
-        max_lock_duration: 730 * 17_280,    // 2 years
-        apply_decay: true,  // Enable decay
+        min_lock_duration: 10,           // Very short for testing
+        max_lock_duration: 730 * 17_280, // 2 years
+        apply_decay: true,               // Enable decay
         early_unlock_penalty_bps: 1000,
     };
     client.set_time_weighted_config(&admin, &tw_config);
@@ -7032,18 +7032,18 @@ fn test_voting_power_decay() {
     // Advance halfway through lock period
     env.ledger().set_sequence_number(100 + 500);
     let halfway_power = client.get_voting_power(&user);
-    
+
     // Power should be approximately half due to linear decay
     assert!(halfway_power < initial_power);
-    assert!(halfway_power >= 45 && halfway_power <= 55); // ~50 expected
+    assert!((45..=55).contains(&halfway_power)); // ~50 expected
 
     // Advance to near end of lock
     env.ledger().set_sequence_number(100 + 900);
     let near_end_power = client.get_voting_power(&user);
-    
+
     // Power should be much lower
     assert!(near_end_power < halfway_power);
-    assert!(near_end_power >= 5 && near_end_power <= 15); // ~10 expected
+    assert!((5..=15).contains(&near_end_power)); // ~10 expected
 }
 
 #[test]
