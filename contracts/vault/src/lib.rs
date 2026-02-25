@@ -931,6 +931,11 @@ impl VaultDAO {
                 token::transfer(&env, &proposal.token, &proposal.proposer, return_amount);
             }
 
+            // Track slashed funds into the insurance pool independently from general vault treasury
+            if slash_amount > 0 {
+                storage::add_to_insurance_pool(&env, &proposal.token, slash_amount);
+            }
+
             events::emit_insurance_slashed(
                 &env,
                 proposal_id,
@@ -1349,6 +1354,40 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Admin withdraws slashed insurance funds
+    pub fn withdraw_insurance_pool(
+        env: Env,
+        admin: Address,
+        token_addr: Address,
+        recipient: Address,
+        amount: i128,
+    ) -> Result<(), VaultError> {
+        // Implementation from original logic before the issue.
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let current_pool = storage::get_insurance_pool(&env, &token_addr);
+        if amount > current_pool {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        // Subtracted from the independent pool tracker
+        storage::subtract_from_insurance_pool(&env, &token_addr, amount);
+
+        // Execute actual token transfer from vault mapping
+        token::transfer(&env, &token_addr, &recipient, amount);
+
+        Ok(())
+    }
+
     // ========================================================================
     // View Functions
     // ========================================================================
@@ -1356,6 +1395,11 @@ impl VaultDAO {
     /// Get proposal by ID
     pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, VaultError> {
         storage::get_proposal(&env, proposal_id)
+    }
+
+    /// Get current pooled slash insurance balance
+    pub fn get_insurance_pool(env: Env, token_addr: Address) -> i128 {
+        storage::get_insurance_pool(&env, &token_addr)
     }
 
     /// Get role for an address
@@ -4055,5 +4099,170 @@ impl VaultDAO {
     /// Get all escrows for a recipient
     pub fn get_recipient_escrows(env: Env, recipient: Address) -> Vec<u64> {
         storage::get_recipient_escrows(&env, &recipient)
+    }
+
+    // ========================================================================
+    // Wallet Recovery (Issue: feature/wallet-recovery)
+    // ========================================================================
+
+    /// Update recovery configuration
+    pub fn set_recovery_config(
+        env: Env,
+        admin: Address,
+        config: types::RecoveryConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut vault_config = storage::get_config(&env)?;
+        vault_config.recovery_config = config;
+        storage::set_config(&env, &vault_config);
+
+        events::emit_recovery_config_updated(&env, &admin);
+        Ok(())
+    }
+
+    /// Initiate a wallet recovery proposal
+    pub fn initiate_recovery(
+        env: Env,
+        caller: Address,
+        new_signers: Vec<Address>,
+        new_threshold: u32,
+    ) -> Result<u64, VaultError> {
+        caller.require_auth();
+
+        // Validate new config
+        if new_signers.is_empty() {
+            return Err(VaultError::NoSigners);
+        }
+        if new_threshold < 1 {
+            return Err(VaultError::ThresholdTooLow);
+        }
+        if new_threshold > new_signers.len() {
+            return Err(VaultError::ThresholdTooHigh);
+        }
+
+        let id = storage::increment_recovery_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let proposal = types::RecoveryProposal {
+            id,
+            new_signers,
+            new_threshold,
+            approvals: Vec::new(&env),
+            status: types::RecoveryStatus::Pending,
+            created_at: current_ledger,
+            execution_after: 0, // Set after approval threshold is met
+        };
+
+        storage::set_recovery_proposal(&env, &proposal);
+        events::emit_recovery_proposed(&env, id, new_threshold);
+
+        Ok(id)
+    }
+
+    /// Approve a recovery proposal (guardians only)
+    pub fn approve_recovery(
+        env: Env,
+        guardian: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        guardian.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.recovery_config.guardians.contains(&guardian) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
+        if proposal.status != types::RecoveryStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        if proposal.approvals.contains(&guardian) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        proposal.approvals.push_back(guardian.clone());
+
+        let threshold = config.recovery_config.threshold;
+        if proposal.approvals.len() >= threshold {
+            proposal.status = types::RecoveryStatus::Approved;
+            proposal.execution_after =
+                env.ledger().sequence() as u64 + config.recovery_config.delay;
+        }
+
+        storage::set_recovery_proposal(&env, &proposal);
+        events::emit_recovery_approved(&env, proposal_id, &guardian);
+
+        Ok(())
+    }
+
+    /// Execute an approved recovery proposal
+    pub fn execute_recovery(env: Env, proposal_id: u64) -> Result<(), VaultError> {
+        let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
+
+        if proposal.status != types::RecoveryStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger < proposal.execution_after {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        // Apply new configuration
+        let mut config = storage::get_config(&env)?;
+        config.signers = proposal.new_signers.clone();
+        config.threshold = proposal.new_threshold;
+        // Reset quorum and other fields to safe defaults if they were invalid for new signers
+        if config.quorum > config.signers.len() {
+            config.quorum = config.signers.len();
+        }
+
+        storage::set_config(&env, &config);
+
+        proposal.status = types::RecoveryStatus::Executed;
+        storage::set_recovery_proposal(&env, &proposal);
+
+        events::emit_recovery_executed(&env, proposal_id);
+        events::emit_config_updated(&env, &env.current_contract_address());
+
+        Ok(())
+    }
+
+    /// Cancel a recovery proposal (admins only)
+    pub fn cancel_recovery(env: Env, admin: Address, proposal_id: u64) -> Result<(), VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
+        if proposal.status != types::RecoveryStatus::Pending
+            && proposal.status != types::RecoveryStatus::Approved
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        proposal.status = types::RecoveryStatus::Cancelled;
+        storage::set_recovery_proposal(&env, &proposal);
+
+        events::emit_recovery_cancelled(&env, proposal_id, &admin);
+
+        Ok(())
+    }
+
+    /// Get recovery configuration
+    pub fn get_recovery_config(env: Env) -> Result<types::RecoveryConfig, VaultError> {
+        let config = storage::get_config(&env)?;
+        Ok(config.recovery_config)
+    }
+
+    /// Get recovery proposal details
+    pub fn get_recovery_proposal(env: Env, id: u64) -> Result<types::RecoveryProposal, VaultError> {
+        storage::get_recovery_proposal(&env, id)
     }
 }

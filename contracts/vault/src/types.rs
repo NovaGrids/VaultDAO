@@ -17,7 +17,7 @@
 //!
 //! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
-use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Map, String, Symbol, Vec};
 
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
@@ -823,6 +823,62 @@ pub struct Dispute {
     pub filed_at: u64,
     /// Ledger when dispute was resolved (0 if unresolved)
     pub resolved_at: u64,
+}
+
+// ============================================================================
+// Wallet Recovery (Issue: feature/wallet-recovery)
+// ============================================================================
+
+/// Recovery configuration stored on-chain
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RecoveryConfig {
+    /// List of trusted guardians
+    pub guardians: Vec<Address>,
+    /// Number of guardian approvals required for recovery
+    pub threshold: u32,
+    /// Delay in ledgers before recovery can be executed
+    pub delay: u64,
+}
+
+impl RecoveryConfig {
+    pub fn default(env: &Env) -> Self {
+        RecoveryConfig {
+            guardians: Vec::new(env),
+            threshold: 0,
+            delay: 0,
+        }
+    }
+}
+
+/// Recovery proposal status
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RecoveryStatus {
+    Pending = 0,
+    Approved = 1,
+    Executed = 2,
+    Cancelled = 3,
+}
+
+/// Proposal to recover wallet access by replacing signers
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RecoveryProposal {
+    pub id: u64,
+    /// Proposed new list of signers
+    pub new_signers: Vec<Address>,
+    /// Proposed new threshold
+    pub new_threshold: u32,
+    /// Guardians who have approved this proposal
+    pub approvals: Vec<Address>,
+    /// Current status
+    pub status: RecoveryStatus,
+    /// Ledger when the proposal was created
+    pub created_at: u64,
+    /// Earliest ledger when this recovery can be executed
+    pub execution_after: u64,
 }
 // ============================================================================
 // Escrow System (Issue: feature/escrow-system)

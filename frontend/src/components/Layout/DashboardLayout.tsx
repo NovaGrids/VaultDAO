@@ -29,6 +29,8 @@ import { ProductTour } from "../ProductTour";
 import { HelpCenter } from "../HelpCenter";
 import { useOnboarding } from "../../context/OnboardingProvider";
 import { ONBOARDING_CONFIG } from "../../constants/onboarding";
+import VoiceCommands from "../VoiceCommands";
+import VoiceNavigation from "../VoiceNavigation";
 
 const DashboardLayout: React.FC = () => {
   const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
@@ -203,6 +205,10 @@ const DashboardLayout: React.FC = () => {
 
       {/* Help Center */}
       <HelpCenter isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+
+      {/* Voice Support */}
+      <VoiceNavigation />
+      <VoiceCommands />
 
       {/* Onboarding Prompt for New Users */}
       {showOnboardingPrompt && !onboarding.hasCompletedOnboarding && (

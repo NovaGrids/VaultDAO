@@ -24,7 +24,7 @@ use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, GasConfig,
     InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment,
-    ProposalTemplate, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -117,6 +117,12 @@ pub enum DataKey {
     FunderEscrows(Address),
     /// Escrow IDs by recipient address -> Vec<u64>
     RecipientEscrows(Address),
+    /// Recovery proposal by ID -> RecoveryProposal
+    RecoveryProposal(u64),
+    /// Next recovery proposal ID counter -> u64
+    NextRecoveryId,
+    /// Insurance pool accumulated slashed funds (Token Address) -> i128
+    InsurancePool(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -664,6 +670,35 @@ pub fn set_insurance_config(env: &Env, config: &InsuranceConfig) {
         .set(&DataKey::InsuranceConfig, config);
 }
 
+pub fn get_insurance_pool(env: &Env, token_addr: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::InsurancePool(token_addr.clone()))
+        .unwrap_or(0)
+}
+
+pub fn add_to_insurance_pool(env: &Env, token_addr: &Address, amount: i128) {
+    let current = get_insurance_pool(env, token_addr);
+    let key = DataKey::InsurancePool(token_addr.clone());
+    env.storage().persistent().set(&key, &(current + amount));
+    // extend TTL
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL); // Keeps pool persistent
+}
+
+#[allow(dead_code)]
+pub fn subtract_from_insurance_pool(env: &Env, token_addr: &Address, amount: i128) {
+    let current = get_insurance_pool(env, token_addr);
+    let key = DataKey::InsurancePool(token_addr.clone());
+    env.storage()
+        .persistent()
+        .set(&key, &(current.saturating_sub(amount).max(0)));
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
 // ============================================================================
 // Notification Preferences (Issue: feature/execution-notifications)
 // ============================================================================
@@ -1031,4 +1066,37 @@ pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+// ============================================================================
+// Wallet Recovery (Issue: feature/wallet-recovery)
+// ============================================================================
+
+pub fn get_recovery_proposal(env: &Env, id: u64) -> Result<RecoveryProposal, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecoveryProposal(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn set_recovery_proposal(env: &Env, proposal: &RecoveryProposal) {
+    let key = DataKey::RecoveryProposal(proposal.id);
+    env.storage().persistent().set(&key, proposal);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_next_recovery_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextRecoveryId)
+        .unwrap_or(1)
+}
+
+pub fn increment_recovery_id(env: &Env) -> u64 {
+    let id = get_next_recovery_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextRecoveryId, &(id + 1));
+    id
 }

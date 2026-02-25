@@ -587,3 +587,42 @@ pub fn emit_escrow_dispute_resolved(
         (arbitrator.clone(), released_to_recipient),
     );
 }
+// ============================================================================
+// Wallet Recovery Events (feature/wallet-recovery)
+// ============================================================================
+
+/// Emit when a recovery proposal is created
+pub fn emit_recovery_proposed(env: &Env, recovery_id: u64, new_threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_proposed"), recovery_id),
+        new_threshold,
+    );
+}
+
+/// Emit when a recovery proposal is approved by a guardian
+pub fn emit_recovery_approved(env: &Env, recovery_id: u64, guardian: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_approved"), recovery_id),
+        guardian.clone(),
+    );
+}
+
+/// Emit when a recovery proposal is executed
+pub fn emit_recovery_executed(env: &Env, recovery_id: u64) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_executed"), recovery_id), ());
+}
+
+/// Emit when a recovery proposal is cancelled
+pub fn emit_recovery_cancelled(env: &Env, recovery_id: u64, canceller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_cancelled"), recovery_id),
+        canceller.clone(),
+    );
+}
+
+/// Emit when recovery configuration is updated
+pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_cfg_updated"),), admin.clone());
+}
