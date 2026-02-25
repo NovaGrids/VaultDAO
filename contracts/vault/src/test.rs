@@ -7301,7 +7301,7 @@ fn test_create_matchable_proposal() {
     // Verify proposal was created
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.id, proposal_id);
-    assert_eq!(proposal.has_matching_criteria, true);
+    assert!(proposal.has_matching_criteria);
     assert_eq!(proposal.match_id, 0);
 }
 

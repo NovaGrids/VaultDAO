@@ -1519,10 +1519,8 @@ impl VaultDAO {
         }
 
         // Rate ranges must overlap
-        let rate_compatible = buy_criteria.max_rate_bps >= sell_criteria.min_rate_bps
-            && buy_criteria.min_rate_bps <= sell_criteria.max_rate_bps;
-
-        rate_compatible
+        buy_criteria.max_rate_bps >= sell_criteria.min_rate_bps
+            && buy_criteria.min_rate_bps <= sell_criteria.max_rate_bps
     }
 
     /// Create a match between two proposals.
