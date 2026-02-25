@@ -24,7 +24,8 @@ use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, FeeStructure,
     GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment,
-    ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role, StakeRecord, StakingConfig,
+    Subscription, SubscriptionPayment, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -125,6 +126,30 @@ pub enum DataKey {
     FeesCollected(Address),
     /// User's total transaction volume per token -> i128
     UserVolume(Address, Address),
+    /// Staking configuration -> StakingConfig
+    StakingConfig,
+    /// Staking pool accumulated funds (Token Address) -> i128
+    StakePool(Address),
+    /// Stake record for a proposal -> StakeRecord
+    StakeRecord(u64),
+    /// Cross-vault proposal configuration -> CrossVaultProposal
+    CrossVaultProposal(u64),
+    /// Cross-vault configuration -> CrossVaultConfig
+    CrossVaultConfig,
+    /// Dispute by ID -> Dispute
+    Dispute(u64),
+    /// Next dispute ID counter -> u64
+    NextDisputeId,
+    /// Disputes for a proposal -> Vec<u64>
+    ProposalDisputes(u64),
+    /// Batch transaction by ID -> BatchTransaction
+    Batch(u64),
+    /// Batch ID counter -> u64
+    BatchIdCounter,
+    /// Batch execution result -> BatchExecutionResult
+    BatchResult(u64),
+    /// Batch rollback state -> Vec<(Address, i128)>
+    BatchRollback(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1208,4 +1233,69 @@ pub fn add_user_volume(env: &Env, user: &Address, token: &Address, amount: i128)
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Proposal Staking (Issue: feature/proposal-staking)
+// ============================================================================
+
+/// Get the staking configuration
+pub fn get_staking_config(env: &Env) -> StakingConfig {
+    env.storage()
+        .instance()
+        .get(&DataKey::StakingConfig)
+        .unwrap_or_else(StakingConfig::default)
+}
+
+/// Set the staking configuration
+pub fn set_staking_config(env: &Env, config: &StakingConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::StakingConfig, config);
+}
+
+/// Get stake pool balance for a specific token
+pub fn get_stake_pool(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StakePool(token.clone()))
+        .unwrap_or(0)
+}
+
+/// Add to stake pool for a specific token
+pub fn add_to_stake_pool(env: &Env, token: &Address, amount: i128) {
+    let current = get_stake_pool(env, token);
+    let key = DataKey::StakePool(token.clone());
+    env.storage().persistent().set(&key, &(current + amount));
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Subtract from stake pool for a specific token
+pub fn subtract_from_stake_pool(env: &Env, token: &Address, amount: i128) {
+    let current = get_stake_pool(env, token);
+    let key = DataKey::StakePool(token.clone());
+    env.storage()
+        .persistent()
+        .set(&key, &(current.saturating_sub(amount).max(0)));
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Get stake record for a proposal
+pub fn get_stake_record(env: &Env, proposal_id: u64) -> Option<StakeRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StakeRecord(proposal_id))
+}
+
+/// Set stake record for a proposal
+pub fn set_stake_record(env: &Env, record: &StakeRecord) {
+    let key = DataKey::StakeRecord(record.proposal_id);
+    env.storage().persistent().set(&key, record);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }

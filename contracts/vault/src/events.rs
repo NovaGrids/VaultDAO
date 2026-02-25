@@ -223,6 +223,46 @@ pub fn emit_insurance_returned(env: &Env, proposal_id: u64, proposer: &Address, 
 }
 
 // ============================================================================
+// Staking Events (feature/proposal-staking)
+// ============================================================================
+
+/// Emit when stake is locked on proposal creation
+pub fn emit_stake_locked(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    amount: i128,
+    token: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stake_locked"), proposal_id),
+        (proposer.clone(), amount, token.clone()),
+    );
+}
+
+/// Emit when stake is slashed for malicious proposal
+pub fn emit_stake_slashed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    slashed_amount: i128,
+    returned_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stake_slashed"), proposal_id),
+        (proposer.clone(), slashed_amount, returned_amount),
+    );
+}
+
+/// Emit when stake is refunded on successful execution
+pub fn emit_stake_refunded(env: &Env, proposal_id: u64, proposer: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "stake_refunded"), proposal_id),
+        (proposer.clone(), amount),
+    );
+}
+
+// ============================================================================
 // Reputation Events (feature/reputation-system)
 // ============================================================================
 
