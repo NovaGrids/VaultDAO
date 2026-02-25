@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, MessageSquare, Loader2 } from 'lucide-react';
 import CommentThread, { type Comment } from './CommentThread';
-import { useWallet } from '../context/WalletContextProps';
+import { useWallet } from '../hooks/useWallet';
 import { useVaultContract } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';
 

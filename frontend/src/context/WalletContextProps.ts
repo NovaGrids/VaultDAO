@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext } from "react";
 import type { WalletAdapter } from "../adapters";
 
 export interface WalletContextType {
@@ -19,11 +19,3 @@ export interface WalletContextType {
 export const WalletContext = createContext<WalletContextType | undefined>(
   undefined,
 );
-
-export const useWallet = () => {
-  const context = useContext(WalletContext);
-  if (context === undefined) {
-    throw new Error("useWallet must be used within a WalletProvider");
-  }
-  return context;
-};

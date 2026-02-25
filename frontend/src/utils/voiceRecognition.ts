@@ -21,9 +21,10 @@ class VoiceRecognitionService {
   private awake = false;
 
   constructor() {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      this.recognition = new SpeechRecognition();
+    const globalWindow = globalThis as Record<string, unknown>;
+    const SpeechRecognitionClass = (globalWindow.SpeechRecognition || globalWindow.webkitSpeechRecognition) as (new () => SpeechRecognition) | undefined;
+    if (SpeechRecognitionClass) {
+      this.recognition = new SpeechRecognitionClass();
       this.synthesis = window.speechSynthesis;
     }
   }
