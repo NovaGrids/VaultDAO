@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::types::{
-    DexConfig, RetryConfig, SubscriptionStatus, SubscriptionTier, SwapProposal, TimeBasedThreshold,
+    DexConfig, SubscriptionStatus, SubscriptionTier, SwapProposal, TimeBasedThreshold,
     TransferDetails, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
@@ -6312,4 +6312,185 @@ fn test_insurance_pool_withdrawal() {
     assert!(result.is_err());
 }
 
-// ============================================================================
+#[test]
+fn test_estimate_execution_fee_breakdown_and_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+    client.set_gas_config(
+        &admin,
+        &GasConfig {
+            enabled: true,
+            default_gas_limit: 10_000,
+            base_cost: 100,
+            condition_cost: 25,
+        },
+    );
+
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::DateAfter(100));
+    conditions.push_back(Condition::BalanceAbove(10));
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "fee"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let estimate = client.estimate_execution_fee(&proposal_id);
+    assert_eq!(estimate.base_fee, 100);
+    assert_eq!(estimate.resource_fee, 75);
+    assert_eq!(estimate.total_fee, 175);
+    assert_eq!(estimate.operation_count, 3);
+
+    let stored = client
+        .get_execution_fee_estimate(&proposal_id)
+        .expect("stored estimate should exist");
+    assert_eq!(stored.total_fee, estimate.total_fee);
+}
+
+#[test]
+fn test_estimate_execution_fee_includes_insurance_step() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Register a proper Stellar Asset Contract for the token
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = sac.address();
+    let sac_admin_client = StellarAssetClient::new(&env, &token);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+    client.set_gas_config(
+        &admin,
+        &GasConfig {
+            enabled: true,
+            default_gas_limit: 10_000,
+            base_cost: 50,
+            condition_cost: 10,
+        },
+    );
+
+    // Mint tokens to the treasurer so they can lock insurance
+    sac_admin_client.mint(&treasurer, &1000);
+
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::DateAfter(200));
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "ins_fee"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &25i128,
+    );
+
+    let estimate = client.estimate_execution_fee(&proposal_id);
+    assert_eq!(estimate.operation_count, 3);
+    assert_eq!(estimate.base_fee, 50);
+    assert_eq!(estimate.resource_fee, 30);
+    assert_eq!(estimate.total_fee, 80);
+}
+
+#[test]
+fn test_estimate_execution_fee_refreshes_after_gas_config_update() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    client.set_gas_config(
+        &admin,
+        &GasConfig {
+            enabled: true,
+            default_gas_limit: 10_000,
+            base_cost: 100,
+            condition_cost: 20,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "refresh"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let initial = client.estimate_execution_fee(&proposal_id);
+    assert_eq!(initial.total_fee, 120);
+
+    client.set_gas_config(
+        &admin,
+        &GasConfig {
+            enabled: true,
+            default_gas_limit: 10_000,
+            base_cost: 200,
+            condition_cost: 40,
+        },
+    );
+
+    let refreshed = client.estimate_execution_fee(&proposal_id);
+    assert_eq!(refreshed.total_fee, 240);
+
+    let stored = client
+        .get_execution_fee_estimate(&proposal_id)
+        .expect("stored estimate should be refreshed");
+    assert_eq!(stored.total_fee, refreshed.total_fee);
+}

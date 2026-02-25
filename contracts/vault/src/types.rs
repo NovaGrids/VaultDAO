@@ -444,6 +444,20 @@ impl GasConfig {
     }
 }
 
+/// Estimated execution fee breakdown for a proposal.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ExecutionFeeEstimate {
+    /// Flat base fee component.
+    pub base_fee: u64,
+    /// Dynamic fee component based on proposal execution complexity.
+    pub resource_fee: u64,
+    /// Total estimated execution fee.
+    pub total_fee: u64,
+    /// Number of logical operations used to derive `resource_fee`.
+    pub operation_count: u32,
+}
+
 // ============================================================================
 // Performance Metrics (Issue: feature/performance-metrics)
 // ============================================================================
