@@ -720,3 +720,34 @@ pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "recovery_cfg_updated"),), admin.clone());
 }
+
+/// Emit when fee structure is updated
+pub fn emit_fee_structure_updated(env: &Env, admin: &Address, enabled: bool) {
+    env.events().publish(
+        (Symbol::new(env, "fee_structure_updated"),),
+        (admin.clone(), enabled),
+    );
+}
+
+/// Emit when a fee is collected from a transaction
+pub fn emit_fee_collected(
+    env: &Env,
+    user: &Address,
+    token: &Address,
+    amount: i128,
+    fee: i128,
+    fee_bps: u32,
+    reputation_discount_applied: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "fee_collected"),),
+        (
+            user.clone(),
+            token.clone(),
+            amount,
+            fee,
+            fee_bps,
+            reputation_discount_applied,
+        ),
+    );
+}

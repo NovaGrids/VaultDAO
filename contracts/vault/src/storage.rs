@@ -22,7 +22,7 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, GasConfig,
+    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, FeeStructure, GasConfig,
     InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment,
     ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
 };
@@ -123,6 +123,12 @@ pub enum DataKey {
     NextRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
+    /// Fee structure configuration -> FeeStructure
+    FeeStructure,
+    /// Total fees collected per token -> i128
+    FeesCollected(Address),
+    /// User's total transaction volume per token -> i128
+    UserVolume(Address, Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1099,4 +1105,59 @@ pub fn increment_recovery_id(env: &Env) -> u64 {
         .instance()
         .set(&DataKey::NextRecoveryId, &(id + 1));
     id
+}
+
+// ============================================================================
+// Dynamic Fee Structure (Issue: feature/dynamic-fees)
+// ============================================================================
+
+/// Get the fee structure configuration
+pub fn get_fee_structure(env: &Env) -> FeeStructure {
+    env.storage()
+        .instance()
+        .get(&DataKey::FeeStructure)
+        .unwrap_or_else(|| FeeStructure::default(env))
+}
+
+/// Set the fee structure configuration
+pub fn set_fee_structure(env: &Env, fee_structure: &FeeStructure) {
+    env.storage()
+        .instance()
+        .set(&DataKey::FeeStructure, fee_structure);
+}
+
+/// Get total fees collected for a specific token
+pub fn get_fees_collected(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::FeesCollected(token.clone()))
+        .unwrap_or(0)
+}
+
+/// Add to fees collected for a specific token
+pub fn add_fees_collected(env: &Env, token: &Address, amount: i128) {
+    let current = get_fees_collected(env, token);
+    let key = DataKey::FeesCollected(token.clone());
+    env.storage().persistent().set(&key, &(current + amount));
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Get user's total transaction volume for a specific token
+pub fn get_user_volume(env: &Env, user: &Address, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::UserVolume(user.clone(), token.clone()))
+        .unwrap_or(0)
+}
+
+/// Update user's transaction volume for a specific token
+pub fn add_user_volume(env: &Env, user: &Address, token: &Address, amount: i128) {
+    let current = get_user_volume(env, user, token);
+    let key = DataKey::UserVolume(user.clone(), token.clone());
+    env.storage().persistent().set(&key, &(current + amount));
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
 }

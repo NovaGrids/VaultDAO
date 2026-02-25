@@ -20,10 +20,10 @@ use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
 use types::{
     Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
-    CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, GasConfig, InsuranceConfig,
-    ListMode, NotificationPreferences, Priority, Proposal, ProposalAmendment, ProposalStatus,
-    ProposalTemplate, Reputation, RetryConfig, RetryState, Role, TemplateOverrides,
-    ThresholdStrategy, VaultAction, VaultMetrics,
+    CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, FeeCalculation, FeeStructure,
+    GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Priority, Proposal,
+    ProposalAmendment, ProposalStatus, ProposalTemplate, Reputation, RetryConfig, RetryState,
+    Role, TemplateOverrides, ThresholdStrategy, VaultAction, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -2377,6 +2377,91 @@ impl VaultDAO {
     }
 
     // ========================================================================
+    // Dynamic Fee System (Issue: feature/dynamic-fees)
+    // ========================================================================
+
+    /// Configure the dynamic fee structure.
+    ///
+    /// Only Admin can update fee configuration.
+    ///
+    /// # Arguments
+    /// * `admin` - Admin address (must authorize)
+    /// * `fee_structure` - New fee structure configuration
+    pub fn set_fee_structure(
+        env: Env,
+        admin: Address,
+        fee_structure: types::FeeStructure,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Validate fee structure
+        if fee_structure.base_fee_bps > 10_000 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Validate tiers are sorted by min_volume
+        for i in 1..fee_structure.tiers.len() {
+            let prev = fee_structure.tiers.get(i - 1).unwrap();
+            let curr = fee_structure.tiers.get(i).unwrap();
+            if curr.min_volume <= prev.min_volume {
+                return Err(VaultError::InvalidAmount);
+            }
+            if curr.fee_bps > 10_000 {
+                return Err(VaultError::InvalidAmount);
+            }
+        }
+
+        if fee_structure.reputation_discount_percentage > 100 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        storage::set_fee_structure(&env, &fee_structure);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_fee_structure_updated(&env, &admin, fee_structure.enabled);
+
+        Ok(())
+    }
+
+    /// Get the current fee structure configuration.
+    pub fn get_fee_structure(env: Env) -> types::FeeStructure {
+        storage::get_fee_structure(&env)
+    }
+
+    /// Calculate fee for a given transaction without collecting it.
+    ///
+    /// # Arguments
+    /// * `user` - The user making the transaction
+    /// * `token` - The token being transferred
+    /// * `amount` - The transaction amount
+    ///
+    /// # Returns
+    /// FeeCalculation with base fee, discount, and final fee
+    pub fn calculate_fee(
+        env: Env,
+        user: Address,
+        token: Address,
+        amount: i128,
+    ) -> types::FeeCalculation {
+        Self::calculate_fee(&env, &user, &token, amount)
+    }
+
+    /// Get total fees collected for a specific token.
+    pub fn get_fees_collected(env: Env, token: Address) -> i128 {
+        storage::get_fees_collected(&env, &token)
+    }
+
+    /// Get user's total transaction volume for a specific token.
+    pub fn get_user_volume(env: Env, user: Address, token: Address) -> i128 {
+        storage::get_user_volume(&env, &user, &token)
+    }
+
+    // ========================================================================
     // Reputation System (Issue: feature/reputation-system)
     // ========================================================================
 
@@ -2746,6 +2831,124 @@ impl VaultDAO {
                 Symbol::new(env, "rejected"),
             );
         }
+    }
+
+    // ========================================================================
+    // Dynamic Fee System (Issue: feature/dynamic-fees)
+    // ========================================================================
+
+    /// Calculate fee for a transaction based on volume tiers and reputation.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `user` - The user making the transaction
+    /// * `token` - The token being transferred
+    /// * `amount` - The transaction amount
+    ///
+    /// # Returns
+    /// FeeCalculation with base fee, discount, and final fee
+    fn calculate_fee(
+        env: &Env,
+        user: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> types::FeeCalculation {
+        let fee_structure = storage::get_fee_structure(env);
+
+        if !fee_structure.enabled {
+            return types::FeeCalculation {
+                base_fee: 0,
+                discount: 0,
+                final_fee: 0,
+                fee_bps: 0,
+                reputation_discount_applied: false,
+            };
+        }
+
+        // Get user's total volume for this token
+        let user_volume = storage::get_user_volume(env, user, token);
+
+        // Find applicable fee tier based on volume
+        let mut fee_bps = fee_structure.base_fee_bps;
+        for i in 0..fee_structure.tiers.len() {
+            if let Some(tier) = fee_structure.tiers.get(i) {
+                if user_volume >= tier.min_volume {
+                    fee_bps = tier.fee_bps;
+                } else {
+                    break; // Tiers are sorted, so we can stop
+                }
+            }
+        }
+
+        // Calculate base fee
+        let base_fee = (amount * fee_bps as i128) / 10_000;
+
+        // Check for reputation discount
+        let rep = storage::get_reputation(env, user);
+        let mut discount = 0i128;
+        let mut reputation_discount_applied = false;
+
+        if rep.score >= fee_structure.reputation_discount_threshold {
+            discount = (base_fee * fee_structure.reputation_discount_percentage as i128) / 100;
+            reputation_discount_applied = true;
+        }
+
+        let final_fee = base_fee.saturating_sub(discount).max(0);
+
+        types::FeeCalculation {
+            base_fee,
+            discount,
+            final_fee,
+            fee_bps,
+            reputation_discount_applied,
+        }
+    }
+
+    /// Collect fee from a transaction and distribute to treasury.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `user` - The user making the transaction
+    /// * `token` - The token being transferred
+    /// * `amount` - The transaction amount
+    ///
+    /// # Returns
+    /// The fee amount collected
+    fn collect_and_distribute_fee(
+        env: &Env,
+        user: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> Result<i128, VaultError> {
+        let fee_calc = Self::calculate_fee(env, user, token, amount);
+
+        if fee_calc.final_fee == 0 {
+            return Ok(0);
+        }
+
+        let fee_structure = storage::get_fee_structure(env);
+
+        // Transfer fee from vault to treasury
+        token::transfer_from_vault(env, token, &fee_structure.treasury, fee_calc.final_fee);
+
+        // Update fee collection stats
+        storage::add_fees_collected(env, token, fee_calc.final_fee);
+
+        // Update user volume
+        storage::add_user_volume(env, user, token, amount);
+
+        // Emit fee collected event
+        events::emit_fee_collected(
+            env,
+            user,
+            token,
+            amount,
+            fee_calc.final_fee,
+            fee_calc.fee_bps,
+            fee_calc.reputation_discount_applied,
+        );
+
+        Ok(fee_calc.final_fee)
     }
 
     // ========================================================================
@@ -3671,9 +3874,18 @@ impl VaultDAO {
             return Err(VaultError::GasLimitExceeded);
         }
 
-        // Check vault balance (account for insurance amount that is also held in vault)
+        // Calculate fee for this transaction
+        let fee_amount = Self::collect_and_distribute_fee(
+            env,
+            &proposal.proposer,
+            &proposal.token,
+            proposal.amount,
+        )?;
+
+        // Check vault balance (account for insurance amount and fee)
         let balance = token::balance(env, &proposal.token);
-        if balance < proposal.amount + proposal.insurance_amount {
+        let total_required = proposal.amount + proposal.insurance_amount + fee_amount;
+        if balance < total_required {
             return Err(VaultError::InsufficientBalance);
         }
 

@@ -991,3 +991,64 @@ impl Escrow {
         (self.total_amount * completed_percentage as i128) / 100 - self.released_amount
     }
 }
+// ============================================================================
+// Dynamic Fee Structure (Issue: feature/dynamic-fees)
+// ============================================================================
+
+/// Fee tier based on transaction volume
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeTier {
+    /// Minimum volume threshold for this tier (in stroops)
+    pub min_volume: i128,
+    /// Fee rate in basis points (e.g., 100 = 1%)
+    pub fee_bps: u32,
+}
+
+/// Dynamic fee structure configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeStructure {
+    /// Volume-based fee tiers (sorted by min_volume ascending)
+    pub tiers: Vec<FeeTier>,
+    /// Base fee rate in basis points (used if no tiers match)
+    pub base_fee_bps: u32,
+    /// Reputation score threshold for discount eligibility
+    pub reputation_discount_threshold: u32,
+    /// Discount percentage for high-reputation users (0-100)
+    pub reputation_discount_percentage: u32,
+    /// Treasury address for fee distribution
+    pub treasury: Address,
+    /// Whether fee collection is enabled
+    pub enabled: bool,
+}
+
+impl FeeStructure {
+    pub fn default(env: &Env) -> Self {
+        FeeStructure {
+            tiers: Vec::new(env),
+            base_fee_bps: 50, // 0.5% default
+            reputation_discount_threshold: 750,
+            reputation_discount_percentage: 50, // 50% discount
+            treasury: Address::generate(env),
+            enabled: false,
+        }
+    }
+}
+
+/// Fee calculation result
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeCalculation {
+    /// Base fee before discounts
+    pub base_fee: i128,
+    /// Discount amount applied
+    pub discount: i128,
+    /// Final fee to collect
+    pub final_fee: i128,
+    /// Fee rate used (in basis points)
+    pub fee_bps: u32,
+    /// Whether reputation discount was applied
+    pub reputation_discount_applied: bool,
+}
+

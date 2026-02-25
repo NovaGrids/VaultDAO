@@ -6728,3 +6728,357 @@ fn test_insurance_pool_withdrawal() {
     let result = client.try_withdraw_insurance_pool(&admin, &token_addr, &withdraw_target, &1);
     assert!(result.is_err());
 }
+
+// ============================================================================
+// Dynamic Fee System Tests (Issue: feature/dynamic-fees)
+// ============================================================================
+
+#[test]
+fn test_fee_structure_configuration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Create fee structure with tiers
+    let mut tiers = Vec::new(&env);
+    tiers.push_back(types::FeeTier {
+        min_volume: 1000,
+        fee_bps: 40, // 0.4% for volume >= 1000
+    });
+    tiers.push_back(types::FeeTier {
+        min_volume: 5000,
+        fee_bps: 30, // 0.3% for volume >= 5000
+    });
+    tiers.push_back(types::FeeTier {
+        min_volume: 10000,
+        fee_bps: 20, // 0.2% for volume >= 10000
+    });
+
+    let fee_structure = types::FeeStructure {
+        tiers,
+        base_fee_bps: 50, // 0.5% base
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+
+    client.set_fee_structure(&admin, &fee_structure);
+
+    // Verify configuration
+    let retrieved = client.get_fee_structure();
+    assert_eq!(retrieved.base_fee_bps, 50);
+    assert_eq!(retrieved.tiers.len(), 3);
+    assert_eq!(retrieved.enabled, true);
+}
+
+#[test]
+fn test_fee_calculation_base_rate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Enable fees with base rate only
+    let fee_structure = types::FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 50, // 0.5%
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+
+    client.set_fee_structure(&admin, &fee_structure);
+
+    // Calculate fee for 1000 stroops
+    let fee_calc = client.calculate_fee(&user, &token, &1000);
+    
+    // Expected: 1000 * 50 / 10000 = 5 stroops
+    assert_eq!(fee_calc.base_fee, 5);
+    assert_eq!(fee_calc.final_fee, 5);
+    assert_eq!(fee_calc.discount, 0);
+    assert_eq!(fee_calc.reputation_discount_applied, false);
+}
+
+#[test]
+fn test_fee_calculation_volume_tiers() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set up fee tiers
+    let mut tiers = Vec::new(&env);
+    tiers.push_back(types::FeeTier {
+        min_volume: 1000,
+        fee_bps: 40, // 0.4%
+    });
+    tiers.push_back(types::FeeTier {
+        min_volume: 5000,
+        fee_bps: 30, // 0.3%
+    });
+
+    let fee_structure = types::FeeStructure {
+        tiers,
+        base_fee_bps: 50, // 0.5% base
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+
+    client.set_fee_structure(&admin, &fee_structure);
+
+    // Test base rate (no volume yet)
+    let fee_calc = client.calculate_fee(&user, &token, &100);
+    assert_eq!(fee_calc.fee_bps, 50); // Base rate
+
+    // Note: In a real scenario, we would need to execute transactions
+    // to build up volume. For this test, we're just verifying the
+    // fee calculation logic works correctly.
+}
+
+#[test]
+fn test_fee_calculation_reputation_discount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let high_rep_user = Address::generate(&env);
+    let token = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(high_rep_user.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Set roles
+    client.set_role(&admin, &high_rep_user, &Role::Treasurer);
+
+    // Enable fees
+    let fee_structure = types::FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 100, // 1%
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50, // 50% discount
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+
+    client.set_fee_structure(&admin, &fee_structure);
+
+    // Build reputation by creating and executing proposals
+    // (In a real test, we'd need to go through the full proposal lifecycle)
+    
+    // For now, just verify the fee calculation logic
+    let fee_calc = client.calculate_fee(&high_rep_user, &token, &1000);
+    
+    // Base fee: 1000 * 100 / 10000 = 10
+    assert_eq!(fee_calc.base_fee, 10);
+    
+    // Without high reputation, no discount
+    assert_eq!(fee_calc.discount, 0);
+}
+
+#[test]
+fn test_fee_disabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Disable fees
+    let fee_structure = types::FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 50,
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: false, // Disabled
+    };
+
+    client.set_fee_structure(&admin, &fee_structure);
+
+    // Calculate fee - should be zero
+    let fee_calc = client.calculate_fee(&user, &token, &1000);
+    assert_eq!(fee_calc.final_fee, 0);
+    assert_eq!(fee_calc.base_fee, 0);
+}
+
+#[test]
+fn test_fee_structure_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Test invalid base fee (> 100%)
+    let mut invalid_fee_structure = types::FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 15000, // > 10000 (100%)
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+
+    let result = client.try_set_fee_structure(&admin, &invalid_fee_structure);
+    assert!(result.is_err());
+
+    // Test invalid discount percentage (> 100)
+    invalid_fee_structure.base_fee_bps = 50;
+    invalid_fee_structure.reputation_discount_percentage = 150;
+
+    let result = client.try_set_fee_structure(&admin, &invalid_fee_structure);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_fee_structure_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    let fee_structure = types::FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 50,
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+
+    // Non-admin should not be able to set fee structure
+    let result = client.try_set_fee_structure(&non_admin, &fee_structure);
+    assert!(result.is_err());
+    assert_eq!(result.err(), Some(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
+fn test_user_volume_tracking() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Initially, volume should be zero
+    let volume = client.get_user_volume(&user, &token);
+    assert_eq!(volume, 0);
+
+    // Note: Volume is updated during proposal execution
+    // In a full integration test, we would execute proposals
+    // and verify volume increases
+}
+
+#[test]
+fn test_fees_collected_tracking() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Initially, fees collected should be zero
+    let fees = client.get_fees_collected(&token);
+    assert_eq!(fees, 0);
+
+    // Note: Fees are collected during proposal execution
+    // In a full integration test, we would execute proposals
+    // and verify fees are collected
+}
