@@ -17,7 +17,7 @@
 //!
 //! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
-use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Map, String, Symbol, Vec};
 
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
@@ -47,6 +47,8 @@ pub struct InitConfig {
     pub default_voting_deadline: u64,
     /// Retry configuration for failed executions
     pub retry_config: RetryConfig,
+    /// Recovery configuration
+    pub recovery_config: RecoveryConfig,
 }
 
 /// Vault configuration
@@ -79,6 +81,8 @@ pub struct Config {
     pub default_voting_deadline: u64,
     /// Retry configuration for failed executions
     pub retry_config: RetryConfig,
+    /// Recovery configuration
+    pub recovery_config: RecoveryConfig,
 }
 
 /// Audit record for a cancelled proposal
@@ -731,123 +735,116 @@ pub struct RetryState {
 }
 
 // ============================================================================
-// Cross-Vault Proposal Coordination (Issue: feature/cross-vault-coordination)
+// Subscription System (Issue: feature/subscription-system)
 // ============================================================================
 
-/// Status of a cross-vault proposal
+/// Subscription tier levels
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
-pub enum CrossVaultStatus {
+pub enum SubscriptionTier {
+    Basic = 0,
+    Standard = 1,
+    Premium = 2,
+    Enterprise = 3,
+}
+
+/// Subscription status
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum SubscriptionStatus {
+    Active = 0,
+    Cancelled = 1,
+    Expired = 2,
+    Suspended = 3,
+}
+
+/// Subscription record
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Subscription {
+    pub id: u64,
+    pub subscriber: Address,
+    pub service_provider: Address,
+    pub tier: SubscriptionTier,
+    pub token: Address,
+    pub amount_per_period: i128,
+    pub interval_ledgers: u64,
+    pub next_renewal_ledger: u64,
+    pub created_at: u64,
+    pub status: SubscriptionStatus,
+    pub total_payments: u32,
+    pub last_payment_ledger: u64,
+    pub auto_renew: bool,
+}
+
+/// Payment record for subscription tracking
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SubscriptionPayment {
+    pub subscription_id: u64,
+    pub payment_number: u32,
+    pub amount: i128,
+    pub paid_at: u64,
+    pub period_start: u64,
+    pub period_end: u64,
+}
+
+// ============================================================================
+// Wallet Recovery (Issue: feature/wallet-recovery)
+// ============================================================================
+
+/// Recovery configuration stored on-chain
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RecoveryConfig {
+    /// List of trusted guardians
+    pub guardians: Vec<Address>,
+    /// Number of guardian approvals required for recovery
+    pub threshold: u32,
+    /// Delay in ledgers before recovery can be executed
+    pub delay: u64,
+}
+
+impl RecoveryConfig {
+    pub fn default(env: &Env) -> Self {
+        RecoveryConfig {
+            guardians: Vec::new(env),
+            threshold: 0,
+            delay: 0,
+        }
+    }
+}
+
+/// Recovery proposal status
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RecoveryStatus {
     Pending = 0,
     Approved = 1,
     Executed = 2,
-    Failed = 3,
-    Cancelled = 4,
+    Cancelled = 3,
 }
 
-/// Describes a single action to be executed on a participant vault
+/// Proposal to recover wallet access by replacing signers
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct VaultAction {
-    /// Address of the participant vault contract
-    pub vault_address: Address,
-    /// Recipient of the transfer from the participant vault
-    pub recipient: Address,
-    /// Token contract address
-    pub token: Address,
-    /// Amount to transfer
-    pub amount: i128,
-    /// Optional memo
-    pub memo: Symbol,
-}
-
-/// Cross-vault proposal stored alongside the base Proposal
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct CrossVaultProposal {
-    /// List of actions to execute across participant vaults
-    pub actions: Vec<VaultAction>,
-    /// Current status of the cross-vault proposal
-    pub status: CrossVaultStatus,
-    /// Per-action execution results (true = success)
-    pub execution_results: Vec<bool>,
-    /// Ledger when executed (0 if not yet executed)
-    pub executed_at: u64,
-}
-
-/// Configuration for cross-vault participation
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct CrossVaultConfig {
-    /// Whether this vault participates in cross-vault operations
-    pub enabled: bool,
-    /// Vault addresses authorized to coordinate actions on this vault
-    pub authorized_coordinators: Vec<Address>,
-    /// Maximum amount per single cross-vault action
-    pub max_action_amount: i128,
-    /// Maximum number of actions in a single cross-vault proposal
-    pub max_actions: u32,
-}
-
-// ============================================================================
-// Dispute Resolution (Issue: feature/dispute-resolution)
-// ============================================================================
-
-/// Lifecycle status of a dispute
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum DisputeStatus {
-    /// Dispute has been filed, awaiting arbitrator review
-    Filed = 0,
-    /// Arbitrator is actively reviewing the dispute
-    UnderReview = 1,
-    /// Dispute has been resolved by an arbitrator
-    Resolved = 2,
-    /// Dispute was dismissed by an arbitrator
-    Dismissed = 3,
-}
-
-/// Outcome of a dispute resolution
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum DisputeResolution {
-    /// Ruling in favor of the original proposer (proposal proceeds)
-    InFavorOfProposer = 0,
-    /// Ruling in favor of the disputer (proposal rejected)
-    InFavorOfDisputer = 1,
-    /// Compromise reached (proposal modified or partially executed)
-    Compromise = 2,
-    /// Dispute dismissed as invalid
-    Dismissed = 3,
-}
-
-/// On-chain dispute record for a contested proposal
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct Dispute {
-    /// Unique dispute ID
+pub struct RecoveryProposal {
     pub id: u64,
-    /// ID of the disputed proposal
-    pub proposal_id: u64,
-    /// Address that filed the dispute
-    pub disputer: Address,
-    /// Short reason for the dispute
-    pub reason: Symbol,
-    /// IPFS hashes or on-chain references to supporting evidence
-    pub evidence: Vec<String>,
+    /// Proposed new list of signers
+    pub new_signers: Vec<Address>,
+    /// Proposed new threshold
+    pub new_threshold: u32,
+    /// Guardians who have approved this proposal
+    pub approvals: Vec<Address>,
     /// Current status
-    pub status: DisputeStatus,
-    /// Resolution outcome (only set when status is Resolved or Dismissed)
-    pub resolution: DisputeResolution,
-    /// Arbitrator who resolved the dispute (zero-value until resolved)
-    pub arbitrator: Address,
-    /// Ledger when dispute was filed
-    pub filed_at: u64,
-    /// Ledger when dispute was resolved (0 if unresolved)
-    pub resolved_at: u64,
+    pub status: RecoveryStatus,
+    /// Ledger when the proposal was created
+    pub created_at: u64,
+    /// Earliest ledger when this recovery can be executed
+    pub execution_after: u64,
 }
 // ============================================================================
 // Escrow System (Issue: feature/escrow-system)
@@ -944,4 +941,75 @@ impl Escrow {
         }
         (self.total_amount * completed_percentage as i128) / 100 - self.released_amount
     }
+}
+
+/// A single operation within a batch transaction
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchOperation {
+    /// Operation type (e.g., "transfer", "swap", "liquidity")
+    pub op_type: Symbol,
+    /// Recipient address
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Amount for the operation
+    pub amount: i128,
+    /// Optional data for operation (e.g., swap params)
+    pub data: String,
+}
+
+/// Status of a batch transaction
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BatchStatus {
+    /// Awaiting execution
+    Pending = 0,
+    /// Currently executing
+    Executing = 1,
+    /// Successfully completed
+    Completed = 2,
+    /// Failed during execution
+    Failed = 3,
+    /// Rolled back due to failure
+    RolledBack = 4,
+}
+
+/// Atomic batch transaction containing multiple operations
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchTransaction {
+    /// Unique batch ID
+    pub id: u64,
+    /// Creator of the batch
+    pub creator: Address,
+    /// List of operations to execute atomically
+    pub operations: Vec<BatchOperation>,
+    /// Current status
+    pub status: BatchStatus,
+    /// Timestamp when created
+    pub created_at: u64,
+    /// Memo for the batch
+    pub memo: Symbol,
+    /// Gas estimate for the batch
+    pub estimated_gas: u64,
+}
+
+/// Result of a batch transaction execution
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchExecutionResult {
+    /// Batch ID
+    pub batch_id: u64,
+    /// Whether execution succeeded
+    pub success: bool,
+    /// Index of failed operation (if any)
+    pub failed_operation_index: u64,
+    /// Error message if failed
+    pub error: Symbol,
+    /// Number of operations executed before failure
+    pub executed_count: u64,
+    /// Ledger when executed
+    pub executed_at: u64,
 }

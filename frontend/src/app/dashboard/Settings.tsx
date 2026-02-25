@@ -20,10 +20,11 @@ import {
 } from 'lucide-react';
 import RecipientListManagement from '../../components/RecipientListManagement';
 import RoleManagement from '../../components/RoleManagement';
+import EmergencyControls from '../../components/EmergencyControls';
 import WalletComparison from '../../components/WalletComparison';
 import CopyButton from '../../components/CopyButton';
 import { useVaultContract } from '../../hooks/useVaultContract';
-import { useWallet } from '../../context/WalletContextProps';
+import { useWallet } from '../../hooks/useWallet';
 import { formatTokenAmount, truncateAddress } from '../../utils/formatters';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
@@ -121,6 +122,9 @@ const Settings: React.FC = () => {
     [vaultConfig],
   );
 
+  const isAdmin = useMemo(() => vaultConfig?.currentUserRole === 2, [vaultConfig]);
+  const isSigner = useMemo(() => vaultConfig?.isCurrentUserSigner ?? false, [vaultConfig]);
+
   const formatTimelockDelay = (delayLedgers: number): string => {
     if (!delayLedgers || delayLedgers < 1) return 'No delay';
     const totalSeconds = delayLedgers * 5;
@@ -140,6 +144,11 @@ const Settings: React.FC = () => {
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-bold">Settings</h2>
+
+      {/* Emergency Controls */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <EmergencyControls isAdmin={isAdmin} isSigner={isSigner} />
+      </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
