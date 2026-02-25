@@ -358,6 +358,26 @@ pub fn emit_gas_config_updated(env: &Env, admin: &Address) {
         .publish((Symbol::new(env, "gas_cfg_updated"),), admin.clone());
 }
 
+/// Emit when execution fee estimate is calculated/refreshed for a proposal.
+pub fn emit_execution_fee_estimated(
+    env: &Env,
+    proposal_id: u64,
+    base_fee: u64,
+    resource_fee: u64,
+    total_fee: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "exec_fee_estimated"), proposal_id),
+        (base_fee, resource_fee, total_fee),
+    );
+}
+
+/// Emit when a proposal execution consumes its estimated fee.
+pub fn emit_execution_fee_used(env: &Env, proposal_id: u64, total_fee: u64) {
+    env.events()
+        .publish((Symbol::new(env, "exec_fee_used"), proposal_id), total_fee);
+}
+
 // ============================================================================
 // Performance Metrics Events (feature/performance-metrics)
 // ============================================================================
