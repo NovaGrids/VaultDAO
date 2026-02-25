@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::types::{
-    CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution, DisputeStatus, RetryConfig,
-    SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction, VelocityConfig,
+    BountyStatus, ClaimStatus, CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution,
+    DisputeStatus, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction,
+    VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -6730,3 +6731,1192 @@ fn test_insurance_pool_withdrawal() {
 }
 
 // ============================================================================
+// Proposal Inheritance and Forking Tests
+// ============================================================================
+
+#[test]
+fn test_fork_proposal_basic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create parent proposal
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient1,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Fork the proposal with a different recipient
+    let child_id = client.fork_proposal(
+        &signer2,
+        &parent_id,
+        &Some(recipient2.clone()),
+        &None,
+        &None,
+        &None,
+    );
+
+    // Verify parent proposal
+    let parent = client.get_proposal(&parent_id);
+    assert_eq!(parent.id, parent_id);
+    assert_eq!(parent.recipient, recipient1);
+    assert_eq!(parent.amount, 100);
+    assert_eq!(parent.parent_id, 0);
+
+    // Verify forked proposal
+    let child = client.get_proposal(&child_id);
+    assert_eq!(child.id, child_id);
+    assert_eq!(child.recipient, recipient2);
+    assert_eq!(child.amount, 100); // Inherited from parent
+    assert_eq!(child.token, token);
+    assert_eq!(child.parent_id, parent_id);
+    assert_eq!(child.proposer, signer2);
+    assert_eq!(child.status, ProposalStatus::Pending);
+}
+
+#[test]
+fn test_fork_proposal_with_overrides() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create parent proposal
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient1,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Fork with all overrides
+    let child_id = client.fork_proposal(
+        &signer2,
+        &parent_id,
+        &Some(recipient2.clone()),
+        &Some(200i128),
+        &Some(Symbol::new(&env, "forked")),
+        &Some(Priority::High),
+    );
+
+    // Verify forked proposal has all overrides
+    let child = client.get_proposal(&child_id);
+    assert_eq!(child.recipient, recipient2);
+    assert_eq!(child.amount, 200);
+    assert_eq!(child.memo, Symbol::new(&env, "forked"));
+    assert_eq!(child.priority, Priority::High);
+    assert_eq!(child.parent_id, parent_id);
+}
+
+#[test]
+fn test_get_proposal_children() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create parent proposal
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Initially no children
+    let children = client.get_proposal_children(&parent_id);
+    assert_eq!(children.len(), 0);
+
+    // Fork twice
+    let child1_id = client.fork_proposal(&signer2, &parent_id, &None, &Some(150i128), &None, &None);
+
+    let child2_id = client.fork_proposal(&signer2, &parent_id, &None, &Some(200i128), &None, &None);
+
+    // Verify children list
+    let children = client.get_proposal_children(&parent_id);
+    assert_eq!(children.len(), 2);
+    assert_eq!(children.get(0).unwrap(), child1_id);
+    assert_eq!(children.get(1).unwrap(), child2_id);
+}
+
+#[test]
+fn test_inheritance_chain() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Create a chain: grandparent -> parent -> child
+    let grandparent_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "grandparent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let parent_id = client.fork_proposal(
+        &signer1,
+        &grandparent_id,
+        &None,
+        &Some(150i128),
+        &None,
+        &None,
+    );
+
+    let child_id = client.fork_proposal(&signer1, &parent_id, &None, &Some(200i128), &None, &None);
+
+    // Verify inheritance chains
+    let grandparent_chain = client.get_inheritance_chain(&grandparent_id);
+    assert_eq!(grandparent_chain.len(), 0); // No ancestors
+
+    let parent_chain = client.get_inheritance_chain(&parent_id);
+    assert_eq!(parent_chain.len(), 1);
+    assert_eq!(parent_chain.get(0).unwrap(), grandparent_id);
+
+    let child_chain = client.get_inheritance_chain(&child_id);
+    assert_eq!(child_chain.len(), 2);
+    assert_eq!(child_chain.get(0).unwrap(), grandparent_id);
+    assert_eq!(child_chain.get(1).unwrap(), parent_id);
+}
+
+#[test]
+fn test_compare_fork() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Create parent and fork
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient1,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let child_id = client.fork_proposal(
+        &signer1,
+        &parent_id,
+        &Some(recipient2.clone()),
+        &Some(200i128),
+        &Some(Symbol::new(&env, "child")),
+        &None,
+    );
+
+    // Compare fork with parent
+    let (parent, child) = client.compare_fork(&child_id);
+
+    assert_eq!(parent.id, parent_id);
+    assert_eq!(parent.amount, 100);
+    assert_eq!(parent.recipient, recipient1);
+
+    assert_eq!(child.id, child_id);
+    assert_eq!(child.amount, 200);
+    assert_eq!(child.recipient, recipient2);
+    assert_eq!(child.parent_id, parent_id);
+}
+
+#[test]
+fn test_fork_proposal_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let member = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Create parent proposal
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Try to fork as member (should fail)
+    let result = client.try_fork_proposal(&member, &parent_id, &None, &None, &None, &None);
+
+    assert!(result.is_err());
+    assert_eq!(result.err(), Some(Ok(VaultError::InsufficientRole)));
+}
+
+#[test]
+fn test_fork_nonexistent_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Try to fork non-existent proposal
+    let result = client.try_fork_proposal(&signer1, &999u64, &None, &None, &None, &None);
+
+    assert!(result.is_err());
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotFound)));
+}
+
+#[test]
+fn test_fork_inherits_metadata_and_tags() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Create parent proposal
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Add tags to parent
+    client.add_proposal_tag(&signer1, &parent_id, &Symbol::new(&env, "urgent"));
+    client.add_proposal_tag(&signer1, &parent_id, &Symbol::new(&env, "payroll"));
+
+    // Fork the proposal
+    let child_id = client.fork_proposal(&signer1, &parent_id, &None, &Some(150i128), &None, &None);
+
+    // Verify child inherits tags
+    let child = client.get_proposal(&child_id);
+    assert_eq!(child.tags.len(), 2);
+    assert_eq!(child.tags.get(0).unwrap(), Symbol::new(&env, "urgent"));
+    assert_eq!(child.tags.get(1).unwrap(), Symbol::new(&env, "payroll"));
+}
+
+#[test]
+fn test_fork_respects_spending_limits() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Create parent proposal
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Try to fork with amount exceeding spending limit
+    let result = client.try_fork_proposal(
+        &signer1,
+        &parent_id,
+        &None,
+        &Some(2000i128), // Exceeds spending_limit of 1000
+        &None,
+        &None,
+    );
+
+    assert!(result.is_err());
+    assert_eq!(result.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
+
+#[test]
+fn test_fork_independent_approvals() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create and approve parent proposal
+    let parent_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "parent"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&signer1, &parent_id);
+    client.approve_proposal(&signer2, &parent_id);
+
+    let parent = client.get_proposal(&parent_id);
+    assert_eq!(parent.status, ProposalStatus::Approved);
+
+    // Fork the proposal
+    let child_id = client.fork_proposal(&signer1, &parent_id, &None, &Some(150i128), &None, &None);
+
+    // Verify child has no approvals (independent voting)
+    let child = client.get_proposal(&child_id);
+    assert_eq!(child.status, ProposalStatus::Pending);
+    assert_eq!(child.approvals.len(), 0);
+}
+
+// ============================================================================
+// Proposal Matching and Pairing Tests
+// ============================================================================
+
+#[test]
+fn test_create_matchable_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Create a buy order
+    let matching_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let proposal_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy_order"),
+        &Priority::Normal,
+        &matching_criteria,
+    );
+
+    // Verify proposal was created
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.id, proposal_id);
+    assert!(proposal.has_matching_criteria);
+    assert_eq!(proposal.match_id, 0);
+}
+
+#[test]
+fn test_match_proposals_basic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create a buy order
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let buy_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    // Create a sell order
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 9500,
+        max_rate_bps: 10500,
+        matchable: true,
+    };
+
+    let sell_id = client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    // Match proposals
+    let matches_created = client.match_proposals(&signer1);
+    assert_eq!(matches_created, 1);
+
+    // Verify proposals are matched
+    let buy_proposal = client.get_proposal(&buy_id);
+    let sell_proposal = client.get_proposal(&sell_id);
+    assert!(buy_proposal.match_id > 0);
+    assert_eq!(buy_proposal.match_id, sell_proposal.match_id);
+}
+
+#[test]
+fn test_get_matching_queue() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Initially empty
+    let buy_queue = client.get_matching_queue(&types::MatchDirection::Buy);
+    assert_eq!(buy_queue.len(), 0);
+
+    // Create a buy order
+    let matching_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let proposal_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &matching_criteria,
+    );
+
+    // Verify it's in the queue
+    let buy_queue = client.get_matching_queue(&types::MatchDirection::Buy);
+    assert_eq!(buy_queue.len(), 1);
+    assert_eq!(buy_queue.get(0).unwrap(), proposal_id);
+}
+
+#[test]
+fn test_unmatch_proposals() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create and match proposals
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let buy_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 9500,
+        max_rate_bps: 10500,
+        matchable: true,
+    };
+
+    let sell_id = client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    client.match_proposals(&signer1);
+
+    let buy_proposal = client.get_proposal(&buy_id);
+    let match_id = buy_proposal.match_id;
+    assert!(match_id > 0);
+
+    // Unmatch
+    client.unmatch_proposals(&admin, &match_id, &Symbol::new(&env, "test"));
+
+    // Verify proposals are unmatched
+    let buy_proposal = client.get_proposal(&buy_id);
+    let sell_proposal = client.get_proposal(&sell_id);
+    assert_eq!(buy_proposal.match_id, 0);
+    assert_eq!(sell_proposal.match_id, 0);
+
+    // Verify they're back in the queue
+    let buy_queue = client.get_matching_queue(&types::MatchDirection::Buy);
+    let sell_queue = client.get_matching_queue(&types::MatchDirection::Sell);
+    assert_eq!(buy_queue.len(), 1);
+    assert_eq!(sell_queue.len(), 1);
+}
+
+#[test]
+fn test_match_incompatible_rates() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create a buy order with low rate
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 8000,
+        max_rate_bps: 9000,
+        matchable: true,
+    };
+
+    client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    // Create a sell order with high rate (no overlap)
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 10000,
+        max_rate_bps: 12000,
+        matchable: true,
+    };
+
+    client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    // Try to match - should create 0 matches
+    let matches_created = client.match_proposals(&signer1);
+    assert_eq!(matches_created, 0);
+}
+
+#[test]
+fn test_get_matches_for_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create and match proposals
+    let buy_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Buy,
+        offer_token: token_a.clone(),
+        request_token: token_b.clone(),
+        min_rate_bps: 9000,
+        max_rate_bps: 11000,
+        matchable: true,
+    };
+
+    let buy_id = client.create_matchable_proposal(
+        &signer1,
+        &recipient1,
+        &token_a,
+        &100,
+        &Symbol::new(&env, "buy"),
+        &Priority::Normal,
+        &buy_criteria,
+    );
+
+    let sell_criteria = types::MatchingCriteria {
+        direction: types::MatchDirection::Sell,
+        offer_token: token_b.clone(),
+        request_token: token_a.clone(),
+        min_rate_bps: 9500,
+        max_rate_bps: 10500,
+        matchable: true,
+    };
+
+    client.create_matchable_proposal(
+        &signer2,
+        &recipient2,
+        &token_b,
+        &100,
+        &Symbol::new(&env, "sell"),
+        &Priority::Normal,
+        &sell_criteria,
+    );
+
+    client.match_proposals(&signer1);
+
+    // Get matches for buy proposal
+    let matches = client.get_matches_for_proposal(&buy_id);
+    assert_eq!(matches.len(), 1);
+}
+
+// ============================================================================
+
+// ============================================================================
+// Bounty System Tests
+// ============================================================================
+
+#[test]
+fn test_create_bounty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let token_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+    };
+    client.initialize(&admin, &config);
+
+    let creator = Address::generate(&env);
+    let reward_amount = 1_000_000i128;
+
+    // Mint tokens to creator
+    token_client.mint(&creator, &reward_amount);
+
+    // Create bounty
+    let bounty_id = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "test_bounty"),
+        &String::from_str(&env, "Complete this task"),
+        &token_addr,
+        &reward_amount,
+        &1000, // duration in ledgers
+        &2,    // required approvals
+        &0,    // no associated proposal
+    );
+
+    assert_eq!(bounty_id, 1);
+
+    // Verify bounty was created
+    let bounty = client.get_bounty(&bounty_id).unwrap();
+    assert_eq!(bounty.creator, creator);
+    assert_eq!(bounty.reward_amount, reward_amount);
+    assert_eq!(bounty.status, BountyStatus::Active);
+}
+
+#[test]
+fn test_submit_and_approve_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let token_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+    };
+    client.initialize(&admin, &config);
+
+    let creator = Address::generate(&env);
+    let claimer = Address::generate(&env);
+    let reward_amount = 1_000_000i128;
+
+    token_client.mint(&creator, &reward_amount);
+
+    let bounty_id = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "test_bounty"),
+        &String::from_str(&env, "Complete this task"),
+        &token_addr,
+        &reward_amount,
+        &1000,
+        &2,
+        &0,
+    );
+
+    // Submit claim
+    let claim_id = client.submit_claim(
+        &claimer,
+        &bounty_id,
+        &String::from_str(&env, "https://proof.com/evidence"),
+        &Symbol::new(&env, "completed"),
+    );
+
+    assert_eq!(claim_id, 1);
+
+    // Verify claim was created
+    let claim = client.get_claim(&claim_id).unwrap();
+    assert_eq!(claim.claimant, claimer);
+    assert_eq!(claim.bounty_id, bounty_id);
+    assert_eq!(claim.status, ClaimStatus::Pending);
+
+    // First approval
+    client.approve_claim(&signer1, &claim_id);
+
+    let bounty = client.get_bounty(&bounty_id).unwrap();
+    assert_eq!(bounty.claim_approvals.len(), 1);
+
+    // Second approval - should trigger reward distribution
+    client.approve_claim(&signer2, &claim_id);
+
+    let claim = client.get_claim(&claim_id).unwrap();
+    assert_eq!(claim.status, ClaimStatus::Approved);
+
+    let bounty = client.get_bounty(&bounty_id).unwrap();
+    assert_eq!(bounty.claim_approvals.len(), 2);
+    assert_eq!(bounty.status, BountyStatus::Completed);
+}
+
+#[test]
+fn test_cancel_and_expire_bounty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    let token_client = StellarAssetClient::new(&env, &token_addr);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+    };
+    client.initialize(&admin, &config);
+
+    let creator = Address::generate(&env);
+    let reward_amount = 1_000_000i128;
+
+    token_client.mint(&creator, &(reward_amount * 2));
+
+    // Create bounty for cancellation test
+    let bounty_id1 = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "bounty1"),
+        &String::from_str(&env, "Task 1"),
+        &token_addr,
+        &reward_amount,
+        &1000,
+        &2,
+        &0,
+    );
+
+    // Cancel bounty
+    client.cancel_bounty(&creator, &bounty_id1, &Symbol::new(&env, "cancelled"));
+
+    let bounty = client.get_bounty(&bounty_id1).unwrap();
+    assert_eq!(bounty.status, BountyStatus::Cancelled);
+
+    // Create bounty for expiration test
+    let bounty_id2 = client.create_bounty(
+        &creator,
+        &Symbol::new(&env, "bounty2"),
+        &String::from_str(&env, "Task 2"),
+        &token_addr,
+        &reward_amount,
+        &10, // short duration
+        &2,
+        &0,
+    );
+
+    // Move time forward
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 20;
+    });
+
+    // Expire bounties
+    client.expire_bounties(&admin);
+
+    let bounty = client.get_bounty(&bounty_id2).unwrap();
+    assert_eq!(bounty.status, BountyStatus::Expired);
+}

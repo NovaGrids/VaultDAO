@@ -283,6 +283,174 @@ pub struct Proposal {
     pub voting_deadline: u64,
     /// Parent proposal ID for inheritance/forking (0 = no parent)
     pub parent_id: u64,
+    /// Whether this proposal has matching criteria
+    pub has_matching_criteria: bool,
+    /// ID of the match this proposal is part of (0 if not matched)
+    pub match_id: u64,
+}
+
+// ============================================================================
+// Proposal Matching and Pairing (Issue: feature/proposal-matching)
+// ============================================================================
+
+/// Proposal matching direction for market-making operations
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MatchDirection {
+    /// No matching (default for regular proposals)
+    None = 0,
+    /// Buy order - willing to receive token
+    Buy = 1,
+    /// Sell order - willing to send token
+    Sell = 2,
+}
+
+/// Matching criteria for proposal pairing
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MatchingCriteria {
+    /// Direction of the proposal (Buy/Sell/None)
+    pub direction: MatchDirection,
+    /// Token being offered (for Sell) or requested (for Buy)
+    pub offer_token: Address,
+    /// Token being requested (for Sell) or offered (for Buy)
+    pub request_token: Address,
+    /// Minimum acceptable exchange rate (in basis points, e.g., 10000 = 1:1)
+    pub min_rate_bps: u32,
+    /// Maximum acceptable exchange rate (in basis points)
+    pub max_rate_bps: u32,
+    /// Whether this proposal is open for matching
+    pub matchable: bool,
+}
+
+/// Matched proposal pair
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalMatch {
+    /// Unique match ID
+    pub id: u64,
+    /// First proposal ID (typically Buy order)
+    pub proposal_a: u64,
+    /// Second proposal ID (typically Sell order)
+    pub proposal_b: u64,
+    /// Agreed exchange rate in basis points
+    pub agreed_rate_bps: u32,
+    /// Amount to be exchanged
+    pub matched_amount: i128,
+    /// Match status
+    pub status: MatchStatus,
+    /// Ledger when match was created
+    pub matched_at: u64,
+    /// Ledger when match was executed (0 if not executed)
+    pub executed_at: u64,
+}
+
+/// Status of a proposal match
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MatchStatus {
+    /// Match created, awaiting execution
+    Pending = 0,
+    /// Both proposals executed successfully
+    Executed = 1,
+    /// Match was cancelled/unmatched
+    Cancelled = 2,
+    /// Match execution failed
+    Failed = 3,
+}
+
+// ============================================================================
+// Bounty System (Issue: feature/bounty-system)
+// ============================================================================
+
+/// Bounty status lifecycle
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BountyStatus {
+    /// Bounty is active and accepting claims
+    Active = 0,
+    /// Bounty has been claimed and awaiting verification
+    Claimed = 1,
+    /// Bounty has been completed and reward distributed
+    Completed = 2,
+    /// Bounty expired without completion
+    Expired = 3,
+    /// Bounty was cancelled
+    Cancelled = 4,
+}
+
+/// Claim status for bounty submissions
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ClaimStatus {
+    /// Claim submitted, awaiting review
+    Pending = 0,
+    /// Claim approved, reward distributed
+    Approved = 1,
+    /// Claim rejected
+    Rejected = 2,
+}
+
+/// Bounty with requirements and rewards
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Bounty {
+    /// Unique bounty ID
+    pub id: u64,
+    /// Address that created the bounty
+    pub creator: Address,
+    /// Title/description of the bounty
+    pub title: Symbol,
+    /// Detailed requirements (IPFS hash or on-chain text)
+    pub requirements: String,
+    /// Token contract address for reward
+    pub reward_token: Address,
+    /// Reward amount
+    pub reward_amount: i128,
+    /// Current status
+    pub status: BountyStatus,
+    /// Ledger when bounty was created
+    pub created_at: u64,
+    /// Ledger when bounty expires
+    pub expires_at: u64,
+    /// Address that claimed the bounty (zero if unclaimed)
+    pub claimer: Address,
+    /// Ledger when bounty was claimed
+    pub claimed_at: u64,
+    /// Number of approvals required for claim verification
+    pub required_approvals: u32,
+    /// Addresses that have approved the claim
+    pub claim_approvals: Vec<Address>,
+    /// Associated proposal ID (0 if standalone bounty)
+    pub proposal_id: u64,
+}
+
+/// Claim submission for a bounty
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BountyClaim {
+    /// Unique claim ID
+    pub id: u64,
+    /// Bounty ID this claim is for
+    pub bounty_id: u64,
+    /// Address submitting the claim
+    pub claimant: Address,
+    /// Proof of completion (IPFS hash, URL, or description)
+    pub proof: String,
+    /// Additional notes
+    pub notes: Symbol,
+    /// Claim status
+    pub status: ClaimStatus,
+    /// Ledger when claim was submitted
+    pub submitted_at: u64,
+    /// Ledger when claim was reviewed (0 if not reviewed)
+    pub reviewed_at: u64,
+    /// Address that reviewed the claim (zero if not reviewed)
+    pub reviewer: Address,
 }
 
 /// On-chain comment on a proposal

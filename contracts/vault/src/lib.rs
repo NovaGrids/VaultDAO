@@ -368,6 +368,8 @@ impl VaultDAO {
                 0
             },
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -577,6 +579,8 @@ impl VaultDAO {
                     0
                 },
                 parent_id: 0,
+                has_matching_criteria: false,
+                match_id: 0,
             };
 
             storage::set_proposal(&env, &proposal);
@@ -1276,6 +1280,8 @@ impl VaultDAO {
                 0
             },
             parent_id,
+            has_matching_criteria: false, // Forked proposals don't inherit matching criteria
+            match_id: 0,
         };
 
         // 10. Store proposal and inheritance tracking
@@ -1336,6 +1342,807 @@ impl VaultDAO {
         let parent = storage::get_proposal(&env, child.parent_id)?;
 
         Ok((parent, child))
+    }
+
+    // ========================================================================
+    // Proposal Matching and Pairing
+    // ========================================================================
+
+    /// Create a matchable proposal with matching criteria.
+    ///
+    /// This creates a proposal that can be automatically matched with complementary
+    /// proposals for paired execution (e.g., buy/sell orders).
+    ///
+    /// # Arguments
+    /// * `proposer` - Address creating the proposal
+    /// * `recipient` - Recipient address
+    /// * `token` - Token contract address
+    /// * `amount` - Amount to transfer
+    /// * `memo` - Description
+    /// * `priority` - Urgency level
+    /// * `matching_criteria` - Criteria for matching with other proposals
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_matchable_proposal(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        matching_criteria: types::MatchingCriteria,
+    ) -> Result<u64, VaultError> {
+        // Validate matching criteria
+        if matching_criteria.direction == types::MatchDirection::None {
+            return Err(VaultError::InvalidAmount); // Reusing error for invalid criteria
+        }
+        if matching_criteria.min_rate_bps > matching_criteria.max_rate_bps {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Create proposal using standard transfer function (auth is handled there)
+        let proposal_id = Self::propose_transfer(
+            env.clone(),
+            proposer.clone(),
+            recipient,
+            token,
+            amount,
+            memo,
+            priority.clone(),
+            Vec::new(&env),
+            ConditionLogic::And,
+            0,
+        )?;
+
+        // Update proposal with matching criteria
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        proposal.has_matching_criteria = true;
+        storage::set_proposal(&env, &proposal);
+        storage::set_matching_criteria(&env, proposal_id, &matching_criteria);
+
+        // Add to matching queue if matchable
+        if matching_criteria.matchable {
+            storage::add_to_matching_queue(&env, matching_criteria.direction.clone(), proposal_id);
+            events::emit_proposal_queued_for_matching(
+                &env,
+                proposal_id,
+                matching_criteria.direction as u32,
+                &matching_criteria.offer_token,
+                &matching_criteria.request_token,
+            );
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        Ok(proposal_id)
+    }
+
+    /// Find and create matches for proposals in the matching queue.
+    ///
+    /// Scans the matching queues for complementary proposals and creates matches
+    /// when criteria are satisfied. Returns the number of matches created.
+    pub fn match_proposals(env: Env, matcher: Address) -> Result<u32, VaultError> {
+        matcher.require_auth();
+
+        let role = storage::get_role(&env, &matcher);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut matches_created = 0u32;
+
+        // Get buy and sell queues
+        let buy_queue = storage::get_matching_queue(&env, types::MatchDirection::Buy);
+        let sell_queue = storage::get_matching_queue(&env, types::MatchDirection::Sell);
+
+        // Try to match each buy order with sell orders
+        for i in 0..buy_queue.len() {
+            let buy_id = buy_queue.get(i).unwrap();
+            let buy_proposal = match storage::get_proposal(&env, buy_id) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            // Skip if already matched or not pending
+            if buy_proposal.match_id != 0 || buy_proposal.status != ProposalStatus::Pending {
+                continue;
+            }
+
+            let buy_criteria = match storage::get_matching_criteria(&env, buy_id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            if !buy_criteria.matchable {
+                continue;
+            }
+
+            // Try to find a matching sell order
+            for j in 0..sell_queue.len() {
+                let sell_id = sell_queue.get(j).unwrap();
+                let sell_proposal = match storage::get_proposal(&env, sell_id) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+
+                // Skip if already matched or not pending
+                if sell_proposal.match_id != 0 || sell_proposal.status != ProposalStatus::Pending {
+                    continue;
+                }
+
+                let sell_criteria = match storage::get_matching_criteria(&env, sell_id) {
+                    Some(c) => c,
+                    None => continue,
+                };
+
+                if !sell_criteria.matchable {
+                    continue;
+                }
+
+                // Check if proposals are compatible
+                if Self::can_match(&buy_criteria, &sell_criteria) {
+                    // Create the match
+                    let match_result = Self::create_match_internal(
+                        &env,
+                        buy_id,
+                        sell_id,
+                        &buy_proposal,
+                        &sell_proposal,
+                        &buy_criteria,
+                        &sell_criteria,
+                    );
+
+                    if match_result.is_ok() {
+                        matches_created += 1;
+                        break; // Move to next buy order
+                    }
+                }
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        Ok(matches_created)
+    }
+
+    /// Check if two proposals can be matched based on their criteria.
+    fn can_match(
+        buy_criteria: &types::MatchingCriteria,
+        sell_criteria: &types::MatchingCriteria,
+    ) -> bool {
+        // Tokens must be complementary
+        if buy_criteria.request_token != sell_criteria.offer_token {
+            return false;
+        }
+        if buy_criteria.offer_token != sell_criteria.request_token {
+            return false;
+        }
+
+        // Rate ranges must overlap
+        buy_criteria.max_rate_bps >= sell_criteria.min_rate_bps
+            && buy_criteria.min_rate_bps <= sell_criteria.max_rate_bps
+    }
+
+    /// Create a match between two proposals.
+    #[allow(clippy::too_many_arguments)]
+    fn create_match_internal(
+        env: &Env,
+        buy_id: u64,
+        sell_id: u64,
+        buy_proposal: &Proposal,
+        sell_proposal: &Proposal,
+        buy_criteria: &types::MatchingCriteria,
+        sell_criteria: &types::MatchingCriteria,
+    ) -> Result<u64, VaultError> {
+        // Calculate agreed rate (midpoint of overlapping range)
+        let min_agreed = buy_criteria.min_rate_bps.max(sell_criteria.min_rate_bps);
+        let max_agreed = buy_criteria.max_rate_bps.min(sell_criteria.max_rate_bps);
+        let agreed_rate_bps = (min_agreed + max_agreed) / 2;
+
+        // Calculate matched amount (minimum of both proposals)
+        let matched_amount = buy_proposal.amount.min(sell_proposal.amount);
+
+        // Create match record
+        let match_id = storage::increment_match_id(env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let proposal_match = types::ProposalMatch {
+            id: match_id,
+            proposal_a: buy_id,
+            proposal_b: sell_id,
+            agreed_rate_bps,
+            matched_amount,
+            status: types::MatchStatus::Pending,
+            matched_at: current_ledger,
+            executed_at: 0,
+        };
+
+        storage::set_proposal_match(env, &proposal_match);
+
+        // Update proposals with match ID
+        let mut buy_updated = buy_proposal.clone();
+        buy_updated.match_id = match_id;
+        storage::set_proposal(env, &buy_updated);
+
+        let mut sell_updated = sell_proposal.clone();
+        sell_updated.match_id = match_id;
+        storage::set_proposal(env, &sell_updated);
+
+        // Add match to both proposals' match lists
+        storage::add_proposal_match(env, buy_id, match_id);
+        storage::add_proposal_match(env, sell_id, match_id);
+
+        // Remove from matching queues
+        storage::remove_from_matching_queue(env, types::MatchDirection::Buy, buy_id);
+        storage::remove_from_matching_queue(env, types::MatchDirection::Sell, sell_id);
+
+        // Emit event
+        events::emit_proposals_matched(
+            env,
+            match_id,
+            buy_id,
+            sell_id,
+            agreed_rate_bps,
+            matched_amount,
+        );
+
+        Ok(match_id)
+    }
+
+    /// Execute a matched pair of proposals.
+    ///
+    /// Both proposals in the match must be approved before execution.
+    /// Executes both proposals atomically.
+    pub fn execute_matched_proposals(
+        env: Env,
+        executor: Address,
+        match_id: u64,
+    ) -> Result<(), VaultError> {
+        executor.require_auth();
+
+        // Get match
+        let mut proposal_match =
+            storage::get_proposal_match(&env, match_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check match status
+        if proposal_match.status != types::MatchStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Get both proposals
+        let proposal_a = storage::get_proposal(&env, proposal_match.proposal_a)?;
+        let proposal_b = storage::get_proposal(&env, proposal_match.proposal_b)?;
+
+        // Both must be approved
+        if proposal_a.status != ProposalStatus::Approved
+            || proposal_b.status != ProposalStatus::Approved
+        {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        // Execute both proposals
+        Self::execute_proposal(env.clone(), executor.clone(), proposal_match.proposal_a)?;
+        Self::execute_proposal(env.clone(), executor.clone(), proposal_match.proposal_b)?;
+
+        // Update match status
+        proposal_match.status = types::MatchStatus::Executed;
+        proposal_match.executed_at = env.ledger().sequence() as u64;
+        storage::set_proposal_match(&env, &proposal_match);
+
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_match_executed(
+            &env,
+            match_id,
+            proposal_match.proposal_a,
+            proposal_match.proposal_b,
+            &executor,
+        );
+
+        Ok(())
+    }
+
+    /// Unmatch a proposal pair.
+    ///
+    /// Cancels a match and returns both proposals to the matching queue if still valid.
+    pub fn unmatch_proposals(
+        env: Env,
+        unmatcher: Address,
+        match_id: u64,
+        reason: Symbol,
+    ) -> Result<(), VaultError> {
+        unmatcher.require_auth();
+
+        let role = storage::get_role(&env, &unmatcher);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Get match
+        let mut proposal_match =
+            storage::get_proposal_match(&env, match_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Can only unmatch pending matches
+        if proposal_match.status != types::MatchStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Update match status
+        proposal_match.status = types::MatchStatus::Cancelled;
+        storage::set_proposal_match(&env, &proposal_match);
+
+        // Update proposals - clear match_id
+        let mut proposal_a = storage::get_proposal(&env, proposal_match.proposal_a)?;
+        proposal_a.match_id = 0;
+        storage::set_proposal(&env, &proposal_a);
+
+        let mut proposal_b = storage::get_proposal(&env, proposal_match.proposal_b)?;
+        proposal_b.match_id = 0;
+        storage::set_proposal(&env, &proposal_b);
+
+        // Return to matching queues if still matchable and pending
+        if proposal_a.status == ProposalStatus::Pending {
+            if let Some(criteria) = storage::get_matching_criteria(&env, proposal_match.proposal_a)
+            {
+                if criteria.matchable {
+                    storage::add_to_matching_queue(
+                        &env,
+                        criteria.direction.clone(),
+                        proposal_match.proposal_a,
+                    );
+                }
+            }
+        }
+
+        if proposal_b.status == ProposalStatus::Pending {
+            if let Some(criteria) = storage::get_matching_criteria(&env, proposal_match.proposal_b)
+            {
+                if criteria.matchable {
+                    storage::add_to_matching_queue(
+                        &env,
+                        criteria.direction.clone(),
+                        proposal_match.proposal_b,
+                    );
+                }
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_match_cancelled(&env, match_id, &unmatcher, &reason);
+
+        Ok(())
+    }
+
+    /// Get a proposal match by ID.
+    pub fn get_proposal_match(env: Env, match_id: u64) -> Option<types::ProposalMatch> {
+        storage::get_proposal_match(&env, match_id)
+    }
+
+    /// Get all matches for a specific proposal.
+    pub fn get_matches_for_proposal(env: Env, proposal_id: u64) -> Vec<u64> {
+        storage::get_proposal_matches(&env, proposal_id)
+    }
+
+    /// Get the matching queue for a specific direction.
+    pub fn get_matching_queue(env: Env, direction: types::MatchDirection) -> Vec<u64> {
+        storage::get_matching_queue(&env, direction)
+    }
+
+    // ========================================================================
+    // Bounty System
+    // ========================================================================
+
+    /// Create a bounty with requirements and reward.
+    ///
+    /// Bounties incentivize community contributions by offering rewards
+    /// for completing specific tasks or requirements.
+    ///
+    /// # Arguments
+    /// * `creator` - Address creating the bounty (must authorize)
+    /// * `title` - Short title/description
+    /// * `requirements` - Detailed requirements (IPFS hash or text)
+    /// * `reward_token` - Token contract for reward
+    /// * `reward_amount` - Reward amount
+    /// * `duration_ledgers` - How long bounty is active
+    /// * `required_approvals` - Number of approvals needed for claim verification
+    /// * `proposal_id` - Optional associated proposal (0 for standalone)
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_bounty(
+        env: Env,
+        creator: Address,
+        title: Symbol,
+        requirements: String,
+        reward_token: Address,
+        reward_amount: i128,
+        duration_ledgers: u64,
+        required_approvals: u32,
+        proposal_id: u64,
+    ) -> Result<u64, VaultError> {
+        creator.require_auth();
+
+        // Validate inputs
+        if reward_amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        if required_approvals == 0 {
+            return Err(VaultError::ThresholdTooLow);
+        }
+        if duration_ledgers == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Lock reward tokens in vault
+        token::transfer_to_vault(&env, &reward_token, &creator, reward_amount);
+
+        // Create bounty
+        let bounty_id = storage::increment_bounty_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let bounty = types::Bounty {
+            id: bounty_id,
+            creator: creator.clone(),
+            title: title.clone(),
+            requirements,
+            reward_token: reward_token.clone(),
+            reward_amount,
+            status: types::BountyStatus::Active,
+            created_at: current_ledger,
+            expires_at: current_ledger + duration_ledgers,
+            claimer: creator.clone(), // Placeholder, will be updated when claimed
+            claimed_at: 0,
+            required_approvals,
+            claim_approvals: Vec::new(&env),
+            proposal_id,
+        };
+
+        storage::set_bounty(&env, &bounty);
+        storage::add_active_bounty(&env, bounty_id);
+        storage::add_creator_bounty(&env, &creator, bounty_id);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_bounty_created(
+            &env,
+            bounty_id,
+            &creator,
+            &reward_token,
+            reward_amount,
+            bounty.expires_at,
+        );
+
+        Ok(bounty_id)
+    }
+
+    /// Submit a claim for a bounty.
+    ///
+    /// Claimants provide proof of completion for review and verification.
+    ///
+    /// # Arguments
+    /// * `claimant` - Address submitting the claim
+    /// * `bounty_id` - ID of the bounty being claimed
+    /// * `proof` - Proof of completion (IPFS hash, URL, etc.)
+    /// * `notes` - Additional notes
+    pub fn submit_claim(
+        env: Env,
+        claimant: Address,
+        bounty_id: u64,
+        proof: String,
+        notes: Symbol,
+    ) -> Result<u64, VaultError> {
+        claimant.require_auth();
+
+        // Get bounty
+        let mut bounty =
+            storage::get_bounty(&env, bounty_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check bounty status
+        if bounty.status != types::BountyStatus::Active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Check expiration
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger > bounty.expires_at {
+            bounty.status = types::BountyStatus::Expired;
+            storage::set_bounty(&env, &bounty);
+            storage::remove_active_bounty(&env, bounty_id);
+            events::emit_bounty_expired(&env, bounty_id, &bounty.creator);
+            return Err(VaultError::ProposalExpired);
+        }
+
+        // Update bounty status
+        bounty.status = types::BountyStatus::Claimed;
+        bounty.claimer = claimant.clone();
+        bounty.claimed_at = current_ledger;
+        storage::set_bounty(&env, &bounty);
+
+        // Create claim
+        let claim_id = storage::increment_claim_id(&env);
+        let claim = types::BountyClaim {
+            id: claim_id,
+            bounty_id,
+            claimant: claimant.clone(),
+            proof: proof.clone(),
+            notes,
+            status: types::ClaimStatus::Pending,
+            submitted_at: current_ledger,
+            reviewed_at: 0,
+            reviewer: claimant.clone(), // Placeholder, will be updated when reviewed
+        };
+
+        storage::set_claim(&env, &claim);
+        storage::add_bounty_claim(&env, bounty_id, claim_id);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_claim_submitted(&env, claim_id, bounty_id, &claimant, &proof);
+
+        Ok(claim_id)
+    }
+
+    /// Approve a claim (add approval vote).
+    ///
+    /// Signers vote to verify that the claim meets the bounty requirements.
+    /// When threshold is reached, reward is automatically distributed.
+    ///
+    /// # Arguments
+    /// * `approver` - Address approving the claim
+    /// * `claim_id` - ID of the claim to approve
+    pub fn approve_claim(env: Env, approver: Address, claim_id: u64) -> Result<(), VaultError> {
+        approver.require_auth();
+
+        // Check if approver is a signer
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&approver) {
+            return Err(VaultError::NotASigner);
+        }
+
+        // Get claim
+        let mut claim = storage::get_claim(&env, claim_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check claim status
+        if claim.status != types::ClaimStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Get bounty
+        let mut bounty =
+            storage::get_bounty(&env, claim.bounty_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check if already approved
+        if bounty.claim_approvals.contains(&approver) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        // Add approval
+        bounty.claim_approvals.push_back(approver.clone());
+        let approval_count = bounty.claim_approvals.len();
+
+        // Emit approval event
+        events::emit_claim_approval_added(
+            &env,
+            claim_id,
+            claim.bounty_id,
+            &approver,
+            approval_count,
+            bounty.required_approvals,
+        );
+
+        // Check if threshold reached
+        if approval_count >= bounty.required_approvals {
+            // Distribute reward
+            token::transfer(
+                &env,
+                &bounty.reward_token,
+                &claim.claimant,
+                bounty.reward_amount,
+            );
+
+            // Update claim status
+            claim.status = types::ClaimStatus::Approved;
+            claim.reviewed_at = env.ledger().sequence() as u64;
+            claim.reviewer = approver.clone();
+
+            // Update bounty status
+            bounty.status = types::BountyStatus::Completed;
+            storage::remove_active_bounty(&env, claim.bounty_id);
+
+            // Emit event
+            events::emit_claim_approved(
+                &env,
+                claim_id,
+                claim.bounty_id,
+                &claim.claimant,
+                &approver,
+                bounty.reward_amount,
+            );
+        }
+
+        storage::set_claim(&env, &claim);
+        storage::set_bounty(&env, &bounty);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Reject a claim.
+    ///
+    /// Admin or bounty creator can reject a claim if it doesn't meet requirements.
+    /// Bounty returns to Active status for new claims.
+    ///
+    /// # Arguments
+    /// * `rejector` - Address rejecting the claim
+    /// * `claim_id` - ID of the claim to reject
+    pub fn reject_claim(env: Env, rejector: Address, claim_id: u64) -> Result<(), VaultError> {
+        rejector.require_auth();
+
+        // Get claim
+        let mut claim = storage::get_claim(&env, claim_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check claim status
+        if claim.status != types::ClaimStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Get bounty
+        let mut bounty =
+            storage::get_bounty(&env, claim.bounty_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check authorization (Admin or creator)
+        let role = storage::get_role(&env, &rejector);
+        if role != Role::Admin && rejector != bounty.creator {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Update claim status
+        claim.status = types::ClaimStatus::Rejected;
+        claim.reviewed_at = env.ledger().sequence() as u64;
+        claim.reviewer = rejector.clone();
+
+        // Return bounty to Active status
+        bounty.status = types::BountyStatus::Active;
+        bounty.claimer = Address::from_string(&String::from_str(&env, ""));
+        bounty.claimed_at = 0;
+        bounty.claim_approvals = Vec::new(&env);
+
+        storage::set_claim(&env, &claim);
+        storage::set_bounty(&env, &bounty);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_claim_rejected(&env, claim_id, claim.bounty_id, &claim.claimant, &rejector);
+
+        Ok(())
+    }
+
+    /// Cancel a bounty and refund the reward.
+    ///
+    /// Only the creator or Admin can cancel. Reward is returned to creator.
+    ///
+    /// # Arguments
+    /// * `canceller` - Address cancelling the bounty
+    /// * `bounty_id` - ID of the bounty to cancel
+    /// * `reason` - Reason for cancellation
+    pub fn cancel_bounty(
+        env: Env,
+        canceller: Address,
+        bounty_id: u64,
+        reason: Symbol,
+    ) -> Result<(), VaultError> {
+        canceller.require_auth();
+
+        // Get bounty
+        let mut bounty =
+            storage::get_bounty(&env, bounty_id).ok_or(VaultError::ProposalNotFound)?;
+
+        // Check authorization
+        let role = storage::get_role(&env, &canceller);
+        if role != Role::Admin && canceller != bounty.creator {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Can only cancel Active or Claimed bounties
+        if bounty.status != types::BountyStatus::Active
+            && bounty.status != types::BountyStatus::Claimed
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Refund reward to creator
+        token::transfer(
+            &env,
+            &bounty.reward_token,
+            &bounty.creator,
+            bounty.reward_amount,
+        );
+
+        // Update bounty status
+        bounty.status = types::BountyStatus::Cancelled;
+        storage::set_bounty(&env, &bounty);
+        storage::remove_active_bounty(&env, bounty_id);
+        storage::extend_instance_ttl(&env);
+
+        // Emit event
+        events::emit_bounty_cancelled(&env, bounty_id, &bounty.creator, &reason);
+
+        Ok(())
+    }
+
+    /// Expire bounties that have passed their expiration time.
+    ///
+    /// Can be called by anyone to clean up expired bounties.
+    /// Refunds rewards to creators.
+    ///
+    /// # Arguments
+    /// * `caller` - Address calling the function
+    ///
+    /// # Returns
+    /// Number of bounties expired
+    pub fn expire_bounties(env: Env, caller: Address) -> Result<u32, VaultError> {
+        caller.require_auth();
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let active_bounties = storage::get_active_bounties(&env);
+        let mut expired_count = 0u32;
+
+        for i in 0..active_bounties.len() {
+            let bounty_id = active_bounties.get(i).unwrap();
+            if let Some(mut bounty) = storage::get_bounty(&env, bounty_id) {
+                if current_ledger > bounty.expires_at
+                    && bounty.status == types::BountyStatus::Active
+                {
+                    // Refund reward to creator
+                    token::transfer(
+                        &env,
+                        &bounty.reward_token,
+                        &bounty.creator,
+                        bounty.reward_amount,
+                    );
+
+                    // Update status
+                    bounty.status = types::BountyStatus::Expired;
+                    storage::set_bounty(&env, &bounty);
+                    storage::remove_active_bounty(&env, bounty_id);
+
+                    // Emit event
+                    events::emit_bounty_expired(&env, bounty_id, &bounty.creator);
+
+                    expired_count += 1;
+                }
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        Ok(expired_count)
+    }
+
+    /// Get a bounty by ID.
+    pub fn get_bounty(env: Env, bounty_id: u64) -> Option<types::Bounty> {
+        storage::get_bounty(&env, bounty_id)
+    }
+
+    /// Get a claim by ID.
+    pub fn get_claim(env: Env, claim_id: u64) -> Option<types::BountyClaim> {
+        storage::get_claim(&env, claim_id)
+    }
+
+    /// Get all claims for a bounty.
+    pub fn get_bounty_claims(env: Env, bounty_id: u64) -> Vec<u64> {
+        storage::get_bounty_claims(&env, bounty_id)
+    }
+
+    /// Get all active bounties.
+    pub fn get_active_bounties(env: Env) -> Vec<u64> {
+        storage::get_active_bounties(&env)
+    }
+
+    /// Get bounties created by an address.
+    pub fn get_creator_bounties(env: Env, creator: Address) -> Vec<u64> {
+        storage::get_creator_bounties(&env, &creator)
     }
 
     // ========================================================================
@@ -3060,6 +3867,8 @@ impl VaultDAO {
                 0
             },
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -3494,6 +4303,8 @@ impl VaultDAO {
                 0
             },
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -4188,6 +4999,8 @@ impl VaultDAO {
             is_swap: false,
             voting_deadline: 0,
             parent_id: 0,
+            has_matching_criteria: false,
+            match_id: 0,
         };
 
         storage::set_proposal(&env, &proposal);

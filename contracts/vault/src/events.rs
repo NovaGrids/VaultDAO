@@ -739,3 +739,156 @@ pub fn emit_proposal_forked(
         (parent_id, forker.clone(), recipient.clone(), amount),
     );
 }
+
+// ============================================================================
+// Proposal Matching and Pairing Events (feature/proposal-matching)
+// ============================================================================
+
+/// Emit when two proposals are matched
+pub fn emit_proposals_matched(
+    env: &Env,
+    match_id: u64,
+    proposal_a: u64,
+    proposal_b: u64,
+    agreed_rate_bps: u32,
+    matched_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposals_matched"), match_id),
+        (proposal_a, proposal_b, agreed_rate_bps, matched_amount),
+    );
+}
+
+/// Emit when a matched pair is executed
+pub fn emit_match_executed(
+    env: &Env,
+    match_id: u64,
+    proposal_a: u64,
+    proposal_b: u64,
+    executor: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "match_executed"), match_id),
+        (proposal_a, proposal_b, executor.clone()),
+    );
+}
+
+/// Emit when a match is cancelled/unmatched
+pub fn emit_match_cancelled(env: &Env, match_id: u64, canceller: &Address, reason: &Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "match_cancelled"), match_id),
+        (canceller.clone(), reason.clone()),
+    );
+}
+
+/// Emit when a proposal is added to matching queue
+pub fn emit_proposal_queued_for_matching(
+    env: &Env,
+    proposal_id: u64,
+    direction: u32,
+    offer_token: &Address,
+    request_token: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "queued_for_matching"), proposal_id),
+        (direction, offer_token.clone(), request_token.clone()),
+    );
+}
+
+// ============================================================================
+// Bounty System Events (feature/bounty-system)
+// ============================================================================
+
+/// Emit when a bounty is created
+pub fn emit_bounty_created(
+    env: &Env,
+    bounty_id: u64,
+    creator: &Address,
+    reward_token: &Address,
+    reward_amount: i128,
+    expires_at: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bounty_created"), bounty_id),
+        (
+            creator.clone(),
+            reward_token.clone(),
+            reward_amount,
+            expires_at,
+        ),
+    );
+}
+
+/// Emit when a claim is submitted for a bounty
+pub fn emit_claim_submitted(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    claimant: &Address,
+    proof: &soroban_sdk::String,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_submitted"), claim_id),
+        (bounty_id, claimant.clone(), proof.clone()),
+    );
+}
+
+/// Emit when a claim is approved
+pub fn emit_claim_approved(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    claimant: &Address,
+    reviewer: &Address,
+    reward_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_approved"), claim_id),
+        (bounty_id, claimant.clone(), reviewer.clone(), reward_amount),
+    );
+}
+
+/// Emit when a claim is rejected
+pub fn emit_claim_rejected(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    claimant: &Address,
+    reviewer: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_rejected"), claim_id),
+        (bounty_id, claimant.clone(), reviewer.clone()),
+    );
+}
+
+/// Emit when a bounty expires
+pub fn emit_bounty_expired(env: &Env, bounty_id: u64, creator: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "bounty_expired"), bounty_id),
+        creator.clone(),
+    );
+}
+
+/// Emit when a bounty is cancelled
+pub fn emit_bounty_cancelled(env: &Env, bounty_id: u64, creator: &Address, reason: &Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "bounty_cancelled"), bounty_id),
+        (creator.clone(), reason.clone()),
+    );
+}
+
+/// Emit when a claim approval is added
+pub fn emit_claim_approval_added(
+    env: &Env,
+    claim_id: u64,
+    bounty_id: u64,
+    approver: &Address,
+    approval_count: u32,
+    required: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_approval_added"), claim_id),
+        (bounty_id, approver.clone(), approval_count, required),
+    );
+}
