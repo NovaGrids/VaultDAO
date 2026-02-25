@@ -727,6 +727,9 @@ pub struct RetryState {
 /// Subscription tier levels
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Status of a cross-vault proposal
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum SubscriptionTier {
     Basic = 0,
