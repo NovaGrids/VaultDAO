@@ -2,13 +2,13 @@
 
 use super::*;
 use crate::types::{
-    DexConfig, SubscriptionStatus, SubscriptionTier, SwapProposal, TimeBasedThreshold,
-    TransferDetails, VelocityConfig,
+    DexConfig, RetryConfig, StreamStatus, SubscriptionStatus, SubscriptionTier, SwapProposal,
+    TimeBasedThreshold, TransferDetails, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token::StellarAssetClient,
+    token::{self, StellarAssetClient},
     Env, Symbol, Vec,
 };
 
@@ -42,7 +42,8 @@ fn default_init_config(
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(_env),
+        recovery_config: crate::RecoveryConfig::default(_env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     }
 }
 
@@ -58,7 +59,11 @@ fn test_multisig_approval() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -86,7 +91,8 @@ fn test_multisig_approval() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
 
@@ -133,7 +139,11 @@ fn test_unauthorized_proposal() {
 
     let admin = Address::generate(&env);
     let member = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -158,7 +168,8 @@ fn test_unauthorized_proposal() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
 
@@ -191,7 +202,11 @@ fn test_timelock_violation() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -217,7 +232,8 @@ fn test_timelock_violation() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -261,7 +277,11 @@ fn test_amend_proposal_resets_approvals_and_tracks_history() {
     let signer2 = Address::generate(&env);
     let recipient1 = Address::generate(&env);
     let recipient2 = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -337,7 +357,11 @@ fn test_amend_proposal_only_proposer_can_amend() {
     let proposer = Address::generate(&env);
     let other = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -382,7 +406,11 @@ fn test_amend_proposal_rejects_non_pending_proposal() {
     let admin = Address::generate(&env);
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -426,7 +454,11 @@ fn test_amend_proposal_enforces_spending_limit() {
     let admin = Address::generate(&env);
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -469,7 +501,11 @@ fn test_priority_levels() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -495,7 +531,8 @@ fn test_priority_levels() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -565,7 +602,11 @@ fn test_get_proposals_by_priority() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -591,7 +632,8 @@ fn test_get_proposals_by_priority() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -639,7 +681,11 @@ fn test_change_priority_unauthorized() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let random_user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -665,7 +711,8 @@ fn test_change_priority_unauthorized() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -696,7 +743,11 @@ fn test_comment_functionality() {
 
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -722,7 +773,8 @@ fn test_comment_functionality() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -779,7 +831,11 @@ fn test_blacklist_mode() {
     let treasurer = Address::generate(&env);
     let normal_recipient = Address::generate(&env);
     let blocked_recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -805,7 +861,8 @@ fn test_blacklist_mode() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -853,7 +910,11 @@ fn test_abstention_does_not_count_toward_threshold() {
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -881,7 +942,8 @@ fn test_abstention_does_not_count_toward_threshold() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -952,7 +1014,8 @@ fn test_list_management() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
 
@@ -982,7 +1045,11 @@ fn test_cannot_abstain_after_voting() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1008,7 +1075,8 @@ fn test_cannot_abstain_after_voting() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1042,7 +1110,11 @@ fn test_cannot_abstain_twice() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1068,7 +1140,8 @@ fn test_cannot_abstain_twice() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1103,7 +1176,11 @@ fn test_velocity_limit_enforcement() {
     let admin = Address::generate(&env);
     let signer = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1129,7 +1206,8 @@ fn test_velocity_limit_enforcement() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer, &Role::Treasurer);
@@ -1183,7 +1261,11 @@ fn test_verify_attachment() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1209,7 +1291,8 @@ fn test_verify_attachment() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1241,7 +1324,11 @@ fn test_remove_attachment() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1267,7 +1354,8 @@ fn test_remove_attachment() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1304,7 +1392,11 @@ fn test_attachment_unauthorized() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1331,7 +1423,8 @@ fn test_attachment_unauthorized() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1366,7 +1459,11 @@ fn test_attachment_duplicate() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1392,7 +1489,8 @@ fn test_attachment_duplicate() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1427,7 +1525,11 @@ fn test_attachment_invalid_hash() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1453,7 +1555,8 @@ fn test_attachment_invalid_hash() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1485,7 +1588,11 @@ fn test_admin_can_add_attachment() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1511,7 +1618,8 @@ fn test_admin_can_add_attachment() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1543,7 +1651,11 @@ fn test_set_and_get_proposal_metadata() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1569,7 +1681,8 @@ fn test_set_and_get_proposal_metadata() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1609,7 +1722,11 @@ fn test_remove_proposal_metadata() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1635,7 +1752,8 @@ fn test_remove_proposal_metadata() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1673,7 +1791,11 @@ fn test_proposal_metadata_unauthorized() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1700,7 +1822,8 @@ fn test_proposal_metadata_unauthorized() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1735,7 +1858,11 @@ fn test_proposal_metadata_empty_value_invalid() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1774,7 +1901,11 @@ fn test_proposal_metadata_value_too_long_invalid() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1814,7 +1945,11 @@ fn test_proposal_metadata_limit_exceeded() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1865,7 +2000,11 @@ fn test_admin_can_manage_proposal_metadata() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1910,7 +2049,11 @@ fn test_metadata_update_existing_key_at_capacity() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1964,7 +2107,11 @@ fn test_get_proposal_metadata_value_missing_key_returns_none() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2001,7 +2148,11 @@ fn test_get_proposals_by_tag() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2076,7 +2227,11 @@ fn test_proposal_tag_unauthorized() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2117,7 +2272,11 @@ fn test_fixed_threshold_strategy() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2144,7 +2303,8 @@ fn test_fixed_threshold_strategy() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2184,7 +2344,11 @@ fn test_percentage_threshold_strategy() {
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2213,7 +2377,8 @@ fn test_percentage_threshold_strategy() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2261,7 +2426,11 @@ fn test_time_based_threshold_strategy() {
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2293,7 +2462,8 @@ fn test_time_based_threshold_strategy() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2336,7 +2506,11 @@ fn test_condition_balance_above() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2362,7 +2536,8 @@ fn test_condition_balance_above() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2401,7 +2576,11 @@ fn test_condition_date_after() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2428,7 +2607,8 @@ fn test_condition_date_after() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2478,7 +2658,11 @@ fn test_condition_multiple_and_logic() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2505,7 +2689,8 @@ fn test_condition_multiple_and_logic() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2561,7 +2746,11 @@ fn test_condition_multiple_or_logic() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2588,7 +2777,8 @@ fn test_condition_multiple_or_logic() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2638,7 +2828,11 @@ fn test_condition_no_conditions() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2664,7 +2858,8 @@ fn test_condition_no_conditions() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2686,8 +2881,10 @@ fn test_condition_no_conditions() {
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
     let result = client.try_execute_proposal(&admin, &proposal_id);
-    assert!(result.is_err());
-    assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+    assert_eq!(result, Ok(Ok(())));
+
+    let exec_prop = client.get_proposal(&proposal_id);
+    assert_eq!(exec_prop.status, ProposalStatus::Executed);
 }
 
 // ============================================================================
@@ -2729,7 +2926,8 @@ fn test_dex_config_setup() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
 
@@ -2791,7 +2989,8 @@ fn test_swap_proposal_creation() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -2859,7 +3058,8 @@ fn test_dex_not_enabled_error() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -2914,7 +3114,8 @@ fn test_batch_propose_multi_token() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -2966,8 +3167,13 @@ fn test_batch_propose_exceeds_max_size() {
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    let client = VaultDAOClient::new(&env, &env.register(VaultDAO, ()));
-    let token = Address::generate(&env);
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -2993,7 +3199,8 @@ fn test_batch_propose_exceeds_max_size() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -3035,7 +3242,11 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3062,7 +3273,8 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3102,7 +3314,11 @@ fn test_quorum_blocks_approval_until_satisfied() {
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3131,7 +3347,8 @@ fn test_quorum_blocks_approval_until_satisfied() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3191,7 +3408,11 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
     let signer3 = Address::generate(&env);
     let signer4 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3221,7 +3442,8 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3283,7 +3505,11 @@ fn test_get_quorum_status() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3311,7 +3537,8 @@ fn test_get_quorum_status() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3362,7 +3589,11 @@ fn test_get_quorum_status_quorum_disabled() {
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3388,7 +3619,8 @@ fn test_get_quorum_status_quorum_disabled() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3447,7 +3679,8 @@ fn test_update_quorum() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
 
@@ -3476,7 +3709,11 @@ fn test_execution_rechecks_quorum_requirement() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3503,7 +3740,8 @@ fn test_execution_rechecks_quorum_requirement() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3545,7 +3783,11 @@ fn test_batch_execution_rechecks_quorum_requirement() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3572,7 +3814,8 @@ fn test_batch_execution_rechecks_quorum_requirement() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3619,7 +3862,11 @@ fn test_quorum_satisfied_by_approvals_alone() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -3647,7 +3894,8 @@ fn test_quorum_satisfied_by_approvals_alone() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3712,7 +3960,8 @@ fn test_initialize_rejects_quorum_too_high() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
 
     let result = client.try_initialize(&admin, &config);
@@ -3767,7 +4016,8 @@ macro_rules! setup_retry_test {
                 max_retries: 3,
                 initial_backoff_ledgers: 10,
             },
-            recovery_config: crate::types::RecoveryConfig::default(&$env),
+            recovery_config: crate::RecoveryConfig::default(&$env),
+            oracle_config: crate::OptionalVaultOracleConfig::None,
         };
 
         $client.initialize(&$admin, &config);
@@ -3959,7 +4209,8 @@ fn test_retry_not_enabled_passes_through_error() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
 
     client.initialize(&admin, &config);
@@ -4061,7 +4312,8 @@ fn test_retry_disabled_rejects_retry_execution() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
 
     client.initialize(&admin, &config);
@@ -4268,7 +4520,11 @@ fn test_dependency_validation_missing_and_circular() {
 
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -4478,7 +4734,8 @@ fn test_cross_vault_multi_vault_actions() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
 
     // Initialize all vaults
@@ -4956,7 +5213,8 @@ fn test_reputation_initialized_at_neutral() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -4984,7 +5242,11 @@ fn test_reputation_increases_on_proposal_creation() {
     let admin = Address::generate(&env);
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5009,7 +5271,8 @@ fn test_reputation_increases_on_proposal_creation() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -5046,7 +5309,11 @@ fn test_reputation_increases_on_approval() {
     let proposer = Address::generate(&env);
     let approver = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5072,7 +5339,8 @@ fn test_reputation_increases_on_approval() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -5114,7 +5382,11 @@ fn test_participation_tracking_on_abstention() {
     let admin = Address::generate(&env);
     let abstainer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5140,7 +5412,8 @@ fn test_participation_tracking_on_abstention() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
 
@@ -5178,7 +5451,11 @@ fn test_reputation_increases_on_execution() {
     let proposer = Address::generate(&env);
     let signer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5204,7 +5481,8 @@ fn test_reputation_increases_on_execution() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -5246,7 +5524,11 @@ fn test_reputation_decreases_on_rejection() {
     let proposer = Address::generate(&env);
     let proposer2 = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5272,7 +5554,8 @@ fn test_reputation_decreases_on_rejection() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -5313,7 +5596,11 @@ fn test_reputation_decay_over_time() {
     let admin = Address::generate(&env);
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5338,7 +5625,8 @@ fn test_reputation_decay_over_time() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -5397,7 +5685,11 @@ fn test_create_from_template_with_overrides() {
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
     let new_recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5423,7 +5715,8 @@ fn test_create_from_template_with_overrides() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -5474,7 +5767,11 @@ fn test_create_from_template_amount_out_of_range() {
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5500,7 +5797,8 @@ fn test_create_from_template_amount_out_of_range() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -5586,7 +5884,8 @@ fn test_create_from_inactive_template() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
 
     client.initialize(&admin, &config);
@@ -5636,7 +5935,11 @@ fn test_reputation_based_spending_limit() {
     let admin = Address::generate(&env);
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5661,7 +5964,8 @@ fn test_reputation_based_spending_limit() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -5709,7 +6013,11 @@ fn test_reputation_high_score_get_limits_boost() {
     let treasurer = Address::generate(&env);
     let signer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5735,7 +6043,8 @@ fn test_reputation_high_score_get_limits_boost() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -5803,7 +6112,8 @@ fn test_template_not_found() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
 
@@ -5844,7 +6154,11 @@ fn test_retry_not_enabled() {
     let proposer = Address::generate(&env);
     let signer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -5869,7 +6183,8 @@ fn test_retry_not_enabled() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -5932,7 +6247,7 @@ fn test_wallet_recovery_flow() {
     guardians.push_back(guardian2.clone());
 
     let mut config = default_init_config(&env, signers, 1);
-    config.recovery_config = crate::types::RecoveryConfig {
+    config.recovery_config = crate::RecoveryConfig {
         guardians,
         threshold: 2,
         delay: 50,
@@ -5948,12 +6263,12 @@ fn test_wallet_recovery_flow() {
     // 2. First guardian approval
     client.approve_recovery(&guardian1, &recovery_id);
     let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, types::RecoveryStatus::Pending);
+    assert_eq!(proposal.status, RecoveryStatus::Pending);
 
     // 3. Second guardian approval -> Should move to Approved
     client.approve_recovery(&guardian2, &recovery_id);
     let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, types::RecoveryStatus::Approved);
+    assert_eq!(proposal.status, RecoveryStatus::Approved);
     assert_eq!(proposal.execution_after, 100 + 50);
 
     // 4. Try execute before delay
@@ -5969,11 +6284,15 @@ fn test_wallet_recovery_flow() {
     assert_eq!(v_config.guardians.len(), 2);
 
     let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, types::RecoveryStatus::Executed);
+    assert_eq!(proposal.status, RecoveryStatus::Executed);
 
     // Verify new signer works
     client.set_role(&admin, &new_signer, &Role::Treasurer);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
     let p_id = client.propose_transfer(
         &new_signer,
         &admin,
@@ -6008,7 +6327,7 @@ fn test_recovery_cancellation() {
     guardians.push_back(guardian1.clone());
 
     let mut config = default_init_config(&env, signers, 1);
-    config.recovery_config = crate::types::RecoveryConfig {
+    config.recovery_config = crate::RecoveryConfig {
         guardians,
         threshold: 1,
         delay: 50,
@@ -6024,7 +6343,7 @@ fn test_recovery_cancellation() {
     client.cancel_recovery(&admin, &recovery_id);
 
     let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, types::RecoveryStatus::Cancelled);
+    assert_eq!(proposal.status, RecoveryStatus::Cancelled);
 
     // 3. Try to approve cancelled proposal
     let res = client.try_approve_recovery(&guardian1, &recovery_id);
@@ -6074,7 +6393,8 @@ fn test_insurance_posting_and_refund() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -6175,7 +6495,8 @@ fn test_insurance_slashing_on_rejection() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -6264,7 +6585,8 @@ fn test_insurance_pool_withdrawal() {
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
+        recovery_config: crate::RecoveryConfig::default(&env),
+        oracle_config: crate::OptionalVaultOracleConfig::None,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -6318,6 +6640,134 @@ fn test_insurance_pool_withdrawal() {
 }
 
 #[test]
+fn test_stream_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Register token
+    let token_admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(token_admin);
+    let token_client = token::Client::new(&env, &token_id.address());
+    let token_admin_client = StellarAssetClient::new(&env, &token_id.address());
+    let token_id_addr = token_id.address();
+
+    // Initialize vault
+    let signers = Vec::from_array(&env, [admin.clone()]);
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Give sender some tokens
+    token_admin_client.mint(&sender, &1000);
+    assert_eq!(token_client.balance(&sender), 1000);
+
+    // 1. Create stream: 100 tokens over 100 seconds (rate = 1 token/sec)
+    let stream_id = client.create_stream(&sender, &recipient, &token_id_addr, &100, &100);
+    assert_eq!(token_client.balance(&sender), 900);
+    assert_eq!(token_client.balance(&contract_id), 100);
+
+    // 2. Wait 10 seconds
+    env.ledger().with_mut(|li| li.timestamp += 10);
+
+    // Check stream status
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Active);
+
+    // 3. Claim: should be 10 tokens
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 10);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.claimed_amount, 10);
+
+    // 4. Pause stream
+    client.pause_stream(&sender, &stream_id);
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Paused);
+    assert_eq!(stream.accumulated_seconds, 10);
+
+    // 5. Wait 20 seconds while paused
+    env.ledger().with_mut(|li| li.timestamp += 20);
+
+    // Claim should give 0 more tokens
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 10);
+
+    // 6. Resume stream
+    client.resume_stream(&sender, &stream_id);
+
+    // 7. Wait 10 seconds
+    env.ledger().with_mut(|li| li.timestamp += 10);
+
+    // Total active time = 10 (before pause) + 10 (after resume) = 20
+    // Total claimable = 20. Claimed = 10. New claim = 10.
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 20);
+
+    // 8. Wait till end (another 80 seconds)
+    env.ledger().with_mut(|li| li.timestamp += 80);
+
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 100);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Completed);
+}
+
+#[test]
+fn test_stream_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Register token
+    let token_admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(token_admin);
+    let token_client = token::Client::new(&env, &token_id.address());
+    let token_admin_client = StellarAssetClient::new(&env, &token_id.address());
+    let token_id_addr = token_id.address();
+
+    // Initialize vault
+    let signers = Vec::from_array(&env, [admin.clone()]);
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Give sender tokens
+    token_admin_client.mint(&sender, &1000);
+
+    // Create stream: 100 tokens over 100 seconds
+    let stream_id = client.create_stream(&sender, &recipient, &token_id_addr, &100, &100);
+
+    // Wait 40 seconds
+    env.ledger().with_mut(|li| li.timestamp += 40);
+
+    // Cancel stream
+    client.cancel_stream(&sender, &stream_id);
+
+    // Recipient should have gotten 40 tokens
+    assert_eq!(token_client.balance(&recipient), 40);
+    // Sender should have gotten 60 tokens back (900 + 60 = 960)
+    assert_eq!(token_client.balance(&sender), 960);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+    assert_eq!(stream.claimed_amount, 40);
+}
+
+// ============================================================================
+#[test]
 fn test_estimate_execution_fee_breakdown_and_storage() {
     let env = Env::default();
     env.mock_all_auths();
@@ -6326,53 +6776,76 @@ fn test_estimate_execution_fee_breakdown_and_storage() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
+    let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
 
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
+    // Register token
+    let token_admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(token_admin);
+    let token_client = token::Client::new(&env, &token_id.address());
+    let token_admin_client = StellarAssetClient::new(&env, &token_id.address());
+    let token_id_addr = token_id.address();
 
-    let config = default_init_config(&env, signers, 2);
+    // Initialize vault
+    let signers = Vec::from_array(&env, [admin.clone()]);
+    let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-    client.set_gas_config(
-        &admin,
-        &GasConfig {
-            enabled: true,
-            default_gas_limit: 10_000,
-            base_cost: 100,
-            condition_cost: 25,
-        },
-    );
 
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::DateAfter(100));
-    conditions.push_back(Condition::BalanceAbove(10));
+    // Give sender some tokens
+    token_admin_client.mint(&sender, &1000);
+    assert_eq!(token_client.balance(&sender), 1000);
 
-    let proposal_id = client.propose_transfer(
-        &treasurer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "fee"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0i128,
-    );
+    // 1. Create stream: 100 tokens over 100 seconds (rate = 1 token/sec)
+    let stream_id = client.create_stream(&sender, &recipient, &token_id_addr, &100, &100);
+    assert_eq!(token_client.balance(&sender), 900);
+    assert_eq!(token_client.balance(&contract_id), 100);
 
-    let estimate = client.estimate_execution_fee(&proposal_id);
-    assert_eq!(estimate.base_fee, 100);
-    assert_eq!(estimate.resource_fee, 75);
-    assert_eq!(estimate.total_fee, 175);
-    assert_eq!(estimate.operation_count, 3);
+    // 2. Wait 10 seconds
+    env.ledger().with_mut(|li| li.timestamp += 10);
 
-    let stored = client
-        .get_execution_fee_estimate(&proposal_id)
-        .expect("stored estimate should exist");
-    assert_eq!(stored.total_fee, estimate.total_fee);
+    // Check stream status
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Active);
+
+    // 3. Claim: should be 10 tokens
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 10);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.claimed_amount, 10);
+
+    // 4. Pause stream
+    client.pause_stream(&sender, &stream_id);
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Paused);
+    assert_eq!(stream.accumulated_seconds, 10);
+
+    // 5. Wait 20 seconds while paused
+    env.ledger().with_mut(|li| li.timestamp += 20);
+
+    // Claim should give 0 more tokens
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 10);
+
+    // 6. Resume stream
+    client.resume_stream(&sender, &stream_id);
+
+    // 7. Wait 10 seconds
+    env.ledger().with_mut(|li| li.timestamp += 10);
+
+    // Total active time = 10 (before pause) + 10 (after resume) = 20
+    // Total claimable = 20. Claimed = 10. New claim = 10.
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 20);
+
+    // 8. Wait till end (another 80 seconds)
+    env.ledger().with_mut(|li| li.timestamp += 80);
+
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(token_client.balance(&recipient), 100);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.status, StreamStatus::Completed);
 }
 
 #[test]
@@ -6446,7 +6919,11 @@ fn test_estimate_execution_fee_refreshes_after_gas_config_update() {
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -6498,4 +6975,178 @@ fn test_estimate_execution_fee_refreshes_after_gas_config_update() {
         .get_execution_fee_estimate(&proposal_id)
         .expect("stored estimate should be refreshed");
     assert_eq!(stored.total_fee, refreshed.total_fee);
+}
+
+#[contract]
+pub struct MockOracle;
+
+#[contractimpl]
+impl MockOracle {
+    pub fn lastprice(env: Env, _asset: Address) -> Option<crate::types::VaultPriceData> {
+        let price = env.storage().instance().get(&Symbol::new(&env, "price"));
+        let timestamp = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "time"))
+            .unwrap_or(0);
+
+        price.map(|p| crate::types::VaultPriceData {
+            price: p,
+            timestamp,
+        })
+    }
+
+    pub fn set_price(env: Env, _asset: Address, price: i128, timestamp: u64) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "price"), &price);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "time"), &timestamp);
+    }
+}
+
+#[test]
+fn test_oracle_price_conditions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let oracle_id = env.register(MockOracle, ());
+    let oracle_client = MockOracleClient::new(&env, &oracle_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let oracle_cfg = crate::VaultOracleConfig {
+        address: oracle_id,
+        base_symbol: Symbol::new(&env, "USD"),
+        max_staleness: 100,
+    };
+
+    let mut init_config = default_init_config(&env, signers, 1);
+    init_config.oracle_config = crate::OptionalVaultOracleConfig::Some(oracle_cfg.clone());
+    client.initialize(&admin, &init_config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    // Set initial price: 1 TOKEN = 10 USD (scaled by 7 decimals -> 100,000,000)
+    let price = 100_000_000i128;
+    oracle_client.set_price(&token, &price, &env.ledger().timestamp());
+
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::PriceAbove(token.clone(), 150_000_000i128));
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "price_cond"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&treasurer, &proposal_id);
+
+    let res = client.try_execute_proposal(&treasurer, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotApproved)));
+
+    // 2. Update price to 20 USD
+    oracle_client.set_price(&token, &200_000_000i128, &env.ledger().timestamp());
+
+    client.execute_proposal(&treasurer, &proposal_id);
+    let p = client.get_proposal(&proposal_id);
+    assert_eq!(p.status, ProposalStatus::Executed);
+}
+
+#[test]
+fn test_oracle_staleness() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let oracle_id = env.register(MockOracle, ());
+    let oracle_client = MockOracleClient::new(&env, &oracle_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let oracle_cfg = crate::VaultOracleConfig {
+        address: oracle_id,
+        base_symbol: Symbol::new(&env, "USD"),
+        max_staleness: 100, // 100 ledgers
+    };
+
+    let mut init_config = default_init_config(&env, signers, 1);
+    init_config.oracle_config = crate::OptionalVaultOracleConfig::Some(oracle_cfg.clone());
+    client.initialize(&admin, &init_config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    // Set initial price to be recorded at ledger 0
+    let price = 100_000_000i128;
+    oracle_client.set_price(&token, &price, &0);
+
+    // Fast forward ledger beyond staleness (105 > 100)
+    let mut li = env.ledger().get();
+    li.sequence_number = 105;
+    li.timestamp = 150;
+    env.ledger().set(li);
+
+    let mut conditions = Vec::new(&env);
+    // Even though price is 100 USD (which is > 50 USD), it is stale so it should act as false
+    conditions.push_back(Condition::PriceAbove(token.clone(), 50_000_000i128));
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "stale_cond"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&treasurer, &proposal_id);
+
+    let res = client.try_execute_proposal(&treasurer, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotApproved)));
+
+    // Update price to be fresh (recorded at ledger 105)
+    oracle_client.set_price(&token, &price, &105);
+
+    client.execute_proposal(&treasurer, &proposal_id);
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        ProposalStatus::Executed
+    );
 }

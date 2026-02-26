@@ -150,6 +150,18 @@ pub fn emit_config_updated(env: &Env, updater: &Address) {
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
 }
 
+// ============================================================================
+// Oracle Events (feature/oracle-integration)
+// ============================================================================
+
+/// Emit when oracle configuration is updated by admin
+pub fn emit_oracle_config_updated(env: &Env, admin: &Address, oracle: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "oracle_cfg_updated"),),
+        (admin.clone(), oracle.clone()),
+    );
+}
+
 /// Emit when quorum configuration is updated by admin
 pub fn emit_quorum_updated(env: &Env, admin: &Address, old_quorum: u32, new_quorum: u32) {
     env.events().publish(
@@ -774,4 +786,46 @@ pub fn emit_funding_round_completed(env: &Env, round_id: u64, total_released: i1
 pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "recovery_cfg_updated"),), admin.clone());
+}
+
+// ============================================================================
+// Streaming Events (feature/streaming-payments)
+// ============================================================================
+
+/// Emit when a new token stream is created
+pub fn emit_stream_created(
+    env: &Env,
+    stream_id: u64,
+    sender: &Address,
+    recipient: &Address,
+    token: &Address,
+    amount: i128,
+    rate: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_created"), stream_id),
+        (
+            sender.clone(),
+            recipient.clone(),
+            token.clone(),
+            amount,
+            rate,
+        ),
+    );
+}
+
+/// Emit when a stream status is updated (paused, resumed, or cancelled)
+pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, updated_by: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "stream_status"), stream_id),
+        (status, updated_by.clone()),
+    );
+}
+
+/// Emit when tokens are claimed from a stream
+pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "stream_claimed"), stream_id),
+        (recipient.clone(), amount),
+    );
 }
