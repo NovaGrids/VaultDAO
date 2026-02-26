@@ -115,28 +115,15 @@ pub enum DataKey {
     FunderEscrows(Address),
     /// Escrow IDs by recipient address -> Vec<u64>
     RecipientEscrows(Address),
-    /// Recovery proposal by ID -> RecoveryProposal
-    RecoveryProposal(u64),
-    /// Next recovery proposal ID counter -> u64
-    NextRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
     /// Token lock by owner address -> TokenLock
     TokenLock(Address),
     /// Next token lock ID counter -> u64
-    NextTokenLockId,
     /// Time-weighted voting configuration -> TimeWeightedConfig
     TimeWeightedConfig,
     /// Total locked tokens by address -> i128
     TotalLocked(Address),
-    /// Batch transaction by ID -> BatchTransaction
-    Batch(u64),
-    /// Batch execution result by ID -> BatchExecutionResult
-    BatchResult(u64),
-    /// Batch rollback state (operations to reverse) -> Vec<(Address, i128)>
-    BatchRollback(u64),
-    /// Next batch ID counter -> u64
-    BatchIdCounter,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1172,104 +1159,4 @@ pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {
         // No lock = base voting power of 1
         1
     }
-// Batch Transactions
-// ============================================================================
-
-pub fn get_next_batch_id(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get::<DataKey, u64>(&DataKey::BatchIdCounter)
-        .unwrap_or(0)
-}
-
-pub fn increment_batch_id(env: &Env) -> u64 {
-    let current = get_next_batch_id(env);
-    let next = current + 1;
-    env.storage()
-        .instance()
-        .set(&DataKey::BatchIdCounter, &next);
-    extend_instance_ttl(env);
-    next
-}
-
-pub fn set_batch(env: &Env, batch: &crate::types::BatchTransaction) {
-    let key = DataKey::Batch(batch.id);
-    env.storage().persistent().set(&key, batch);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-}
-
-pub fn get_batch(env: &Env, batch_id: u64) -> Result<crate::types::BatchTransaction, VaultError> {
-    let key = DataKey::Batch(batch_id);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .flatten()
-        .ok_or(VaultError::BatchNotFound)
-}
-
-pub fn set_batch_result(env: &Env, result: &crate::types::BatchExecutionResult) {
-    let key = DataKey::BatchResult(result.batch_id);
-    env.storage().persistent().set(&key, result);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-}
-
-pub fn get_batch_result(env: &Env, batch_id: u64) -> Option<crate::types::BatchExecutionResult> {
-    let key = DataKey::BatchResult(batch_id);
-    env.storage().persistent().get(&key).flatten()
-}
-
-#[allow(dead_code)]
-pub fn get_rollback_state(env: &Env, batch_id: u64) -> Vec<(Address, i128)> {
-    let key = DataKey::BatchRollback(batch_id);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .flatten()
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-pub fn set_rollback_state(env: &Env, batch_id: u64, state: &Vec<(Address, i128)>) {
-    let key = DataKey::BatchRollback(batch_id);
-    env.storage().persistent().set(&key, state);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-}
-
-// ============================================================================
-// Wallet Recovery (Issue: feature/wallet-recovery)
-// ============================================================================
-
-pub fn get_recovery_proposal(env: &Env, id: u64) -> Result<RecoveryProposal, VaultError> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::RecoveryProposal(id))
-        .ok_or(VaultError::ProposalNotFound)
-}
-
-pub fn set_recovery_proposal(env: &Env, proposal: &RecoveryProposal) {
-    let key = DataKey::RecoveryProposal(proposal.id);
-    env.storage().persistent().set(&key, proposal);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-}
-
-pub fn get_next_recovery_id(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get(&DataKey::NextRecoveryId)
-        .unwrap_or(1)
-}
-
-pub fn increment_recovery_id(env: &Env) -> u64 {
-    let id = get_next_recovery_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextRecoveryId, &(id + 1));
-    id
 }
