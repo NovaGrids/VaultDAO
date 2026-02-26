@@ -45,6 +45,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   const { getListMode, isWhitelisted, isBlacklisted } = useVaultContract();
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [listMode, setListMode] = useState<string>('Disabled');
+  const modalRef = useFocusTrap<HTMLDivElement>(isOpen);
 
   const loadListMode = useCallback(async () => {
     try {
@@ -99,6 +100,20 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.recipient, listMode, validateRecipient]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, onClose]);
 
   if (!isOpen) {
     return null;
@@ -159,10 +174,18 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-gray-700 bg-gray-900 p-4 sm:p-6">
+    <div 
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="new-proposal-title"
+    >
+      <div 
+        ref={modalRef}
+        className="w-full max-w-2xl rounded-xl border border-gray-700 bg-gray-900 p-4 sm:p-6"
+      >
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="text-xl font-semibold text-white">Create New Proposal</h3>
+          <h3 id="new-proposal-title" className="text-xl font-semibold text-white">Create New Proposal</h3>
           {selectedTemplateName ? (
             <span className="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs text-purple-300">
               Template: {selectedTemplateName}
@@ -171,7 +194,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
         </div>
 
         {listMode !== 'Disabled' && (
-          <div className="mb-4 rounded-lg bg-blue-500/10 border border-blue-500/30 p-3">
+          <div className="mb-4 rounded-lg bg-blue-500/10 border border-blue-500/30 p-3" role="status">
             <p className="text-sm text-blue-300">
               {listMode === 'Whitelist' && 'Whitelist mode active: Only approved addresses can receive funds'}
               {listMode === 'Blacklist' && 'Blacklist mode active: Blocked addresses cannot receive funds'}
@@ -186,10 +209,15 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
               onChange={(value) => onFieldChange('recipient', value)}
               placeholder="Recipient address"
               className={`w-full rounded-lg border ${recipientError ? 'border-red-500' : 'border-gray-600'
-                } bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none`}
+                } bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500`}
+              aria-invalid={!!recipientError}
+              aria-describedby={recipientError ? 'recipient-error' : undefined}
+              required
             />
             {recipientError && (
-              <p className="mt-1 text-sm text-red-400">{recipientError}</p>
+              <p id="recipient-error" className="mt-1 text-sm text-red-400" role="alert">
+                {recipientError}
+              </p>
             )}
           </div>
           <VoiceToText
@@ -226,14 +254,16 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
               <button
                 type="button"
                 onClick={onOpenTemplateSelector}
-                className="min-h-[44px] rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600"
+                className="min-h-[44px] rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                aria-label="Use template"
               >
                 Use Template
               </button>
               <button
                 type="button"
                 onClick={onSaveAsTemplate}
-                className="min-h-[44px] rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600"
+                className="min-h-[44px] rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                aria-label="Save as template"
               >
                 Save as Template
               </button>
@@ -242,14 +272,16 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="min-h-[44px] rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600"
+                className="min-h-[44px] rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                aria-label="Cancel"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={loading || !!recipientError}
-                className="min-h-[44px] rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-[44px] rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                aria-label={loading ? 'Submitting proposal' : 'Submit proposal'}
               >
                 {loading ? 'Submitting...' : 'Submit Proposal'}
               </button>

@@ -76,6 +76,8 @@ pub struct InitConfig {
     pub post_execution_hooks: Vec<Address>,
     /// Default voting deadline in ledgers (0 = no deadline)
     pub default_voting_deadline: u64,
+    /// Addresses allowed to veto proposals.
+    pub veto_addresses: Vec<Address>,
     /// Retry configuration for failed executions
     pub retry_config: RetryConfig,
     /// Recovery configuration
@@ -116,6 +118,8 @@ pub struct Config {
     pub post_execution_hooks: Vec<Address>,
     /// Default voting deadline in ledgers (0 = no deadline)
     pub default_voting_deadline: u64,
+    /// Addresses allowed to veto proposals.
+    pub veto_addresses: Vec<Address>,
     /// Retry configuration for failed executions
     pub retry_config: RetryConfig,
     /// Recovery configuration
@@ -258,6 +262,8 @@ pub enum ProposalStatus {
     Expired = 4,
     /// Cancelled by proposer or admin, with spending refunded.
     Cancelled = 5,
+    /// Approved and scheduled for future execution at a specific time.
+    Scheduled = 6,
 }
 
 /// Proposal priority level for queue ordering
@@ -350,6 +356,8 @@ pub struct Proposal {
     pub expires_at: u64,
     /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
     pub unlock_ledger: u64,
+    /// Optional scheduled execution time (ledger number) for delayed execution
+    pub execution_time: Option<u64>,
     /// Insurance amount staked by proposer (0 = no insurance). Held in vault.
     pub insurance_amount: i128,
     /// Stake amount locked by proposer (0 = no stake). Held in vault.
@@ -1142,6 +1150,109 @@ pub struct Escrow {
     pub finalized_at: u64,
 }
 
+// ============================================================================
+// Time-Weighted Voting (Issue: feature/time-weighted-voting)
+// ============================================================================
+
+/// Token lock for time-weighted voting power
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TokenLock {
+    /// Address that locked the tokens
+    pub owner: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Amount of tokens locked
+    pub amount: i128,
+    /// Ledger when tokens were locked
+    pub locked_at: u64,
+    /// Duration of the lock in ledgers
+    pub duration: u64,
+    /// Ledger when tokens can be unlocked
+    pub unlock_at: u64,
+    /// Whether the lock is active
+    pub is_active: bool,
+    /// Voting power multiplier (basis points, e.g., 10000 = 1x, 20000 = 2x)
+    pub power_multiplier_bps: u32,
+}
+
+impl TokenLock {
+    /// Calculate voting power based on locked amount and duration
+    /// Longer locks get higher multipliers:
+    /// - < 30 days: 1.0x (10000 bps)
+    /// - 30-90 days: 1.5x (15000 bps)
+    /// - 90-180 days: 2.0x (20000 bps)
+    /// - 180-365 days: 3.0x (30000 bps)
+    /// - > 365 days: 4.0x (40000 bps)
+    pub fn calculate_voting_power(&self) -> i128 {
+        if !self.is_active {
+            return 0;
+        }
+        (self.amount * self.power_multiplier_bps as i128) / 10_000
+    }
+
+    /// Calculate power multiplier based on lock duration
+    pub fn calculate_multiplier(duration_ledgers: u64) -> u32 {
+        const DAY_LEDGERS: u64 = 17_280; // ~24 hours at 5 sec/ledger
+
+        if duration_ledgers < 30 * DAY_LEDGERS {
+            10_000 // 1.0x
+        } else if duration_ledgers < 90 * DAY_LEDGERS {
+            15_000 // 1.5x
+        } else if duration_ledgers < 180 * DAY_LEDGERS {
+            20_000 // 2.0x
+        } else if duration_ledgers < 365 * DAY_LEDGERS {
+            30_000 // 3.0x
+        } else {
+            40_000 // 4.0x
+        }
+    }
+
+    /// Calculate remaining voting power with time decay
+    /// Power decays linearly as lock approaches expiration
+    pub fn calculate_decayed_power(&self, current_ledger: u64) -> i128 {
+        if !self.is_active || current_ledger >= self.unlock_at {
+            return 0;
+        }
+
+        let _elapsed = current_ledger.saturating_sub(self.locked_at);
+        let remaining = self.unlock_at.saturating_sub(current_ledger);
+
+        // Linear decay: power = base_power * (remaining / duration)
+        let base_power = self.calculate_voting_power();
+        (base_power * remaining as i128) / self.duration as i128
+    }
+}
+
+/// Time-weighted voting configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TimeWeightedConfig {
+    /// Whether time-weighted voting is enabled
+    pub enabled: bool,
+    /// Minimum lock duration in ledgers
+    pub min_lock_duration: u64,
+    /// Maximum lock duration in ledgers
+    pub max_lock_duration: u64,
+    /// Whether to apply time decay to voting power
+    pub apply_decay: bool,
+    /// Penalty for early unlock (basis points, e.g., 1000 = 10%)
+    pub early_unlock_penalty_bps: u32,
+}
+
+impl TimeWeightedConfig {
+    pub fn default() -> Self {
+        const DAY_LEDGERS: u64 = 17_280;
+        TimeWeightedConfig {
+            enabled: false,
+            min_lock_duration: 7 * DAY_LEDGERS,   // 7 days minimum
+            max_lock_duration: 730 * DAY_LEDGERS, // 2 years maximum
+            apply_decay: true,
+            early_unlock_penalty_bps: 1000, // 10% penalty
+        }
+    }
+}
+
 impl Escrow {
     /// Calculate total percentage from all milestones
     pub fn total_milestone_percentage(&self) -> u32 {
@@ -1199,68 +1310,6 @@ pub struct FeeStructure {
     pub enabled: bool,
 }
 
-// ============================================================================
-// Proposal Staking and Slashing (Issue: feature/proposal-staking)
-// ============================================================================
-
-/// Staking configuration for proposals
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct StakingConfig {
-    /// Whether staking is required for proposals
-    pub enabled: bool,
-    /// Minimum proposal amount that requires staking (in stroops)
-    pub min_amount: i128,
-    /// Base stake requirement as basis points of proposal amount (e.g. 500 = 5%)
-    pub base_stake_bps: u32,
-    /// Maximum stake requirement cap (absolute amount)
-    pub max_stake_amount: i128,
-    /// Percentage of stake slashed for malicious proposals (0-100)
-    pub slash_percentage: u32,
-    /// Reputation score threshold for reduced stake requirement
-    pub reputation_discount_threshold: u32,
-    /// Stake discount percentage for high-reputation users (0-100)
-    pub reputation_discount_percentage: u32,
-}
-
-impl StakingConfig {
-    pub fn default() -> Self {
-        StakingConfig {
-            enabled: false,
-            min_amount: 1_000_000_000, // 100 XLM default minimum
-            base_stake_bps: 500,        // 5% default stake
-            max_stake_amount: 10_000_000_000, // 1000 XLM max stake
-            slash_percentage: 50,       // 50% slashed on malicious
-            reputation_discount_threshold: 750,
-            reputation_discount_percentage: 30, // 30% discount for high rep
-        }
-    }
-}
-
-/// Stake record for a proposal
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct StakeRecord {
-    /// Proposal ID this stake is for
-    pub proposal_id: u64,
-    /// Address that staked
-    pub staker: Address,
-    /// Token staked
-    pub token: Address,
-    /// Amount staked
-    pub amount: i128,
-    /// Ledger when stake was locked
-    pub locked_at: u64,
-    /// Whether stake has been refunded
-    pub refunded: bool,
-    /// Whether stake has been slashed
-    pub slashed: bool,
-    /// Amount slashed (if any)
-    pub slashed_amount: i128,
-    /// Ledger when stake was released/slashed
-    pub released_at: u64,
-}
-
 impl FeeStructure {
     pub fn default(env: &Env) -> Self {
         // Use contract's own address as default treasury
@@ -1292,80 +1341,4 @@ pub struct FeeCalculation {
     pub fee_bps: u32,
     /// Whether reputation discount was applied
     pub reputation_discount_applied: bool,
-}
-
-
-// ============================================================================
-// Batch Transaction System (Issue: feature/batch-transactions)
-// ============================================================================
-
-/// Status of a batch transaction
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum BatchStatus {
-    /// Batch created, awaiting execution
-    Pending = 0,
-    /// Batch is currently being executed
-    Executing = 1,
-    /// Batch execution completed successfully
-    Completed = 2,
-    /// Batch execution failed and was rolled back
-    RolledBack = 3,
-}
-
-/// A single operation in a batch transaction
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct BatchOperation {
-    /// Recipient of the transfer
-    pub recipient: Address,
-    /// Token contract address
-    pub token: Address,
-    /// Amount to transfer
-    pub amount: i128,
-    /// Optional memo
-    pub memo: Symbol,
-}
-
-/// Batch transaction containing multiple operations
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct BatchTransaction {
-    /// Unique batch ID
-    pub id: u64,
-    /// Address that created the batch
-    pub creator: Address,
-    /// List of operations to execute
-    pub operations: Vec<BatchOperation>,
-    /// Current status
-    pub status: BatchStatus,
-    /// Ledger when batch was created
-    pub created_at: u64,
-    /// Optional memo for the entire batch
-    pub memo: Symbol,
-    /// Estimated gas for the batch
-    pub estimated_gas: u64,
-}
-
-/// Result of batch execution
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct BatchExecutionResult {
-    /// Batch ID
-    pub batch_id: u64,
-    /// Whether all operations succeeded
-    pub success: bool,
-    /// Number of operations executed successfully
-    pub successful_operations: u32,
-    /// Total number of operations
-    pub total_operations: u32,
-    /// Ledger when execution completed
-    pub executed_at: u64,
-    /// Index of failed operation (if any)
-    pub failed_operation_index: u32,
-    /// Error message (if any)
-    pub error: Symbol,
-    /// Number of operations executed before failure
-    pub executed_count: u32,
 }

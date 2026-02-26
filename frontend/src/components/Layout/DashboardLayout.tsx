@@ -36,6 +36,7 @@ const DashboardLayout: React.FC = () => {
   const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
   const onboarding = useOnboarding();
   const location = useLocation();
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);

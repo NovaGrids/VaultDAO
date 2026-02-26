@@ -132,6 +132,9 @@ pub enum VaultError {
     // Timelock
     TimelockNotExpired = 60,
 
+    // Scheduling - consolidated
+    SchedulingError = 61, // Consolidates ExecutionTimeTooEarly, ExecutionTimeInPast, NotScheduled, ExecutionTimeNotReached, CannotCancelNonScheduled
+
     // Balance
     InsufficientBalance = 70,
 

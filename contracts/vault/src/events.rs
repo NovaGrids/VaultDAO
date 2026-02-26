@@ -346,6 +346,20 @@ pub fn emit_hook_registered(env: &Env, hook: &Address, is_pre: bool) {
 
 /// Emit when a hook is removed
 pub fn emit_hook_removed(env: &Env, hook: &Address, is_pre: bool) {
+    env.events().publish(
+        (Symbol::new(env, "hook_removed"),),
+        (hook.clone(), is_pre),
+    );
+}
+
+/// Emit when a hook is executed
+pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {
+    env.events().publish(
+        (Symbol::new(env, "hook_executed"), proposal_id),
+        (hook.clone(), is_pre),
+    );
+}
+
 /// Emit when liquidity is removed
 pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
     env.events().publish(
@@ -439,16 +453,8 @@ pub fn emit_voting_deadline_extended(
     admin: &Address,
 ) {
     env.events().publish(
-        (Symbol::new(env, "hook_removed"),),
-        (hook.clone(), is_pre),
-    );
-}
-
-/// Emit when a hook is executed
-pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {
-    env.events().publish(
-        (Symbol::new(env, "hook_executed"), proposal_id),
-        (hook.clone(), is_pre),
+        (Symbol::new(env, "voting_deadline_ext"), proposal_id),
+        (old_deadline, new_deadline, admin.clone()),
     );
 }
 
@@ -553,6 +559,7 @@ pub fn emit_retries_exhausted(env: &Env, proposal_id: u64, total_attempts: u32) 
 // ============================================================================
 
 /// Emit when a new subscription is created
+#[allow(dead_code)]
 pub fn emit_subscription_created(
     env: &Env,
     subscription_id: u64,
@@ -567,6 +574,7 @@ pub fn emit_subscription_created(
 }
 
 /// Emit when a subscription is renewed
+#[allow(dead_code)]
 pub fn emit_subscription_renewed(
     env: &Env,
     subscription_id: u64,
@@ -580,6 +588,7 @@ pub fn emit_subscription_renewed(
 }
 
 /// Emit when a subscription is cancelled
+#[allow(dead_code)]
 pub fn emit_subscription_cancelled(env: &Env, subscription_id: u64, cancelled_by: &Address) {
     env.events().publish(
         (Symbol::new(env, "subscription_cancelled"), subscription_id),
@@ -588,6 +597,7 @@ pub fn emit_subscription_cancelled(env: &Env, subscription_id: u64, cancelled_by
 }
 
 /// Emit when a subscription tier is upgraded
+#[allow(dead_code)]
 pub fn emit_subscription_upgraded(
     env: &Env,
     subscription_id: u64,
@@ -607,6 +617,7 @@ pub fn emit_subscription_expired(env: &Env, subscription_id: u64) {
     env.events()
         .publish((Symbol::new(env, "subscription_expired"),), subscription_id);
 }
+
 // ============================================================================
 // Escrow Events (feature/escrow-system)
 // ============================================================================
@@ -675,36 +686,90 @@ pub fn emit_escrow_dispute_resolved(
         (arbitrator.clone(), released_to_recipient),
     );
 }
+
 // ============================================================================
-// Wallet Recovery Events (feature/wallet-recovery)
+// Time-Weighted Voting Events
 // ============================================================================
 
-/// Emit when a recovery proposal is created
-pub fn emit_recovery_proposed(env: &Env, recovery_id: u64, new_threshold: u32) {
+/// Emit when tokens are locked for voting power
+pub fn emit_tokens_locked(
+    env: &Env,
+    owner: &Address,
+    amount: i128,
+    duration: u64,
+    power_multiplier_bps: u32,
+) {
     env.events().publish(
-        (Symbol::new(env, "recovery_proposed"), recovery_id),
+        (Symbol::new(env, "tokens_locked"),),
+        (owner.clone(), amount, duration, power_multiplier_bps),
+    );
+}
+
+/// Emit when a token lock is extended
+pub fn emit_lock_extended(
+    env: &Env,
+    owner: &Address,
+    new_duration: u64,
+    power_multiplier_bps: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "lock_extended"),),
+        (owner.clone(), new_duration, power_multiplier_bps),
+    );
+}
+
+/// Emit when tokens are unlocked after lock period
+pub fn emit_tokens_unlocked(env: &Env, owner: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "tokens_unlocked"),),
+        (owner.clone(), amount),
+    );
+}
+
+/// Emit when tokens are unlocked early with penalty
+pub fn emit_early_unlock(env: &Env, owner: &Address, returned_amount: i128, penalty: i128) {
+    env.events().publish(
+        (Symbol::new(env, "early_unlock"),),
+        (owner.clone(), returned_amount, penalty),
+    );
+}
+
+// ============================================================================
+// Recovery Events
+// ============================================================================
+
+/// Emit when recovery configuration is updated
+pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_config"),), admin.clone());
+}
+
+/// Emit when a recovery proposal is created
+pub fn emit_recovery_proposed(env: &Env, proposal_id: u64, new_threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_proposed"), proposal_id),
         new_threshold,
     );
 }
 
-/// Emit when a recovery proposal is approved by a guardian
-pub fn emit_recovery_approved(env: &Env, recovery_id: u64, guardian: &Address) {
+/// Emit when a recovery proposal is approved
+pub fn emit_recovery_approved(env: &Env, proposal_id: u64, guardian: &Address) {
     env.events().publish(
-        (Symbol::new(env, "recovery_approved"), recovery_id),
+        (Symbol::new(env, "recovery_approved"), proposal_id),
         guardian.clone(),
     );
 }
 
 /// Emit when a recovery proposal is executed
-pub fn emit_recovery_executed(env: &Env, recovery_id: u64) {
+pub fn emit_recovery_executed(env: &Env, proposal_id: u64) {
     env.events()
-        .publish((Symbol::new(env, "recovery_executed"), recovery_id), ());
+        .publish((Symbol::new(env, "recovery_executed"), proposal_id), ());
 }
 
 /// Emit when a recovery proposal is cancelled
-pub fn emit_recovery_cancelled(env: &Env, recovery_id: u64, canceller: &Address) {
+pub fn emit_recovery_cancelled(env: &Env, proposal_id: u64, canceller: &Address) {
     env.events().publish(
-        (Symbol::new(env, "recovery_cancelled"), recovery_id),
+        (Symbol::new(env, "recovery_cancelled"), proposal_id),
         canceller.clone(),
     );
 }

@@ -38,6 +38,9 @@ pub struct VaultDAO;
 /// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
+/// Ledger interval in seconds (approximate)
+const LEDGER_INTERVAL_SECONDS: u64 = 5;
+
 /// Maximum proposals that can be batch-executed in one call (gas limit)
 const MAX_BATCH_SIZE: u32 = 10;
 
@@ -115,6 +118,7 @@ impl VaultDAO {
             pre_execution_hooks: config.pre_execution_hooks,
             post_execution_hooks: config.post_execution_hooks,
             default_voting_deadline: config.default_voting_deadline,
+            veto_addresses: config.veto_addresses,
             retry_config: config.retry_config,
             recovery_config: config.recovery_config.clone(),
             staking_config: config.staking_config.clone(),
@@ -184,6 +188,54 @@ impl VaultDAO {
             condition_logic,
             insurance_amount,
             empty_dependencies,
+            None,
+        )
+    }
+
+    /// Propose a scheduled transfer with delayed execution.
+    ///
+    /// # Arguments
+    /// * `proposer` - The address initiating the proposal (must authorize).
+    /// * `recipient` - The destination address for the funds.
+    /// * `token_addr` - The contract ID of the Stellar Asset Contract (SAC) or custom token.
+    /// * `amount` - The transaction amount (in stroops/smallest unit).
+    /// * `memo` - A descriptive symbol for the transaction.
+    /// * `priority` - Urgency level (Low/Normal/High/Critical).
+    /// * `conditions` - Optional execution conditions.
+    /// * `condition_logic` - And/Or logic for combining conditions.
+    /// * `insurance_amount` - Tokens staked by proposer as guarantee (0 = none).
+    /// * `execution_time` - Scheduled execution ledger.
+    ///
+    /// # Returns
+    /// The unique ID of the newly created proposal.
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_scheduled_transfer(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token_addr: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+        execution_time: u64,
+    ) -> Result<u64, VaultError> {
+        let empty_dependencies = Vec::new(&env);
+        Self::propose_transfer_internal(
+            env,
+            proposer,
+            recipient,
+            token_addr,
+            amount,
+            memo,
+            priority,
+            conditions,
+            condition_logic,
+            insurance_amount,
+            empty_dependencies,
+            Some(execution_time),
         )
     }
 
@@ -217,6 +269,7 @@ impl VaultDAO {
             condition_logic,
             insurance_amount,
             depends_on,
+            None,
         )
     }
 
@@ -233,6 +286,7 @@ impl VaultDAO {
         condition_logic: ConditionLogic,
         insurance_amount: i128,
         depends_on: Vec<u64>,
+        execution_time: Option<u64>,
     ) -> Result<u64, VaultError> {
         // 1. Verify identity
         proposer.require_auth();
@@ -358,10 +412,22 @@ impl VaultDAO {
         storage::add_daily_spent(&env, today, amount);
         storage::add_weekly_spent(&env, week, amount);
 
-        // 12. Create and store the proposal
+        // 12. Determine timelock
+        let current_ledger = env.ledger().sequence() as u64;
+        let unlock_ledger = if amount >= config.timelock_threshold {
+            current_ledger + config.timelock_delay
+        } else {
+            0
+        };
+
+        // 13. Validate execution_time if provided
+        if let Some(exec_time) = execution_time {
+            Self::validate_execution_time(exec_time, current_ledger, unlock_ledger)?;
+        }
+
+        // 14. Create and store the proposal
         let proposal_id = storage::increment_proposal_id(&env);
         Self::validate_dependencies(&env, proposal_id, &depends_on)?;
-        let current_ledger = env.ledger().sequence() as u64;
 
         // Create stake record after proposal_id is generated
         if actual_stake > 0 {
@@ -405,7 +471,8 @@ impl VaultDAO {
             condition_logic,
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
-            unlock_ledger: 0,
+            unlock_ledger,
+            execution_time,
             insurance_amount: actual_insurance,
             stake_amount: actual_stake,
             gas_limit: proposal_gas_limit,
@@ -431,6 +498,7 @@ impl VaultDAO {
         // Create audit entry
         storage::create_audit_entry(&env, AuditAction::ProposeTransfer, &proposer, proposal_id);
         // 13. Emit events
+        // 15. Emit events
         if actual_insurance > 0 {
             events::emit_insurance_locked(
                 &env,
@@ -627,6 +695,7 @@ impl VaultDAO {
                 created_at: current_ledger,
                 expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
                 unlock_ledger: 0,
+                execution_time: None,
                 insurance_amount: insurance_per_proposal,
                 stake_amount: 0, // Batch proposals don't require individual stakes
                 gas_limit: proposal_gas_limit,
@@ -756,17 +825,30 @@ impl VaultDAO {
         }
 
         if threshold_reached && quorum_reached {
-            proposal.status = ProposalStatus::Approved;
-
-            // Check for Timelock
-            if proposal.amount >= config.timelock_threshold {
-                let current_ledger = env.ledger().sequence() as u64;
-                proposal.unlock_ledger = current_ledger + config.timelock_delay;
+            // Check if proposal has execution_time (scheduled)
+            if proposal.execution_time.is_some() {
+                // Transition to Scheduled status
+                proposal.status = ProposalStatus::Scheduled;
+                events::emit_proposal_scheduled(
+                    &env,
+                    proposal_id,
+                    proposal.execution_time.unwrap(),
+                    current_ledger,
+                );
             } else {
-                proposal.unlock_ledger = 0;
-            }
+                // Immediate execution - transition to Approved
+                proposal.status = ProposalStatus::Approved;
 
-            events::emit_proposal_ready(&env, proposal_id, proposal.unlock_ledger);
+                // Check for Timelock
+                if proposal.amount >= config.timelock_threshold {
+                    let current_ledger = env.ledger().sequence() as u64;
+                    proposal.unlock_ledger = current_ledger + config.timelock_delay;
+                } else {
+                    proposal.unlock_ledger = 0;
+                }
+
+                events::emit_proposal_ready(&env, proposal_id, proposal.unlock_ledger);
+            }
         }
 
         storage::set_proposal(&env, &proposal);
@@ -798,6 +880,11 @@ impl VaultDAO {
     /// 3. Any applicable timelock has expired.
     /// 4. The vault has sufficient balance of the target token.
     ///
+    /// Rollback behavior:
+    /// - A snapshot of execution-critical state is recorded before transfer.
+    /// - If transfer fails, proposal and queue state are restored from snapshot.
+    /// - A rollback event is emitted with the failure reason code.
+    ///
     /// # Arguments
     /// * `executor` - The address triggering the final transfer (must authorize).
     /// * `proposal_id` - ID of the proposal to execute.
@@ -815,6 +902,9 @@ impl VaultDAO {
         // Validate state
         if proposal.status == ProposalStatus::Executed {
             return Err(VaultError::ProposalAlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Vetoed {
+            return Err(VaultError::ProposalNotApproved);
         }
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
@@ -925,8 +1015,16 @@ impl VaultDAO {
             }
         }
 
-        // Execute transfer
-        token::transfer(&env, &proposal.token, &proposal.recipient, proposal.amount);
+        // Snapshot state before execution mutations.
+        let priority = proposal.priority as u32;
+        storage::set_execution_snapshot(
+            &env,
+            proposal_id,
+            &storage::ExecutionSnapshot {
+                proposal: proposal.clone(),
+                was_in_priority_queue: storage::is_in_priority_queue(&env, priority, proposal_id),
+            },
+        );
 
         // Execute post-execution hooks
         for i in 0..config.post_execution_hooks.len() {
@@ -1069,6 +1167,40 @@ impl VaultDAO {
 
         // Update performance metrics
         storage::metrics_on_rejection(&env);
+
+        Ok(())
+    }
+
+    /// Veto a proposal. Can be called only by configured veto addresses.
+    ///
+    /// A veto moves a proposal to `Vetoed` and removes it from the priority queue.
+    /// Vetoed proposals are blocked from execution.
+    pub fn veto_proposal(env: Env, vetoer: Address, proposal_id: u64) -> Result<(), VaultError> {
+        vetoer.require_auth();
+
+        if !storage::is_veto_address(&env, &vetoer)? {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        if proposal.status == ProposalStatus::Executed {
+            return Err(VaultError::ProposalAlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Vetoed {
+            return Ok(());
+        }
+        if proposal.status != ProposalStatus::Pending && proposal.status != ProposalStatus::Approved
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        proposal.status = ProposalStatus::Vetoed;
+        storage::set_proposal(&env, &proposal);
+        storage::remove_from_priority_queue(&env, proposal.priority.clone() as u32, proposal_id);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_proposal_vetoed(&env, proposal_id, &vetoer);
 
         Ok(())
     }
@@ -1783,6 +1915,7 @@ impl VaultDAO {
         Ok(())
     }
 
+    /*
     // ========================================================================
     // Streaming Payments (feature/streaming-payments)
     // ========================================================================
@@ -2224,6 +2357,7 @@ impl VaultDAO {
     pub fn get_subscriber_subscriptions(env: Env, subscriber: Address) -> Vec<u64> {
         storage::get_subscriber_subscriptions(&env, &subscriber)
     }
+    */
 
     // ========================================================================
     // Recipient List Management
@@ -3062,7 +3196,7 @@ impl VaultDAO {
     ///
     /// # Returns
     /// FeeCalculation with base fee, discount, and final fee
-    pub fn calculate_fee_public(
+    pub fn calculate_fee(
         env: Env,
         user: Address,
         token: Address,
@@ -3553,7 +3687,125 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Execution Hooks
+    // Dynamic Fee System (Issue: feature/dynamic-fees)
+    // ========================================================================
+
+    /// Calculate fee for a transaction based on volume tiers and reputation.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `user` - The user making the transaction
+    /// * `token` - The token being transferred
+    /// * `amount` - The transaction amount
+    ///
+    /// # Returns
+    /// FeeCalculation with base fee, discount, and final fee
+    fn calculate_fee(
+        env: &Env,
+        user: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> types::FeeCalculation {
+        let fee_structure = storage::get_fee_structure(env);
+
+        if !fee_structure.enabled {
+            return types::FeeCalculation {
+                base_fee: 0,
+                discount: 0,
+                final_fee: 0,
+                fee_bps: 0,
+                reputation_discount_applied: false,
+            };
+        }
+
+        // Get user's total volume for this token
+        let user_volume = storage::get_user_volume(env, user, token);
+
+        // Find applicable fee tier based on volume
+        let mut fee_bps = fee_structure.base_fee_bps;
+        for i in 0..fee_structure.tiers.len() {
+            if let Some(tier) = fee_structure.tiers.get(i) {
+                if user_volume >= tier.min_volume {
+                    fee_bps = tier.fee_bps;
+                } else {
+                    break; // Tiers are sorted, so we can stop
+                }
+            }
+        }
+
+        // Calculate base fee
+        let base_fee = (amount * fee_bps as i128) / 10_000;
+
+        // Check for reputation discount
+        let rep = storage::get_reputation(env, user);
+        let mut discount = 0i128;
+        let mut reputation_discount_applied = false;
+
+        if rep.score >= fee_structure.reputation_discount_threshold {
+            discount = (base_fee * fee_structure.reputation_discount_percentage as i128) / 100;
+            reputation_discount_applied = true;
+        }
+
+        let final_fee = base_fee.saturating_sub(discount).max(0);
+
+        types::FeeCalculation {
+            base_fee,
+            discount,
+            final_fee,
+            fee_bps,
+            reputation_discount_applied,
+        }
+    }
+
+    /// Collect fee from a transaction and distribute to treasury.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `user` - The user making the transaction
+    /// * `token` - The token being transferred
+    /// * `amount` - The transaction amount
+    ///
+    /// # Returns
+    /// The fee amount collected
+    fn collect_and_distribute_fee(
+        env: &Env,
+        user: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> Result<i128, VaultError> {
+        let fee_calc = Self::calculate_fee(env, user, token, amount);
+
+        if fee_calc.final_fee == 0 {
+            return Ok(0);
+        }
+
+        let fee_structure = storage::get_fee_structure(env);
+
+        // Transfer fee from vault to treasury
+        token::transfer(env, token, &fee_structure.treasury, fee_calc.final_fee);
+
+        // Update fee collection stats
+        storage::add_fees_collected(env, token, fee_calc.final_fee);
+
+        // Update user volume
+        storage::add_user_volume(env, user, token, amount);
+
+        // Emit fee collected event
+        events::emit_fee_collected(
+            env,
+            user,
+            token,
+            amount,
+            fee_calc.final_fee,
+            fee_calc.fee_bps,
+            fee_calc.reputation_discount_applied,
+        );
+
+        Ok(fee_calc.final_fee)
+    }
+
+    // ========================================================================
+    // DEX/AMM Integration (Issue: feature/amm-integration)
     // ========================================================================
 
     /// Register a pre-execution hook
@@ -3648,6 +3900,7 @@ impl VaultDAO {
             created_at: current_ledger as u64,
             expires_at: (current_ledger + PROPOSAL_EXPIRY_LEDGERS as u32) as u64,
             unlock_ledger: unlock_ledger as u64,
+            execution_time: None,
             insurance_amount,
             stake_amount: 0, // Swap proposals don't require stake
             gas_limit: proposal_gas_limit,
@@ -4088,6 +4341,7 @@ impl VaultDAO {
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
+            execution_time: None,
             insurance_amount,
             gas_limit: proposal_gas_limit,
             gas_used: 0,
@@ -4500,9 +4754,9 @@ impl VaultDAO {
             proposal.amount,
         )?;
 
-        // Check vault balance (account for insurance amount, stake amount, and fee)
+        // Check vault balance (account for insurance amount and fee)
         let balance = token::balance(env, &proposal.token);
-        let total_required = proposal.amount + proposal.insurance_amount + proposal.stake_amount + fee_amount;
+        let total_required = proposal.amount + proposal.insurance_amount + fee_amount;
         if balance < total_required {
             return Err(VaultError::InsufficientBalance);
         }
@@ -4863,6 +5117,7 @@ impl VaultDAO {
             created_at: current_ledger,
             expires_at,
             unlock_ledger,
+            execution_time: None,
             insurance_amount: 0,
             stake_amount: 0, // Template proposals don't require stake
             gas_limit: 0,
@@ -5509,6 +5764,131 @@ impl VaultDAO {
     }
 
     // ========================================================================
+    // Time-Weighted Voting
+    // ========================================================================
+
+    /// Lock tokens to gain increased voting power
+    ///
+    /// Locks tokens for a specified duration, granting voting power multipliers:
+    /// - < 30 days: 1.0x
+    /// - 30-90 days: 1.5x
+    /// - 90-180 days: 2.0x
+    /// - 180-365 days: 3.0x
+    /// - > 365 days: 4.0x
+    ///
+    /// # Arguments
+    /// * `owner` - Address locking the tokens
+    /// * `token` - Token contract address
+    /// * `amount` - Amount of tokens to lock
+    /// * `duration` - Lock duration in ledgers
+    pub fn lock_tokens(
+        env: Env,
+        owner: Address,
+        token: Address,
+        amount: i128,
+        duration: u64,
+    ) -> Result<(), VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        if duration < config.min_lock_duration || duration > config.max_lock_duration {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Check if user already has an active lock
+        if let Some(existing_lock) = storage::get_token_lock(&env, &owner) {
+            if existing_lock.is_active {
+                return Err(VaultError::AlreadyApproved); // Reusing error for "already locked"
+            }
+        }
+
+        // Transfer tokens to vault
+        token::transfer_to_vault(&env, &token, &owner, amount);
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let unlock_at = current_ledger + duration;
+        let power_multiplier_bps = types::TokenLock::calculate_multiplier(duration);
+
+        let lock = types::TokenLock {
+            owner: owner.clone(),
+            token: token.clone(),
+            amount,
+            locked_at: current_ledger,
+            duration,
+            unlock_at,
+            is_active: true,
+            power_multiplier_bps,
+        };
+
+        storage::set_token_lock(&env, &lock);
+        storage::set_total_locked(&env, &owner, amount);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_tokens_locked(&env, &owner, amount, duration, power_multiplier_bps);
+
+        Ok(())
+    }
+
+    /// Extend an existing token lock duration
+    ///
+    /// Extends the lock duration, potentially increasing the voting power multiplier.
+    /// The new duration is added to the remaining time.
+    ///
+    /// # Arguments
+    /// * `owner` - Address that owns the lock
+    /// * `additional_duration` - Additional ledgers to add to the lock
+    pub fn extend_lock(
+        env: Env,
+        owner: Address,
+        additional_duration: u64,
+    ) -> Result<(), VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut lock = storage::get_token_lock(&env, &owner).ok_or(VaultError::ProposalNotFound)?;
+
+        if !lock.is_active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Calculate new total duration from current time
+        let remaining = lock.unlock_at.saturating_sub(current_ledger);
+        let new_total_duration = remaining + additional_duration;
+
+        if new_total_duration > config.max_lock_duration {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Update lock
+        lock.unlock_at = current_ledger + new_total_duration;
+        lock.duration = new_total_duration;
+        lock.power_multiplier_bps = types::TokenLock::calculate_multiplier(new_total_duration);
+
+        storage::set_token_lock(&env, &lock);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_lock_extended(&env, &owner, new_total_duration, lock.power_multiplier_bps);
+
+        Ok(())
+    }
+
+    // ========================================================================
     // Wallet Recovery (Issue: feature/wallet-recovery)
     // ========================================================================
 
@@ -5606,6 +5986,145 @@ impl VaultDAO {
 
         Ok(())
     }
+
+    /// Unlock tokens early with penalty
+    ///
+    /// Allows early unlock of tokens before the lock period expires.
+    /// A penalty is applied based on the configuration.
+    ///
+    /// # Arguments
+    /// * `owner` - Address that owns the lock
+    pub fn unlock_early(env: Env, owner: Address) -> Result<i128, VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut lock = storage::get_token_lock(&env, &owner).ok_or(VaultError::ProposalNotFound)?;
+
+        if !lock.is_active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Check if lock has naturally expired
+        if current_ledger >= lock.unlock_at {
+            return Self::unlock_tokens(env, owner);
+        }
+
+        // Calculate penalty
+        let penalty_amount = (lock.amount * config.early_unlock_penalty_bps as i128) / 10_000;
+        let return_amount = lock.amount - penalty_amount;
+
+        // Transfer tokens back to owner (minus penalty)
+        token::transfer(&env, &lock.token, &owner, return_amount);
+
+        // Penalty goes to insurance pool
+        if penalty_amount > 0 {
+            storage::add_to_insurance_pool(&env, &lock.token, penalty_amount);
+        }
+
+        // Deactivate lock
+        lock.is_active = false;
+        storage::set_token_lock(&env, &lock);
+        storage::set_total_locked(&env, &owner, 0);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_early_unlock(&env, &owner, return_amount, penalty_amount);
+
+        Ok(return_amount)
+    }
+
+    /// Unlock tokens after lock period expires
+    ///
+    /// Returns all locked tokens to the owner without penalty.
+    ///
+    /// # Arguments
+    /// * `owner` - Address that owns the lock
+    pub fn unlock_tokens(env: Env, owner: Address) -> Result<i128, VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut lock = storage::get_token_lock(&env, &owner).ok_or(VaultError::ProposalNotFound)?;
+
+        if !lock.is_active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Check if lock period has expired
+        if current_ledger < lock.unlock_at {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        let amount = lock.amount;
+
+        // Transfer tokens back to owner
+        token::transfer(&env, &lock.token, &owner, amount);
+
+        // Deactivate lock
+        lock.is_active = false;
+        storage::set_token_lock(&env, &lock);
+        storage::set_total_locked(&env, &owner, 0);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_tokens_unlocked(&env, &owner, amount);
+
+        Ok(amount)
+    }
+
+    /// Get token lock information for an address
+    pub fn get_token_lock(env: Env, owner: Address) -> Option<types::TokenLock> {
+        storage::get_token_lock(&env, &owner)
+    }
+
+    /// Get voting power for an address
+    ///
+    /// Returns the current voting power including time-weighted multipliers
+    /// and decay if enabled.
+    pub fn get_voting_power(env: Env, owner: Address) -> i128 {
+        storage::calculate_voting_power(&env, &owner)
+    }
+
+    /// Configure time-weighted voting system
+    ///
+    /// Admin only function to enable/disable and configure time-weighted voting.
+    pub fn set_time_weighted_config(
+        env: Env,
+        admin: Address,
+        config: types::TimeWeightedConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        storage::set_time_weighted_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Get time-weighted voting configuration
+    pub fn get_time_weighted_config(env: Env) -> types::TimeWeightedConfig {
+        storage::get_time_weighted_config(&env)
+    }
+
+    // ========================================================================
+    // Recovery Proposals
+    // ========================================================================
 
     /// Execute an approved recovery proposal
     pub fn execute_recovery(env: Env, proposal_id: u64) -> Result<(), VaultError> {
@@ -5857,5 +6376,301 @@ impl VaultDAO {
     /// Get all permissions for an address
     pub fn get_permissions(env: Env, addr: Address) -> Vec<types::PermissionGrant> {
         storage::get_permissions(&env, &addr)
+    }
+
+    // ========================================================================
+    // Time Conversion Utilities
+    // ========================================================================
+
+    /// Convert ledger number to approximate Unix timestamp.
+    ///
+    /// This function provides an approximate conversion based on the
+    /// LEDGER_INTERVAL_SECONDS constant (5 seconds per ledger).
+    ///
+    /// # Arguments
+    /// * `ledger` - The ledger number to convert
+    ///
+    /// # Returns
+    /// Approximate Unix timestamp in seconds
+    ///
+    /// # Note
+    /// This is an approximation. Actual ledger times may vary slightly.
+    pub fn ledger_to_timestamp(ledger: u64) -> u64 {
+        ledger * LEDGER_INTERVAL_SECONDS
+    }
+
+    /// Convert Unix timestamp to approximate ledger number.
+    ///
+    /// This function provides an approximate conversion based on the
+    /// LEDGER_INTERVAL_SECONDS constant (5 seconds per ledger).
+    ///
+    /// # Arguments
+    /// * `timestamp` - Unix timestamp in seconds
+    ///
+    /// # Returns
+    /// Approximate ledger number
+    ///
+    /// # Note
+    /// This is an approximation. Actual ledger times may vary slightly.
+    pub fn timestamp_to_ledger(timestamp: u64) -> u64 {
+        timestamp / LEDGER_INTERVAL_SECONDS
+    }
+
+    // ========================================================================
+    // Scheduling Validation
+    // ========================================================================
+
+    /// Validate execution time for scheduled proposals.
+    ///
+    /// # Arguments
+    /// * `execution_time` - Proposed execution ledger
+    /// * `current_ledger` - Current ledger sequence
+    /// * `timelock_end` - Earliest ledger when proposal can execute (from timelock)
+    ///
+    /// # Returns
+    /// Ok(()) if valid, or appropriate error
+    fn validate_execution_time(
+        execution_time: u64,
+        current_ledger: u64,
+        timelock_end: u64,
+    ) -> Result<(), VaultError> {
+        if execution_time <= current_ledger {
+            return Err(VaultError::SchedulingError);
+        }
+        if execution_time < timelock_end {
+            return Err(VaultError::SchedulingError);
+        }
+        Ok(())
+    }
+
+    // ========================================================================
+    // Scheduled Proposal Functions
+    // ========================================================================
+
+    /// Execute a scheduled proposal.
+    ///
+    /// # Arguments
+    /// * `env` - Contract environment
+    /// * `caller` - Address executing the proposal
+    /// * `proposal_id` - ID of the proposal to execute
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or appropriate error
+    pub fn execute_scheduled_proposal(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Verify proposal is scheduled
+        if proposal.status != ProposalStatus::Scheduled {
+            return Err(VaultError::SchedulingError);
+        }
+
+        // Verify execution time has been reached
+        let execution_time = proposal.execution_time.ok_or(VaultError::SchedulingError)?;
+        if current_ledger < execution_time {
+            return Err(VaultError::SchedulingError);
+        }
+
+        // Verify sufficient approvals
+        let config = storage::get_config(&env)?;
+        if proposal.approvals.len() < config.threshold {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        // Attempt to execute the proposal action
+        let vault_address = env.current_contract_address();
+        let token_client = soroban_sdk::token::Client::new(&env, &proposal.token);
+
+        match token_client.try_transfer(&vault_address, &proposal.recipient, &proposal.amount) {
+            Ok(_) => {
+                // Execution successful - transition to Executed
+                proposal.status = ProposalStatus::Executed;
+                storage::set_proposal(&env, &proposal);
+
+                // Return insurance if any
+                if proposal.insurance_amount > 0 {
+                    let _ = token_client.try_transfer(
+                        &vault_address,
+                        &proposal.proposer,
+                        &proposal.insurance_amount,
+                    );
+                    events::emit_insurance_returned(
+                        &env,
+                        proposal_id,
+                        &proposal.proposer,
+                        proposal.insurance_amount,
+                    );
+                }
+
+                events::emit_proposal_executed(
+                    &env,
+                    proposal_id,
+                    &caller,
+                    &proposal.recipient,
+                    &proposal.token,
+                    proposal.amount,
+                    current_ledger,
+                );
+
+                // Update metrics
+                let execution_time_ledgers = current_ledger.saturating_sub(proposal.created_at);
+                storage::metrics_on_execution(&env, proposal.gas_used, execution_time_ledgers);
+
+                Ok(())
+            }
+            Err(_) => {
+                // Execution failed - maintain Scheduled status for retry
+                storage::set_proposal(&env, &proposal);
+                Err(VaultError::InsufficientBalance)
+            }
+        }
+    }
+
+    /// Cancel a scheduled proposal.
+    ///
+    /// # Arguments
+    /// * `env` - Contract environment
+    /// * `caller` - Address cancelling the proposal
+    /// * `proposal_id` - ID of the proposal to cancel
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or appropriate error
+    pub fn cancel_scheduled_proposal(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Verify caller has authority (admin or proposer)
+        let config = storage::get_config(&env)?;
+        let is_admin = config.signers.contains(&caller);
+        let is_proposer = proposal.proposer == caller;
+
+        if !is_admin && !is_proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Verify proposal is scheduled
+        if proposal.status != ProposalStatus::Scheduled {
+            return Err(VaultError::SchedulingError);
+        }
+
+        // Transition to Cancelled
+        proposal.status = ProposalStatus::Cancelled;
+        storage::set_proposal(&env, &proposal);
+
+        let current_ledger = env.ledger().sequence() as u64;
+        events::emit_scheduled_proposal_cancelled(&env, proposal_id, current_ledger);
+
+        Ok(())
+    }
+
+    /// Get all scheduled proposals ordered by execution time.
+    ///
+    /// # Arguments
+    /// * `env` - Contract environment
+    ///
+    /// # Returns
+    /// Vector of scheduled proposals sorted by execution_time
+    pub fn get_scheduled_proposals(env: Env) -> Vec<Proposal> {
+        let mut scheduled = Vec::new(&env);
+        let proposal_count = storage::get_next_proposal_id(&env);
+
+        for id in 1..proposal_count {
+            if let Ok(proposal) = storage::get_proposal(&env, id) {
+                if proposal.status == ProposalStatus::Scheduled {
+                    scheduled.push_back(proposal);
+                }
+            }
+        }
+
+        // Sort by execution_time
+        let mut sorted = Vec::new(&env);
+        while !scheduled.is_empty() {
+            let mut min_idx = 0;
+            let mut min_time = u64::MAX;
+
+            for i in 0..scheduled.len() {
+                if let Some(p) = scheduled.get(i) {
+                    if let Some(exec_time) = p.execution_time {
+                        if exec_time < min_time {
+                            min_time = exec_time;
+                            min_idx = i;
+                        }
+                    }
+                }
+            }
+
+            if let Some(p) = scheduled.get(min_idx) {
+                sorted.push_back(p);
+            }
+            scheduled.remove(min_idx);
+        }
+
+        sorted
+    }
+
+    /// Get scheduled proposals within a time range.
+    ///
+    /// # Arguments
+    /// * `env` - Contract environment
+    /// * `start_time` - Start of time range (ledger number)
+    /// * `end_time` - End of time range (ledger number)
+    ///
+    /// # Returns
+    /// Vector of scheduled proposals within range, sorted by execution_time
+    pub fn get_scheduled_proposals_in_range(
+        env: Env,
+        start_time: u64,
+        end_time: u64,
+    ) -> Vec<Proposal> {
+        let mut scheduled = Vec::new(&env);
+        let proposal_count = storage::get_next_proposal_id(&env);
+
+        for id in 1..proposal_count {
+            if let Ok(proposal) = storage::get_proposal(&env, id) {
+                if proposal.status == ProposalStatus::Scheduled {
+                    if let Some(exec_time) = proposal.execution_time {
+                        if exec_time >= start_time && exec_time <= end_time {
+                            scheduled.push_back(proposal);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by execution_time
+        let mut sorted = Vec::new(&env);
+        while !scheduled.is_empty() {
+            let mut min_idx = 0;
+            let mut min_time = u64::MAX;
+
+            for i in 0..scheduled.len() {
+                if let Some(p) = scheduled.get(i) {
+                    if let Some(exec_time) = p.execution_time {
+                        if exec_time < min_time {
+                            min_time = exec_time;
+                            min_idx = i;
+                        }
+                    }
+                }
+            }
+
+            if let Some(p) = scheduled.get(min_idx) {
+                sorted.push_back(p);
+            }
+            scheduled.remove(min_idx);
+        }
+
+        sorted
     }
 }
