@@ -18,7 +18,11 @@ import {
   Files,
   RefreshCw,
   AlertCircle,
+feature/notification-and-comparison-tools
+  Bell,
+
   HelpCircle,
+
 } from "lucide-react";
 import { useWallet } from "../../hooks/useWallet";
 import type { WalletAdapter } from "../../adapters";
@@ -26,6 +30,14 @@ import { WalletSwitcher } from "../WalletSwitcher";
 import CopyButton from '../CopyButton';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { LayoutErrorBoundary } from '../ErrorHandler';
+ feature/notification-and-comparison-tools
+import NotificationCenter from '../NotificationCenter';
+import { useNotifications } from '../../context/NotificationContext';
+
+const DashboardLayout: React.FC = () => {
+  const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
+  const { unreadCount } = useNotifications();
+
 import { OnboardingFlow } from "../OnboardingFlow";
 import { ProductTour } from "../ProductTour";
 import { HelpCenter } from "../HelpCenter";
@@ -38,10 +50,14 @@ const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
   const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
   const onboarding = useOnboarding();
+
   const location = useLocation();
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+ feature/notification-and-comparison-tools
+  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
+
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
 
@@ -55,6 +71,7 @@ const DashboardLayout: React.FC = () => {
 
     return () => clearTimeout(timer);
   }, [onboarding.hasCompletedOnboarding, isConnected]);
+
 
   const shortenAddress = (addr: string, chars = 4) => {
     return `${addr.slice(0, chars)}...${addr.slice(-chars)}`;
@@ -127,9 +144,26 @@ const DashboardLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center space-x-4">
+<<<<<<< HEAD
             {/* Language Switcher */}
             <LanguageSwitcher />
             
+=======
+ feature/notification-and-comparison-tools
+            {/* Notification Bell */}
+            <button
+              onClick={() => setIsNotificationCenterOpen(true)}
+              className="relative p-2 hover:bg-gray-700/50 rounded-lg transition-colors"
+              aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+            >
+              <Bell size={20} className="text-gray-400 hover:text-white transition-colors" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-purple-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+
+>>>>>>> da5f68c73360c19e64fd521b1be6e3fd0ae3c1aa
             {/* Help Button */}
             <button
               onClick={() => setIsHelpOpen(true)}
@@ -138,6 +172,7 @@ const DashboardLayout: React.FC = () => {
               title={t('navigation.help')}
             >
               <HelpCircle size={20} />
+
             </button>
 
             {isConnected && address ? (
@@ -206,6 +241,13 @@ const DashboardLayout: React.FC = () => {
         </main>
       </div>
 
+feature/notification-and-comparison-tools
+      {/* Notification Center */}
+      <NotificationCenter
+        isOpen={isNotificationCenterOpen}
+        onClose={() => setIsNotificationCenterOpen(false)}
+      />
+
       {/* Onboarding Components */}
       {showOnboardingPrompt && <OnboardingFlow onComplete={() => setShowOnboardingPrompt(false)} />}
       <ProductTour />
@@ -243,6 +285,7 @@ const DashboardLayout: React.FC = () => {
           </div>
         </div>
       )}
+
     </div>
   );
 };

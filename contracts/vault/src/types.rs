@@ -470,6 +470,7 @@ pub struct VelocityConfig {
     pub window: u64,
 }
 
+/// Audit action types
 // ============================================================================
 // Reputation System (Issue: feature/reputation-system)
 // ============================================================================
@@ -698,81 +699,61 @@ pub struct SwapResult {
 /// Chain identifier for cross-chain operations
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ChainId {
-    Stellar,
-    Ethereum,
-    Polygon,
-    Arbitrum,
-    Optimism,
+#[repr(u32)]
+pub enum AuditAction {
+    Initialize = 0,
+    ProposeTransfer = 1,
+    ApproveProposal = 2,
+    ExecuteProposal = 3,
+    RejectProposal = 4,
+    SetRole = 5,
+    AddSigner = 6,
+    RemoveSigner = 7,
+    UpdateLimits = 8,
+    UpdateThreshold = 9,
 }
 
-/// Cross-chain asset representation
+/// Audit trail entry with cryptographic verification
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct CrossChainAsset {
-    pub chain: ChainId,
-    pub token_address: String,
-    pub decimals: u32,
-    pub confirmations: u32,
-    pub required_confirmations: u32,
-    pub status: u32,
+pub struct AuditEntry {
+    /// Unique entry ID
+    pub id: u64,
+    /// Action performed
+    pub action: AuditAction,
+    /// Actor who performed the action
+    pub actor: Address,
+    /// Target of the action (proposal ID, address, etc.)
+    pub target: u64,
+    /// Ledger timestamp
+    pub timestamp: u64,
+    /// Hash of previous entry (chain integrity)
+    pub prev_hash: u64,
+    /// Hash of this entry
+    pub hash: u64,
 }
 
-/// Cross-chain transfer proposal
+/// Recipient list mode
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct CrossChainProposal {
-    pub target_chain: ChainId,
-    pub recipient: String,
-    pub amount: i128,
-    pub asset: CrossChainAsset,
-    pub bridge_fee: i128,
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ListMode {
+    Disabled = 0,
+    Whitelist = 1,
+    Blacklist = 2,
 }
 
-/// Bridge configuration
+/// Comment on a proposal
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct BridgeConfig {
-    pub enabled_chains: Vec<ChainId>,
-    pub max_bridge_amount: i128,
-    pub fee_bps: u32,
-    pub min_confirmations: Vec<ChainConfirmation>,
-}
-
-/// Minimum confirmations per chain
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct ChainConfirmation {
-    pub chain_id: ChainId,
-    pub confirmations: u32,
-}
-
-/// Cross-chain transfer parameters
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct CrossChainTransferParams {
-    pub chain: ChainId,
-    pub recipient: String,
-    pub amount: i128,
-    pub token: Address,
-}
-
-// ============================================================================
-// Multi-Token Batch Transfers (Issue: feature/multi-token-batch-transfers)
-// ============================================================================
-
-/// Transfer details for batch operations supporting multiple tokens
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct TransferDetails {
-    /// Recipient of the transfer
-    pub recipient: Address,
-    /// Token contract address
-    pub token: Address,
-    /// Amount to transfer
-    pub amount: i128,
-    /// Optional memo
-    pub memo: Symbol,
+pub struct Comment {
+    pub id: u64,
+    pub proposal_id: u64,
+    pub author: Address,
+    pub text: Symbol,
+    pub parent_id: u64,
+    pub created_at: u64,
+    pub edited_at: u64,
 }
 
 // ============================================================================
@@ -1301,6 +1282,135 @@ impl Escrow {
 // Dynamic Fee Structure (Issue: feature/dynamic-fees)
 // ============================================================================
 
+/// Status of a funding round milestone
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FundingMilestoneStatus {
+    /// Milestone is pending completion
+    Pending,
+    /// Milestone has been submitted for verification
+    Submitted,
+    /// Milestone has been verified and approved
+    Verified,
+    /// Milestone was rejected
+    Rejected,
+}
+
+/// A milestone within a funding round
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingMilestone {
+    /// Milestone description
+    pub description: String,
+    /// Amount to release upon completion (in stroops)
+    pub amount: i128,
+    /// Current status
+    pub status: FundingMilestoneStatus,
+    /// Ledger when milestone was submitted
+    pub submitted_at: u64,
+    /// Ledger when milestone was verified
+    pub verified_at: u64,
+    /// Address that verified the milestone
+    pub verified_by: Option<Address>,
+}
+
+/// Status of a funding round
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FundingRoundStatus {
+    /// Round is pending approval
+    Pending,
+    /// Round has been approved and is active
+    Active,
+    /// Round has been completed
+    Completed,
+    /// Round was cancelled
+    Cancelled,
+}
+
+/// A funding round with multiple milestones
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingRound {
+    /// Unique round ID
+    pub id: u64,
+    /// Associated proposal ID
+    pub proposal_id: u64,
+    /// Project recipient
+    pub recipient: Address,
+    /// Token address for funding
+    pub token: Address,
+    /// Total amount for this round
+    pub total_amount: i128,
+    /// Amount already released
+    pub released_amount: i128,
+    /// Milestones for this round
+    pub milestones: Vec<FundingMilestone>,
+    /// Current status
+    pub status: FundingRoundStatus,
+    /// Ledger when round was created
+    pub created_at: u64,
+    /// Ledger when round was approved
+    pub approved_at: u64,
+    /// Ledger when round was completed/cancelled
+    pub finalized_at: u64,
+}
+
+impl FundingRound {
+    /// Calculate total amount from all milestones
+    pub fn total_milestone_amount(&self) -> i128 {
+        let mut total: i128 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                total = total.saturating_add(m.amount);
+            }
+        }
+        total
+    }
+
+    /// Calculate amount available for release based on verified milestones
+    pub fn amount_to_release(&self) -> i128 {
+        let mut verified_amount: i128 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.status == FundingMilestoneStatus::Verified {
+                    verified_amount = verified_amount.saturating_add(m.amount);
+                }
+            }
+        }
+        verified_amount - self.released_amount
+    }
+
+    /// Check if all milestones are verified
+    pub fn all_milestones_verified(&self) -> bool {
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.status != FundingMilestoneStatus::Verified {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Configuration for funding rounds system
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingRoundConfig {
+    /// Whether funding rounds are enabled
+    pub enabled: bool,
+    /// Minimum number of milestones per round
+    pub min_milestones: u32,
+    /// Maximum number of milestones per round
+    pub max_milestones: u32,
+    /// Minimum amount per milestone
+    pub min_milestone_amount: i128,
+    /// Maximum rounds per proposal
+    pub max_rounds_per_proposal: u32,
+}
+
+/// A single operation within a batch transaction
 /// Fee tier based on transaction volume
 #[contracttype]
 #[derive(Clone, Debug)]

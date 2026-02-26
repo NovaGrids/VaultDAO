@@ -1,3 +1,6 @@
 {
+ feature/notification-and-comparison-tools
+
     "typescript.autoClosingTags": false
+
 }

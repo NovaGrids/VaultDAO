@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ArrowUpRight, Clock, SearchX, Check, Loader2 } from 'lucide-react';
+import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare } from 'lucide-react';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
 import NewProposalModal from '../../components/modals/NewProposalModal';
 import ProposalDetailModal from '../../components/modals/ProposalDetailModal';
 import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
+import ProposalComparison from '../../components/ProposalComparison';
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
@@ -66,6 +67,8 @@ const Proposals: React.FC = () => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
+  const [selectedForComparison, setSelectedForComparison] = useState<Set<string>>(new Set());
 
   const [activeFilters, setActiveFilters] = useState<FilterState>({
     search: '',
@@ -331,9 +334,20 @@ const Proposals: React.FC = () => {
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold">Proposals</h1>
-          <button onClick={() => setShowNewProposalModal(true)} className="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition">
-            New Proposal
-          </button>
+          <div className="flex items-center gap-3">
+            {selectedForComparison.size > 0 && (
+              <button
+                onClick={() => setShowComparison(true)}
+                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition flex items-center gap-2"
+              >
+                <GitCompare size={18} />
+                <span>Compare ({selectedForComparison.size})</span>
+              </button>
+            )}
+            <button onClick={() => setShowNewProposalModal(true)} className="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition">
+              New Proposal
+            </button>
+          </div>
         </div>
 
         <ProposalFilters proposalCount={filteredProposals.length} onFilterChange={setActiveFilters} />
@@ -346,10 +360,49 @@ const Proposals: React.FC = () => {
               const progressPercent = (prop.approvals / prop.threshold) * 100;
 
               return (
-                <div key={prop.id} onClick={() => setSelectedProposal(prop)} className="bg-gray-800/50 p-5 rounded-2xl border border-gray-700 hover:border-purple-500/50 cursor-pointer transition-all hover:scale-[1.01] group">
-                  <div className="flex flex-col gap-4">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                      <div className="flex items-center gap-4 flex-1">
+                <div key={prop.id} className="bg-gray-800/50 p-5 rounded-2xl border border-gray-700 hover:border-purple-500/50 transition-all group relative">
+                  {/* Checkbox for comparison */}
+                  <div className="absolute top-4 right-4 z-10">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const newSelection = new Set(selectedForComparison);
+                        if (newSelection.has(prop.id)) {
+                          newSelection.delete(prop.id);
+                        } else {
+                          if (newSelection.size < 5) {
+                            newSelection.add(prop.id);
+                          }
+                        }
+                        setSelectedForComparison(newSelection);
+                      }}
+                      className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
+                        selectedForComparison.has(prop.id)
+                          ? 'bg-blue-600 border-blue-600'
+                          : 'border-gray-600 hover:border-blue-500'
+                      }`}
+                      title="Select for comparison"
+                    >
+                      {selectedForComparison.has(prop.id) && (
+                        <svg
+                          className="w-4 h-4 text-white"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+
+                  <div onClick={() => setSelectedProposal(prop)} className="cursor-pointer">
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div className="flex items-center gap-4 flex-1">
                         <div className="p-3 bg-gray-900 rounded-xl text-purple-400 group-hover:bg-purple-600 group-hover:text-white transition-colors">
                           <ArrowUpRight size={20} />
                         </div>
@@ -365,12 +418,12 @@ const Proposals: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                        <StatusBadge status={prop.status} />
+                        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                          <StatusBadge status={prop.status} />
+                        </div>
                       </div>
-                    </div>
 
-                    {prop.status === 'Pending' && (
+                      {prop.status === 'Pending' && (
                       <div className="flex flex-col gap-3 pt-3 border-t border-gray-700/50">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex-1">
@@ -440,6 +493,7 @@ const Proposals: React.FC = () => {
                         </div>
                       </div>
                     )}
+                    </div>
                   </div>
                 </div>
               );
@@ -466,11 +520,22 @@ const Proposals: React.FC = () => {
         <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} />
         <ConfirmationModal isOpen={showRejectModal} title="Reject Proposal" message="Are you sure you want to reject this?" onConfirm={handleRejectConfirm} onCancel={() => setShowRejectModal(false)} showReasonInput={true} isDestructive={true} />
         
+ feature/notification-and-comparison-tools
+        {showComparison && (
+          <ProposalComparison
+            proposals={proposals}
+            selectedIds={selectedForComparison}
+            onClose={() => setShowComparison(false)}
+            onSelectionChange={setSelectedForComparison}
+          />
+        )}
+
         <VoiceCommands 
           onCreateProposal={() => setShowNewProposalModal(true)}
           onApprove={() => selectedProposal && handleApprove(selectedProposal.id, {} as React.MouseEvent)}
           onReject={() => selectedProposal && setShowRejectModal(true)}
         />
+
       </div>
     </div>
   );
