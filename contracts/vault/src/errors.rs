@@ -14,7 +14,6 @@ pub enum VaultError {
     // Threshold / Quorum
     ThresholdTooLow = 4,
     ThresholdTooHigh = 5,
-    /// The configured quorum exceeds the total number of signers.
     QuorumTooHigh = 6,
 
     // Authorization
@@ -61,9 +60,6 @@ pub enum VaultError {
     AddressAlreadyOnList = 92,
     AddressNotOnList = 93,
 
-    // Comments
-    NotCommentAuthor = 100,
-
     // Insurance
     InsuranceInsufficient = 110,
 
@@ -79,21 +75,29 @@ pub enum VaultError {
     // Recurring payments
     IntervalTooShort = 150,
 
-    // DEX/AMM
+    // DEX/AMM - consolidated
     DexNotEnabled = 160,
-    SlippageExceeded = 161,
-    PriceImpactExceeded = 162,
-    InvalidSwapParams = 163,
-    InsufficientLiquidity = 164,
+    DexOperationFailed = 161, // Consolidates SlippageExceeded, PriceImpactExceeded, InvalidSwapParams, InsufficientLiquidity
 
-    // Bridge — variants must match all call sites in bridge.rs exactly
-    BridgeNotEnabled = 170,
-    BridgeNotConfigured = 171,
-    UnsupportedChain = 172,
-    ChainNotSupported = 173,
-    BridgeAmountExceedsLimit = 174,
-    ExceedsBridgeLimit = 175,
+    // Bridge - consolidated
+    BridgeError = 165, // Consolidates BridgeNotConfigured, ChainNotSupported, ExceedsBridgeLimit
 
-    // Reputation
-    ReputationTooLow = 180,
+    // Retry errors - consolidated
+    RetryError = 168, // Consolidates MaxRetriesExceeded, RetryBackoffNotElapsed, RetryNotEnabled
+
+    // Cross-vault errors
+    XVaultNotEnabled = 200,
+
+    // Quorum runtime checks
+    QuorumNotReached = 8,
+
+    // Template errors
+    TemplateNotFound = 210,
+    TemplateInactive = 211,
+    TemplateValidationFailed = 212,
+
+    // Batch transaction errors (consolidated)
+    BatchNotFound = 220,
+    BatchNotPending = 221,
+    BatchSizeExceeded = 222,
 }

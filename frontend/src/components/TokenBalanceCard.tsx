@@ -1,15 +1,7 @@
 import React from 'react';
 import { Wallet, TrendingUp, TrendingDown, Loader2 } from 'lucide-react';
-import type { TokenInfo } from '../constants/tokens';
+import type { TokenBalance } from '../types';
 import { formatTokenBalance, getTokenIcon } from '../constants/tokens';
-
-export interface TokenBalance {
-  token: TokenInfo;
-  balance: string;
-  usdValue?: number;
-  change24h?: number;
-  isLoading?: boolean;
-}
 
 interface TokenBalanceCardProps {
   tokenBalance: TokenBalance;

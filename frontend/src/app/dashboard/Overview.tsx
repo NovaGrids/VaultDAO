@@ -1,22 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { LayoutDashboard, FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
+import { FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
 import TokenBalanceCard from '../../components/TokenBalanceCard';
-import type { TokenBalance as ImportedTokenBalance } from '../../components/TokenBalanceCard';
 import DashboardBuilder from '../../components/DashboardBuilder';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
 import { loadDashboardLayout } from '../../utils/dashboardTemplates';
-import type { TokenInfo } from '../../constants/tokens';
+import type { TokenInfo, TokenBalance } from '../../types';
+import type { WidgetConfig } from '../../types/dashboard';
 import { isValidStellarAddress } from '../../constants/tokens';
 import { formatTokenAmount } from '../../utils/formatters';
-
-interface TokenBalance extends ImportedTokenBalance {
-    token: TokenInfo;
-    balance: string;
-    isLoading: boolean;
-}
 
 interface DashboardStats {
     totalBalance: string;
@@ -30,8 +24,8 @@ interface DashboardStats {
 const Overview: React.FC = () => {
     const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, getVaultBalance, loading } = useVaultContract();
     const [stats, setStats] = useState<DashboardStats | null>(null);
-    const [tokenBalances, setTokenBalances] = useState<any[]>([]);
-    const [portfolioValue, setPortfolioValue] = useState<any>(null);
+    const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
+    const [portfolioValue, setPortfolioValue] = useState<{ total: number; change24h: number } | null>(null);
     const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
     const [showAddTokenModal, setShowAddTokenModal] = useState(false);
     const [newTokenAddress, setNewTokenAddress] = useState('');
@@ -43,7 +37,7 @@ const Overview: React.FC = () => {
     const [balanceError, setBalanceError] = useState<string | null>(null);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [showAdvancedDashboard, setShowAdvancedDashboard] = useState(false);
-    const [savedLayout, setSavedLayout] = useState<any>(null);
+    const [savedLayout, setSavedLayout] = useState<{ widgets?: unknown[] } | null>(null);
 
     const quickActionTemplates = (() => {
         const mostUsed = getMostUsedTemplates(3);
@@ -83,7 +77,6 @@ const Overview: React.FC = () => {
         fetchData();
         fetchBalance();
 
-        // Load saved dashboard layout
         const layout = loadDashboardLayout();
         if (layout) {
             setSavedLayout(layout);
@@ -92,9 +85,8 @@ const Overview: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [getDashboardStats]);
+    }, [getDashboardStats, fetchBalance]);
 
-    // Fetch token balances
     const fetchTokenBalances = useCallback(async () => {
         setIsLoadingBalances(true);
         try {
@@ -105,7 +97,6 @@ const Overview: React.FC = () => {
             }));
             setTokenBalances(tokenBalancesWithLoading);
 
-            // Fetch portfolio value
             const portfolio = await getPortfolioValue();
             setPortfolioValue({ total: parseFloat(portfolio), change24h: 0 });
         } catch (error) {
@@ -120,7 +111,6 @@ const Overview: React.FC = () => {
         fetchTokenBalances();
     }, [fetchTokenBalances]);
 
-    // Handle adding custom token
     const handleAddCustomToken = async () => {
         if (!newTokenAddress.trim()) {
             setAddError('Please enter a token address');
@@ -136,9 +126,8 @@ const Overview: React.FC = () => {
         setAddError(null);
 
         try {
-            const tokenInfo = await addCustomToken?.(newTokenAddress.trim());
+            const tokenInfo = await addCustomToken?.();
             if (tokenInfo) {
-                // Add to local state
                 setTokenBalances(prev => [...prev, {
                     token: tokenInfo,
                     balance: '0',
@@ -154,12 +143,10 @@ const Overview: React.FC = () => {
         }
     };
 
-    // Handle token card click
     const handleTokenClick = (token: TokenInfo) => {
         setSelectedToken(selectedToken?.address === token.address ? null : token);
     };
 
-    // Format portfolio value
     const formatPortfolioValue = (value: number): string => {
         if (value < 0.01) return '<$0.01';
         return `$${value.toLocaleString(undefined, {
@@ -177,46 +164,45 @@ const Overview: React.FC = () => {
     }
 
     return (
-        <div className="space-y-8 pb-10">
+        <div className="space-y-8 pb-10 transition-colors">
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Treasury Overview</h2>
+                <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Treasury Overview</h2>
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => setShowAdvancedDashboard(!showAdvancedDashboard)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
                     >
                         <Grid3x3 className="h-4 w-4" />
                         <span>{showAdvancedDashboard ? 'Classic View' : 'Advanced Dashboard'}</span>
                     </button>
-                    <div className="text-sm text-gray-400 flex items-center gap-2 bg-gray-800 px-4 py-2 rounded-lg border border-gray-700">
+                    <div className="text-sm text-slate-600 dark:text-gray-400 flex items-center gap-2 bg-white dark:bg-gray-800 px-4 py-2 rounded-lg border border-slate-200 dark:border-gray-700 shadow-sm">
                         <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
                         <span>Network: Testnet</span>
                     </div>
                 </div>
             </div>
 
-            {/* Advanced Dashboard */}
             {showAdvancedDashboard && (
                 <DashboardBuilder
-                    initialWidgets={savedLayout?.widgets || []}
+                    initialWidgets={(savedLayout?.widgets as WidgetConfig[] | undefined) || []}
                 />
             )}
 
-            {/* Classic Dashboard */}
             {!showAdvancedDashboard && (
                 <>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        {/* Featured Balance Card */}
                         <div className="md:col-span-2 lg:col-span-1">
-                            <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-xl border border-purple-500 p-6 h-full">
+                            <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-2xl border border-purple-500 p-6 h-full shadow-xl shadow-purple-500/20">
                                 <div className="flex items-start justify-between mb-4">
                                     <div className="flex items-center gap-3">
-                                        <div className="p-3 bg-white/10 rounded-lg">
+                                        <div className="p-3 bg-white/20 rounded-xl backdrop-blur-md">
                                             <Wallet className="h-6 w-6 text-white" />
                                         </div>
                                         <div>
-                                            <p className="text-sm text-purple-200">Vault Balance</p>
-                                            <p className="text-xs text-purple-300 mt-0.5">
+                                            <p className="text-sm text-purple-100 font-medium">Vault Balance</p>
+                                            <p className="text-[10px] text-purple-200/80 mt-0.5">
                                                 {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : 'Loading...'}
                                             </p>
                                         </div>
@@ -224,7 +210,7 @@ const Overview: React.FC = () => {
                                     <button
                                         onClick={fetchBalance}
                                         disabled={balanceLoading}
-                                        className="p-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                                        className="p-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center"
                                         title="Refresh balance"
                                     >
                                         <RefreshCw className={`h-5 w-5 text-white ${balanceLoading ? 'animate-spin' : ''}`} />
@@ -232,16 +218,11 @@ const Overview: React.FC = () => {
                                 </div>
                                 {balanceError ? (
                                     <div className="text-center py-4">
-                                        <p className="text-red-300 text-sm mb-2">{balanceError}</p>
-                                        <button
-                                            onClick={fetchBalance}
-                                            className="text-xs text-white underline hover:no-underline"
-                                        >
-                                            Retry
-                                        </button>
+                                        <p className="text-red-200 text-sm mb-2">{balanceError}</p>
+                                        <button onClick={fetchBalance} className="text-xs text-white underline">Retry</button>
                                     </div>
                                 ) : (
-                                    <div className="text-3xl md:text-4xl font-bold text-white">
+                                    <div className="text-3xl md:text-4xl font-bold text-white tracking-tight">
                                         {balanceLoading ? (
                                             <Loader2 className="h-8 w-8 animate-spin" />
                                         ) : (
@@ -251,8 +232,9 @@ const Overview: React.FC = () => {
                                 )}
                             </div>
                         </div>
+                        
                         <StatCard
-                            title="Vault Balance"
+                            title="Total Staked"
                             value={`${stats?.totalBalance || '0'} XLM`}
                             icon={Wallet}
                             variant="primary"
@@ -271,30 +253,19 @@ const Overview: React.FC = () => {
                             icon={CheckCircle}
                             variant="success"
                         />
-                        <StatCard
-                            title="Active Signers"
-                            value={stats?.activeSigners || 0}
-                            subtitle={`Threshold: ${stats?.threshold || '0/0'}`}
-                            icon={LayoutDashboard}
-                            variant="primary"
-                        />
                     </div>
 
                     {/* Token Balances Section */}
-                    <div className="rounded-xl border border-gray-700 bg-gray-800 p-4 sm:p-6">
-                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                    <div className="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 sm:p-6 shadow-sm">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
                             <div>
-                                <h3 className="text-lg font-semibold text-white">Token Balances</h3>
+                                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Token Balances</h3>
                                 {portfolioValue && (
                                     <div className="flex items-center gap-2 mt-1">
-                                        <span className="text-sm text-gray-400">Total Value:</span>
-                                        <span className="text-lg font-bold text-white">{formatPortfolioValue(portfolioValue.total)}</span>
-                                        <span className={`text-xs flex items-center ${portfolioValue.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                            {portfolioValue.change24h >= 0 ? (
-                                                <TrendingUp size={12} className="mr-1" />
-                                            ) : (
-                                                <TrendingDown size={12} className="mr-1" />
-                                            )}
+                                        <span className="text-sm text-slate-500 dark:text-gray-400">Total Value:</span>
+                                        <span className="text-lg font-bold text-slate-900 dark:text-white">{formatPortfolioValue(portfolioValue.total)}</span>
+                                        <span className={`text-xs font-semibold flex items-center ${portfolioValue.change24h >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                            {portfolioValue.change24h >= 0 ? <TrendingUp size={12} className="mr-1" /> : <TrendingDown size={12} className="mr-1" />}
                                             {Math.abs(portfolioValue.change24h).toFixed(2)}%
                                         </span>
                                     </div>
@@ -302,14 +273,13 @@ const Overview: React.FC = () => {
                             </div>
                             <button
                                 onClick={() => setShowAddTokenModal(true)}
-                                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors"
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 text-sm font-semibold transition-colors"
                             >
                                 <Plus size={16} />
                                 <span>Add Token</span>
                             </button>
                         </div>
 
-                        {/* Token Grid */}
                         {isLoadingBalances ? (
                             <div className="flex items-center justify-center py-12">
                                 <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
@@ -327,103 +297,68 @@ const Overview: React.FC = () => {
                                 ))}
                             </div>
                         ) : (
-                            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-                                <Wallet size={48} className="mb-4 opacity-50" />
+                            <div className="flex flex-col items-center justify-center py-12 text-slate-400 dark:text-gray-500">
+                                <Wallet size={48} className="mb-4 opacity-20" />
                                 <p className="text-lg font-medium">No tokens found</p>
-                                <p className="text-sm mt-1">Add a token to get started</p>
+                                <p className="text-sm">Add a token to start tracking assets</p>
                             </div>
                         )}
                     </div>
 
                     {/* Quick Actions Section */}
-                    <div className="rounded-xl border border-gray-700 bg-gray-800 p-4 sm:p-6">
+                    <div className="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 sm:p-6 shadow-sm">
                         <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                            <h3 className="text-lg font-semibold">Quick Actions</h3>
-                            <Link to="/dashboard/templates" className="text-sm text-purple-300 hover:text-purple-200">
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Quick Actions</h3>
+                            <Link to="/dashboard/templates" className="text-sm font-medium text-purple-600 dark:text-purple-400 hover:underline">
                                 Manage templates
                             </Link>
                         </div>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                             {quickActionTemplates.map((template) => (
                                 <Link
                                     key={template.id}
                                     to={`/dashboard/proposals?template=${encodeURIComponent(template.id)}`}
-                                    className="min-h-[44px] rounded-lg border border-gray-600 bg-gray-900 p-3 text-left transition-colors hover:border-purple-500"
+                                    className="rounded-xl border border-slate-100 dark:border-gray-700 bg-slate-50 dark:bg-gray-900/50 p-4 text-left transition-all hover:border-purple-500 hover:shadow-md group"
                                 >
-                                    <p className="font-medium text-white">{template.name}</p>
-                                    <p className="text-sm text-gray-400">{template.category}</p>
-                                    <p className="text-xs text-gray-500">Used {template.usageCount} times</p>
+                                    <p className="font-bold text-slate-900 dark:text-white group-hover:text-purple-600 transition-colors">{template.name}</p>
+                                    <p className="text-sm text-slate-500 dark:text-gray-400 mb-2">{template.category}</p>
+                                    <p className="text-[10px] font-bold text-slate-400 dark:text-gray-500 uppercase tracking-wider">Used {template.usageCount} times</p>
                                 </Link>
                             ))}
                         </div>
                     </div>
+                </>
+            )}
 
-                    {/* Add Token Modal */}
-                    {showAddTokenModal && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-                            <div className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 p-4 sm:p-6">
-                                <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-xl font-semibold text-white">Add Custom Token</h3>
-                                    <button
-                                        onClick={() => {
-                                            setShowAddTokenModal(false);
-                                            setNewTokenAddress('');
-                                            setAddError(null);
-                                        }}
-                                        className="p-1 hover:bg-gray-700 rounded text-gray-400"
-                                    >
-                                        <X size={20} />
-                                    </button>
-                                </div>
-
-                                <div className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm text-gray-400 mb-2">Token Contract Address</label>
-                                        <input
-                                            type="text"
-                                            value={newTokenAddress}
-                                            onChange={(e) => {
-                                                setNewTokenAddress(e.target.value);
-                                                setAddError(null);
-                                            }}
-                                            placeholder="C... (56 characters)"
-                                            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-3 text-sm text-white placeholder-gray-500 focus:border-purple-500 focus:outline-none"
-                                        />
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            Enter the Stellar contract address for the token you want to track
-                                        </p>
-                                    </div>
-
-                                    {addError && (
-                                        <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 p-3 rounded-lg">
-                                            <span>{addError}</span>
-                                        </div>
-                                    )}
-
-                                    <div className="flex gap-3">
-                                        <button
-                                            onClick={() => {
-                                                setShowAddTokenModal(false);
-                                                setNewTokenAddress('');
-                                                setAddError(null);
-                                            }}
-                                            className="flex-1 min-h-[44px] rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600"
-                                        >
-                                            Cancel
-                                        </button>
-                                        <button
-                                            onClick={handleAddCustomToken}
-                                            disabled={isAddingToken || !newTokenAddress.trim()}
-                                            className="flex-1 min-h-[44px] rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                            {isAddingToken ? 'Adding...' : 'Add Token'}
-                                        </button>
-                                    </div>
-                                </div>
+            {/* Modal remains largely same but with text-slate/white colors */}
+            {showAddTokenModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6 shadow-2xl">
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Add Custom Token</h3>
+                            <button onClick={() => setShowAddTokenModal(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white"><X size={20} /></button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Token Contract Address</label>
+                                <input
+                                    type="text"
+                                    value={newTokenAddress}
+                                    onChange={(e) => {setNewTokenAddress(e.target.value); setAddError(null);}}
+                                    placeholder="C..."
+                                    className="w-full rounded-xl border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800 px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                                />
+                            </div>
+                            {addError && <div className="p-3 rounded-lg bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm">{addError}</div>}
+                            <div className="flex gap-3 pt-2">
+                                <button onClick={() => setShowAddTokenModal(false)} className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-gray-800 text-slate-600 dark:text-white font-bold">Cancel</button>
+                                <button onClick={handleAddCustomToken} disabled={isAddingToken || !newTokenAddress.trim()} className="flex-1 py-3 rounded-xl bg-purple-600 text-white font-bold disabled:opacity-50">
+                                    {isAddingToken ? 'Adding...' : 'Add Token'}
+                                </button>
                             </div>
                         </div>
-                    )}
-                </>
+                    </div>
+                </div>
             )}
         </div>
     );
