@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
 import TokenBalanceCard from '../../components/TokenBalanceCard';
@@ -7,6 +8,7 @@ import DashboardBuilder from '../../components/DashboardBuilder';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
 import { loadDashboardLayout } from '../../utils/dashboardTemplates';
+import { formatCurrency } from '../../utils/localeFormatter';
 import type { TokenInfo, TokenBalance } from '../../types';
 import type { WidgetConfig } from '../../types/dashboard';
 import { isValidStellarAddress } from '../../constants/tokens';
@@ -22,6 +24,7 @@ interface DashboardStats {
 }
 
 const Overview: React.FC = () => {
+    const { t } = useTranslation();
     const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, getVaultBalance, loading } = useVaultContract();
     const [stats, setStats] = useState<DashboardStats | null>(null);
     const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
@@ -167,18 +170,18 @@ const Overview: React.FC = () => {
         <div className="space-y-8 pb-10 transition-colors">
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Treasury Overview</h2>
+                <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">{t('dashboard.treasuryOverview')}</h2>
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => setShowAdvancedDashboard(!showAdvancedDashboard)}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
                     >
                         <Grid3x3 className="h-4 w-4" />
-                        <span>{showAdvancedDashboard ? 'Classic View' : 'Advanced Dashboard'}</span>
+                        <span>{showAdvancedDashboard ? t('dashboard.classicView') : t('dashboard.advancedDashboard')}</span>
                     </button>
                     <div className="text-sm text-slate-600 dark:text-gray-400 flex items-center gap-2 bg-white dark:bg-gray-800 px-4 py-2 rounded-lg border border-slate-200 dark:border-gray-700 shadow-sm">
                         <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                        <span>Network: Testnet</span>
+                        <span>{t('dashboard.networkTestnet')}</span>
                     </div>
                 </div>
             </div>
@@ -201,9 +204,9 @@ const Overview: React.FC = () => {
                                             <Wallet className="h-6 w-6 text-white" />
                                         </div>
                                         <div>
-                                            <p className="text-sm text-purple-100 font-medium">Vault Balance</p>
+                                            <p className="text-sm text-purple-100 font-medium">{t('dashboard.vaultBalance')}</p>
                                             <p className="text-[10px] text-purple-200/80 mt-0.5">
-                                                {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : 'Loading...'}
+                                                {lastUpdated ? `${t('dashboard.updated')} ${lastUpdated.toLocaleTimeString()}` : t('common.loading')}
                                             </p>
                                         </div>
                                     </div>
@@ -211,7 +214,7 @@ const Overview: React.FC = () => {
                                         onClick={fetchBalance}
                                         disabled={balanceLoading}
                                         className="p-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center"
-                                        title="Refresh balance"
+                                        title={t('dashboard.refreshBalance')}
                                     >
                                         <RefreshCw className={`h-5 w-5 text-white ${balanceLoading ? 'animate-spin' : ''}`} />
                                     </button>
@@ -219,7 +222,7 @@ const Overview: React.FC = () => {
                                 {balanceError ? (
                                     <div className="text-center py-4">
                                         <p className="text-red-200 text-sm mb-2">{balanceError}</p>
-                                        <button onClick={fetchBalance} className="text-xs text-white underline">Retry</button>
+                                        <button onClick={fetchBalance} className="text-xs text-white underline">{t('common.retry')}</button>
                                     </div>
                                 ) : (
                                     <div className="text-3xl md:text-4xl font-bold text-white tracking-tight">
@@ -234,22 +237,22 @@ const Overview: React.FC = () => {
                         </div>
                         
                         <StatCard
-                            title="Total Staked"
+                            title={t('dashboard.totalStaked')}
                             value={`${stats?.totalBalance || '0'} XLM`}
                             icon={Wallet}
                             variant="primary"
                         />
                         <StatCard
-                            title="Active Proposals"
+                            title={t('dashboard.activeProposals')}
                             value={stats?.totalProposals || 0}
-                            subtitle={`${stats?.pendingApprovals || 0} pending vote`}
+                            subtitle={`${stats?.pendingApprovals || 0} ${t('dashboard.pendingVote')}`}
                             icon={FileText}
                             variant="warning"
                         />
                         <StatCard
-                            title="Ready to Execute"
+                            title={t('dashboard.readyToExecute')}
                             value={stats?.readyToExecute || 0}
-                            subtitle="Passed timelock"
+                            subtitle={t('dashboard.passedTimelock')}
                             icon={CheckCircle}
                             variant="success"
                         />
@@ -259,11 +262,11 @@ const Overview: React.FC = () => {
                     <div className="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 sm:p-6 shadow-sm">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
                             <div>
-                                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Token Balances</h3>
+                                <h3 className="text-lg font-bold text-slate-900 dark:text-white">{t('dashboard.tokenBalances')}</h3>
                                 {portfolioValue && (
                                     <div className="flex items-center gap-2 mt-1">
-                                        <span className="text-sm text-slate-500 dark:text-gray-400">Total Value:</span>
-                                        <span className="text-lg font-bold text-slate-900 dark:text-white">{formatPortfolioValue(portfolioValue.total)}</span>
+                                        <span className="text-sm text-slate-500 dark:text-gray-400">{t('dashboard.totalValue')}:</span>
+                                        <span className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(portfolioValue.total)}</span>
                                         <span className={`text-xs font-semibold flex items-center ${portfolioValue.change24h >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                                             {portfolioValue.change24h >= 0 ? <TrendingUp size={12} className="mr-1" /> : <TrendingDown size={12} className="mr-1" />}
                                             {Math.abs(portfolioValue.change24h).toFixed(2)}%
@@ -276,7 +279,7 @@ const Overview: React.FC = () => {
                                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 text-sm font-semibold transition-colors"
                             >
                                 <Plus size={16} />
-                                <span>Add Token</span>
+                                <span>{t('dashboard.addToken')}</span>
                             </button>
                         </div>
 
@@ -299,8 +302,8 @@ const Overview: React.FC = () => {
                         ) : (
                             <div className="flex flex-col items-center justify-center py-12 text-slate-400 dark:text-gray-500">
                                 <Wallet size={48} className="mb-4 opacity-20" />
-                                <p className="text-lg font-medium">No tokens found</p>
-                                <p className="text-sm">Add a token to start tracking assets</p>
+                                <p className="text-lg font-medium">{t('dashboard.noTokensFound')}</p>
+                                <p className="text-sm">{t('dashboard.addTokenToStartTracking')}</p>
                             </div>
                         )}
                     </div>
@@ -308,9 +311,9 @@ const Overview: React.FC = () => {
                     {/* Quick Actions Section */}
                     <div className="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 sm:p-6 shadow-sm">
                         <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Quick Actions</h3>
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white">{t('dashboard.quickActions')}</h3>
                             <Link to="/dashboard/templates" className="text-sm font-medium text-purple-600 dark:text-purple-400 hover:underline">
-                                Manage templates
+                                {t('dashboard.manageTemplates')}
                             </Link>
                         </div>
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -322,7 +325,7 @@ const Overview: React.FC = () => {
                                 >
                                     <p className="font-bold text-slate-900 dark:text-white group-hover:text-purple-600 transition-colors">{template.name}</p>
                                     <p className="text-sm text-slate-500 dark:text-gray-400 mb-2">{template.category}</p>
-                                    <p className="text-[10px] font-bold text-slate-400 dark:text-gray-500 uppercase tracking-wider">Used {template.usageCount} times</p>
+                                    <p className="text-[10px] font-bold text-slate-400 dark:text-gray-500 uppercase tracking-wider">{t('dashboard.usedNTimes', { count: template.usageCount })}</p>
                                 </Link>
                             ))}
                         </div>
@@ -335,12 +338,12 @@ const Overview: React.FC = () => {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
                     <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6 shadow-2xl">
                         <div className="flex items-center justify-between mb-6">
-                            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Add Custom Token</h3>
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white">{t('dashboard.addCustomToken')}</h3>
                             <button onClick={() => setShowAddTokenModal(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white"><X size={20} /></button>
                         </div>
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Token Contract Address</label>
+                                <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">{t('dashboard.tokenContractAddress')}</label>
                                 <input
                                     type="text"
                                     value={newTokenAddress}
@@ -351,9 +354,9 @@ const Overview: React.FC = () => {
                             </div>
                             {addError && <div className="p-3 rounded-lg bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm">{addError}</div>}
                             <div className="flex gap-3 pt-2">
-                                <button onClick={() => setShowAddTokenModal(false)} className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-gray-800 text-slate-600 dark:text-white font-bold">Cancel</button>
+                                <button onClick={() => setShowAddTokenModal(false)} className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-gray-800 text-slate-600 dark:text-white font-bold">{t('common.cancel')}</button>
                                 <button onClick={handleAddCustomToken} disabled={isAddingToken || !newTokenAddress.trim()} className="flex-1 py-3 rounded-xl bg-purple-600 text-white font-bold disabled:opacity-50">
-                                    {isAddingToken ? 'Adding...' : 'Add Token'}
+                                    {isAddingToken ? t('dashboard.adding') : t('dashboard.addToken')}
                                 </button>
                             </div>
                         </div>
