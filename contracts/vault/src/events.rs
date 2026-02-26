@@ -346,6 +346,20 @@ pub fn emit_hook_registered(env: &Env, hook: &Address, is_pre: bool) {
 
 /// Emit when a hook is removed
 pub fn emit_hook_removed(env: &Env, hook: &Address, is_pre: bool) {
+    env.events().publish(
+        (Symbol::new(env, "hook_removed"),),
+        (hook.clone(), is_pre),
+    );
+}
+
+/// Emit when a hook is executed
+pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {
+    env.events().publish(
+        (Symbol::new(env, "hook_executed"), proposal_id),
+        (hook.clone(), is_pre),
+    );
+}
+
 /// Emit when liquidity is removed
 pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
     env.events().publish(
@@ -439,16 +453,8 @@ pub fn emit_voting_deadline_extended(
     admin: &Address,
 ) {
     env.events().publish(
-        (Symbol::new(env, "hook_removed"),),
-        (hook.clone(), is_pre),
-    );
-}
-
-/// Emit when a hook is executed
-pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {
-    env.events().publish(
-        (Symbol::new(env, "hook_executed"), proposal_id),
-        (hook.clone(), is_pre),
+        (Symbol::new(env, "voting_deadline_ext"), proposal_id),
+        (old_deadline, new_deadline, admin.clone()),
     );
 }
 
@@ -607,6 +613,7 @@ pub fn emit_subscription_expired(env: &Env, subscription_id: u64) {
     env.events()
         .publish((Symbol::new(env, "subscription_expired"),), subscription_id);
 }
+
 // ============================================================================
 // Escrow Events (feature/escrow-system)
 // ============================================================================
@@ -675,6 +682,7 @@ pub fn emit_escrow_dispute_resolved(
         (arbitrator.clone(), released_to_recipient),
     );
 }
+
 // ============================================================================
 // Wallet Recovery Events (feature/wallet-recovery)
 // ============================================================================
@@ -743,5 +751,45 @@ pub fn emit_fee_collected(
             fee_bps,
             reputation_discount_applied,
         ),
+    );
+}
+
+// ============================================================================
+// Stream Events (feature/token-streaming)
+// ============================================================================
+
+/// Emit when a stream status is updated (paused, resumed, or cancelled)
+pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, updated_by: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "stream_status"), stream_id),
+        (status, updated_by.clone()),
+    );
+}
+
+/// Emit when tokens are claimed from a stream
+pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "stream_claimed"), stream_id),
+        (recipient.clone(), amount),
+    );
+}
+
+// ============================================================================
+// Proposal Scheduling Events (feature/proposal-scheduling)
+// ============================================================================
+
+/// Emit when a proposal is scheduled for future execution
+pub fn emit_proposal_scheduled(env: &Env, proposal_id: u64, execution_time: u64, scheduled_at: u64) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_scheduled"), proposal_id),
+        (execution_time, scheduled_at),
+    );
+}
+
+/// Emit when a scheduled proposal is cancelled
+pub fn emit_scheduled_proposal_cancelled(env: &Env, proposal_id: u64, cancelled_at: u64) {
+    env.events().publish(
+        (Symbol::new(env, "scheduled_cancelled"), proposal_id),
+        cancelled_at,
     );
 }

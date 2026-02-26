@@ -258,6 +258,8 @@ pub enum ProposalStatus {
     Expired = 4,
     /// Cancelled by proposer or admin, with spending refunded.
     Cancelled = 5,
+    /// Approved and scheduled for future execution at a specific time.
+    Scheduled = 6,
 }
 
 /// Proposal priority level for queue ordering
@@ -350,6 +352,8 @@ pub struct Proposal {
     pub expires_at: u64,
     /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
     pub unlock_ledger: u64,
+    /// Optional scheduled execution time (ledger number) for delayed execution
+    pub execution_time: Option<u64>,
     /// Insurance amount staked by proposer (0 = no insurance). Held in vault.
     pub insurance_amount: i128,
     /// Stake amount locked by proposer (0 = no stake). Held in vault.

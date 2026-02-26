@@ -7731,3 +7731,73 @@ fn test_stake_max_cap() {
     // Stake should be capped at max_stake_amount
     assert_eq!(proposal.stake_amount, 500);
 }
+
+// ============================================================================
+// Time Conversion Tests
+// ============================================================================
+
+#[test]
+fn test_ledger_to_timestamp_basic() {
+    // Test basic conversion: ledger * 5 seconds
+    assert_eq!(VaultDAO::ledger_to_timestamp(0), 0);
+    assert_eq!(VaultDAO::ledger_to_timestamp(1), 5);
+    assert_eq!(VaultDAO::ledger_to_timestamp(10), 50);
+    assert_eq!(VaultDAO::ledger_to_timestamp(100), 500);
+    assert_eq!(VaultDAO::ledger_to_timestamp(1000), 5000);
+}
+
+#[test]
+fn test_timestamp_to_ledger_basic() {
+    // Test basic conversion: timestamp / 5 seconds
+    assert_eq!(VaultDAO::timestamp_to_ledger(0), 0);
+    assert_eq!(VaultDAO::timestamp_to_ledger(5), 1);
+    assert_eq!(VaultDAO::timestamp_to_ledger(50), 10);
+    assert_eq!(VaultDAO::timestamp_to_ledger(500), 100);
+    assert_eq!(VaultDAO::timestamp_to_ledger(5000), 1000);
+}
+
+#[test]
+fn test_time_conversion_round_trip() {
+    // Test that converting ledger -> timestamp -> ledger preserves the value
+    let test_ledgers = [0, 1, 10, 100, 1000, 10000, 100000];
+    
+    for ledger in test_ledgers {
+        let timestamp = VaultDAO::ledger_to_timestamp(ledger);
+        let back_to_ledger = VaultDAO::timestamp_to_ledger(timestamp);
+        assert_eq!(ledger, back_to_ledger);
+    }
+}
+
+#[test]
+fn test_timestamp_to_ledger_rounding() {
+    // Test that timestamps between ledger intervals round down
+    assert_eq!(VaultDAO::timestamp_to_ledger(0), 0);
+    assert_eq!(VaultDAO::timestamp_to_ledger(1), 0);  // Rounds down
+    assert_eq!(VaultDAO::timestamp_to_ledger(4), 0);  // Rounds down
+    assert_eq!(VaultDAO::timestamp_to_ledger(5), 1);
+    assert_eq!(VaultDAO::timestamp_to_ledger(6), 1);  // Rounds down
+    assert_eq!(VaultDAO::timestamp_to_ledger(9), 1);  // Rounds down
+    assert_eq!(VaultDAO::timestamp_to_ledger(10), 2);
+}
+
+#[test]
+fn test_time_conversion_large_values() {
+    // Test with large values (e.g., 1 year in ledgers)
+    let one_day_ledgers = 17_280u64;  // ~24 hours
+    let one_week_ledgers = one_day_ledgers * 7;
+    let one_year_ledgers = one_day_ledgers * 365;
+    
+    let one_day_seconds = VaultDAO::ledger_to_timestamp(one_day_ledgers);
+    assert_eq!(one_day_seconds, 86_400);  // 24 * 60 * 60
+    
+    let one_week_seconds = VaultDAO::ledger_to_timestamp(one_week_ledgers);
+    assert_eq!(one_week_seconds, 604_800);  // 7 * 24 * 60 * 60
+    
+    let one_year_seconds = VaultDAO::ledger_to_timestamp(one_year_ledgers);
+    assert_eq!(one_year_seconds, 31_536_000);  // 365 * 24 * 60 * 60
+    
+    // Test round trip
+    assert_eq!(VaultDAO::timestamp_to_ledger(one_day_seconds), one_day_ledgers);
+    assert_eq!(VaultDAO::timestamp_to_ledger(one_week_seconds), one_week_ledgers);
+    assert_eq!(VaultDAO::timestamp_to_ledger(one_year_seconds), one_year_ledgers);
+}
