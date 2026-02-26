@@ -16,6 +16,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
 
@@ -30,6 +31,10 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: contracts/vault
+
+      - name: Build WASM contract
+        run: cargo build --target wasm32-unknown-unknown --release
         working-directory: contracts/vault
 
       - name: Run tests
@@ -50,7 +55,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
         working-directory: frontend
 
       - name: Build frontend
