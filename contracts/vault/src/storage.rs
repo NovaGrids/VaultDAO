@@ -21,13 +21,13 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
-use crate::types::{AuditEntry, Comment, Config, Proposal, Role, VelocityConfig};
 use soroban_sdk::Vec as SdkVec;
 use crate::types::{
-    Comment, Config, DelegatedPermission, DexConfig, Escrow, ExecutionFeeEstimate, FundingRound,
-    FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
-    PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
-    RetryState, Role, SwapProposal, SwapResult, VaultMetrics, VelocityConfig,
+    AuditEntry, Comment, Config, DelegatedPermission, DexConfig, Escrow, ExecutionFeeEstimate,
+    FundingRound, FundingRoundConfig, GasConfig, InsuranceConfig, ListMode,
+    NotificationPreferences, PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate,
+    RecoveryProposal, Reputation, RetryState, Role, Subscription, SubscriptionPayment,
+    SwapProposal, SwapResult, VaultMetrics, VelocityConfig, VotingStrategy,
 };
 
 /// Core storage key definitions (kept minimal to avoid size limits)
@@ -172,6 +172,12 @@ pub enum FeatureKey {
     FundingRoundConfig,
     /// Batch transaction storage (nested with BatchKey)
     Batch(BatchKey),
+    /// Oracle configuration -> VaultOracleConfig
+    VaultOracleConfig,
+    /// Active voting strategy for proposal approvals -> VotingStrategy
+    VotingStrategy,
+    /// Ledger sequence when an approval was cast -> u64
+    ApprovalLedger(u64, Address),
     /// Stream payment storage (nested with StreamKey)
     Stream(StreamKey),
     /// Fee structure configuration -> FeeStructure
@@ -215,6 +221,30 @@ pub fn get_config(env: &Env) -> Result<Config, VaultError> {
 
 pub fn set_config(env: &Env, config: &Config) {
     env.storage().instance().set(&DataKey::Config, config);
+}
+
+pub fn get_voting_strategy(env: &Env) -> VotingStrategy {
+    env.storage()
+        .instance()
+        .get(&DataKey::VotingStrategy)
+        .unwrap_or(VotingStrategy::Simple)
+}
+
+pub fn set_voting_strategy(env: &Env, strategy: &VotingStrategy) {
+    env.storage().instance().set(&DataKey::VotingStrategy, strategy);
+}
+
+pub fn set_approval_ledger(env: &Env, proposal_id: u64, voter: &Address, ledger: u64) {
+    let key = DataKey::ApprovalLedger(proposal_id, voter.clone());
+    env.storage().persistent().set(&key, &ledger);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn get_approval_ledger(env: &Env, proposal_id: u64, voter: &Address) -> Option<u64> {
+    let key = DataKey::ApprovalLedger(proposal_id, voter.clone());
+    env.storage().persistent().get(&key)
 }
 
 pub fn is_veto_address(env: &Env, addr: &Address) -> Result<bool, VaultError> {
@@ -1164,6 +1194,70 @@ pub fn add_subscriber_subscription(env: &Env, subscriber: &Address, subscription
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 */
+
+// ============================================================================
+// Delegation (Issue: feature/proposal-delegation)
+// ============================================================================
+
+pub fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Delegation(delegator.clone()))
+}
+
+pub fn set_delegation(env: &Env, delegation: &Delegation) {
+    let key = DataKey::Delegation(delegation.delegator.clone());
+    env.storage().persistent().set(&key, delegation);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_delegation_history(env: &Env, delegator: &Address) -> Vec<DelegationHistory> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DelegationHistory(delegator.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn add_delegation_history(env: &Env, history: &DelegationHistory) {
+    let mut history_list = get_delegation_history(env, &history.delegator);
+    history_list.push_back(history.clone());
+    let key = DataKey::DelegationHistory(history.delegator.clone());
+    env.storage().persistent().set(&key, &history_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn update_delegation_history(env: &Env, history: &DelegationHistory) {
+    let history_list = get_delegation_history(env, &history.delegator);
+    let mut updated_list: Vec<DelegationHistory> = Vec::new(env);
+    for entry in history_list.iter() {
+        if entry.id == history.id {
+            updated_list.push_back(history.clone());
+        } else {
+            updated_list.push_back(entry);
+        }
+    }
+    let key = DataKey::DelegationHistory(history.delegator.clone());
+    env.storage().persistent().set(&key, &updated_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn increment_delegation_history_id(env: &Env) -> u64 {
+    let id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextDelegationHistoryId)
+        .unwrap_or(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDelegationHistoryId, &(id + 1));
+    id
+}
 
 // ============================================================================
 // Escrow (Issue: feature/escrow-system)

@@ -1,0 +1,117 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Fault Condition** - CI Compilation Failure
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bug exists in CI environment
+  - **Scoped PBT Approach**: Scope the property to the concrete failing case - CI build with cargo commands
+  - Test that CI compilation succeeds for the contract (from Fault Condition in design)
+  - The test assertions should verify: compilation succeeds, no "cannot find type" errors, no "cannot find function" errors, no "cannot find variant" errors
+  - Run test on UNFIXED code in CI environment
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bug exists)
+  - Document counterexamples found: specific compilation errors, missing types/functions/variants reported, environment differences
+  - Capture complete CI build output showing all 34 compilation errors
+  - Compare CI environment (Rust version, cargo version, feature flags) with local environment
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Local Compilation Behavior
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for local development builds (non-CI environment)
+  - Document successful local build metrics: compilation time, warnings, binary size, test results
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements
+  - Test that local compilation produces same successful result: exit code 0, same warnings, binary equivalence
+  - Property-based testing generates test cases across different local environments for stronger guarantees
+  - Run tests on UNFIXED code in local environment
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+- [x] 3. Fix for CI compilation errors
+
+  - [x] 3.1 Investigate root cause based on exploration test results
+    - Analyze the 34 compilation errors captured in task 1
+    - Verify all reported missing components exist in source code:
+      - `Delegation` type in `types.rs` line 686
+      - `DelegationHistory` type in `types.rs`
+      - `get_delegation` function in `storage.rs` line 881
+      - `emit_delegation_created` function in `events.rs` line 577
+      - `DelegationError` variant in `errors.rs` line 210
+      - `DexError` variant in `errors.rs`
+    - Compare CI and local environments for differences:
+      - Rust toolchain version (check `rust-toolchain.toml` and CI workflow)
+      - Cargo version
+      - Feature flags enabled in build commands
+      - Dependency versions (check `Cargo.lock` status)
+      - Conditional compilation directives (`#[cfg(...)]`)
+      - Module visibility and exports in `lib.rs`
+    - Identify the specific root cause from hypothesized issues
+    - _Bug_Condition: isBugCondition(input) where input.environment == "CI" AND compilationFails(input) AND allComponentsExistInSource(input.sourceFiles)_
+    - _Expected_Behavior: Compilation succeeds in CI with exit code 0 and no errors_
+    - _Preservation: Local compilation continues to succeed with identical behavior_
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+  - [x] 3.2 Apply the appropriate fix based on root cause
+    - **If Cargo.lock Issue**:
+      - Run `cargo update` locally to refresh dependencies
+      - Ensure `Cargo.lock` is committed to version control
+      - Update CI workflow to use locked dependency versions
+    - **If Feature Flag Issue**:
+      - Identify required feature flags in `Cargo.toml`
+      - Update `.github/workflows/*.yml` build commands to include `--all-features` or specific features
+      - Example: Change `cargo build` to `cargo build --all-features`
+    - **If Module Visibility Issue**:
+      - Add missing `pub` keywords to type definitions in `types.rs`
+      - Add `pub use` statements in `lib.rs` to export delegation and DEX types
+      - Ensure module declarations use `pub mod` in `lib.rs`
+    - **If Conditional Compilation Issue**:
+      - Search for `#[cfg(...)]` attributes on delegation/DEX code
+      - Remove or adjust conditions to include CI target environment
+      - Ensure code is not excluded based on target or features
+    - **If Toolchain Version Issue**:
+      - Create or update `rust-toolchain.toml` with specific Rust version
+      - Update CI workflow to use same toolchain version as local
+      - Test with both stable and nightly if version mismatch found
+    - _Bug_Condition: isBugCondition(input) from design_
+    - _Expected_Behavior: expectedBehavior(result) from design - CI compilation succeeds_
+    - _Preservation: Preservation Requirements from design - local builds unchanged_
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+  - [x] 3.3 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - CI Compilation Success
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1 in CI environment
+    - Verify compilation succeeds with exit code 0
+    - Verify no "cannot find type" errors for `Delegation`, `DelegationHistory`
+    - Verify no "cannot find function" errors for `get_delegation`, `emit_delegation_created`
+    - Verify no "cannot find variant" errors for `DelegationError`, `DexError`
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
+
+  - [x] 3.4 Verify preservation tests still pass
+    - **Property 2: Preservation** - Local Compilation Behavior
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2 in local environment
+    - Verify local compilation still succeeds with exit code 0
+    - Verify same warnings as before fix
+    - Verify binary equivalence or functional equivalence
+    - Verify `cargo test` passes with same test count and results
+    - Verify `cargo check`, `cargo clippy`, and `cargo fmt` work identically
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix (no regressions)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Verify CI build succeeds consistently across multiple runs
+  - Verify local build still succeeds with identical behavior
+  - Verify all delegation types are accessible in compiled code
+  - Verify all storage functions are callable
+  - Verify all events can be emitted
+  - Verify all error variants can be constructed
+  - Test full CI/CD pipeline with the fix applied
+  - Ensure all tests pass, ask the user if questions arise

@@ -21,6 +21,15 @@ use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, Map, String, Sy
 use types::{
     BatchExecutionResult, BatchOperation, BatchStatus, BatchTransaction, CancellationRecord,
     Comment, Condition, ConditionLogic, Config, DexConfig, Escrow, EscrowStatus,
+<<<<<<< HEAD
+    ExecutionFeeEstimate, GasConfig, InitConfig, InsuranceConfig, ListMode, Milestone,
+    NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal, ProposalAmendment,
+    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
+    RecurringPayment, Reputation, RetryConfig, RetryState, Role, StreamStatus, StreamingPayment,
+    Subscription, SubscriptionPayment, SubscriptionStatus, SubscriptionTier, SwapProposal,
+    SwapResult, TemplateOverrides, ThresholdStrategy, TransferDetails, VaultMetrics,
+    VaultOracleConfig, VaultPriceData, VotingStrategy,
+=======
     ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
     FundingRoundConfig, FundingRoundStatus, GasConfig, InitConfig, InsuranceConfig, ListMode,
     Milestone, NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal,
@@ -28,6 +37,7 @@ use types::{
     RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, StreamStatus,
     StreamingPayment, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
     TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData,
+>>>>>>> e8f0c2c7a2d16d622769e1c4ceda0865df957a4c
 };
 
 /// The main contract structure for VaultDAO.
@@ -37,7 +47,8 @@ use types::{
 #[contract]
 pub struct VaultDAO;
 
-/// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
+/// Proposal expiration: ~7 days in ledgers (5 seconds per ledger) - DEPRECATED, use ExpirationConfig
+#[allow(dead_code)]
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
 /// Ledger interval in seconds (approximate)
@@ -128,6 +139,7 @@ impl VaultDAO {
 
         // Store state
         storage::set_config(&env, &config_storage);
+        storage::set_voting_strategy(&env, &VotingStrategy::Simple);
         storage::set_role(&env, &admin, Role::Admin);
         storage::set_staking_config(&env, &config.staking_config);
         storage::set_initialized(&env);
@@ -695,7 +707,7 @@ impl VaultDAO {
                 conditions: conditions.clone(),
                 condition_logic: condition_logic.clone(),
                 created_at: current_ledger,
-                expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+                expires_at: calculate_expiration_ledger(&config, &priority, current_ledger),
                 unlock_ledger: 0,
                 execution_time: None,
                 insurance_amount: insurance_per_proposal,
@@ -756,6 +768,9 @@ impl VaultDAO {
     /// Quorum = approvals + abstentions. The approval threshold is checked only against
     /// explicit approvals. Both must be satisfied to transition to `Approved`.
     ///
+    /// Supports delegation: if the signer has delegated their voting power, the vote
+    /// is recorded under the effective voter (following the delegation chain).
+    ///
     /// # Arguments
     /// * `signer` - The authorized address providing approval.
     /// * `proposal_id` - ID of the proposal to approve.
@@ -787,11 +802,13 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        // Check expiration
+        // Check expiration (only if expiration is enabled, i.e., expires_at > 0)
         let current_ledger = env.ledger().sequence() as u64;
-        if current_ledger > proposal.expires_at {
+        if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
+            storage::metrics_on_expiry(&env);
+            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
             return Err(VaultError::ProposalExpired);
         }
 
@@ -804,13 +821,31 @@ impl VaultDAO {
             return Err(VaultError::VotingDeadlinePassed);
         }
 
-        // Prevent double-approval or abstaining then approving
-        if proposal.approvals.contains(&signer) || proposal.abstentions.contains(&signer) {
+        // Resolve delegation chain to get effective voter
+        let effective_voter = Self::resolve_delegation_chain(&env, &signer, 0);
+        let is_delegated = effective_voter != signer;
+
+        // Prevent double-approval or abstaining then approving (check effective voter)
+        if proposal.approvals.contains(&effective_voter)
+            || proposal.abstentions.contains(&effective_voter)
+        {
             return Err(VaultError::AlreadyApproved);
         }
 
+<<<<<<< HEAD
         // Add approval
         proposal.approvals.push_back(signer.clone());
+        let current_ledger = env.ledger().sequence() as u64;
+        storage::set_approval_ledger(&env, proposal_id, &signer, current_ledger);
+=======
+        // Add approval using effective voter
+        proposal.approvals.push_back(effective_voter.clone());
+
+        // Emit delegated vote event if voting through delegation
+        if is_delegated {
+            events::emit_delegated_vote(&env, proposal_id, &effective_voter, &signer);
+        }
+>>>>>>> e8f0c2c7a2d16d622769e1c4ceda0865df957a4c
 
         // Calculate current vote totals
         let approval_count = proposal.approvals.len();
@@ -819,8 +854,7 @@ impl VaultDAO {
         let was_quorum_reached = config.quorum == 0 || previous_quorum_votes >= config.quorum;
 
         // Check if threshold met AND quorum satisfied
-        let threshold_reached =
-            approval_count >= Self::calculate_threshold(&config, &proposal.amount);
+        let threshold_reached = Self::is_threshold_reached(&env, &config, &proposal);
         let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
         if config.quorum > 0 && !was_quorum_reached && quorum_reached {
             events::emit_quorum_reached(&env, proposal_id, quorum_votes, config.quorum);
@@ -863,13 +897,13 @@ impl VaultDAO {
         events::emit_proposal_approved(
             &env,
             proposal_id,
-            &signer,
+            &effective_voter,
             approval_count,
             config.threshold,
         );
 
-        // Reputation boost for approving
-        Self::update_reputation_on_approval(&env, &signer);
+        // Reputation boost for approving (credit the effective voter)
+        Self::update_reputation_on_approval(&env, &effective_voter);
 
         Ok(())
     }
@@ -918,6 +952,7 @@ impl VaultDAO {
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_expiry(&env);
+            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
             return Err(VaultError::ProposalExpired);
         }
 
@@ -931,7 +966,7 @@ impl VaultDAO {
 
         // Enforce retry constraints if this is a retry attempt
         let config = storage::get_config(&env)?;
-        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
+        Self::ensure_vote_requirements_satisfied(&env, &config, &proposal)?;
         if let Some(retry_state) = storage::get_retry_state(&env, proposal_id) {
             if retry_state.retry_count > 0 {
                 // Check if max retries exhausted
@@ -1069,6 +1104,284 @@ impl VaultDAO {
     /// Get the current retry state for a proposal.
     pub fn get_retry_state(env: Env, proposal_id: u64) -> Option<RetryState> {
         storage::get_retry_state(&env, proposal_id)
+    }
+
+    // ========================================================================
+    // Delegation System (Issue: feature/proposal-delegation)
+    // ========================================================================
+
+    /// Delegate voting power to another address.
+    ///
+    /// Allows a signer to temporarily or permanently delegate their voting power
+    /// to a trusted address. The delegate can vote on behalf of the delegator.
+    ///
+    /// # Arguments
+    /// * `delegator` - The address delegating their voting power (must authorize).
+    /// * `delegate` - The address receiving the voting power.
+    /// * `expiry_ledger` - Ledger when delegation expires (0 = permanent).
+    ///
+    /// # Restrictions
+    /// * Delegator must be a signer
+    /// * Cannot delegate to self
+    /// * Cannot create circular delegation chains
+    /// * Maximum delegation chain depth is 3 levels
+    pub fn delegate_voting_power(
+        env: Env,
+        delegator: Address,
+        delegate: Address,
+        expiry_ledger: u64,
+    ) -> Result<(), VaultError> {
+        delegator.require_auth();
+
+        // Validate delegator is a signer
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&delegator) {
+            return Err(VaultError::NotASigner);
+        }
+
+        // Cannot delegate to self
+        if delegator == delegate {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Check if delegation already exists
+        if let Some(existing) = storage::get_delegation(&env, &delegator) {
+            if existing.is_active {
+                return Err(VaultError::DelegationError);
+            }
+        }
+
+        // Validate expiry is in the future (if not permanent)
+        let current_ledger = env.ledger().sequence() as u64;
+        if expiry_ledger > 0 && expiry_ledger <= current_ledger {
+            return Err(VaultError::DelegationError);
+        }
+
+        // Check for circular delegation (prevent A->B->A or longer cycles)
+        Self::check_circular_delegation(&env, &delegator, &delegate)?;
+
+        // Check delegation chain depth (max 3 levels)
+        let chain_depth = Self::get_delegation_chain_depth(&env, &delegate);
+        if chain_depth >= 3 {
+            return Err(VaultError::DelegationChainTooLong);
+        }
+
+        // Create delegation
+        let delegation = types::Delegation {
+            delegator: delegator.clone(),
+            delegate: delegate.clone(),
+            expiry_ledger,
+            is_active: true,
+            created_at: current_ledger,
+        };
+
+        storage::set_delegation(&env, &delegation);
+
+        // Record in history
+        let history_id = storage::increment_delegation_history_id(&env);
+        let history = types::DelegationHistory {
+            id: history_id,
+            delegator: delegator.clone(),
+            delegate: delegate.clone(),
+            created_at: current_ledger,
+            ended_at: 0,
+            end_reason: Symbol::new(&env, "active"),
+        };
+        storage::add_delegation_history(&env, &history);
+
+        storage::extend_instance_ttl(&env);
+
+        events::emit_delegation_created(&env, &delegator, &delegate, expiry_ledger);
+
+        Ok(())
+    }
+
+    /// Revoke an active delegation.
+    ///
+    /// The delegator can revoke their delegation at any time, immediately
+    /// returning voting power to themselves.
+    ///
+    /// # Arguments
+    /// * `delegator` - The address revoking their delegation (must authorize).
+    pub fn revoke_delegation(env: Env, delegator: Address) -> Result<(), VaultError> {
+        delegator.require_auth();
+
+        // Get active delegation
+        let mut delegation =
+            storage::get_delegation(&env, &delegator).ok_or(VaultError::DelegationError)?;
+
+        if !delegation.is_active {
+            return Err(VaultError::DelegationError);
+        }
+
+        // Mark as inactive
+        delegation.is_active = false;
+        storage::set_delegation(&env, &delegation);
+
+        // Update history - find the active entry and mark it as revoked
+        let history_list = storage::get_delegation_history(&env, &delegator);
+        for i in 0..history_list.len() {
+            if let Some(mut entry) = history_list.get(i) {
+                if entry.ended_at == 0 && entry.delegate == delegation.delegate {
+                    entry.ended_at = env.ledger().sequence() as u64;
+                    entry.end_reason = Symbol::new(&env, "revoked");
+                    storage::update_delegation_history(&env, &entry);
+                    break;
+                }
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        events::emit_delegation_revoked(&env, &delegator, &delegation.delegate);
+
+        Ok(())
+    }
+
+    /// Get the effective voter for an address, following delegation chains.
+    ///
+    /// Resolves delegation chains up to 3 levels deep. If a delegation has expired,
+    /// it is automatically marked as inactive and the original address is returned.
+    ///
+    /// # Arguments
+    /// * `voter` - The original voter address.
+    ///
+    /// # Returns
+    /// The effective voter address after following the delegation chain.
+    pub fn get_effective_voter(env: Env, voter: Address) -> Address {
+        Self::resolve_delegation_chain(&env, &voter, 0)
+    }
+
+    /// Get active delegation for an address.
+    pub fn get_delegation(env: Env, delegator: Address) -> Option<types::Delegation> {
+        let delegation = storage::get_delegation(&env, &delegator)?;
+
+        // Check if expired
+        let current_ledger = env.ledger().sequence() as u64;
+        if delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger {
+            // Mark as expired
+            let mut expired_delegation = delegation.clone();
+            expired_delegation.is_active = false;
+            storage::set_delegation(&env, &expired_delegation);
+
+            events::emit_delegation_expired(&env, &delegation.delegator, &delegation.delegate);
+
+            return None;
+        }
+
+        if delegation.is_active {
+            Some(delegation)
+        } else {
+            None
+        }
+    }
+
+    /// Get delegation history for an address.
+    pub fn get_delegation_history(env: Env, delegator: Address) -> Vec<types::DelegationHistory> {
+        storage::get_delegation_history(&env, &delegator)
+    }
+
+    // ========================================================================
+    // Private Delegation Helpers
+    // ========================================================================
+
+    /// Resolve delegation chain recursively up to max depth.
+    fn resolve_delegation_chain(env: &Env, voter: &Address, depth: u32) -> Address {
+        // Max depth check
+        if depth >= 3 {
+            return voter.clone();
+        }
+
+        // Get delegation
+        if let Some(delegation) = storage::get_delegation(env, voter) {
+            if !delegation.is_active {
+                return voter.clone();
+            }
+
+            // Check expiry
+            let current_ledger = env.ledger().sequence() as u64;
+            if delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger {
+                // Mark as expired
+                let mut expired_delegation = delegation.clone();
+                expired_delegation.is_active = false;
+                storage::set_delegation(env, &expired_delegation);
+
+                events::emit_delegation_expired(env, &delegation.delegator, &delegation.delegate);
+
+                return voter.clone();
+            }
+
+            // Follow the chain
+            Self::resolve_delegation_chain(env, &delegation.delegate, depth + 1)
+        } else {
+            voter.clone()
+        }
+    }
+
+    /// Get the depth of a delegation chain starting from an address.
+    fn get_delegation_chain_depth(env: &Env, voter: &Address) -> u32 {
+        Self::calculate_chain_depth(env, voter, 0)
+    }
+
+    /// Recursively calculate delegation chain depth.
+    fn calculate_chain_depth(env: &Env, voter: &Address, current_depth: u32) -> u32 {
+        if current_depth >= 3 {
+            return current_depth;
+        }
+
+        if let Some(delegation) = storage::get_delegation(env, voter) {
+            if delegation.is_active {
+                Self::calculate_chain_depth(env, &delegation.delegate, current_depth + 1)
+            } else {
+                current_depth
+            }
+        } else {
+            current_depth
+        }
+    }
+
+    /// Check for circular delegation (A->B->A or longer cycles).
+    fn check_circular_delegation(
+        env: &Env,
+        delegator: &Address,
+        delegate: &Address,
+    ) -> Result<(), VaultError> {
+        let mut visited = Vec::new(env);
+        visited.push_back(delegator.clone());
+
+        Self::detect_cycle(env, delegate, &visited)
+    }
+
+    /// Recursively detect cycles in delegation chain.
+    fn detect_cycle(
+        env: &Env,
+        current: &Address,
+        visited: &Vec<Address>,
+    ) -> Result<(), VaultError> {
+        // Check if we've seen this address before
+        for i in 0..visited.len() {
+            if let Some(addr) = visited.get(i) {
+                if addr == *current {
+                    return Err(VaultError::CircularDelegation);
+                }
+            }
+        }
+
+        // Max depth check
+        if visited.len() >= 3 {
+            return Ok(());
+        }
+
+        // Follow the chain
+        if let Some(delegation) = storage::get_delegation(env, current) {
+            if delegation.is_active {
+                let mut new_visited = visited.clone();
+                new_visited.push_back(current.clone());
+                Self::detect_cycle(env, &delegation.delegate, &new_visited)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Reject a pending proposal.
@@ -1583,6 +1896,29 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Update the voting strategy used for proposal approvals.
+    ///
+    /// Only Admin can update voting strategy.
+    pub fn update_voting_strategy(
+        env: Env,
+        admin: Address,
+        strategy: VotingStrategy,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        Self::validate_voting_strategy(&strategy)?;
+        storage::set_voting_strategy(&env, &strategy);
+        storage::extend_instance_ttl(&env);
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
     /// Extend voting deadline for a proposal (admin only)
     pub fn extend_voting_deadline(
         env: Env,
@@ -1756,6 +2092,11 @@ impl VaultDAO {
     pub fn is_signer(env: Env, addr: Address) -> Result<bool, VaultError> {
         let config = storage::get_config(&env)?;
         Ok(config.signers.contains(&addr))
+    }
+
+    /// Get currently configured voting strategy.
+    pub fn get_voting_strategy(env: Env) -> VotingStrategy {
+        storage::get_voting_strategy(&env)
     }
 
     /// Returns quorum status for a proposal as (quorum_votes, required_quorum, quorum_reached).
@@ -2625,6 +2966,54 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+<<<<<<< HEAD
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Snapshot check: voter must have been a signer at proposal creation
+        if !proposal.snapshot_signers.contains(&signer) {
+            return Err(VaultError::VoterNotInSnapshot);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger > proposal.expires_at {
+            proposal.status = ProposalStatus::Expired;
+            storage::set_proposal(&env, &proposal);
+            return Err(VaultError::ProposalExpired);
+        }
+
+        // Prevent voting twice (approving then abstaining, or abstaining twice)
+        if proposal.approvals.contains(&signer) || proposal.abstentions.contains(&signer) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        // Record the abstention
+        proposal.abstentions.push_back(signer.clone());
+
+        let abstention_count = proposal.abstentions.len();
+        let quorum_votes = proposal.approvals.len() + abstention_count;
+        let previous_quorum_votes = quorum_votes.saturating_sub(1);
+        let was_quorum_reached = config.quorum == 0 || previous_quorum_votes >= config.quorum;
+
+        // An abstention may push quorum over the line while approvals already meet threshold.
+        // Check both conditions and transition to Approved if they are now both satisfied.
+        let threshold_reached = Self::is_threshold_reached(&env, &config, &proposal);
+        let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
+        if config.quorum > 0 && !was_quorum_reached && quorum_reached {
+            events::emit_quorum_reached(&env, proposal_id, quorum_votes, config.quorum);
+        }
+
+        if threshold_reached && quorum_reached {
+            proposal.status = ProposalStatus::Approved;
+
+            if proposal.amount >= config.timelock_threshold {
+                proposal.unlock_ledger = current_ledger + config.timelock_delay;
+            } else {
+                proposal.unlock_ledger = 0;
+=======
         for id in start_id..=end_id {
             let entry = storage::get_audit_entry(&env, id)?;
             
@@ -2648,6 +3037,7 @@ impl VaultDAO {
                 if entry.prev_hash != prev_entry.hash {
                     return Ok(false);
                 }
+>>>>>>> e8f0c2c7a2d16d622769e1c4ceda0865df957a4c
             }
         }
 
@@ -2692,7 +3082,7 @@ impl VaultDAO {
                 continue;
             }
             // Skip if approvals/quorum are no longer satisfied
-            if Self::ensure_vote_requirements_satisfied(&config, &proposal).is_err() {
+            if Self::ensure_vote_requirements_satisfied(&env, &config, &proposal).is_err() {
                 failed_count += 1;
                 continue;
             }
@@ -3434,15 +3824,117 @@ impl VaultDAO {
         }
     }
 
+    fn integer_sqrt(value: i128) -> u32 {
+        if value <= 0 {
+            return 0;
+        }
+        let mut x = value as u128;
+        let mut y = x.div_ceil(2);
+        while y < x {
+            x = y;
+            y = (x + ((value as u128) / x)) / 2;
+        }
+        x as u32
+    }
+
+    fn validate_voting_strategy(strategy: &VotingStrategy) -> Result<(), VaultError> {
+        match strategy {
+            VotingStrategy::Simple => Ok(()),
+            VotingStrategy::Weighted {
+                required_weight, ..
+            } => {
+                if *required_weight <= 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                Ok(())
+            }
+            VotingStrategy::Quadratic {
+                required_voice_credits,
+                ..
+            } => {
+                if *required_voice_credits < 1 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                Ok(())
+            }
+            VotingStrategy::Conviction {
+                required_conviction,
+                growth_period,
+            } => {
+                if *required_conviction < 1 || *growth_period < 1 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn is_threshold_reached(env: &Env, config: &Config, proposal: &Proposal) -> bool {
+        let strategy = storage::get_voting_strategy(env);
+        match strategy {
+            VotingStrategy::Simple => {
+                proposal.approvals.len() >= Self::calculate_threshold(config, &proposal.amount)
+            }
+            VotingStrategy::Weighted {
+                governance_token,
+                required_weight,
+            } => {
+                let token_client = soroban_sdk::token::Client::new(env, &governance_token);
+                let mut total_weight: i128 = 0;
+                for i in 0..proposal.approvals.len() {
+                    if let Some(voter) = proposal.approvals.get(i) {
+                        let bal = token_client.balance(&voter);
+                        if bal > 0 {
+                            total_weight = total_weight.saturating_add(bal);
+                        }
+                    }
+                }
+                total_weight >= required_weight
+            }
+            VotingStrategy::Quadratic {
+                governance_token,
+                required_voice_credits,
+            } => {
+                let token_client = soroban_sdk::token::Client::new(env, &governance_token);
+                let mut total_credits: u32 = 0;
+                for i in 0..proposal.approvals.len() {
+                    if let Some(voter) = proposal.approvals.get(i) {
+                        let bal = token_client.balance(&voter);
+                        total_credits = total_credits.saturating_add(Self::integer_sqrt(bal));
+                    }
+                }
+                total_credits >= required_voice_credits
+            }
+            VotingStrategy::Conviction {
+                required_conviction,
+                growth_period,
+            } => {
+                let current_ledger = env.ledger().sequence() as u64;
+                let mut conviction: u32 = 0;
+                for i in 0..proposal.approvals.len() {
+                    if let Some(voter) = proposal.approvals.get(i) {
+                        let approved_at = storage::get_approval_ledger(env, proposal.id, &voter)
+                            .unwrap_or(proposal.created_at);
+                        let age = current_ledger.saturating_sub(approved_at);
+                        let bonus_steps = (age / growth_period) as u32;
+                        let bonus_capped = bonus_steps.min(3);
+                        conviction = conviction.saturating_add(1 + bonus_capped);
+                    }
+                }
+                conviction >= required_conviction
+            }
+        }
+    }
+
     /// Validate that approvals and quorum participation both satisfy current requirements.
     fn ensure_vote_requirements_satisfied(
+        env: &Env,
         config: &Config,
         proposal: &Proposal,
     ) -> Result<(), VaultError> {
         let approval_count = proposal.approvals.len();
         let quorum_votes = approval_count + proposal.abstentions.len();
-        let threshold_reached =
-            approval_count >= Self::calculate_threshold(config, &proposal.amount);
+        let threshold_reached = Self::is_threshold_reached(env, config, proposal);
         let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
         if !threshold_reached {
             return Err(VaultError::ProposalNotApproved);
@@ -3863,7 +4355,7 @@ impl VaultDAO {
         }
 
         // Validate DEX is enabled
-        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexNotEnabled)?;
+        let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
 
         // Validate DEX address
         let dex_addr = match &swap_op {
@@ -3876,7 +4368,7 @@ impl VaultDAO {
         };
 
         if !dex_config.enabled_dexs.contains(dex_addr) {
-            return Err(VaultError::DexNotEnabled);
+            return Err(VaultError::DexError);
         }
 
         config.pre_execution_hooks.push_back(hook.clone());
@@ -3903,7 +4395,7 @@ impl VaultDAO {
             conditions,
             condition_logic,
             created_at: current_ledger as u64,
-            expires_at: (current_ledger + PROPOSAL_EXPIRY_LEDGERS as u32) as u64,
+            expires_at: calculate_expiration_ledger(&config, &priority, current_ledger as u64),
             unlock_ledger: unlock_ledger as u64,
             execution_time: None,
             insurance_amount,
@@ -3947,7 +4439,7 @@ impl VaultDAO {
         if role != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
-        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
+        Self::ensure_vote_requirements_satisfied(&env, &config, &proposal)?;
 
         let mut config = storage::get_config(&env)?;
         if config.post_execution_hooks.contains(&hook) {
@@ -4410,7 +4902,7 @@ impl VaultDAO {
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
-        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
+        Self::ensure_vote_requirements_satisfied(&env, &config, &proposal)?;
 
         let mut cross_vault = storage::get_cross_vault_proposal(&env, proposal_id)
             .ok_or(VaultError::ProposalNotFound)?;

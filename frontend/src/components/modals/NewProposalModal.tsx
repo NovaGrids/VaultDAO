@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Users } from 'lucide-react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import FileUploader, { type UploadedAttachment } from '../FileUploader';
 import FormRenderer from '../FormRenderer';
