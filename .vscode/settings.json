@@ -1,1 +1,10 @@
-{}
+{
+ feature/proposal-comparison-tool
+ feature/proposal-comparison-tool
+
+ feature/notification-and-comparison-tools
+
+
+    "typescript.autoClosingTags": false
+
+}

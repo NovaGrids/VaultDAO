@@ -23,6 +23,19 @@ const Activity: React.FC = () => {
   const [showExportModal, setShowExportModal] = useState(false);
   const [activeTab, setActiveTab] = useState<ActivityTab>('activity');
 
+  // Subscribe to real-time activity updates
+  useEffect(() => {
+    updatePresence('online', 'Activity');
+
+    const unsubscribe = subscribe('activity_new', (data: ActivityLike) => {
+      setActivities((prev) => [data, ...prev]);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [subscribe, updatePresence]);
+
   const exportDatasets: ExportDatasets = useMemo(() => {
     const activityRows = loadedTransactions.map((tx) => ({
       id: tx.id,
