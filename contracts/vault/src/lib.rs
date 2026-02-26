@@ -2492,6 +2492,44 @@ impl VaultDAO {
             
             // Verify hash computation
             let computed_hash = storage::compute_audit_hash(
+                &env,
+                &entry.action,
+                &entry.actor,
+                entry.target,
+                entry.timestamp,
+                entry.prev_hash,
+            );
+            
+            if computed_hash != entry.hash {
+                return Ok(false);
+            }
+            
+            // Verify chain linkage (except for first entry)
+            if id > 1 {
+                let prev_entry = storage::get_audit_entry(&env, id - 1)?;
+                if entry.prev_hash != prev_entry.hash {
+                    return Ok(false);
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    // ========================================================================
+    // Batch Execution
+    // ========================================================================
+
+    /// Execute multiple approved proposals in a single transaction.
+    ///
+    /// Gas-optimized batch execution. Skips proposals that fail validation.
+    /// Returns the list of successfully executed proposal IDs and the count of failures.
+    pub fn batch_execute_proposals(
+        env: Env,
+        executor: Address,
+        proposal_ids: Vec<u64>,
+    ) -> Result<(Vec<u64>, u32), VaultError> {
+        executor.require_auth();
         // Load config once (gas optimization — avoids repeated storage reads)
         let config = storage::get_config(&env)?;
 
