@@ -37,7 +37,8 @@ use types::{
 #[contract]
 pub struct VaultDAO;
 
-/// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
+/// Proposal expiration: ~7 days in ledgers (5 seconds per ledger) - DEPRECATED, use ExpirationConfig
+#[allow(dead_code)]
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
 /// Ledger interval in seconds (approximate)
@@ -695,7 +696,7 @@ impl VaultDAO {
                 conditions: conditions.clone(),
                 condition_logic: condition_logic.clone(),
                 created_at: current_ledger,
-                expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+                expires_at: calculate_expiration_ledger(&config, &priority, current_ledger),
                 unlock_ledger: 0,
                 execution_time: None,
                 insurance_amount: insurance_per_proposal,
@@ -790,11 +791,13 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        // Check expiration
+        // Check expiration (only if expiration is enabled, i.e., expires_at > 0)
         let current_ledger = env.ledger().sequence() as u64;
-        if current_ledger > proposal.expires_at {
+        if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
+            storage::metrics_on_expiry(&env);
+            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
             return Err(VaultError::ProposalExpired);
         }
 
@@ -932,6 +935,7 @@ impl VaultDAO {
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_expiry(&env);
+            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
             return Err(VaultError::ProposalExpired);
         }
 
@@ -4195,7 +4199,7 @@ impl VaultDAO {
             conditions,
             condition_logic,
             created_at: current_ledger as u64,
-            expires_at: (current_ledger + PROPOSAL_EXPIRY_LEDGERS as u32) as u64,
+            expires_at: calculate_expiration_ledger(&config, &priority, current_ledger as u64),
             unlock_ledger: unlock_ledger as u64,
             execution_time: None,
             insurance_amount,
