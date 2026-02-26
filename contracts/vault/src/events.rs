@@ -150,6 +150,18 @@ pub fn emit_config_updated(env: &Env, updater: &Address) {
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
 }
 
+// ============================================================================
+// Oracle Events (feature/oracle-integration)
+// ============================================================================
+
+/// Emit when oracle configuration is updated by admin
+pub fn emit_oracle_config_updated(env: &Env, admin: &Address, oracle: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "oracle_cfg_updated"),),
+        (admin.clone(), oracle.clone()),
+    );
+}
+
 /// Emit when quorum configuration is updated by admin
 pub fn emit_quorum_updated(env: &Env, admin: &Address, old_quorum: u32, new_quorum: u32) {
     env.events().publish(

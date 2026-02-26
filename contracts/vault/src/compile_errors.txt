@@ -1,0 +1,124 @@
+   Compiling vault_dao v0.1.0 (/Users/victor/Desktop/VaultDAO/contracts/vault)
+error[E0063]: missing field `oracle_config` in initializer of `InitConfig`
+    --> src/test.rs:3796:22
+     |
+3796 |         let config = InitConfig {
+     |                      ^^^^^^^^^^ missing `oracle_config`
+...
+3829 |   ...contract_id);
+     |   ...------------ in this macro invocation
+     |
+     = note: this error originates in the macro `setup_retry_test` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0063]: missing field `oracle_config` in initializer of `InitConfig`
+    --> src/test.rs:3796:22
+     |
+3796 |         let config = InitConfig {
+     |                      ^^^^^^^^^^ missing `oracle_config`
+...
+3862 |   ...contract_id);
+     |   ...------------ in this macro invocation
+     |
+     = note: this error originates in the macro `setup_retry_test` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0063]: missing field `oracle_config` in initializer of `InitConfig`
+    --> src/test.rs:3796:22
+     |
+3796 |         let config = InitConfig {
+     |                      ^^^^^^^^^^ missing `oracle_config`
+...
+3889 |   ...contract_id);
+     |   ...------------ in this macro invocation
+     |
+     = note: this error originates in the macro `setup_retry_test` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0063]: missing field `oracle_config` in initializer of `InitConfig`
+    --> src/test.rs:3796:22
+     |
+3796 |         let config = InitConfig {
+     |                      ^^^^^^^^^^ missing `oracle_config`
+...
+3925 |   ...contract_id);
+     |   ...------------ in this macro invocation
+     |
+     = note: this error originates in the macro `setup_retry_test` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0063]: missing field `oracle_config` in initializer of `InitConfig`
+    --> src/test.rs:3796:22
+     |
+3796 |         let config = InitConfig {
+     |                      ^^^^^^^^^^ missing `oracle_config`
+...
+4039 |   ...contract_id);
+     |   ...------------ in this macro invocation
+     |
+     = note: this error originates in the macro `setup_retry_test` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0063]: missing field `oracle_config` in initializer of `InitConfig`
+    --> src/test.rs:3796:22
+     |
+3796 |         let config = InitConfig {
+     |                      ^^^^^^^^^^ missing `oracle_config`
+...
+4124 |   ...contract_id);
+     |   ...------------ in this macro invocation
+     |
+     = note: this error originates in the macro `setup_retry_test` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `ScVal: TryFrom<...>` is not satisfied
+  --> src/types.rs:23:1
+   |
+23 | #[contracttype]
+   | ^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `From<types::OracleConfig>` is not implemented for `ScVal`
+   = help: the following other types implement trait `From<T>`:
+             `&ScVal` implements `From<ScValObjRef<'_>>`
+             `ScVal` implements `From<&()>`
+             `ScVal` implements `From<&Fp2>`
+             `ScVal` implements `From<&Fr>`
+             `ScVal` implements `From<&G1Affine>`
+             `ScVal` implements `From<&G2Affine>`
+             `ScVal` implements `From<&bool>`
+             `ScVal` implements `From<&...>`
+           and 48 others
+   = note: required for `OracleConfig` to implement `Into<ScVal>`
+   = note: required for `ScVal` to implement `From<&...>`
+   = note: 1 redundant requirement hidden
+   = note: required for `&Option<...>` to implement `Into<ScVal>`
+   = note: required for `ScVal` to implement `TryFrom<&...>`
+   = note: required for `&Option<...>` to implement `TryInto<ScVal>`
+   = note: the full name for the type has been written to '/Users/victor/Desktop/VaultDAO/contracts/vault/target/debug/deps/vault_dao-712ddb44c42883d3.long-type-5234559589154662786.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+   = note: this error originates in the attribute macro `contracttype` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `ScVal: TryFrom<...>` is not satisfied
+  --> src/types.rs:77:1
+   |
+77 | #[contracttype]
+   | ^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `From<types::OracleConfig>` is not implemented for `ScVal`
+   = help: the following other types implement trait `From<T>`:
+             `&ScVal` implements `From<ScValObjRef<'_>>`
+             `ScVal` implements `From<&()>`
+             `ScVal` implements `From<&Fp2>`
+             `ScVal` implements `From<&Fr>`
+             `ScVal` implements `From<&G1Affine>`
+             `ScVal` implements `From<&G2Affine>`
+             `ScVal` implements `From<&bool>`
+             `ScVal` implements `From<&...>`
+           and 48 others
+   = note: required for `OracleConfig` to implement `Into<ScVal>`
+   = note: required for `ScVal` to implement `From<&...>`
+   = note: 1 redundant requirement hidden
+   = note: required for `&Option<...>` to implement `Into<ScVal>`
+   = note: required for `ScVal` to implement `TryFrom<&...>`
+   = note: required for `&Option<...>` to implement `TryInto<ScVal>`
+   = note: the full name for the type has been written to '/Users/victor/Desktop/VaultDAO/contracts/vault/target/debug/deps/vault_dao-712ddb44c42883d3.long-type-5234559589154662786.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+   = note: this error originates in the attribute macro `contracttype` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+Some errors have detailed explanations: E0063, E0277.
+For more information about an error, try `rustc --explain E0063`.
+error: could not compile `vault_dao` (lib test) due to 8 previous errors

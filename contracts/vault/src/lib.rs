@@ -14,8 +14,6 @@ mod test;
 mod token;
 mod types;
 
-pub use types::InitConfig;
-
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
 use types::{
@@ -113,6 +111,7 @@ impl VaultDAO {
             default_voting_deadline: config.default_voting_deadline,
             retry_config: config.retry_config,
             recovery_config: config.recovery_config,
+            oracle_config: config.oracle_config.clone(),
         };
 
         // Store state
@@ -3097,7 +3096,7 @@ impl VaultDAO {
             ThresholdStrategy::Fixed => config.threshold,
             ThresholdStrategy::Percentage(pct) => {
                 let signers = config.signers.len() as u64;
-                (signers * (*pct as u64)).div_ceil(100).max(1) as u32
+                (signers * (u64::from(*pct))).div_ceil(100).max(1) as u32
             }
             ThresholdStrategy::AmountBased(tiers) => {
                 // Find the highest tier whose amount is <= proposal amount
@@ -3150,6 +3149,20 @@ impl VaultDAO {
                     }
                     Condition::DateAfter(after_ledger) => current_ledger > after_ledger,
                     Condition::DateBefore(before_ledger) => current_ledger < before_ledger,
+                    Condition::PriceAbove(asset, threshold) => {
+                        if let Ok(price) = Self::get_asset_price(env, asset.clone()) {
+                            price >= threshold
+                        } else {
+                            false
+                        }
+                    }
+                    Condition::PriceBelow(asset, threshold) => {
+                        if let Ok(price) = Self::get_asset_price(env, asset.clone()) {
+                            price <= threshold
+                        } else {
+                            false
+                        }
+                    }
                 };
                 results.push_back(satisfied);
             }
@@ -3183,6 +3196,77 @@ impl VaultDAO {
         } else {
             Err(VaultError::ProposalNotApproved) // repurpose for "conditions not met"
         }
+    }
+
+    /// Update the oracle configuration.
+    pub fn update_oracle_config(
+        env: Env,
+        admin: Address,
+        oracle_config: crate::VaultOracleConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut config = storage::get_config(&env)?;
+        config.oracle_config = crate::OptionalVaultOracleConfig::Some(oracle_config.clone());
+        storage::set_config(&env, &config);
+        storage::set_oracle_config(
+            &env,
+            &crate::OptionalVaultOracleConfig::Some(oracle_config.clone()),
+        );
+        events::emit_oracle_config_updated(&env, &admin, &oracle_config.address);
+        Ok(())
+    }
+
+    /// Get the current price of an asset in USD from the configured oracle.
+    pub fn get_asset_price(env: &Env, asset: Address) -> Result<i128, VaultError> {
+        let config = storage::get_config(env)?;
+        let oracle_cfg = match config.oracle_config {
+            crate::OptionalVaultOracleConfig::Some(cfg) => cfg,
+            crate::OptionalVaultOracleConfig::None => return Err(VaultError::NotInitialized),
+        };
+
+        // Interface with standard Oracle contract
+        // lastprice(asset: Address) -> Option<VaultPriceData>
+        let price_data: Option<VaultPriceData> = env.invoke_contract(
+            &oracle_cfg.address,
+            &Symbol::new(env, "lastprice"),
+            Vec::from_array(env, [asset.into_val(env)]),
+        );
+
+        match price_data {
+            Some(data) => {
+                let current_ledger = env.ledger().sequence() as u64;
+                if current_ledger.saturating_sub(data.timestamp) > oracle_cfg.max_staleness as u64 {
+                    return Err(VaultError::RetryError); // Staleness error
+                }
+                Ok(data.price)
+            }
+            None => Err(VaultError::InvalidAmount), // Price not found
+        }
+    }
+
+    /// Convert a token amount to USD using the oracle price.
+    pub fn convert_to_usd(env: &Env, asset: Address, amount: i128) -> Result<i128, VaultError> {
+        let price = Self::get_asset_price(env, asset)?;
+        // Assuming price is scaled by some fixed decimals (e.g. 7 or 14)
+        // result = amount * price / 10^decimals
+        Ok(amount.saturating_mul(price) / 10_000_000)
+    }
+
+    pub fn get_portfolio_valuation(env: Env, assets: Vec<Address>) -> Result<i128, VaultError> {
+        let mut total_usd = 0i128;
+
+        for asset in assets.into_iter() {
+            let balance = token::balance(&env, &asset);
+            if balance > 0 {
+                let usd_value = Self::convert_to_usd(&env, asset, balance)?;
+                total_usd = total_usd.saturating_add(usd_value);
+            }
+        }
+
+        Ok(total_usd)
     }
 
     /// Award small reputation boost when a proposal is created.

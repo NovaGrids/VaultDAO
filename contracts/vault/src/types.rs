@@ -19,6 +19,33 @@
 
 use soroban_sdk::{contracttype, Address, Env, Map, String, Symbol, Vec};
 
+/// Oracle configuration for price feeds
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VaultOracleConfig {
+    /// Address of the oracle contract
+    pub address: Address,
+    /// Asset symbol for the base currency (e.g., USD)
+    pub base_symbol: Symbol,
+    /// Maximum ledgers before price is considered stale
+    pub max_staleness: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OptionalVaultOracleConfig {
+    None,
+    Some(VaultOracleConfig),
+}
+
+/// Price data from an oracle
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VaultPriceData {
+    pub price: i128,
+    pub timestamp: u64,
+}
+
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -49,6 +76,8 @@ pub struct InitConfig {
     pub retry_config: RetryConfig,
     /// Recovery configuration
     pub recovery_config: RecoveryConfig,
+    /// Oracle configuration for price feeds
+    pub oracle_config: OptionalVaultOracleConfig,
 }
 
 /// Vault configuration
@@ -83,6 +112,8 @@ pub struct Config {
     pub retry_config: RetryConfig,
     /// Recovery configuration
     pub recovery_config: RecoveryConfig,
+    /// Oracle configuration for price feeds
+    pub oracle_config: OptionalVaultOracleConfig,
 }
 
 /// Audit record for a cancelled proposal
@@ -242,6 +273,10 @@ pub enum Condition {
     DateAfter(u64),
     /// Execute only before this ledger sequence
     DateBefore(u64),
+    /// Execute only when asset price is above threshold (in USD)
+    PriceAbove(Address, i128),
+    /// Execute only when asset price is below threshold (in USD)
+    PriceBelow(Address, i128),
 }
 
 /// Logic for combining multiple conditions
@@ -445,8 +480,8 @@ pub struct Reputation {
     pub last_decay_ledger: u64,
 }
 
-impl Reputation {
-    pub fn default() -> Self {
+impl Default for Reputation {
+    fn default() -> Self {
         Reputation {
             score: 500, // Start at neutral 500/1000
             proposals_executed: 0,
@@ -494,8 +529,8 @@ pub struct NotificationPreferences {
     pub notify_on_expiry: bool,
 }
 
-impl NotificationPreferences {
-    pub fn default() -> Self {
+impl Default for NotificationPreferences {
+    fn default() -> Self {
         NotificationPreferences {
             notify_on_proposal: true,
             notify_on_approval: true,
@@ -524,8 +559,8 @@ pub struct GasConfig {
     pub condition_cost: u64,
 }
 
-impl GasConfig {
-    pub fn default() -> Self {
+impl Default for GasConfig {
+    fn default() -> Self {
         GasConfig {
             enabled: false,
             default_gas_limit: 0,
@@ -555,7 +590,7 @@ pub struct ExecutionFeeEstimate {
 
 /// Vault-wide cumulative performance metrics
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct VaultMetrics {
     /// Total number of proposals ever created
     pub total_proposals: u64,
@@ -574,18 +609,6 @@ pub struct VaultMetrics {
 }
 
 impl VaultMetrics {
-    pub fn default() -> Self {
-        VaultMetrics {
-            total_proposals: 0,
-            executed_count: 0,
-            rejected_count: 0,
-            expired_count: 0,
-            total_execution_time_ledgers: 0,
-            total_gas_used: 0,
-            last_updated_ledger: 0,
-        }
-    }
-
     /// Success rate in basis points (0-10000)
     pub fn success_rate_bps(&self) -> u32 {
         let total = self.executed_count + self.rejected_count + self.expired_count;
