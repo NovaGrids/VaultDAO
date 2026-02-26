@@ -1166,6 +1166,70 @@ pub fn add_subscriber_subscription(env: &Env, subscriber: &Address, subscription
 */
 
 // ============================================================================
+// Delegation (Issue: feature/proposal-delegation)
+// ============================================================================
+
+pub fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Delegation(delegator.clone()))
+}
+
+pub fn set_delegation(env: &Env, delegation: &Delegation) {
+    let key = DataKey::Delegation(delegation.delegator.clone());
+    env.storage().persistent().set(&key, delegation);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_delegation_history(env: &Env, delegator: &Address) -> Vec<DelegationHistory> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DelegationHistory(delegator.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn add_delegation_history(env: &Env, history: &DelegationHistory) {
+    let mut history_list = get_delegation_history(env, &history.delegator);
+    history_list.push_back(history.clone());
+    let key = DataKey::DelegationHistory(history.delegator.clone());
+    env.storage().persistent().set(&key, &history_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn update_delegation_history(env: &Env, history: &DelegationHistory) {
+    let history_list = get_delegation_history(env, &history.delegator);
+    let mut updated_list: Vec<DelegationHistory> = Vec::new(env);
+    for entry in history_list.iter() {
+        if entry.id == history.id {
+            updated_list.push_back(history.clone());
+        } else {
+            updated_list.push_back(entry);
+        }
+    }
+    let key = DataKey::DelegationHistory(history.delegator.clone());
+    env.storage().persistent().set(&key, &updated_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn increment_delegation_history_id(env: &Env) -> u64 {
+    let id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextDelegationHistoryId)
+        .unwrap_or(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDelegationHistoryId, &(id + 1));
+    id
+}
+
+// ============================================================================
 // Escrow (Issue: feature/escrow-system)
 // ============================================================================
 

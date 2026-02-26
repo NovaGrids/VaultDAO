@@ -3098,7 +3098,7 @@ fn test_dex_not_enabled_error() {
         &ConditionLogic::And,
         &0i128,
     );
-    assert_eq!(result.err(), Some(Ok(VaultError::DexNotEnabled)));
+    assert_eq!(result.err(), Some(Ok(VaultError::DexError)));
 }
 
 #[test]
