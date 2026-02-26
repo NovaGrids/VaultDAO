@@ -931,3 +931,41 @@ impl Escrow {
         (self.total_amount * completed_percentage as i128) / 100 - self.released_amount
     }
 }
+
+// ============================================================================
+// Delegation Types (Issue: feature/proposal-delegation)
+// ============================================================================
+
+/// Delegation of voting power from one signer to another
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Delegation {
+    /// Address delegating their voting power
+    pub delegator: Address,
+    /// Address receiving the delegated voting power
+    pub delegate: Address,
+    /// Ledger number when delegation expires (0 = no expiry)
+    pub expiry_ledger: u64,
+    /// Ledger when delegation was created
+    pub created_at: u64,
+    /// Whether delegation is currently active
+    pub is_active: bool,
+}
+
+/// Historical record of delegation changes
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DelegationHistory {
+    /// Unique ID for this history entry
+    pub id: u64,
+    /// Address that delegated
+    pub delegator: Address,
+    /// Address that received delegation
+    pub delegate: Address,
+    /// Ledger when this delegation was created
+    pub created_at: u64,
+    /// Ledger when this delegation was revoked/expired (0 if still active)
+    pub ended_at: u64,
+    /// Reason for ending: "revoked", "expired", or "active"
+    pub end_reason: Symbol,
+}

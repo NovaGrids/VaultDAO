@@ -987,7 +987,7 @@ impl VaultDAO {
             delegate: delegate.clone(),
             created_at: current_ledger,
             ended_at: 0,
-            was_revoked: false,
+            end_reason: Symbol::new(&env, "active"),
         };
         storage::add_delegation_history(&env, &history);
 
@@ -1026,7 +1026,7 @@ impl VaultDAO {
             if let Some(mut entry) = history_list.get(i) {
                 if entry.ended_at == 0 && entry.delegate == delegation.delegate {
                     entry.ended_at = env.ledger().sequence() as u64;
-                    entry.was_revoked = true;
+                    entry.end_reason = Symbol::new(&env, "revoked");
                     storage::update_delegation_history(&env, &entry);
                     break;
                 }

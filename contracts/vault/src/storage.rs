@@ -22,15 +22,10 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-<<<<<<< HEAD
-    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, GasConfig,
-    InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment,
-    ProposalTemplate, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
-=======
     Comment, Config, CrossVaultConfig, CrossVaultProposal, Delegation, DelegationHistory, Dispute,
-    GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal, Reputation,
-    RetryState, Role, VaultMetrics, VelocityConfig,
->>>>>>> 1cb1cb4 (Fix CI compilation errors for delegation infrastructure)
+    Escrow, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
+    ProposalAmendment, ProposalTemplate, Reputation, RetryState, Role, VaultMetrics,
+    VelocityConfig,
 };
 
 /// Storage key definitions
@@ -125,6 +120,12 @@ pub enum DataKey {
     RecipientEscrows(Address),
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
+    /// Delegation by delegator address -> Delegation
+    Delegation(Address),
+    /// Delegation history by delegator address -> Vec<DelegationHistory>
+    DelegationHistory(Address),
+    /// Next delegation history ID counter -> u64
+    NextDelegationHistoryId,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1003,12 +1004,9 @@ pub fn set_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 // ============================================================================
-// Escrow (Issue: feature/escrow-system)
+// Delegation (Issue: feature/proposal-delegation)
 // ============================================================================
 
-<<<<<<< HEAD
-pub fn get_next_escrow_id(env: &Env) -> u64 {
-=======
 pub fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
     env.storage()
         .persistent()
@@ -1057,8 +1055,23 @@ pub fn update_delegation_history(env: &Env, history: &DelegationHistory) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
-pub fn get_next_delegation_history_id(env: &Env) -> u64 {
->>>>>>> 1cb1cb4 (Fix CI compilation errors for delegation infrastructure)
+pub fn increment_delegation_history_id(env: &Env) -> u64 {
+    let id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextDelegationHistoryId)
+        .unwrap_or(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDelegationHistoryId, &(id + 1));
+    id
+}
+
+// ============================================================================
+// Escrow (Issue: feature/escrow-system)
+// ============================================================================
+
+pub fn get_next_escrow_id(env: &Env) -> u64 {
     env.storage()
         .instance()
         .get(&DataKey::NextEscrowId)

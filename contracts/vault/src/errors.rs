@@ -95,4 +95,12 @@ pub enum VaultError {
     TemplateNotFound = 210,
     TemplateInactive = 211,
     TemplateValidationFailed = 212,
+
+    // Delegation errors
+    DelegationError = 220,
+    DelegationChainTooLong = 221,
+    CircularDelegation = 222,
+
+    // DEX errors (additional)
+    DexError = 230,
 }
