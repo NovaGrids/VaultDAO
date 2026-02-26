@@ -470,6 +470,7 @@ pub struct VelocityConfig {
     pub window: u64,
 }
 
+/// Audit action types
 // ============================================================================
 // Reputation System (Issue: feature/reputation-system)
 // ============================================================================
@@ -698,81 +699,61 @@ pub struct SwapResult {
 /// Chain identifier for cross-chain operations
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ChainId {
-    Stellar,
-    Ethereum,
-    Polygon,
-    Arbitrum,
-    Optimism,
+#[repr(u32)]
+pub enum AuditAction {
+    Initialize = 0,
+    ProposeTransfer = 1,
+    ApproveProposal = 2,
+    ExecuteProposal = 3,
+    RejectProposal = 4,
+    SetRole = 5,
+    AddSigner = 6,
+    RemoveSigner = 7,
+    UpdateLimits = 8,
+    UpdateThreshold = 9,
 }
 
-/// Cross-chain asset representation
+/// Audit trail entry with cryptographic verification
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct CrossChainAsset {
-    pub chain: ChainId,
-    pub token_address: String,
-    pub decimals: u32,
-    pub confirmations: u32,
-    pub required_confirmations: u32,
-    pub status: u32,
+pub struct AuditEntry {
+    /// Unique entry ID
+    pub id: u64,
+    /// Action performed
+    pub action: AuditAction,
+    /// Actor who performed the action
+    pub actor: Address,
+    /// Target of the action (proposal ID, address, etc.)
+    pub target: u64,
+    /// Ledger timestamp
+    pub timestamp: u64,
+    /// Hash of previous entry (chain integrity)
+    pub prev_hash: u64,
+    /// Hash of this entry
+    pub hash: u64,
 }
 
-/// Cross-chain transfer proposal
+/// Recipient list mode
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct CrossChainProposal {
-    pub target_chain: ChainId,
-    pub recipient: String,
-    pub amount: i128,
-    pub asset: CrossChainAsset,
-    pub bridge_fee: i128,
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ListMode {
+    Disabled = 0,
+    Whitelist = 1,
+    Blacklist = 2,
 }
 
-/// Bridge configuration
+/// Comment on a proposal
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct BridgeConfig {
-    pub enabled_chains: Vec<ChainId>,
-    pub max_bridge_amount: i128,
-    pub fee_bps: u32,
-    pub min_confirmations: Vec<ChainConfirmation>,
-}
-
-/// Minimum confirmations per chain
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct ChainConfirmation {
-    pub chain_id: ChainId,
-    pub confirmations: u32,
-}
-
-/// Cross-chain transfer parameters
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct CrossChainTransferParams {
-    pub chain: ChainId,
-    pub recipient: String,
-    pub amount: i128,
-    pub token: Address,
-}
-
-// ============================================================================
-// Multi-Token Batch Transfers (Issue: feature/multi-token-batch-transfers)
-// ============================================================================
-
-/// Transfer details for batch operations supporting multiple tokens
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct TransferDetails {
-    /// Recipient of the transfer
-    pub recipient: Address,
-    /// Token contract address
-    pub token: Address,
-    /// Amount to transfer
-    pub amount: i128,
-    /// Optional memo
-    pub memo: Symbol,
+pub struct Comment {
+    pub id: u64,
+    pub proposal_id: u64,
+    pub author: Address,
+    pub text: Symbol,
+    pub parent_id: u64,
+    pub created_at: u64,
+    pub edited_at: u64,
 }
 
 // ============================================================================

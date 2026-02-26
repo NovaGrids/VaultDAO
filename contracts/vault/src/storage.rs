@@ -21,6 +21,8 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
+use crate::types::{AuditEntry, Comment, Config, Proposal, Role, VelocityConfig};
+use soroban_sdk::Vec as SdkVec;
 use crate::types::{
     Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, FeeStructure,
     GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment,
@@ -53,24 +55,24 @@ pub enum DataKey {
     NextRecurringId,
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
-    /// Cancellation record for a proposal -> CancellationRecord
-    CancellationRecord(u64),
-    /// List of all cancelled proposal IDs -> Vec<u64>
-    CancellationHistory,
-    /// Amendment history for a proposal -> Vec<ProposalAmendment>
-    AmendmentHistory(u64),
-    /// Recipient list mode -> ListMode
+    /// Recipient list mode
     ListMode,
-    /// Whitelist flag for address -> bool
+    /// Whitelist entry
     Whitelist(Address),
-    /// Blacklist flag for address -> bool
+    /// Blacklist entry
     Blacklist(Address),
-    /// Comment by ID -> Comment
+    /// Comment by ID
     Comment(u64),
-    /// Next comment ID counter -> u64
-    NextCommentId,
-    /// Comment IDs per proposal -> Vec<u64>
+    /// Comments for a proposal
     ProposalComments(u64),
+    /// Next comment ID counter
+    NextCommentId,
+    /// Audit entry by ID
+    AuditEntry(u64),
+    /// Next audit entry ID counter
+    NextAuditId,
+    /// Last audit entry hash
+    LastAuditHash,
     /// Proposal IPFS attachment hashes -> Vec<String>
     Attachments(u64),
     /// Reputation record per address -> Reputation
@@ -694,6 +696,25 @@ pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
 }
 
 // ============================================================================
+// Audit Trail
+// ============================================================================
+
+pub fn get_next_audit_id(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::NextAuditId).unwrap_or(1)
+}
+
+pub fn increment_audit_id(env: &Env) -> u64 {
+    let id = get_next_audit_id(env);
+    env.storage().instance().set(&DataKey::NextAuditId, &(id + 1));
+    id
+}
+
+pub fn get_last_audit_hash(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::LastAuditHash).unwrap_or(0)
+}
+
+pub fn set_last_audit_hash(env: &Env, hash: u64) {
+    env.storage().instance().set(&DataKey::LastAuditHash, &hash);
 // Attachments
 // ============================================================================
 
@@ -929,38 +950,43 @@ pub fn set_metrics(env: &Env, metrics: &VaultMetrics) {
     env.storage().instance().set(&FeatureKey::Metrics, metrics);
 }
 
-/// Increment proposal counter in metrics
-pub fn metrics_on_proposal(env: &Env) {
-    let mut m = get_metrics(env);
-    m.total_proposals += 1;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn set_audit_entry(env: &Env, entry: &AuditEntry) {
+    let key = DataKey::AuditEntry(entry.id);
+    env.storage().persistent().set(&key, entry);
+    env.storage().persistent().extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
-/// Record a successful execution in metrics
-pub fn metrics_on_execution(env: &Env, gas_used: u64, execution_time_ledgers: u64) {
-    let mut m = get_metrics(env);
-    m.executed_count += 1;
-    m.total_gas_used += gas_used;
-    m.total_execution_time_ledgers += execution_time_ledgers;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn get_audit_entry(env: &Env, id: u64) -> Result<AuditEntry, VaultError> {
+    env.storage().persistent().get(&DataKey::AuditEntry(id)).ok_or(VaultError::ProposalNotFound)
 }
 
-/// Record a rejection in metrics
-pub fn metrics_on_rejection(env: &Env) {
-    let mut m = get_metrics(env);
-    m.rejected_count += 1;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn compute_audit_hash(env: &Env, action: &crate::types::AuditAction, actor: &Address, target: u64, timestamp: u64, prev_hash: u64) -> u64 {
+    let mut hash = prev_hash;
+    hash = hash.wrapping_mul(31).wrapping_add(*action as u64);
+    hash = hash.wrapping_mul(31).wrapping_add(actor.to_string().len() as u64);
+    hash = hash.wrapping_mul(31).wrapping_add(target);
+    hash = hash.wrapping_mul(31).wrapping_add(timestamp);
+    hash
 }
 
-/// Record an expiry in metrics
-pub fn metrics_on_expiry(env: &Env) {
-    let mut m = get_metrics(env);
-    m.expired_count += 1;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn create_audit_entry(env: &Env, action: crate::types::AuditAction, actor: &Address, target: u64) {
+    let id = increment_audit_id(env);
+    let timestamp = env.ledger().sequence() as u64;
+    let prev_hash = get_last_audit_hash(env);
+    let hash = compute_audit_hash(env, &action, actor, target, timestamp, prev_hash);
+    
+    let entry = AuditEntry {
+        id,
+        action,
+        actor: actor.clone(),
+        target,
+        timestamp,
+        prev_hash,
+        hash,
+    };
+    
+    set_audit_entry(env, &entry);
+    set_last_audit_hash(env, hash);
 }
 
 // ============================================================================
