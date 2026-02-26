@@ -156,6 +156,31 @@ pub enum ThresholdStrategy {
     TimeBased(TimeBasedThreshold),
 }
 
+/// Voting strategy used to determine whether a proposal has enough voting power.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum VotingStrategy {
+    /// Original behavior: approval count must satisfy threshold strategy.
+    Simple,
+    /// Sum of voting-token balances of approvers must meet required_weight.
+    Weighted {
+        governance_token: Address,
+        required_weight: i128,
+    },
+    /// Sum of sqrt(balance) for each approver must meet required_voice_credits.
+    Quadratic {
+        governance_token: Address,
+        required_voice_credits: u32,
+    },
+    /// Approval conviction grows with time since each approval was cast.
+    /// Each approval starts at 1 point; every `growth_period` ledgers it gains +1,
+    /// capped at +3 bonus (max 4 points per approval).
+    Conviction {
+        required_conviction: u32,
+        growth_period: u64,
+    },
+}
+
 /// Amount-based threshold tier
 #[contracttype]
 #[derive(Clone, Debug)]

@@ -7150,3 +7150,178 @@ fn test_oracle_staleness() {
         ProposalStatus::Executed
     );
 }
+
+#[test]
+fn test_weighted_voting_strategy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10_000);
+    token_client.mint(&signer1, &600);
+    token_client.mint(&signer2, &500);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 3);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    client.update_voting_strategy(
+        &admin,
+        &VotingStrategy::Weighted {
+            governance_token: token.clone(),
+            required_weight: 1000,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "weighted"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Pending);
+
+    client.approve_proposal(&signer2, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_quadratic_voting_strategy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10_000);
+    token_client.mint(&signer1, &100);
+    token_client.mint(&signer2, &25);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 3);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    client.update_voting_strategy(
+        &admin,
+        &VotingStrategy::Quadratic {
+            governance_token: token.clone(),
+            required_voice_credits: 15,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "quadratic"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Pending);
+
+    client.approve_proposal(&signer2, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_conviction_voting_strategy() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+    signers.push_back(signer3.clone());
+
+    let config = default_init_config(&env, signers, 4);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+    client.set_role(&admin, &signer3, &Role::Treasurer);
+
+    client.update_voting_strategy(
+        &admin,
+        &VotingStrategy::Conviction {
+            required_conviction: 5,
+            growth_period: 10,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "conviction"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Pending);
+
+    env.ledger().set_sequence_number(130);
+    client.abstain_from_proposal(&signer3, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Approved);
+}
