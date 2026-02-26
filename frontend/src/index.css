@@ -192,4 +192,62 @@
     transition: all 200ms ease;
     transition-property: left, top, width, height;
   }
+
+  /* RTL Support */
+  html[dir="rtl"] {
+    direction: rtl;
+    text-align: right;
+  }
+
+  html[dir="rtl"] body {
+    direction: rtl;
+  }
+
+  /* RTL-aware spacing utilities */
+  html[dir="rtl"] .ml-4 { margin-left: 0; margin-right: 1rem; }
+  html[dir="rtl"] .ml-3 { margin-left: 0; margin-right: 0.75rem; }
+  html[dir="rtl"] .ml-2 { margin-left: 0; margin-right: 0.5rem; }
+  html[dir="rtl"] .mr-4 { margin-right: 0; margin-left: 1rem; }
+  html[dir="rtl"] .mr-3 { margin-right: 0; margin-left: 0.75rem; }
+  html[dir="rtl"] .mr-2 { margin-right: 0; margin-left: 0.5rem; }
+  html[dir="rtl"] .pl-4 { padding-left: 0; padding-right: 1rem; }
+  html[dir="rtl"] .pl-3 { padding-left: 0; padding-right: 0.75rem; }
+  html[dir="rtl"] .pr-4 { padding-right: 0; padding-left: 1rem; }
+  html[dir="rtl"] .pr-3 { padding-right: 0; padding-left: 0.75rem; }
+
+  /* RTL Flexbox utilities */
+  html[dir="rtl"] .flex-row { flex-direction: row-reverse; }
+  html[dir="rtl"] .justify-end { justify-content: flex-start; }
+  html[dir="rtl"] .justify-start { justify-content: flex-end; }
+
+  /* RTL Transform utilities */
+  html[dir="rtl"] .rotate-180 { transform: scaleX(-1) rotate(180deg); }
+
+  /* RTL border radius */
+  html[dir="rtl"] .rounded-l { border-radius: 0; border-top-right-radius: 0.25rem; border-bottom-right-radius: 0.25rem; }
+  html[dir="rtl"] .rounded-r { border-radius: 0; border-top-left-radius: 0.25rem; border-bottom-left-radius: 0.25rem; }
+
+  /* RTL specific animations */
+  @keyframes slideInLeft {
+    from { transform: translateX(-100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  @keyframes slideOutLeft {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(-100%); opacity: 0; }
+  }
+
+  html[dir="rtl"] .animate-slide-in-right {
+    animation: slideInLeft 0.3s ease-out forwards;
+  }
+
+  html[dir="rtl"] .animate-slide-out-right {
+    animation: slideOutLeft 0.3s ease-in forwards;
+  }
+
+  /* Custom scrollbar for RTL */
+  html[dir="rtl"] .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
 }

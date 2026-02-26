@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useTranslation } from 'react-i18next';
 import { Outlet, Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -27,6 +28,7 @@ import { useWallet } from "../../hooks/useWallet";
 import type { WalletAdapter } from "../../adapters";
 import { WalletSwitcher } from "../WalletSwitcher";
 import CopyButton from '../CopyButton';
+import { LanguageSwitcher } from '../LanguageSwitcher';
 import { LayoutErrorBoundary } from '../ErrorHandler';
  feature/notification-and-comparison-tools
 import NotificationCenter from '../NotificationCenter';
@@ -45,6 +47,7 @@ import VoiceCommands from "../VoiceCommands";
 import VoiceNavigation from "../VoiceNavigation";
 
 const DashboardLayout: React.FC = () => {
+  const { t } = useTranslation();
   const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
   const onboarding = useOnboarding();
 
@@ -136,11 +139,16 @@ const DashboardLayout: React.FC = () => {
               <Menu size={24} />
             </button>
             <div className="hidden md:block">
-              <p className="text-slate-500 dark:text-gray-400 text-sm font-medium">Welcome back to VaultDAO</p>
+              <p className="text-slate-500 dark:text-gray-400 text-sm font-medium">{t('navigation.welcomeBack')}</p>
             </div>
           </div>
 
           <div className="flex items-center space-x-4">
+<<<<<<< HEAD
+            {/* Language Switcher */}
+            <LanguageSwitcher />
+            
+=======
  feature/notification-and-comparison-tools
             {/* Notification Bell */}
             <button
@@ -155,12 +163,13 @@ const DashboardLayout: React.FC = () => {
                 </span>
               )}
 
+>>>>>>> da5f68c73360c19e64fd521b1be6e3fd0ae3c1aa
             {/* Help Button */}
             <button
               onClick={() => setIsHelpOpen(true)}
               className="p-2 hover:bg-gray-700/50 rounded-lg transition-colors text-gray-400 hover:text-white"
-              aria-label="Open help center"
-              title="Help Center"
+              aria-label={t('navigation.help')}
+              title={t('navigation.help')}
             >
               <HelpCircle size={20} />
 
