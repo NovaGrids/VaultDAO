@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+    darkMode: 'class', // Added this
     content: [
       "./index.html",
       "./src/**/*.{js,ts,jsx,tsx}",
@@ -7,7 +8,6 @@ export default {
     theme: {
       extend: {
         colors: {
-            // Custom colors for VaultDAO
             primary: "#1e1e24",
             secondary: "#2a2a35", 
             accent: "#4f46e5",
@@ -15,4 +15,4 @@ export default {
       },
     },
     plugins: [],
-  }
+}

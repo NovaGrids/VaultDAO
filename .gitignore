@@ -25,3 +25,6 @@ target
 issue.md
 PR_DESCRIPTION.md
 contracts/vault/test_snapshots/
+REPUTATION_SYSTEM_COMMIT.md 
+CI_CHECKS_SUMMARY.md
+ATOMIC_BATCHING_COMMIT.md

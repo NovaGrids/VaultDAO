@@ -12,6 +12,7 @@ const SavedSearches: React.FC<SavedSearchesProps> = ({ onSelect, className = '' 
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSaved(getSavedSearches());
   }, [open]);
 

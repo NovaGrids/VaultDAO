@@ -9,17 +9,10 @@ import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
-import { useWallet } from '../../context/WalletContextProps';
-import { reportError } from '../../components/ErrorReporting';
-import { parseError } from '../../utils/errorParser';
-import type { TokenInfo } from '../../constants/tokens';
+import { useWallet } from '../../hooks/useWallet';
+import type { TokenInfo, TokenBalance } from '../../types';
 import { DEFAULT_TOKENS } from '../../constants/tokens';
-
-interface TokenBalance {
-  token: TokenInfo;
-  balance: string;
-  isLoading: boolean;
-}
+import VoiceCommands from '../../components/VoiceCommands';
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
@@ -63,6 +56,7 @@ const Proposals: React.FC = () => {
   const { notify } = useToast();
   const { rejectProposal, approveProposal, getTokenBalances } = useVaultContract();
   const { address } = useWallet();
+  const { subscribe, updatePresence } = useRealtime();
 
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(false);
@@ -179,6 +173,51 @@ const Proposals: React.FC = () => {
     fetchProposals();
   }, []);
 
+  // Subscribe to real-time proposal updates
+  useEffect(() => {
+    updatePresence('online', 'Proposals');
+
+    const unsubscribers = [
+      subscribe('proposal_created', (data: Proposal) => {
+        setProposals((prev) => [data, ...prev]);
+        notify('new_proposal', `New proposal #${data.id} created`, 'info');
+      }),
+      subscribe('proposal_updated', (data: { id: string; updates: Partial<Proposal> }) => {
+        setProposals((prev) =>
+          prev.map((p) => (p.id === data.id ? { ...p, ...data.updates } : p))
+        );
+      }),
+      subscribe('proposal_approved', (data: { id: string; approver: string }) => {
+        setProposals((prev) =>
+          prev.map((p) => {
+            if (p.id === data.id) {
+              const newApprovals = p.approvals + 1;
+              const newApprovedBy = [...p.approvedBy, data.approver];
+              return {
+                ...p,
+                approvals: newApprovals,
+                approvedBy: newApprovedBy,
+                status: newApprovals >= p.threshold ? 'Approved' : p.status,
+              };
+            }
+            return p;
+          })
+        );
+        notify('proposal_approved', `Proposal #${data.id} approved`, 'success');
+      }),
+      subscribe('proposal_rejected', (data: { id: string }) => {
+        setProposals((prev) =>
+          prev.map((p) => (p.id === data.id ? { ...p, status: 'Rejected' } : p))
+        );
+        notify('proposal_rejected', `Proposal #${data.id} rejected`, 'error');
+      }),
+    ];
+
+    return () => {
+      unsubscribers.forEach((unsub) => unsub());
+    };
+  }, [subscribe, updatePresence, notify]);
+
   // Filter proposals by token and other filters
   const filteredProposals = useMemo(() => {
     const filtered = proposals.filter((p) => {
@@ -231,8 +270,6 @@ const Proposals: React.FC = () => {
       setProposals(prev => prev.map(p => p.id === rejectingId ? { ...p, status: 'Rejected' } : p));
       notify('proposal_rejected', `Proposal #${rejectingId} rejected`, 'success');
     } catch (err: unknown) {
-      const vaultErr = parseError(err);
-      reportError({ ...vaultErr, context: 'Proposals.handleReject' });
       const errorMessage = err instanceof Error ? err.message : 'Failed to reject';
       notify('proposal_rejected', errorMessage, 'error');
     } finally {
@@ -266,8 +303,6 @@ const Proposals: React.FC = () => {
       }));
       notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
     } catch (err: unknown) {
-      const vaultErr = parseError(err);
-      reportError({ ...vaultErr, context: 'Proposals.handleApprove' });
       const errorMessage = err instanceof Error ? err.message : 'Failed to approve proposal';
       notify('proposal_rejected', errorMessage, 'error');
     } finally {
@@ -282,7 +317,7 @@ const Proposals: React.FC = () => {
   // Initialize selected token when tokenBalances load
   useEffect(() => {
     if (!selectedToken && tokenBalances.length > 0) {
-      const xlmToken = tokenBalances.find((tb: TokenBalance) => tb.token.address === 'NATIVE');
+      const xlmToken = tokenBalances.find(tb => tb.token.address === 'NATIVE');
       if (xlmToken) {
         setSelectedToken(xlmToken.token);
       } else {
@@ -423,7 +458,6 @@ const Proposals: React.FC = () => {
           selectedTemplateName={null}
           formData={newProposalForm}
           onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
-          onAttachmentsChange={(attachments) => setNewProposalForm(prev => ({ ...prev, attachments }))}
           onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
           onOpenTemplateSelector={() => { }}
           onSaveAsTemplate={() => { }}
@@ -431,6 +465,12 @@ const Proposals: React.FC = () => {
         />
         <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} />
         <ConfirmationModal isOpen={showRejectModal} title="Reject Proposal" message="Are you sure you want to reject this?" onConfirm={handleRejectConfirm} onCancel={() => setShowRejectModal(false)} showReasonInput={true} isDestructive={true} />
+        
+        <VoiceCommands 
+          onCreateProposal={() => setShowNewProposalModal(true)}
+          onApprove={() => selectedProposal && handleApprove(selectedProposal.id, {} as React.MouseEvent)}
+          onReject={() => selectedProposal && setShowRejectModal(true)}
+        />
       </div>
     </div>
   );

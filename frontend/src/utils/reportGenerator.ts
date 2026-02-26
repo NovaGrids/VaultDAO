@@ -76,7 +76,8 @@ function generateSOC2ReportPDF(config: ReportConfig, data: ReportData): jsPDF {
       headStyles: { fillColor: [88, 28, 135] },
     });
     
-    yPos = (doc as any).lastAutoTable.finalY + 15;
+    const docObj = doc as unknown as Record<string, unknown>;
+    yPos = (docObj.lastAutoTable as number) + 15;
   }
   
   if (config.includeSections.complianceChecks) {
@@ -195,7 +196,7 @@ export function exportToCSV(entries: AuditEntry[]): Blob {
   return new Blob([csvContent], { type: 'text/csv' });
 }
 
-export function exportToJSON(data: any): Blob {
+export function exportToJSON(data: unknown): Blob {
   const jsonString = JSON.stringify(data, null, 2);
   return new Blob([jsonString], { type: 'application/json' });
 }
@@ -235,7 +236,7 @@ export async function generateSOC2Report(reportData: {
   };
 
   const doc = generateSOC2ReportPDF(config, data);
-  return new Blob([doc.output('arraybuffer')], { type: 'application/pdf' });
+  return new Blob([doc.output('arraybuffer') as ArrayBuffer], { type: 'application/pdf' });
 }
 
 // Simplified wrapper for ISO27001 reports
@@ -273,6 +274,6 @@ export async function generateISO27001Report(reportData: {
   };
 
   const doc = generateISO27001ReportPDF(config, data);
-  return new Blob([doc.output('arraybuffer')], { type: 'application/pdf' });
+  return new Blob([doc.output('arraybuffer') as ArrayBuffer], { type: 'application/pdf' });
 }
 
