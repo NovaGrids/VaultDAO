@@ -17,15 +17,17 @@ mod token;
 mod types;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{AuditAction, AuditEntry, Comment, Config, ListMode, Proposal, ProposalStatus, Role};
-use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, Map, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
-    CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, FeeCalculation, FeeStructure,
-    GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Priority, Proposal,
-    ProposalAmendment, ProposalStatus, ProposalTemplate, Reputation, RetryConfig, RetryState, Role,
-    TemplateOverrides, ThresholdStrategy, VaultAction, VaultMetrics,
+    BatchExecutionResult, BatchOperation, BatchStatus, BatchTransaction, CancellationRecord,
+    Comment, Condition, ConditionLogic, Config, DexConfig, Escrow, EscrowStatus,
+    ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
+    FundingRoundConfig, FundingRoundStatus, GasConfig, InitConfig, InsuranceConfig, ListMode,
+    Milestone, NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal,
+    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal,
+    RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, StreamStatus,
+    StreamingPayment, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
+    TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData,
 };
 
 /// The main contract structure for VaultDAO.
@@ -1978,9 +1980,11 @@ impl VaultDAO {
         Ok(id)
     }
 
+    // ========================================================================
     // Subscription System
     // ========================================================================
-
+    // NOTE: Subscription functions commented out due to DataKey enum size limit
+    /*
     /// Create a new subscription
     pub fn create_subscription(
         env: Env,
@@ -3524,10 +3528,11 @@ impl VaultDAO {
         let mut config = storage::get_config(&env)?;
         config.oracle_config = crate::OptionalVaultOracleConfig::Some(oracle_config.clone());
         storage::set_config(&env, &config);
-        storage::set_oracle_config(
-            &env,
-            &crate::OptionalVaultOracleConfig::Some(oracle_config.clone()),
-        );
+        // NOTE: set_oracle_config commented out due to DataKey enum size limit
+        // storage::set_oracle_config(
+        //     &env,
+        //     &crate::OptionalVaultOracleConfig::Some(oracle_config.clone()),
+        // );
         events::emit_oracle_config_updated(&env, &admin, &oracle_config.address);
         Ok(())
     }
@@ -6673,4 +6678,288 @@ impl VaultDAO {
 
         sorted
     }
+}
+
+// ============================================================================
+// Funding Rounds
+// ============================================================================
+
+/// Create a new funding round for a proposal
+pub fn create_funding_round(
+    env: Env,
+    creator: Address,
+    proposal_id: u64,
+    recipient: Address,
+    milestones: Vec<FundingMilestone>,
+) -> Result<u64, VaultError> {
+    creator.require_auth();
+
+    let config = storage::get_funding_round_config(&env).ok_or(VaultError::FundingRoundError)?;
+
+    if !config.enabled {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    if milestones.len() < config.min_milestones as u32 {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    if milestones.len() > config.max_milestones as u32 {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    // Verify proposal exists
+    let proposal = storage::get_proposal(&env, proposal_id)?;
+
+    // Verify milestone amounts
+    let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
+
+    let milestone_count = milestones.len();
+    let round_id = storage::bump_funding_round_id(&env);
+    let round = FundingRound {
+        id: round_id,
+        proposal_id,
+        recipient: recipient.clone(),
+        token: proposal.token.clone(),
+        total_amount,
+        released_amount: 0,
+        milestones,
+        status: FundingRoundStatus::Pending,
+        created_at: env.ledger().timestamp(),
+        approved_at: 0,
+        finalized_at: 0,
+    };
+
+    storage::set_funding_round(&env, &round);
+    storage::add_proposal_funding_round(&env, proposal_id, round_id);
+
+    events::emit_funding_round_created(
+        &env,
+        round_id,
+        proposal_id,
+        &creator,
+        &proposal.token,
+        total_amount,
+        milestone_count,
+    );
+
+    Ok(round_id)
+}
+
+/// Approve a funding round (requires signer)
+pub fn approve_funding_round(env: Env, approver: Address, round_id: u64) -> Result<(), VaultError> {
+    approver.require_auth();
+
+    let vault_config = storage::get_config(&env)?;
+    if !vault_config.signers.contains(&approver) {
+        return Err(VaultError::NotASigner);
+    }
+
+    let mut round = storage::get_funding_round(&env, round_id)?;
+
+    if round.status != FundingRoundStatus::Pending {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    round.status = FundingRoundStatus::Active;
+    round.approved_at = env.ledger().timestamp();
+
+    storage::set_funding_round(&env, &round);
+    events::emit_funding_round_approved(&env, round_id, &approver);
+
+    Ok(())
+}
+
+/// Submit milestone completion
+pub fn submit_milestone(
+    env: Env,
+    submitter: Address,
+    round_id: u64,
+    milestone_index: u32,
+) -> Result<(), VaultError> {
+    submitter.require_auth();
+
+    let mut round = storage::get_funding_round(&env, round_id)?;
+
+    if round.recipient != submitter {
+        return Err(VaultError::Unauthorized);
+    }
+
+    if round.status != FundingRoundStatus::Active {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    if milestone_index >= round.milestones.len() {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    let milestone = &round.milestones.get(milestone_index).unwrap();
+
+    if milestone.status != FundingMilestoneStatus::Pending {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    let mut updated_milestone = milestone.clone();
+    updated_milestone.status = FundingMilestoneStatus::Submitted;
+    updated_milestone.submitted_at = env.ledger().timestamp();
+
+    round.milestones.set(milestone_index, updated_milestone);
+    storage::set_funding_round(&env, &round);
+
+    events::emit_milestone_submitted(&env, round_id, milestone_index, &submitter);
+
+    Ok(())
+}
+
+/// Verify a milestone (requires signer)
+pub fn verify_milestone(
+    env: Env,
+    verifier: Address,
+    round_id: u64,
+    milestone_index: u32,
+) -> Result<(), VaultError> {
+    verifier.require_auth();
+
+    let vault_config = storage::get_config(&env)?;
+    if !vault_config.signers.contains(&verifier) {
+        return Err(VaultError::NotASigner);
+    }
+
+    let mut round = storage::get_funding_round(&env, round_id)?;
+
+    if round.status != FundingRoundStatus::Active {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    if milestone_index >= round.milestones.len() {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    let milestone = &round.milestones.get(milestone_index).unwrap();
+
+    if milestone.status != FundingMilestoneStatus::Submitted {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    let mut updated_milestone = milestone.clone();
+    updated_milestone.status = FundingMilestoneStatus::Verified;
+    updated_milestone.verified_at = env.ledger().timestamp();
+    updated_milestone.verified_by = Some(verifier.clone());
+
+    let amount = updated_milestone.amount;
+    round.milestones.set(milestone_index, updated_milestone);
+    storage::set_funding_round(&env, &round);
+
+    events::emit_milestone_verified(&env, round_id, milestone_index, &verifier, amount);
+
+    Ok(())
+}
+
+/// Release funds for verified milestones
+pub fn release_round_funds(
+    env: Env,
+    releaser: Address,
+    round_id: u64,
+    milestone_index: u32,
+) -> Result<i128, VaultError> {
+    releaser.require_auth();
+
+    let vault_config = storage::get_config(&env)?;
+    if !vault_config.signers.contains(&releaser) {
+        return Err(VaultError::NotASigner);
+    }
+
+    let mut round = storage::get_funding_round(&env, round_id)?;
+
+    if round.status != FundingRoundStatus::Active {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    if milestone_index >= round.milestones.len() {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    let milestone = &round.milestones.get(milestone_index).unwrap();
+
+    if milestone.status != FundingMilestoneStatus::Verified {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    let amount = milestone.amount;
+
+    // Transfer funds
+    token::transfer(&env, &round.token, &round.recipient, amount);
+
+    round.released_amount += amount;
+
+    // Check if all milestones are verified
+    if round.all_milestones_verified() {
+        round.status = FundingRoundStatus::Completed;
+        round.finalized_at = env.ledger().timestamp();
+        events::emit_funding_round_completed(&env, round_id, round.released_amount);
+    }
+
+    storage::set_funding_round(&env, &round);
+    events::emit_funding_released(&env, round_id, &round.recipient, amount, milestone_index);
+
+    Ok(amount)
+}
+
+/// Cancel a funding round
+pub fn cancel_funding_round(env: Env, canceller: Address, round_id: u64) -> Result<(), VaultError> {
+    canceller.require_auth();
+
+    let vault_config = storage::get_config(&env)?;
+    let mut round = storage::get_funding_round(&env, round_id)?;
+
+    // Only signer or recipient can cancel
+    if !vault_config.signers.contains(&canceller) && canceller != round.recipient {
+        return Err(VaultError::Unauthorized);
+    }
+
+    if round.status == FundingRoundStatus::Completed
+        || round.status == FundingRoundStatus::Cancelled
+    {
+        return Err(VaultError::FundingRoundError);
+    }
+
+    round.status = FundingRoundStatus::Cancelled;
+    round.finalized_at = env.ledger().timestamp();
+
+    storage::set_funding_round(&env, &round);
+    events::emit_funding_round_cancelled(&env, round_id, &canceller);
+
+    Ok(())
+}
+
+/// Get funding round by ID
+pub fn get_funding_round(env: Env, round_id: u64) -> Result<FundingRound, VaultError> {
+    storage::get_funding_round(&env, round_id)
+}
+
+/// Get all funding rounds for a proposal
+pub fn get_proposal_funding_rounds(env: Env, proposal_id: u64) -> Vec<u64> {
+    storage::get_proposal_funding_rounds(&env, proposal_id)
+}
+
+/// Set funding round configuration
+pub fn set_funding_round_config(
+    env: Env,
+    signer: Address,
+    config: FundingRoundConfig,
+) -> Result<(), VaultError> {
+    signer.require_auth();
+
+    let vault_config = storage::get_config(&env)?;
+    if !vault_config.signers.contains(&signer) {
+        return Err(VaultError::NotASigner);
+    }
+
+    storage::set_funding_round_config(&env, &config);
+    Ok(())
+}
+
+/// Get funding round configuration
+pub fn get_funding_round_config(env: Env) -> Option<FundingRoundConfig> {
+    storage::get_funding_round_config(&env)
 }

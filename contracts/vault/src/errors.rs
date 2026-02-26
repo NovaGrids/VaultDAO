@@ -185,8 +185,10 @@ pub enum VaultError {
     TemplateInactive = 211,
     TemplateValidationFailed = 212,
 
+    // Funding round errors - consolidated
+    FundingRoundError = 220, // Consolidates all funding round related errors
     // Batch transaction errors (consolidated)
-    BatchNotFound = 220,
-    BatchNotPending = 221,
-    BatchSizeExceeded = 222,
+    BatchNotFound = 230,
+    BatchNotPending = 231,
+    BatchSizeExceeded = 232,
 }

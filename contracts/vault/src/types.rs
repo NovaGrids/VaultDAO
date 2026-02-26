@@ -1282,6 +1282,135 @@ impl Escrow {
 // Dynamic Fee Structure (Issue: feature/dynamic-fees)
 // ============================================================================
 
+/// Status of a funding round milestone
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FundingMilestoneStatus {
+    /// Milestone is pending completion
+    Pending,
+    /// Milestone has been submitted for verification
+    Submitted,
+    /// Milestone has been verified and approved
+    Verified,
+    /// Milestone was rejected
+    Rejected,
+}
+
+/// A milestone within a funding round
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingMilestone {
+    /// Milestone description
+    pub description: String,
+    /// Amount to release upon completion (in stroops)
+    pub amount: i128,
+    /// Current status
+    pub status: FundingMilestoneStatus,
+    /// Ledger when milestone was submitted
+    pub submitted_at: u64,
+    /// Ledger when milestone was verified
+    pub verified_at: u64,
+    /// Address that verified the milestone
+    pub verified_by: Option<Address>,
+}
+
+/// Status of a funding round
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FundingRoundStatus {
+    /// Round is pending approval
+    Pending,
+    /// Round has been approved and is active
+    Active,
+    /// Round has been completed
+    Completed,
+    /// Round was cancelled
+    Cancelled,
+}
+
+/// A funding round with multiple milestones
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingRound {
+    /// Unique round ID
+    pub id: u64,
+    /// Associated proposal ID
+    pub proposal_id: u64,
+    /// Project recipient
+    pub recipient: Address,
+    /// Token address for funding
+    pub token: Address,
+    /// Total amount for this round
+    pub total_amount: i128,
+    /// Amount already released
+    pub released_amount: i128,
+    /// Milestones for this round
+    pub milestones: Vec<FundingMilestone>,
+    /// Current status
+    pub status: FundingRoundStatus,
+    /// Ledger when round was created
+    pub created_at: u64,
+    /// Ledger when round was approved
+    pub approved_at: u64,
+    /// Ledger when round was completed/cancelled
+    pub finalized_at: u64,
+}
+
+impl FundingRound {
+    /// Calculate total amount from all milestones
+    pub fn total_milestone_amount(&self) -> i128 {
+        let mut total: i128 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                total = total.saturating_add(m.amount);
+            }
+        }
+        total
+    }
+
+    /// Calculate amount available for release based on verified milestones
+    pub fn amount_to_release(&self) -> i128 {
+        let mut verified_amount: i128 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.status == FundingMilestoneStatus::Verified {
+                    verified_amount = verified_amount.saturating_add(m.amount);
+                }
+            }
+        }
+        verified_amount - self.released_amount
+    }
+
+    /// Check if all milestones are verified
+    pub fn all_milestones_verified(&self) -> bool {
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.status != FundingMilestoneStatus::Verified {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Configuration for funding rounds system
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FundingRoundConfig {
+    /// Whether funding rounds are enabled
+    pub enabled: bool,
+    /// Minimum number of milestones per round
+    pub min_milestones: u32,
+    /// Maximum number of milestones per round
+    pub max_milestones: u32,
+    /// Minimum amount per milestone
+    pub min_milestone_amount: i128,
+    /// Maximum rounds per proposal
+    pub max_rounds_per_proposal: u32,
+}
+
+/// A single operation within a batch transaction
 /// Fee tier based on transaction volume
 #[contracttype]
 #[derive(Clone, Debug)]
