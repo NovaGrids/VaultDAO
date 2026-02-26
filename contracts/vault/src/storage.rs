@@ -21,10 +21,13 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
+use crate::types::{AuditEntry, Comment, Config, Proposal, Role, VelocityConfig};
+use soroban_sdk::Vec as SdkVec;
 use crate::types::{
-    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, FeeStructure,
-    GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal, ProposalAmendment,
-    ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    Comment, Config, DelegatedPermission, DexConfig, Escrow, ExecutionFeeEstimate, FundingRound,
+    FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
+    PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
+    RetryState, Role, SwapProposal, SwapResult, VaultMetrics, VelocityConfig,
 };
 
 /// Core storage key definitions (kept minimal to avoid size limits)
@@ -53,24 +56,24 @@ pub enum DataKey {
     NextRecurringId,
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
-    /// Cancellation record for a proposal -> CancellationRecord
-    CancellationRecord(u64),
-    /// List of all cancelled proposal IDs -> Vec<u64>
-    CancellationHistory,
-    /// Amendment history for a proposal -> Vec<ProposalAmendment>
-    AmendmentHistory(u64),
-    /// Recipient list mode -> ListMode
+    /// Recipient list mode
     ListMode,
-    /// Whitelist flag for address -> bool
+    /// Whitelist entry
     Whitelist(Address),
-    /// Blacklist flag for address -> bool
+    /// Blacklist entry
     Blacklist(Address),
-    /// Comment by ID -> Comment
+    /// Comment by ID
     Comment(u64),
-    /// Next comment ID counter -> u64
-    NextCommentId,
-    /// Comment IDs per proposal -> Vec<u64>
+    /// Comments for a proposal
     ProposalComments(u64),
+    /// Next comment ID counter
+    NextCommentId,
+    /// Audit entry by ID
+    AuditEntry(u64),
+    /// Next audit entry ID counter
+    NextAuditId,
+    /// Last audit entry hash
+    LastAuditHash,
     /// Proposal IPFS attachment hashes -> Vec<String>
     Attachments(u64),
     /// Reputation record per address -> Reputation
@@ -159,6 +162,18 @@ pub enum FeatureKey {
     NextRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
+    /// Funding round by ID -> FundingRound
+    FundingRound(u64),
+    /// Next funding round ID counter -> u64
+    NextFundingRoundId,
+    /// Funding round IDs by proposal ID -> Vec<u64>
+    ProposalFundingRounds(u64),
+    /// Funding round configuration -> FundingRoundConfig
+    FundingRoundConfig,
+    /// Batch transaction storage (nested with BatchKey)
+    Batch(BatchKey),
+    /// Stream payment storage (nested with StreamKey)
+    Stream(StreamKey),
     /// Fee structure configuration -> FeeStructure
     FeeStructure,
     /// Total fees collected per token -> i128
@@ -419,6 +434,7 @@ pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment)
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_streaming_payment(
     env: &Env,
     id: u64,
@@ -694,6 +710,25 @@ pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
 }
 
 // ============================================================================
+// Audit Trail
+// ============================================================================
+
+pub fn get_next_audit_id(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::NextAuditId).unwrap_or(1)
+}
+
+pub fn increment_audit_id(env: &Env) -> u64 {
+    let id = get_next_audit_id(env);
+    env.storage().instance().set(&DataKey::NextAuditId, &(id + 1));
+    id
+}
+
+pub fn get_last_audit_hash(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::LastAuditHash).unwrap_or(0)
+}
+
+pub fn set_last_audit_hash(env: &Env, hash: u64) {
+    env.storage().instance().set(&DataKey::LastAuditHash, &hash);
 // Attachments
 // ============================================================================
 
@@ -837,8 +872,6 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
 // DEX/AMM Integration (Issue: feature/amm-integration)
 // ============================================================================
 
-use crate::types::{SwapProposal, SwapResult};
-
 pub fn set_dex_config(env: &Env, config: &DexConfig) {
     env.storage().instance().set(&FeatureKey::DexConfig, config);
 }
@@ -850,12 +883,14 @@ pub fn get_dex_config(env: &Env) -> Option<DexConfig> {
 // ============================================================================
 // Oracle Config
 // ============================================================================
-
+// NOTE: Oracle config functions commented out due to DataKey enum size limit
+/*
 pub fn set_oracle_config(env: &Env, config: &crate::OptionalVaultOracleConfig) {
     env.storage()
         .instance()
         .set(&DataKey::VaultOracleConfig, config);
 }
+*/
 
 pub fn set_swap_proposal(env: &Env, proposal_id: u64, swap: &SwapProposal) {
     let key = FeatureKey::SwapProposal(proposal_id);
@@ -929,38 +964,43 @@ pub fn set_metrics(env: &Env, metrics: &VaultMetrics) {
     env.storage().instance().set(&FeatureKey::Metrics, metrics);
 }
 
-/// Increment proposal counter in metrics
-pub fn metrics_on_proposal(env: &Env) {
-    let mut m = get_metrics(env);
-    m.total_proposals += 1;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn set_audit_entry(env: &Env, entry: &AuditEntry) {
+    let key = DataKey::AuditEntry(entry.id);
+    env.storage().persistent().set(&key, entry);
+    env.storage().persistent().extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
-/// Record a successful execution in metrics
-pub fn metrics_on_execution(env: &Env, gas_used: u64, execution_time_ledgers: u64) {
-    let mut m = get_metrics(env);
-    m.executed_count += 1;
-    m.total_gas_used += gas_used;
-    m.total_execution_time_ledgers += execution_time_ledgers;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn get_audit_entry(env: &Env, id: u64) -> Result<AuditEntry, VaultError> {
+    env.storage().persistent().get(&DataKey::AuditEntry(id)).ok_or(VaultError::ProposalNotFound)
 }
 
-/// Record a rejection in metrics
-pub fn metrics_on_rejection(env: &Env) {
-    let mut m = get_metrics(env);
-    m.rejected_count += 1;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn compute_audit_hash(env: &Env, action: &crate::types::AuditAction, actor: &Address, target: u64, timestamp: u64, prev_hash: u64) -> u64 {
+    let mut hash = prev_hash;
+    hash = hash.wrapping_mul(31).wrapping_add(*action as u64);
+    hash = hash.wrapping_mul(31).wrapping_add(actor.to_string().len() as u64);
+    hash = hash.wrapping_mul(31).wrapping_add(target);
+    hash = hash.wrapping_mul(31).wrapping_add(timestamp);
+    hash
 }
 
-/// Record an expiry in metrics
-pub fn metrics_on_expiry(env: &Env) {
-    let mut m = get_metrics(env);
-    m.expired_count += 1;
-    m.last_updated_ledger = env.ledger().sequence() as u64;
-    set_metrics(env, &m);
+pub fn create_audit_entry(env: &Env, action: crate::types::AuditAction, actor: &Address, target: u64) {
+    let id = increment_audit_id(env);
+    let timestamp = env.ledger().sequence() as u64;
+    let prev_hash = get_last_audit_hash(env);
+    let hash = compute_audit_hash(env, &action, actor, target, timestamp, prev_hash);
+    
+    let entry = AuditEntry {
+        id,
+        action,
+        actor: actor.clone(),
+        target,
+        timestamp,
+        prev_hash,
+        hash,
+    };
+    
+    set_audit_entry(env, &entry);
+    set_last_audit_hash(env, hash);
 }
 
 // ============================================================================
@@ -1058,7 +1098,8 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 // ============================================================================
 // Subscription System (Issue: feature/subscription-system)
 // ============================================================================
-
+// NOTE: Subscription storage functions commented out due to DataKey enum size limit
+/*
 pub fn get_next_subscription_id(env: &Env) -> u64 {
     env.storage()
         .instance()
@@ -1123,6 +1164,70 @@ pub fn add_subscriber_subscription(env: &Env, subscriber: &Address, subscription
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 */
+
+// ============================================================================
+// Delegation (Issue: feature/proposal-delegation)
+// ============================================================================
+
+pub fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Delegation(delegator.clone()))
+}
+
+pub fn set_delegation(env: &Env, delegation: &Delegation) {
+    let key = DataKey::Delegation(delegation.delegator.clone());
+    env.storage().persistent().set(&key, delegation);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_delegation_history(env: &Env, delegator: &Address) -> Vec<DelegationHistory> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DelegationHistory(delegator.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn add_delegation_history(env: &Env, history: &DelegationHistory) {
+    let mut history_list = get_delegation_history(env, &history.delegator);
+    history_list.push_back(history.clone());
+    let key = DataKey::DelegationHistory(history.delegator.clone());
+    env.storage().persistent().set(&key, &history_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn update_delegation_history(env: &Env, history: &DelegationHistory) {
+    let history_list = get_delegation_history(env, &history.delegator);
+    let mut updated_list: Vec<DelegationHistory> = Vec::new(env);
+    for entry in history_list.iter() {
+        if entry.id == history.id {
+            updated_list.push_back(history.clone());
+        } else {
+            updated_list.push_back(entry);
+        }
+    }
+    let key = DataKey::DelegationHistory(history.delegator.clone());
+    env.storage().persistent().set(&key, &updated_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn increment_delegation_history_id(env: &Env) -> u64 {
+    let id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextDelegationHistoryId)
+        .unwrap_or(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDelegationHistoryId, &(id + 1));
+    id
+}
 
 // ============================================================================
 // Escrow (Issue: feature/escrow-system)
@@ -1193,63 +1298,61 @@ pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
 }
 
 // ============================================================================
-// Time-Weighted Voting (Issue: feature/time-weighted-voting)
+// Funding Rounds
 // ============================================================================
 
-use crate::types::{TimeWeightedConfig, TokenLock};
+pub fn get_funding_round_config(env: &Env) -> Option<FundingRoundConfig> {
+    env.storage().instance().get(&DataKey::FundingRoundConfig)
+}
 
-/// Get time-weighted voting configuration
-pub fn get_time_weighted_config(env: &Env) -> TimeWeightedConfig {
+pub fn set_funding_round_config(env: &Env, config: &FundingRoundConfig) {
     env.storage()
         .instance()
-        .get(&DataKey::TimeWeightedConfig)
-        .unwrap_or_else(TimeWeightedConfig::default)
+        .set(&DataKey::FundingRoundConfig, config);
 }
 
-/// Set time-weighted voting configuration
-pub fn set_time_weighted_config(env: &Env, config: &TimeWeightedConfig) {
+fn get_next_funding_round_id(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .set(&DataKey::TimeWeightedConfig, config);
+        .get(&DataKey::NextFundingRoundId)
+        .unwrap_or(1)
 }
 
-/// Get token lock for an address
-pub fn get_token_lock(env: &Env, owner: &Address) -> Option<TokenLock> {
+pub fn bump_funding_round_id(env: &Env) -> u64 {
+    let id = get_next_funding_round_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextFundingRoundId, &(id + 1));
+    id
+}
+
+pub fn get_funding_round(env: &Env, id: u64) -> Result<FundingRound, VaultError> {
     env.storage()
         .persistent()
-        .get(&DataKey::TokenLock(owner.clone()))
+        .get(&DataKey::FundingRound(id))
+        .ok_or(VaultError::ProposalNotFound)
 }
 
-/// Set token lock for an address
-pub fn set_token_lock(env: &Env, lock: &TokenLock) {
-    let key = DataKey::TokenLock(lock.owner.clone());
-    env.storage().persistent().set(&key, lock);
+pub fn set_funding_round(env: &Env, round: &FundingRound) {
+    let key = DataKey::FundingRound(round.id);
+    env.storage().persistent().set(&key, round);
     env.storage()
         .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
-/// Remove token lock for an address
-#[allow(dead_code)]
-pub fn remove_token_lock(env: &Env, owner: &Address) {
+pub fn get_proposal_funding_rounds(env: &Env, proposal_id: u64) -> Vec<u64> {
     env.storage()
         .persistent()
-        .remove(&DataKey::TokenLock(owner.clone()));
+        .get(&DataKey::ProposalFundingRounds(proposal_id))
+        .unwrap_or_else(|| Vec::new(env))
 }
 
-/// Get total locked tokens for an address
-#[allow(dead_code)]
-pub fn get_total_locked(env: &Env, owner: &Address) -> i128 {
-    env.storage()
-        .persistent()
-        .get(&DataKey::TotalLocked(owner.clone()))
-        .unwrap_or(0)
-}
-
-/// Set total locked tokens for an address
-pub fn set_total_locked(env: &Env, owner: &Address, amount: i128) {
-    let key = DataKey::TotalLocked(owner.clone());
-    env.storage().persistent().set(&key, &amount);
+pub fn add_proposal_funding_round(env: &Env, proposal_id: u64, round_id: u64) {
+    let mut rounds = get_proposal_funding_rounds(env, proposal_id);
+    rounds.push_back(round_id);
+    let key = DataKey::ProposalFundingRounds(proposal_id);
+    env.storage().persistent().set(&key, &rounds);
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);

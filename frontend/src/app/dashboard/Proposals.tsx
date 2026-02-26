@@ -520,7 +520,11 @@ const Proposals: React.FC = () => {
         <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} />
         <ConfirmationModal isOpen={showRejectModal} title="Reject Proposal" message="Are you sure you want to reject this?" onConfirm={handleRejectConfirm} onCancel={() => setShowRejectModal(false)} showReasonInput={true} isDestructive={true} />
         
+feature/proposal-comparison-tool
  feature/proposal-comparison-tool
+
+ feature/notification-and-comparison-tools
+
         {showComparison && (
           <ProposalComparison
             proposals={proposals}
