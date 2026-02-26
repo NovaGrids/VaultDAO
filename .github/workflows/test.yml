@@ -33,6 +33,10 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
         working-directory: contracts/vault
 
+      - name: Build WASM contract
+        run: cargo build --target wasm32-unknown-unknown --release
+        working-directory: contracts/vault
+
       - name: Run tests
         run: cargo test
         working-directory: contracts/vault
@@ -51,7 +55,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
         working-directory: frontend
 
       - name: Build frontend

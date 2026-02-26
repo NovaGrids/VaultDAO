@@ -8,7 +8,7 @@ import {
     nativeToScVal,
     scValToNative
 } from 'stellar-sdk';
-import { useWallet } from '../context/WalletContextProps';
+import { useWallet } from './useWallet';
 import { parseError } from '../utils/errorParser';
 import { withRetry } from '../utils/retryUtils';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
@@ -58,6 +58,18 @@ export interface CreateRecurringPaymentParams {
     amount: string;
     memo: string;
     interval: number; // in seconds
+}
+
+export interface VaultConfig {
+    signers: string[];
+    threshold: number;
+    spendingLimit: string;
+    dailyLimit: string;
+    weeklyLimit: string;
+    timelockThreshold: string;
+    timelockDelay: number;
+    currentUserRole: number;
+    isCurrentUserSigner: boolean;
 }
 
 const server = new SorobanRpc.Server(RPC_URL);
@@ -137,6 +149,37 @@ function parseEventValue(valueXdrBase64: string, eventType: VaultEventType): { a
     return { actor, details };
 }
 
+function parseNumericValue(value: unknown): number {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.trunc(value);
+    }
+    if (typeof value === 'bigint') {
+        return Number(value);
+    }
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
+    }
+    return 0;
+}
+
+function parseBigIntString(value: unknown): string {
+    if (typeof value === 'bigint') return value.toString();
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value).toString();
+    if (typeof value === 'string') {
+        const normalized = value.trim();
+        return normalized.length > 0 ? normalized : '0';
+    }
+    return '0';
+}
+
+function parseSignerAddresses(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((item) => addressToNative(item))
+        .filter((item) => item.length > 0);
+}
+
 interface RawEvent {
     type: string;
     ledger: string;
@@ -156,6 +199,58 @@ export const useVaultContract = () => {
     const [whitelistAddresses, setWhitelistAddresses] = useState<string[]>([]);
     const [blacklistAddresses, setBlacklistAddresses] = useState<string[]>([]);
     const [proposalComments, setProposalComments] = useState<Record<string, Comment[]>>({});
+
+    const readContractValue = useCallback(async (functionName: string, args: xdr.ScVal[] = []): Promise<unknown> => {
+        const source = address ?? CONTRACT_ID;
+        const account = await server.getAccount(source);
+
+        const tx = new TransactionBuilder(account, { fee: "100" })
+            .setNetworkPassphrase(NETWORK_PASSPHRASE)
+            .setTimeout(30)
+            .addOperation(Operation.invokeHostFunction({
+                func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                    new xdr.InvokeContractArgs({
+                        contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                        functionName,
+                        args,
+                    })
+                ),
+                auth: [],
+            }))
+            .build();
+
+        const simulation = await server.simulateTransaction(tx);
+        if (SorobanRpc.Api.isSimulationError(simulation)) {
+            throw new Error(simulation.error || `${functionName} simulation failed`);
+        }
+
+        const retval = (simulation as { result?: { retval?: unknown } })?.result?.retval;
+        if (retval == null) return null;
+
+        if (typeof retval === 'string') {
+            try {
+                return scValToNative(xdr.ScVal.fromXDR(retval, 'base64'));
+            } catch {
+                return null;
+            }
+        }
+
+        try {
+            return scValToNative(retval as xdr.ScVal);
+        } catch {
+            return null;
+        }
+    }, [address]);
+
+    const getUserRole = useCallback(async (): Promise<number> => {
+        if (!address) return 0;
+        try {
+            const role = await readContractValue('get_role', [new Address(address).toScVal()]);
+            return parseNumericValue(role);
+        } catch {
+            return 0;
+        }
+    }, [address, readContractValue]);
 
     const getDashboardStats = useCallback(async () => {
         try {
@@ -184,6 +279,62 @@ export const useVaultContract = () => {
             };
         }
     }, []);
+
+    const getVaultConfig = useCallback(async (): Promise<VaultConfig> => {
+        const [configRawPrimary, configRawLegacy, userRole, isSigner] = await Promise.all([
+            readContractValue('get_config').catch(() => null),
+            readContractValue('get_vault_config').catch(() => null),
+            getUserRole(),
+            address
+                ? readContractValue('is_signer', [new Address(address).toScVal()])
+                    .then((value) => Boolean(value))
+                    .catch(() => false)
+                : Promise.resolve(false),
+        ]);
+
+        const configRaw = configRawPrimary ?? configRawLegacy;
+        const configObject = (configRaw && typeof configRaw === 'object')
+            ? configRaw as Record<string, unknown>
+            : {};
+
+        const signers = parseSignerAddresses(configObject.signers);
+        const threshold = parseNumericValue(configObject.threshold);
+        const spendingLimit = parseBigIntString(configObject.spending_limit ?? configObject.spendingLimit);
+        const dailyLimit = parseBigIntString(configObject.daily_limit ?? configObject.dailyLimit);
+        const weeklyLimit = parseBigIntString(configObject.weekly_limit ?? configObject.weeklyLimit);
+        const timelockThreshold = parseBigIntString(configObject.timelock_threshold ?? configObject.timelockThreshold);
+        const timelockDelay = parseNumericValue(configObject.timelock_delay ?? configObject.timelockDelay);
+
+        if (signers.length > 0 || threshold > 0) {
+            return {
+                signers,
+                threshold,
+                spendingLimit,
+                dailyLimit,
+                weeklyLimit,
+                timelockThreshold,
+                timelockDelay,
+                currentUserRole: userRole,
+                isCurrentUserSigner: isSigner,
+            };
+        }
+
+        const fallbackStats = await getDashboardStats();
+        const [thresholdCount = '0', signerCount = '0'] = fallbackStats.threshold.split('/');
+        const fallbackThreshold = Number.parseInt(thresholdCount, 10);
+        const fallbackSignerCount = Number.parseInt(signerCount, 10);
+        return {
+            signers: Array.from({ length: Number.isFinite(fallbackSignerCount) ? fallbackSignerCount : 0 }, () => ''),
+            threshold: Number.isFinite(fallbackThreshold) ? fallbackThreshold : 0,
+            spendingLimit: '0',
+            dailyLimit: '0',
+            weeklyLimit: '0',
+            timelockThreshold: '0',
+            timelockDelay: 0,
+            currentUserRole: userRole,
+            isCurrentUserSigner: isSigner,
+        };
+    }, [address, getDashboardStats, getUserRole, readContractValue]);
 
     const proposeTransfer = async (recipient: string, token: string, amount: string, memo: string) => {
         if (!isConnected || !address) throw new Error("Wallet not connected");
@@ -353,6 +504,49 @@ export const useVaultContract = () => {
         } catch (e: unknown) {
             const parsed = parseError(e);
             throw parsed;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const updateSpendingLimits = async (proposalLimit: bigint, dailyLimit: bigint, weeklyLimit: bigint) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "update_limits",
+                            args: [
+                                new Address(address).toScVal(),
+                                nativeToScVal(proposalLimit),
+                                nativeToScVal(dailyLimit),
+                                nativeToScVal(weeklyLimit),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            
+            if (response.status !== "PENDING") {
+                throw new Error("Transaction submission failed");
+            }
+
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
         } finally {
             setLoading(false);
         }
@@ -660,6 +854,9 @@ export const useVaultContract = () => {
         approveProposal,
         rejectProposal,
         executeProposal,
+        addSigner,
+        removeSigner,
+        updateThreshold,
         getDashboardStats,
         getVaultEvents,
         loading,
@@ -681,6 +878,7 @@ export const useVaultContract = () => {
         removeFromBlacklist,
         isWhitelisted,
         isBlacklisted,
+        getVaultConfig,
         getTokenBalances: async () => [],
         getPortfolioValue: async () => "0",
         addCustomToken: async () => null,
@@ -692,7 +890,8 @@ export const useVaultContract = () => {
         cancelRecurringPayment: async () => { },
         getAllRoles: async () => [],
         setRole: async () => { },
-        getUserRole: async () => 0,
+        getUserRole,
         assignRole: async () => { },
+        updateSpendingLimits,
     };
 };
