@@ -1,7 +1,7 @@
 // frontend/src/hooks/useProposals.ts
 
 import { useState, useEffect, useCallback } from 'react';
-import { withRetry } from '../components/RetryMechanism';
+import { withRetry } from '../utils/retryUtils';
 // import { useVaultContract } from './useVaultContract';
 import type { Proposal, ProposalStatus } from '../components/type';
 

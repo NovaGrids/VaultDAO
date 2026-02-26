@@ -5,7 +5,7 @@ export interface WidgetConfig {
   type: WidgetType;
   title: string;
   dataSource?: string;
-  settings?: Record<string, any>;
+  settings?: Record<string, unknown>;
 }
 
 export interface LayoutItem {

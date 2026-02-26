@@ -370,7 +370,7 @@ const RecurringPayments: React.FC = () => {
   const handleCreatePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const txHash = await schedulePayment?.(formData);
+      const txHash = await schedulePayment?.();
       notify('new_proposal', 'Recurring payment created successfully!', 'success');
       setIsCreateModalOpen(false);
       setFormData({
@@ -392,7 +392,7 @@ const RecurringPayments: React.FC = () => {
   const handleExecutePayment = async (payment: RecurringPayment) => {
     setExecutingPaymentId(payment.id);
     try {
-      const txHash = await executeRecurringPayment?.(payment.id);
+      const txHash = await executeRecurringPayment?.();
       notify('proposal_executed', 'Payment executed successfully!', 'success');
       await fetchPayments();
       console.log('Transaction hash:', txHash);
@@ -408,7 +408,7 @@ const RecurringPayments: React.FC = () => {
   const handleCancelPayment = async () => {
     if (!selectedPayment) return;
     try {
-      const txHash = await cancelRecurringPayment?.(selectedPayment.id);
+      const txHash = await cancelRecurringPayment?.();
       notify('proposal_rejected', 'Recurring payment cancelled successfully', 'success');
       setIsCancelModalOpen(false);
       setSelectedPayment(null);
@@ -426,7 +426,7 @@ const RecurringPayments: React.FC = () => {
     setIsHistoryModalOpen(true);
     setHistoryLoading(true);
     try {
-      const history = await getRecurringPaymentHistory?.(payment.id) ?? [];
+      const history = await getRecurringPaymentHistory?.() ?? [];
       setPaymentHistory(history);
     } catch (error) {
       console.error('Failed to fetch payment history:', error);

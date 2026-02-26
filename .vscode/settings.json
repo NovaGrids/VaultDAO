@@ -1,2 +1,6 @@
 {
+ feature/proposal-comparison-tool
+
+    "typescript.autoClosingTags": false
+
 }
