@@ -1183,6 +1183,8 @@ pub struct FundingRoundConfig {
     pub min_milestone_amount: i128,
     /// Maximum rounds per proposal
     pub max_rounds_per_proposal: u32,
+}
+
 /// A single operation within a batch transaction
 #[contracttype]
 #[derive(Clone)]

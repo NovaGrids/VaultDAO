@@ -15,14 +15,17 @@ mod token;
 mod types;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, Map, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
-    CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, FundingMilestone,
-    FundingMilestoneStatus, FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig,
-    InsuranceConfig, ListMode, NotificationPreferences, Priority, Proposal, ProposalAmendment,
-    ProposalStatus, ProposalTemplate, Reputation, RetryConfig, RetryState, Role, TemplateOverrides,
-    ThresholdStrategy, VaultAction, VaultMetrics,
+    BatchExecutionResult, BatchOperation, BatchStatus, BatchTransaction, CancellationRecord,
+    Comment, Condition, ConditionLogic, Config, DexConfig, Escrow, EscrowStatus,
+    ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
+    FundingRoundConfig, FundingRoundStatus, GasConfig, InitConfig, InsuranceConfig, ListMode,
+    Milestone, NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal,
+    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal,
+    RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, StreamStatus,
+    StreamingPayment, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
+    TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData,
 };
 
 /// The main contract structure for VaultDAO.
@@ -1645,9 +1648,11 @@ impl VaultDAO {
         Ok(id)
     }
 
+    // ========================================================================
     // Subscription System
     // ========================================================================
-
+    // NOTE: Subscription functions commented out due to DataKey enum size limit
+    /*
     /// Create a new subscription
     pub fn create_subscription(
         env: Env,
@@ -2024,6 +2029,7 @@ impl VaultDAO {
     pub fn get_subscriber_subscriptions(env: Env, subscriber: Address) -> Vec<u64> {
         storage::get_subscriber_subscriptions(&env, &subscriber)
     }
+    */
 
     // ========================================================================
     // Recipient List Management
@@ -3127,10 +3133,11 @@ impl VaultDAO {
         let mut config = storage::get_config(&env)?;
         config.oracle_config = crate::OptionalVaultOracleConfig::Some(oracle_config.clone());
         storage::set_config(&env, &config);
-        storage::set_oracle_config(
-            &env,
-            &crate::OptionalVaultOracleConfig::Some(oracle_config.clone()),
-        );
+        // NOTE: set_oracle_config commented out due to DataKey enum size limit
+        // storage::set_oracle_config(
+        //     &env,
+        //     &crate::OptionalVaultOracleConfig::Some(oracle_config.clone()),
+        // );
         events::emit_oracle_config_updated(&env, &admin, &oracle_config.address);
         Ok(())
     }
@@ -5581,7 +5588,7 @@ pub fn create_funding_round(
     // Verify milestone amounts
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-    let milestone_count = milestones.len() as u32;
+    let milestone_count = milestones.len();
     let round_id = storage::bump_funding_round_id(&env);
     let round = FundingRound {
         id: round_id,

@@ -535,6 +535,7 @@ pub fn emit_retries_exhausted(env: &Env, proposal_id: u64, total_attempts: u32) 
 // ============================================================================
 
 /// Emit when a new subscription is created
+#[allow(dead_code)]
 pub fn emit_subscription_created(
     env: &Env,
     subscription_id: u64,
@@ -549,6 +550,7 @@ pub fn emit_subscription_created(
 }
 
 /// Emit when a subscription is renewed
+#[allow(dead_code)]
 pub fn emit_subscription_renewed(
     env: &Env,
     subscription_id: u64,
@@ -562,6 +564,7 @@ pub fn emit_subscription_renewed(
 }
 
 /// Emit when a subscription is cancelled
+#[allow(dead_code)]
 pub fn emit_subscription_cancelled(env: &Env, subscription_id: u64, cancelled_by: &Address) {
     env.events().publish(
         (Symbol::new(env, "subscription_cancelled"), subscription_id),
@@ -570,6 +573,7 @@ pub fn emit_subscription_cancelled(env: &Env, subscription_id: u64, cancelled_by
 }
 
 /// Emit when a subscription tier is upgraded
+#[allow(dead_code)]
 pub fn emit_subscription_upgraded(
     env: &Env,
     subscription_id: u64,
@@ -741,7 +745,11 @@ pub fn emit_funding_released(
 /// Emit when a funding round is cancelled
 pub fn emit_funding_round_cancelled(env: &Env, round_id: u64, canceller: &Address) {
     env.events().publish(
-        (Symbol::new(env, "funding_round_cancelled"), round_id),}
+        (Symbol::new(env, "funding_round_cancelled"), round_id),
+        canceller,
+    );
+}
+
 // ============================================================================
 // Wallet Recovery Events (feature/wallet-recovery)
 // ============================================================================
@@ -782,7 +790,9 @@ pub fn emit_funding_round_completed(env: &Env, round_id: u64, total_released: i1
         (Symbol::new(env, "funding_round_completed"), round_id),
         total_released,
     );
-/// Emit when recovery configuration is updated}
+}
+
+/// Emit when recovery configuration is updated
 pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "recovery_cfg_updated"),), admin.clone());
@@ -815,6 +825,7 @@ pub fn emit_stream_created(
 }
 
 /// Emit when a stream status is updated (paused, resumed, or cancelled)
+#[allow(dead_code)]
 pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, updated_by: &Address) {
     env.events().publish(
         (Symbol::new(env, "stream_status"), stream_id),
@@ -823,6 +834,7 @@ pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, update
 }
 
 /// Emit when tokens are claimed from a stream
+#[allow(dead_code)]
 pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amount: i128) {
     env.events().publish(
         (Symbol::new(env, "stream_claimed"), stream_id),

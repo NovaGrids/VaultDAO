@@ -22,10 +22,10 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    Comment, Config, CrossVaultConfig, CrossVaultProposal, Dispute, Escrow, FundingRound,
-    FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
-    ProposalAmendment, ProposalTemplate, Reputation, RetryState, Role, VaultMetrics,
-    VelocityConfig,
+    Comment, Config, DelegatedPermission, DexConfig, Escrow, ExecutionFeeEstimate, FundingRound,
+    FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
+    PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
+    RetryState, Role, SwapProposal, SwapResult, VaultMetrics, VelocityConfig,
 };
 
 /// Storage keys for batch transactions
@@ -118,14 +118,6 @@ pub enum DataKey {
     TemplateName(soroban_sdk::Symbol),
     /// Retry state for a proposal -> RetryState
     RetryState(u64),
-    /// Subscription by ID -> Subscription
-    Subscription(u64),
-    /// Next subscription ID counter -> u64
-    NextSubscriptionId,
-    /// Subscription payments by subscription ID -> Vec<SubscriptionPayment>
-    SubscriptionPayments(u64),
-    /// Subscriber subscriptions by address -> Vec<u64>
-    SubscriberSubscriptions(Address),
     /// Escrow agreement by ID -> Escrow
     Escrow(u64),
     /// Next escrow ID counter -> u64
@@ -148,14 +140,10 @@ pub enum DataKey {
     ProposalFundingRounds(u64),
     /// Funding round configuration -> FundingRoundConfig
     FundingRoundConfig,
-    /// Batch transaction by ID -> BatchTransaction
-    Batch(u64),
-    /// Batch execution result by ID -> BatchExecutionResult
-    BatchResult(u64),
-    /// Batch rollback state (operations to reverse) -> Vec<(Address, i128)>
-    BatchRollback(u64),
-    /// Next batch ID counter -> u64
-    BatchIdCounter,
+    /// Batch transaction storage (nested with BatchKey)
+    Batch(BatchKey),
+    /// Stream payment storage (nested with StreamKey)
+    Stream(StreamKey),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -405,6 +393,7 @@ pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment)
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_streaming_payment(
     env: &Env,
     id: u64,
@@ -795,8 +784,6 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
 // DEX/AMM Integration (Issue: feature/amm-integration)
 // ============================================================================
 
-use crate::types::{SwapProposal, SwapResult};
-
 pub fn set_dex_config(env: &Env, config: &DexConfig) {
     env.storage().instance().set(&DataKey::DexConfig, config);
 }
@@ -808,12 +795,14 @@ pub fn get_dex_config(env: &Env) -> Option<DexConfig> {
 // ============================================================================
 // Oracle Config
 // ============================================================================
-
+// NOTE: Oracle config functions commented out due to DataKey enum size limit
+/*
 pub fn set_oracle_config(env: &Env, config: &crate::OptionalVaultOracleConfig) {
     env.storage()
         .instance()
         .set(&DataKey::VaultOracleConfig, config);
 }
+*/
 
 pub fn set_swap_proposal(env: &Env, proposal_id: u64, swap: &SwapProposal) {
     let key = DataKey::SwapProposal(proposal_id);
@@ -1015,7 +1004,8 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 // ============================================================================
 // Subscription System (Issue: feature/subscription-system)
 // ============================================================================
-
+// NOTE: Subscription storage functions commented out due to DataKey enum size limit
+/*
 pub fn get_next_subscription_id(env: &Env) -> u64 {
     env.storage()
         .instance()
@@ -1079,6 +1069,8 @@ pub fn add_subscriber_subscription(env: &Env, subscriber: &Address, subscription
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
+*/
+
 // ============================================================================
 // Escrow (Issue: feature/escrow-system)
 // ============================================================================
@@ -1206,6 +1198,9 @@ pub fn add_proposal_funding_round(env: &Env, proposal_id: u64, round_id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
 // Batch Transactions
 // ============================================================================
 
