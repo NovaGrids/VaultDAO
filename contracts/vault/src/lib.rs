@@ -3206,7 +3206,7 @@ impl VaultDAO {
     ///
     /// # Returns
     /// FeeCalculation with base fee, discount, and final fee
-    pub fn calculate_fee_public(
+    pub fn calculate_fee(
         env: Env,
         user: Address,
         token: Address,
@@ -3697,7 +3697,125 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Execution Hooks
+    // Dynamic Fee System (Issue: feature/dynamic-fees)
+    // ========================================================================
+
+    /// Calculate fee for a transaction based on volume tiers and reputation.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `user` - The user making the transaction
+    /// * `token` - The token being transferred
+    /// * `amount` - The transaction amount
+    ///
+    /// # Returns
+    /// FeeCalculation with base fee, discount, and final fee
+    fn calculate_fee(
+        env: &Env,
+        user: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> types::FeeCalculation {
+        let fee_structure = storage::get_fee_structure(env);
+
+        if !fee_structure.enabled {
+            return types::FeeCalculation {
+                base_fee: 0,
+                discount: 0,
+                final_fee: 0,
+                fee_bps: 0,
+                reputation_discount_applied: false,
+            };
+        }
+
+        // Get user's total volume for this token
+        let user_volume = storage::get_user_volume(env, user, token);
+
+        // Find applicable fee tier based on volume
+        let mut fee_bps = fee_structure.base_fee_bps;
+        for i in 0..fee_structure.tiers.len() {
+            if let Some(tier) = fee_structure.tiers.get(i) {
+                if user_volume >= tier.min_volume {
+                    fee_bps = tier.fee_bps;
+                } else {
+                    break; // Tiers are sorted, so we can stop
+                }
+            }
+        }
+
+        // Calculate base fee
+        let base_fee = (amount * fee_bps as i128) / 10_000;
+
+        // Check for reputation discount
+        let rep = storage::get_reputation(env, user);
+        let mut discount = 0i128;
+        let mut reputation_discount_applied = false;
+
+        if rep.score >= fee_structure.reputation_discount_threshold {
+            discount = (base_fee * fee_structure.reputation_discount_percentage as i128) / 100;
+            reputation_discount_applied = true;
+        }
+
+        let final_fee = base_fee.saturating_sub(discount).max(0);
+
+        types::FeeCalculation {
+            base_fee,
+            discount,
+            final_fee,
+            fee_bps,
+            reputation_discount_applied,
+        }
+    }
+
+    /// Collect fee from a transaction and distribute to treasury.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `user` - The user making the transaction
+    /// * `token` - The token being transferred
+    /// * `amount` - The transaction amount
+    ///
+    /// # Returns
+    /// The fee amount collected
+    fn collect_and_distribute_fee(
+        env: &Env,
+        user: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> Result<i128, VaultError> {
+        let fee_calc = Self::calculate_fee(env, user, token, amount);
+
+        if fee_calc.final_fee == 0 {
+            return Ok(0);
+        }
+
+        let fee_structure = storage::get_fee_structure(env);
+
+        // Transfer fee from vault to treasury
+        token::transfer(env, token, &fee_structure.treasury, fee_calc.final_fee);
+
+        // Update fee collection stats
+        storage::add_fees_collected(env, token, fee_calc.final_fee);
+
+        // Update user volume
+        storage::add_user_volume(env, user, token, amount);
+
+        // Emit fee collected event
+        events::emit_fee_collected(
+            env,
+            user,
+            token,
+            amount,
+            fee_calc.final_fee,
+            fee_calc.fee_bps,
+            fee_calc.reputation_discount_applied,
+        );
+
+        Ok(fee_calc.final_fee)
+    }
+
+    // ========================================================================
+    // DEX/AMM Integration (Issue: feature/amm-integration)
     // ========================================================================
 
     /// Register a pre-execution hook
@@ -4646,9 +4764,9 @@ impl VaultDAO {
             proposal.amount,
         )?;
 
-        // Check vault balance (account for insurance amount, stake amount, and fee)
+        // Check vault balance (account for insurance amount and fee)
         let balance = token::balance(env, &proposal.token);
-        let total_required = proposal.amount + proposal.insurance_amount + proposal.stake_amount + fee_amount;
+        let total_required = proposal.amount + proposal.insurance_amount + fee_amount;
         if balance < total_required {
             return Err(VaultError::InsufficientBalance);
         }
