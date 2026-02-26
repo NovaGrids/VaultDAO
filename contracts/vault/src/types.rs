@@ -360,6 +360,34 @@ pub struct Proposal {
     pub voting_deadline: u64,
 }
 
+/// Read-only execution simulation result for a proposal.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalExecutionSimulation {
+    /// Target proposal id.
+    pub proposal_id: u64,
+    /// Whether execution would succeed at the current ledger.
+    pub can_execute: bool,
+    /// Current proposal status.
+    pub current_status: ProposalStatus,
+    /// Predicted status after a successful execution.
+    pub expected_status: ProposalStatus,
+    /// Current vault token balance.
+    pub vault_balance_before: i128,
+    /// Predicted vault token balance after execution (if executable).
+    pub vault_balance_after: i128,
+    /// Transfer amount that would be sent to recipient.
+    pub transfer_amount: i128,
+    /// Insurance amount that would be returned to proposer.
+    pub insurance_refund: i128,
+    /// Remaining timelock ledgers (0 when unlocked).
+    pub timelock_remaining_ledgers: u64,
+    /// Error code (0 if no error, otherwise VaultError discriminant).
+    pub error_code: u32,
+    /// Short error label for UI display.
+    pub error_label: Symbol,
+}
+
 /// On-chain comment on a proposal
 #[contracttype]
 #[derive(Clone, Debug)]

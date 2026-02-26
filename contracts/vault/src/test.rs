@@ -7150,3 +7150,164 @@ fn test_oracle_staleness() {
         ProposalStatus::Executed
     );
 }
+
+#[test]
+fn test_simulate_proposal_execution_success_no_state_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let mut config = default_init_config(&env, signers, 1);
+    config.timelock_threshold = 10_000;
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "sim_ok"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer, &proposal_id);
+
+    let balance_before = token_client.balance(&contract_id);
+    let proposal_before = client.get_proposal(&proposal_id);
+    assert_eq!(proposal_before.status, ProposalStatus::Approved);
+
+    let simulation = client.simulate_proposal_execution(&proposal_id);
+    assert!(simulation.can_execute);
+    assert_eq!(simulation.error_code, 0);
+    assert_eq!(simulation.expected_status, ProposalStatus::Executed);
+    assert_eq!(simulation.vault_balance_before, balance_before);
+    assert_eq!(simulation.vault_balance_after, balance_before - 100);
+
+    // Ensure simulation does not mutate on-chain state.
+    let proposal_after = client.get_proposal(&proposal_id);
+    assert_eq!(proposal_after.status, ProposalStatus::Approved);
+    assert_eq!(token_client.balance(&contract_id), balance_before);
+}
+
+#[test]
+fn test_simulate_proposal_execution_detects_insufficient_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &50);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "sim_bal"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer, &proposal_id);
+
+    let simulation = client.simulate_proposal_execution(&proposal_id);
+    assert!(!simulation.can_execute);
+    assert_eq!(
+        simulation.error_code,
+        VaultError::InsufficientBalance as u32
+    );
+    assert_eq!(
+        simulation.vault_balance_before,
+        token_client.balance(&contract_id)
+    );
+    assert_eq!(
+        simulation.vault_balance_after,
+        token_client.balance(&contract_id)
+    );
+}
+
+#[test]
+fn test_simulate_proposal_execution_detects_timelock() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let mut config = default_init_config(&env, signers, 1);
+    config.timelock_threshold = 50;
+    config.timelock_delay = 200;
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "sim_time"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer, &proposal_id);
+
+    let simulation = client.simulate_proposal_execution(&proposal_id);
+    assert!(!simulation.can_execute);
+    assert_eq!(simulation.error_code, VaultError::TimelockNotExpired as u32);
+    assert_eq!(simulation.timelock_remaining_ledgers, 200);
+    assert_eq!(
+        token_client.balance(&contract_id),
+        simulation.vault_balance_before
+    );
+}

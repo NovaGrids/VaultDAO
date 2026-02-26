@@ -21,11 +21,11 @@ pub use types::{
     Comment, Condition, ConditionLogic, Config, DexConfig, Escrow, EscrowStatus,
     ExecutionFeeEstimate, GasConfig, InitConfig, InsuranceConfig, ListMode, Milestone,
     NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal, ProposalAmendment,
-    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
-    RecurringPayment, Reputation, RetryConfig, RetryState, Role, StreamStatus, StreamingPayment,
-    Subscription, SubscriptionPayment, SubscriptionStatus, SubscriptionTier, SwapProposal,
-    SwapResult, TemplateOverrides, ThresholdStrategy, TransferDetails, VaultMetrics,
-    VaultOracleConfig, VaultPriceData,
+    ProposalExecutionSimulation, ProposalStatus, ProposalTemplate, RecoveryConfig,
+    RecoveryProposal, RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role,
+    StreamStatus, StreamingPayment, Subscription, SubscriptionPayment, SubscriptionStatus,
+    SubscriptionTier, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
+    TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData,
 };
 
 /// The main contract structure for VaultDAO.
@@ -851,6 +851,80 @@ impl VaultDAO {
             }
             Err(err) => Err(err),
         }
+    }
+
+    /// Simulate proposal execution without mutating contract state.
+    ///
+    /// This performs the same validation checks as `execute_proposal` and transfer
+    /// prechecks, then returns the expected outcome and projected balance changes.
+    pub fn simulate_proposal_execution(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<ProposalExecutionSimulation, VaultError> {
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        let config = storage::get_config(&env)?;
+        let current_ledger = env.ledger().sequence() as u64;
+        let balance_before = token::balance(&env, &proposal.token);
+
+        let mut error_code: u32 = 0;
+        let mut error_label = Symbol::new(&env, "ok");
+        let mut timelock_remaining_ledgers: u64 = 0;
+
+        let precheck_error: Option<VaultError> = if proposal.status == ProposalStatus::Executed {
+            Some(VaultError::ProposalAlreadyExecuted)
+        } else if proposal.status != ProposalStatus::Approved {
+            Some(VaultError::ProposalNotApproved)
+        } else if current_ledger > proposal.expires_at {
+            Some(VaultError::ProposalExpired)
+        } else if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
+            timelock_remaining_ledgers = proposal.unlock_ledger - current_ledger;
+            Some(VaultError::TimelockNotExpired)
+        } else if let Err(err) = Self::ensure_dependencies_executable(&env, &proposal) {
+            Some(err)
+        } else if let Err(err) = Self::ensure_vote_requirements_satisfied(&config, &proposal) {
+            Some(err)
+        } else if let Err(err) = Self::evaluate_conditions(&env, &proposal) {
+            Some(err)
+        } else {
+            let fee_estimate = Self::calculate_execution_fee(&env, &proposal);
+            if proposal.gas_limit > 0 && fee_estimate.total_fee > proposal.gas_limit {
+                Some(VaultError::GasLimitExceeded)
+            } else if balance_before < proposal.amount + proposal.insurance_amount {
+                Some(VaultError::InsufficientBalance)
+            } else {
+                None
+            }
+        };
+
+        let can_execute = precheck_error.is_none();
+        if let Some(err) = precheck_error {
+            error_code = err as u32;
+            error_label = Self::simulation_error_label(&env, err);
+        }
+
+        let vault_balance_after = if can_execute {
+            balance_before - proposal.amount - proposal.insurance_amount
+        } else {
+            balance_before
+        };
+
+        Ok(ProposalExecutionSimulation {
+            proposal_id,
+            can_execute,
+            current_status: proposal.status.clone(),
+            expected_status: if can_execute {
+                ProposalStatus::Executed
+            } else {
+                proposal.status
+            },
+            vault_balance_before: balance_before,
+            vault_balance_after,
+            transfer_amount: proposal.amount,
+            insurance_refund: proposal.insurance_amount,
+            timelock_remaining_ledgers,
+            error_code,
+            error_label,
+        })
     }
 
     /// Explicitly retry a previously failed proposal execution.
@@ -4194,6 +4268,21 @@ impl VaultDAO {
     // ========================================================================
     // Retry Helpers (private)
     // ========================================================================
+
+    fn simulation_error_label(env: &Env, err: VaultError) -> Symbol {
+        match err {
+            VaultError::ProposalAlreadyExecuted => Symbol::new(env, "already_executed"),
+            VaultError::ProposalNotApproved => Symbol::new(env, "not_approved"),
+            VaultError::ProposalExpired => Symbol::new(env, "expired"),
+            VaultError::TimelockNotExpired => Symbol::new(env, "timelocked"),
+            VaultError::ProposalNotFound => Symbol::new(env, "not_found"),
+            VaultError::QuorumNotReached => Symbol::new(env, "quorum"),
+            VaultError::GasLimitExceeded => Symbol::new(env, "gas_limit"),
+            VaultError::InsufficientBalance => Symbol::new(env, "insufficient_balance"),
+            VaultError::ConditionsNotMet => Symbol::new(env, "conditions"),
+            _ => Symbol::new(env, "error"),
+        }
+    }
 
     /// Attempt the actual transfer for a proposal. Separated from execute_proposal
     /// so that retryable failures can be caught and handled.
