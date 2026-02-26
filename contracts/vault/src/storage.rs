@@ -21,13 +21,13 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::errors::VaultError;
-use crate::types::{AuditEntry, Comment, Config, Proposal, Role, VelocityConfig};
 use soroban_sdk::Vec as SdkVec;
 use crate::types::{
-    Comment, Config, DelegatedPermission, DexConfig, Escrow, ExecutionFeeEstimate, FundingRound,
-    FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
-    PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
-    RetryState, Role, SwapProposal, SwapResult, VaultMetrics, VelocityConfig,
+    AuditEntry, Comment, Config, DelegatedPermission, DexConfig, Escrow, ExecutionFeeEstimate,
+    FundingRound, FundingRoundConfig, GasConfig, InsuranceConfig, ListMode,
+    NotificationPreferences, PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate,
+    RecoveryProposal, Reputation, RetryState, Role, Subscription, SubscriptionPayment,
+    SwapProposal, SwapResult, VaultMetrics, VelocityConfig, VotingStrategy,
 };
 
 /// Core storage key definitions (kept minimal to avoid size limits)
@@ -172,6 +172,12 @@ pub enum FeatureKey {
     FundingRoundConfig,
     /// Batch transaction storage (nested with BatchKey)
     Batch(BatchKey),
+    /// Oracle configuration -> VaultOracleConfig
+    VaultOracleConfig,
+    /// Active voting strategy for proposal approvals -> VotingStrategy
+    VotingStrategy,
+    /// Ledger sequence when an approval was cast -> u64
+    ApprovalLedger(u64, Address),
     /// Stream payment storage (nested with StreamKey)
     Stream(StreamKey),
     /// Fee structure configuration -> FeeStructure
@@ -215,6 +221,30 @@ pub fn get_config(env: &Env) -> Result<Config, VaultError> {
 
 pub fn set_config(env: &Env, config: &Config) {
     env.storage().instance().set(&DataKey::Config, config);
+}
+
+pub fn get_voting_strategy(env: &Env) -> VotingStrategy {
+    env.storage()
+        .instance()
+        .get(&DataKey::VotingStrategy)
+        .unwrap_or(VotingStrategy::Simple)
+}
+
+pub fn set_voting_strategy(env: &Env, strategy: &VotingStrategy) {
+    env.storage().instance().set(&DataKey::VotingStrategy, strategy);
+}
+
+pub fn set_approval_ledger(env: &Env, proposal_id: u64, voter: &Address, ledger: u64) {
+    let key = DataKey::ApprovalLedger(proposal_id, voter.clone());
+    env.storage().persistent().set(&key, &ledger);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn get_approval_ledger(env: &Env, proposal_id: u64, voter: &Address) -> Option<u64> {
+    let key = DataKey::ApprovalLedger(proposal_id, voter.clone());
+    env.storage().persistent().get(&key)
 }
 
 pub fn is_veto_address(env: &Env, addr: &Address) -> Result<bool, VaultError> {

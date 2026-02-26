@@ -21,6 +21,15 @@ use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, Map, String, Sy
 use types::{
     BatchExecutionResult, BatchOperation, BatchStatus, BatchTransaction, CancellationRecord,
     Comment, Condition, ConditionLogic, Config, DexConfig, Escrow, EscrowStatus,
+<<<<<<< HEAD
+    ExecutionFeeEstimate, GasConfig, InitConfig, InsuranceConfig, ListMode, Milestone,
+    NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal, ProposalAmendment,
+    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
+    RecurringPayment, Reputation, RetryConfig, RetryState, Role, StreamStatus, StreamingPayment,
+    Subscription, SubscriptionPayment, SubscriptionStatus, SubscriptionTier, SwapProposal,
+    SwapResult, TemplateOverrides, ThresholdStrategy, TransferDetails, VaultMetrics,
+    VaultOracleConfig, VaultPriceData, VotingStrategy,
+=======
     ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
     FundingRoundConfig, FundingRoundStatus, GasConfig, InitConfig, InsuranceConfig, ListMode,
     Milestone, NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal,
@@ -28,6 +37,7 @@ use types::{
     RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, StreamStatus,
     StreamingPayment, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
     TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData,
+>>>>>>> e8f0c2c7a2d16d622769e1c4ceda0865df957a4c
 };
 
 /// The main contract structure for VaultDAO.
@@ -129,6 +139,7 @@ impl VaultDAO {
 
         // Store state
         storage::set_config(&env, &config_storage);
+        storage::set_voting_strategy(&env, &VotingStrategy::Simple);
         storage::set_role(&env, &admin, Role::Admin);
         storage::set_staking_config(&env, &config.staking_config);
         storage::set_initialized(&env);
@@ -821,6 +832,12 @@ impl VaultDAO {
             return Err(VaultError::AlreadyApproved);
         }
 
+<<<<<<< HEAD
+        // Add approval
+        proposal.approvals.push_back(signer.clone());
+        let current_ledger = env.ledger().sequence() as u64;
+        storage::set_approval_ledger(&env, proposal_id, &signer, current_ledger);
+=======
         // Add approval using effective voter
         proposal.approvals.push_back(effective_voter.clone());
 
@@ -828,6 +845,7 @@ impl VaultDAO {
         if is_delegated {
             events::emit_delegated_vote(&env, proposal_id, &effective_voter, &signer);
         }
+>>>>>>> e8f0c2c7a2d16d622769e1c4ceda0865df957a4c
 
         // Calculate current vote totals
         let approval_count = proposal.approvals.len();
@@ -836,8 +854,7 @@ impl VaultDAO {
         let was_quorum_reached = config.quorum == 0 || previous_quorum_votes >= config.quorum;
 
         // Check if threshold met AND quorum satisfied
-        let threshold_reached =
-            approval_count >= Self::calculate_threshold(&config, &proposal.amount);
+        let threshold_reached = Self::is_threshold_reached(&env, &config, &proposal);
         let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
         if config.quorum > 0 && !was_quorum_reached && quorum_reached {
             events::emit_quorum_reached(&env, proposal_id, quorum_votes, config.quorum);
@@ -949,7 +966,7 @@ impl VaultDAO {
 
         // Enforce retry constraints if this is a retry attempt
         let config = storage::get_config(&env)?;
-        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
+        Self::ensure_vote_requirements_satisfied(&env, &config, &proposal)?;
         if let Some(retry_state) = storage::get_retry_state(&env, proposal_id) {
             if retry_state.retry_count > 0 {
                 // Check if max retries exhausted
@@ -1879,6 +1896,29 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Update the voting strategy used for proposal approvals.
+    ///
+    /// Only Admin can update voting strategy.
+    pub fn update_voting_strategy(
+        env: Env,
+        admin: Address,
+        strategy: VotingStrategy,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        Self::validate_voting_strategy(&strategy)?;
+        storage::set_voting_strategy(&env, &strategy);
+        storage::extend_instance_ttl(&env);
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
     /// Extend voting deadline for a proposal (admin only)
     pub fn extend_voting_deadline(
         env: Env,
@@ -2052,6 +2092,11 @@ impl VaultDAO {
     pub fn is_signer(env: Env, addr: Address) -> Result<bool, VaultError> {
         let config = storage::get_config(&env)?;
         Ok(config.signers.contains(&addr))
+    }
+
+    /// Get currently configured voting strategy.
+    pub fn get_voting_strategy(env: Env) -> VotingStrategy {
+        storage::get_voting_strategy(&env)
     }
 
     /// Returns quorum status for a proposal as (quorum_votes, required_quorum, quorum_reached).
@@ -2921,6 +2966,54 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+<<<<<<< HEAD
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Snapshot check: voter must have been a signer at proposal creation
+        if !proposal.snapshot_signers.contains(&signer) {
+            return Err(VaultError::VoterNotInSnapshot);
+        }
+
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger > proposal.expires_at {
+            proposal.status = ProposalStatus::Expired;
+            storage::set_proposal(&env, &proposal);
+            return Err(VaultError::ProposalExpired);
+        }
+
+        // Prevent voting twice (approving then abstaining, or abstaining twice)
+        if proposal.approvals.contains(&signer) || proposal.abstentions.contains(&signer) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        // Record the abstention
+        proposal.abstentions.push_back(signer.clone());
+
+        let abstention_count = proposal.abstentions.len();
+        let quorum_votes = proposal.approvals.len() + abstention_count;
+        let previous_quorum_votes = quorum_votes.saturating_sub(1);
+        let was_quorum_reached = config.quorum == 0 || previous_quorum_votes >= config.quorum;
+
+        // An abstention may push quorum over the line while approvals already meet threshold.
+        // Check both conditions and transition to Approved if they are now both satisfied.
+        let threshold_reached = Self::is_threshold_reached(&env, &config, &proposal);
+        let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
+        if config.quorum > 0 && !was_quorum_reached && quorum_reached {
+            events::emit_quorum_reached(&env, proposal_id, quorum_votes, config.quorum);
+        }
+
+        if threshold_reached && quorum_reached {
+            proposal.status = ProposalStatus::Approved;
+
+            if proposal.amount >= config.timelock_threshold {
+                proposal.unlock_ledger = current_ledger + config.timelock_delay;
+            } else {
+                proposal.unlock_ledger = 0;
+=======
         for id in start_id..=end_id {
             let entry = storage::get_audit_entry(&env, id)?;
             
@@ -2944,6 +3037,7 @@ impl VaultDAO {
                 if entry.prev_hash != prev_entry.hash {
                     return Ok(false);
                 }
+>>>>>>> e8f0c2c7a2d16d622769e1c4ceda0865df957a4c
             }
         }
 
@@ -2988,7 +3082,7 @@ impl VaultDAO {
                 continue;
             }
             // Skip if approvals/quorum are no longer satisfied
-            if Self::ensure_vote_requirements_satisfied(&config, &proposal).is_err() {
+            if Self::ensure_vote_requirements_satisfied(&env, &config, &proposal).is_err() {
                 failed_count += 1;
                 continue;
             }
@@ -3730,15 +3824,117 @@ impl VaultDAO {
         }
     }
 
+    fn integer_sqrt(value: i128) -> u32 {
+        if value <= 0 {
+            return 0;
+        }
+        let mut x = value as u128;
+        let mut y = x.div_ceil(2);
+        while y < x {
+            x = y;
+            y = (x + ((value as u128) / x)) / 2;
+        }
+        x as u32
+    }
+
+    fn validate_voting_strategy(strategy: &VotingStrategy) -> Result<(), VaultError> {
+        match strategy {
+            VotingStrategy::Simple => Ok(()),
+            VotingStrategy::Weighted {
+                required_weight, ..
+            } => {
+                if *required_weight <= 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                Ok(())
+            }
+            VotingStrategy::Quadratic {
+                required_voice_credits,
+                ..
+            } => {
+                if *required_voice_credits < 1 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                Ok(())
+            }
+            VotingStrategy::Conviction {
+                required_conviction,
+                growth_period,
+            } => {
+                if *required_conviction < 1 || *growth_period < 1 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn is_threshold_reached(env: &Env, config: &Config, proposal: &Proposal) -> bool {
+        let strategy = storage::get_voting_strategy(env);
+        match strategy {
+            VotingStrategy::Simple => {
+                proposal.approvals.len() >= Self::calculate_threshold(config, &proposal.amount)
+            }
+            VotingStrategy::Weighted {
+                governance_token,
+                required_weight,
+            } => {
+                let token_client = soroban_sdk::token::Client::new(env, &governance_token);
+                let mut total_weight: i128 = 0;
+                for i in 0..proposal.approvals.len() {
+                    if let Some(voter) = proposal.approvals.get(i) {
+                        let bal = token_client.balance(&voter);
+                        if bal > 0 {
+                            total_weight = total_weight.saturating_add(bal);
+                        }
+                    }
+                }
+                total_weight >= required_weight
+            }
+            VotingStrategy::Quadratic {
+                governance_token,
+                required_voice_credits,
+            } => {
+                let token_client = soroban_sdk::token::Client::new(env, &governance_token);
+                let mut total_credits: u32 = 0;
+                for i in 0..proposal.approvals.len() {
+                    if let Some(voter) = proposal.approvals.get(i) {
+                        let bal = token_client.balance(&voter);
+                        total_credits = total_credits.saturating_add(Self::integer_sqrt(bal));
+                    }
+                }
+                total_credits >= required_voice_credits
+            }
+            VotingStrategy::Conviction {
+                required_conviction,
+                growth_period,
+            } => {
+                let current_ledger = env.ledger().sequence() as u64;
+                let mut conviction: u32 = 0;
+                for i in 0..proposal.approvals.len() {
+                    if let Some(voter) = proposal.approvals.get(i) {
+                        let approved_at = storage::get_approval_ledger(env, proposal.id, &voter)
+                            .unwrap_or(proposal.created_at);
+                        let age = current_ledger.saturating_sub(approved_at);
+                        let bonus_steps = (age / growth_period) as u32;
+                        let bonus_capped = bonus_steps.min(3);
+                        conviction = conviction.saturating_add(1 + bonus_capped);
+                    }
+                }
+                conviction >= required_conviction
+            }
+        }
+    }
+
     /// Validate that approvals and quorum participation both satisfy current requirements.
     fn ensure_vote_requirements_satisfied(
+        env: &Env,
         config: &Config,
         proposal: &Proposal,
     ) -> Result<(), VaultError> {
         let approval_count = proposal.approvals.len();
         let quorum_votes = approval_count + proposal.abstentions.len();
-        let threshold_reached =
-            approval_count >= Self::calculate_threshold(config, &proposal.amount);
+        let threshold_reached = Self::is_threshold_reached(env, config, proposal);
         let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
         if !threshold_reached {
             return Err(VaultError::ProposalNotApproved);
@@ -4243,7 +4439,7 @@ impl VaultDAO {
         if role != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
-        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
+        Self::ensure_vote_requirements_satisfied(&env, &config, &proposal)?;
 
         let mut config = storage::get_config(&env)?;
         if config.post_execution_hooks.contains(&hook) {
@@ -4706,7 +4902,7 @@ impl VaultDAO {
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
-        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
+        Self::ensure_vote_requirements_satisfied(&env, &config, &proposal)?;
 
         let mut cross_vault = storage::get_cross_vault_proposal(&env, proposal_id)
             .ok_or(VaultError::ProposalNotFound)?;
