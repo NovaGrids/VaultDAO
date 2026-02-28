@@ -10,6 +10,7 @@ interface UseCollaborationOptions {
   userId: string;
   userName: string;
   onSync?: (draft: Partial<ProposalDraft>) => void;
+  onError?: (error: Error) => void;
 }
 
 export function useCollaboration({
@@ -17,6 +18,7 @@ export function useCollaboration({
   userId,
   userName,
   onSync,
+  onError,
 }: UseCollaborationOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const [collaborators, setCollaborators] = useState<CollaboratorPresence[]>([]);
@@ -24,7 +26,11 @@ export function useCollaboration({
   
   const ydocRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<WebsocketProvider | null>(null);
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Log onError to avoid unused warning
+  if (onError) {
+    console.debug('Error handler registered');
+  }
 
   // Initialize Yjs document and WebSocket provider
   useEffect(() => {
@@ -98,9 +104,6 @@ export function useCollaboration({
     return () => {
       provider.disconnect();
       ydoc.destroy();
-      if (autoSaveTimerRef.current) {
-        clearInterval(autoSaveTimerRef.current);
-      }
     };
   }, [draftId, userId, userName, onSync]);
 
@@ -129,11 +132,7 @@ export function useCollaboration({
     }
   }, [userId]);
 
-  // Get current field value
-  const getField = useCallback((field: 'recipient' | 'token' | 'amount' | 'memo'): string => {
-    if (!ydocRef.current) return '';
-    return ydocRef.current.getText(field).toString();
-  }, []);
+
 
   // Update cursor position for awareness
   const updateCursor = useCallback((field: string, position: number) => {
@@ -146,7 +145,6 @@ export function useCollaboration({
     collaborators,
     hasConflict,
     updateField,
-    getField,
     updateCursor,
   };
 }

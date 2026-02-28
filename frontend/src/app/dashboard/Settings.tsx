@@ -20,10 +20,12 @@ import {
 } from 'lucide-react';
 import RecipientListManagement from '../../components/RecipientListManagement';
 import RoleManagement from '../../components/RoleManagement';
+import EmergencyControls from '../../components/EmergencyControls';
 import WalletComparison from '../../components/WalletComparison';
 import CopyButton from '../../components/CopyButton';
+import SpendingLimitsPanel from '../../components/SpendingLimitsPanel';
 import { useVaultContract } from '../../hooks/useVaultContract';
-import { useWallet } from '../../context/WalletContextProps';
+import { useWallet } from '../../hooks/useWallet';
 import { formatTokenAmount, truncateAddress } from '../../utils/formatters';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
@@ -78,6 +80,7 @@ const Settings: React.FC = () => {
   const { address } = useWallet();
   const [history, setHistory] = useState<ExportHistoryItem[]>(() => getExportHistory());
   const [showRecipientLists, setShowRecipientLists] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [vaultConfig, setVaultConfig] = useState<Awaited<ReturnType<typeof getVaultConfig>> | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -121,6 +124,9 @@ const Settings: React.FC = () => {
     [vaultConfig],
   );
 
+  const isAdmin = useMemo(() => vaultConfig?.currentUserRole === 2, [vaultConfig]);
+  const isSigner = useMemo(() => vaultConfig?.isCurrentUserSigner ?? false, [vaultConfig]);
+
   const formatTimelockDelay = (delayLedgers: number): string => {
     if (!delayLedgers || delayLedgers < 1) return 'No delay';
     const totalSeconds = delayLedgers * 5;
@@ -140,6 +146,11 @@ const Settings: React.FC = () => {
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-bold">Settings</h2>
+
+      {/* Emergency Controls */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <EmergencyControls isAdmin={isAdmin} isSigner={isSigner} />
+      </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
@@ -317,9 +328,10 @@ const Settings: React.FC = () => {
                           ? 'Download again'
                           : 'Re-download not available (no stored content)'
                       }
-                      className="min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                      className="min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      aria-label={hasStoredContent(item) ? `Re-export ${item.filename}` : 'Re-export not available'}
                     >
-                      <Download size={18} />
+                      <Download size={18} aria-hidden="true" />
                       <span className="hidden sm:inline">Re-export</span>
                     </button>
                   </div>
@@ -331,16 +343,17 @@ const Settings: React.FC = () => {
               <button
                 type="button"
                 onClick={handleClearHistory}
-                className="min-h-[44px] flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gray-700 hover:bg-red-600/80 text-white text-sm touch-manipulation"
+                className="min-h-[44px] flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gray-700 hover:bg-red-600/80 text-white text-sm touch-manipulation focus:outline-none focus:ring-2 focus:ring-purple-500"
+                aria-label="Clear export history"
               >
-                <Trash2 size={18} />
+                <Trash2 size={18} aria-hidden="true" />
                 Clear history
               </button>
             </div>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <FileText size={48} className="text-gray-600 mb-3" />
+            <FileText size={48} className="text-gray-600 mb-3" aria-hidden="true" />
             <p className="text-gray-400">No export history yet.</p>
             <p className="text-sm text-gray-500 mt-1">
               Exports from Proposals and Activity will appear here.
@@ -352,12 +365,14 @@ const Settings: React.FC = () => {
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <Shield className="text-blue-400" size={24} />
+            <Shield className="text-blue-400" size={24} aria-hidden="true" />
             <h3 className="text-lg font-semibold">Recipient Lists</h3>
           </div>
           <button
             onClick={() => setShowRecipientLists(!showRecipientLists)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
+            aria-expanded={showRecipientLists}
+            aria-label={showRecipientLists ? 'Hide recipient lists' : 'Manage recipient lists'}
           >
             {showRecipientLists ? 'Hide' : 'Manage Lists'}
           </button>
@@ -368,11 +383,7 @@ const Settings: React.FC = () => {
         {showRecipientLists && <RecipientListManagement />}
       </div>
 
-      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <p className="text-gray-400">
-          Configuration editing is not enabled yet. Admin updates will be added in a future release.
-        </p>
-      </div>
+      <SpendingLimitsPanel isAdmin={isAdmin} />
     </div>
   );
 };

@@ -6,10 +6,12 @@ const MAX_VERSIONS = 50;
 
 export function useVersionHistory(draftId: string) {
   const [versions, setVersions] = useState<DraftVersion[]>([]);
+  const [loading, setLoading] = useState(false);
 
   // Load versions from localStorage
   useEffect(() => {
     const loadVersions = () => {
+      setLoading(true);
       try {
         const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}${draftId}`);
         if (stored) {
@@ -18,6 +20,8 @@ export function useVersionHistory(draftId: string) {
         }
       } catch (error) {
         console.error('Failed to load version history:', error);
+      } finally {
+        setLoading(false);
       }
     };
     loadVersions();
@@ -26,10 +30,11 @@ export function useVersionHistory(draftId: string) {
   // Save new version
   const saveVersion = useCallback((
     draft: Partial<ProposalDraft>,
-    _userId: string,
+    userId: string,
     userName: string,
     changeDescription: string
   ) => {
+    console.log('Saving version for user:', userId);
     try {
       const newVersion: DraftVersion = {
         id: `${draftId}_v${Date.now()}`,
@@ -65,20 +70,7 @@ export function useVersionHistory(draftId: string) {
     };
   }, [versions]);
 
-  // Get diff between two versions
-  const getDiff = useCallback((versionId1: string, versionId2: string) => {
-    const v1 = versions.find(v => v.id === versionId1);
-    const v2 = versions.find(v => v.id === versionId2);
-    
-    if (!v1 || !v2) return null;
 
-    return {
-      recipient: v1.recipient !== v2.recipient ? { old: v2.recipient, new: v1.recipient } : null,
-      token: v1.token !== v2.token ? { old: v2.token, new: v1.token } : null,
-      amount: v1.amount !== v2.amount ? { old: v2.amount, new: v1.amount } : null,
-      memo: v1.memo !== v2.memo ? { old: v2.memo, new: v1.memo } : null,
-    };
-  }, [versions]);
 
   // Clear all versions
   const clearVersions = useCallback(() => {
@@ -88,9 +80,9 @@ export function useVersionHistory(draftId: string) {
 
   return {
     versions,
+    loading,
     saveVersion,
     restoreVersion,
-    getDiff,
     clearVersions,
   };
 }

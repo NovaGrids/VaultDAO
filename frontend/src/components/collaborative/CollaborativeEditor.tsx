@@ -79,14 +79,12 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     });
 
     // Update CRDT
-    if (field === 'recipient' || field === 'token' || field === 'amount' || field === 'memo') {
-      updateField(field, value);
+    if (field !== 'attachments') {
+      updateField(field as 'recipient' | 'token' | 'amount' | 'memo', value);
     }
 
     // Track change
-    if (field === 'recipient' || field === 'token' || field === 'amount' || field === 'memo') {
-      trackChange(userId, userName, field, oldValue, value);
-    }
+    trackChange(userId, userName, field as any, oldValue, value);
   }, [formData, onDataChange, updateField, trackChange, userId, userName]);
 
   return (

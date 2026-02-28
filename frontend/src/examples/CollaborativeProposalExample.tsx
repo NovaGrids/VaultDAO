@@ -39,7 +39,11 @@ const CollaborativeProposalExample: React.FC = () => {
 
   // Enable collaborative editing
   const handleEnableCollaboration = () => {
-    const newDraftId = `draft-${Date.now()}-${address?.slice(0, 8)}`;
+    if (!address) {
+      notify('config_updated', 'Please connect your wallet', 'error');
+      return;
+    }
+    const newDraftId = `draft-${Date.now()}-${address.slice(0, 8)}`;
     setDraftId(newDraftId);
     setShowStandardModal(false);
     setShowCollabModal(true);
@@ -48,7 +52,7 @@ const CollaborativeProposalExample: React.FC = () => {
   // Submit proposal
   const handleSubmit = async (data: NewProposalFormData) => {
     if (!address) {
-      notify('new_proposal', 'Please connect your wallet', 'error');
+      notify('config_updated', 'Please connect your wallet', 'error');
       return;
     }
 
@@ -74,7 +78,7 @@ const CollaborativeProposalExample: React.FC = () => {
       setShowCollabModal(false);
     } catch (error) {
       console.error('Failed to submit proposal:', error);
-      notify('new_proposal', 'Failed to submit proposal', 'error');
+      notify('proposal_rejected', 'Failed to submit proposal', 'error');
     } finally {
       setLoading(false);
     }

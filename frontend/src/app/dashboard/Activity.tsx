@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useWallet } from '../../context/WalletContextProps';
+import { useWallet } from '../../hooks/useWallet';
 import ExportModal, { type ExportDatasets } from '../../components/modals/ExportModal';
 import { saveExportHistoryItem } from '../../utils/exportHistory';
 import AuditLog from '../../components/AuditLog';
@@ -22,6 +22,19 @@ const Activity: React.FC = () => {
   const [loadedTransactions, setLoadedTransactions] = useState<VaultActivity[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
   const [activeTab, setActiveTab] = useState<ActivityTab>('activity');
+
+  // Subscribe to real-time activity updates
+  useEffect(() => {
+    updatePresence('online', 'Activity');
+
+    const unsubscribe = subscribe('activity_new', (data: ActivityLike) => {
+      setActivities((prev) => [data, ...prev]);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [subscribe, updatePresence]);
 
   const exportDatasets: ExportDatasets = useMemo(() => {
     const activityRows = loadedTransactions.map((tx) => ({
