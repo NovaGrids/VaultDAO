@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { Edit3, Save, Download, Grid3x3, X } from 'lucide-react';
+import { Edit3, Save, Download, Grid3x3, X, Package } from 'lucide-react';
 import WidgetLibrary from './WidgetLibrary';
+import WidgetSystem from './WidgetSystem';
 import LineChartWidget from './widgets/LineChartWidget';
 import BarChartWidget from './widgets/BarChartWidget';
 import PieChartWidget from './widgets/PieChartWidget';
@@ -21,6 +22,8 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
   const [widgets, setWidgets] = useState<WidgetConfig[]>(initialWidgets);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showWidgetSystem, setShowWidgetSystem] = useState(false);
+  const [drillDownData, setDrillDownData] = useState<any>(null);
   const [drillDownData, setDrillDownData] = useState<{ widget: string; data: unknown } | null>(null);
   const dashboardRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +131,13 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
               </button>
             </>
           )}
+          <button
+            onClick={() => setShowWidgetSystem(!showWidgetSystem)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors"
+          >
+            <Package className="h-4 w-4" />
+            <span className="text-sm">Widget Marketplace</span>
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -193,6 +203,26 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
           ))}
         </div>
       </div>
+
+      {/* Widget System Modal */}
+      {showWidgetSystem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-6xl h-[90vh] rounded-xl border border-gray-700 bg-gray-900 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-gray-700">
+              <h2 className="text-2xl font-semibold text-white">Widget System</h2>
+              <button
+                onClick={() => setShowWidgetSystem(false)}
+                className="p-2 hover:bg-gray-800 rounded-lg text-gray-400"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <WidgetSystem />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Drill-down Modal */}
       {drillDownData && (

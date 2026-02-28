@@ -30,8 +30,9 @@
     "lightweight-charts": "^5.1.0",
     "lucide-react": "^0.473.0",
     "qrcode.react": "^4.2.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.0",
+    "react-diff-viewer-continued": "^4.1.2",
+    "react-dom": "^19.2.0",
     "react-dropzone": "^15.0.0",
     "react-grid-layout": "^2.2.2",
     "react-hook-form": "^7.48.0",
@@ -43,6 +44,8 @@
     "react-to-print": "^3.2.0",
     "recharts": "^3.7.0",
     "stellar-sdk": "11.3.0",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.29"
     "web-vitals": "^4.2.0"
   },
   "devDependencies": {

@@ -25,6 +25,7 @@ interface NewProposalModalProps {
   onAttachmentsChange?: (attachments: UploadedAttachment[]) => void;
   onOpenTemplateSelector: () => void;
   onSaveAsTemplate: () => void;
+  onEnableCollaboration?: () => void;
   useCustomForm?: boolean;
   customFormConfig?: FormConfig;
 }
@@ -40,6 +41,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   onAttachmentsChange,
   onOpenTemplateSelector,
   onSaveAsTemplate,
+  onEnableCollaboration,
   useCustomForm = false,
   customFormConfig,
 }) => {
