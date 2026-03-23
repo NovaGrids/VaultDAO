@@ -40,6 +40,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': '/src',
+      // is-lite ships without its ESM build — point to the CJS entry instead
+      'is-lite': '/node_modules/is-lite/dist/index.js',
     },
   },
   // Optimize dependencies
