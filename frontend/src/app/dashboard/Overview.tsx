@@ -129,13 +129,10 @@ const Overview: React.FC = () => {
         setAddError(null);
 
         try {
-            const tokenInfo = await addCustomToken?.();
+            const tokenInfo = await addCustomToken?.(newTokenAddress.trim());
             if (tokenInfo) {
-                setTokenBalances(prev => [...prev, {
-                    token: tokenInfo,
-                    balance: '0',
-                    isLoading: false,
-                }]);
+                // Refresh all balances to include the new token
+                await fetchTokenBalances();
                 setShowAddTokenModal(false);
                 setNewTokenAddress('');
             }
@@ -148,14 +145,6 @@ const Overview: React.FC = () => {
 
     const handleTokenClick = (token: TokenInfo) => {
         setSelectedToken(selectedToken?.address === token.address ? null : token);
-    };
-
-    const formatPortfolioValue = (value: number): string => {
-        if (value < 0.01) return '<$0.01';
-        return `$${value.toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        })}`;
     };
 
     if (loading && !stats) {

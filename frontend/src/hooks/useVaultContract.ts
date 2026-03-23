@@ -15,6 +15,14 @@ import { withRetry } from '../utils/retryUtils';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
 import type { SimulationResult } from '../utils/simulation';
 import type { Comment, ListMode } from '../types';
+import type { TokenBalance } from '../types';
+import type { TokenInfo } from '../constants/tokens';
+import {
+    getAllTrackedTokens,
+    isValidStellarAddress,
+    loadCustomTokens,
+    saveCustomTokens,
+} from '../constants/tokens';
 import {
     generateCacheKey,
     getCachedSimulation,
@@ -831,6 +839,211 @@ export const useVaultContract = () => {
         );
     }, [getVaultEvents]);
 
+    /**
+     * Fetch the vault's XLM balance from Horizon.
+     */
+    const getVaultBalance = useCallback(async (): Promise<string> => {
+        try {
+            const res = await fetch(`${env.horizonUrl}/accounts/${env.contractId}`);
+            if (!res.ok) return '0';
+            const data = await res.json() as { balances?: Array<{ asset_type: string; balance: string }> };
+            const native = data.balances?.find(b => b.asset_type === 'native');
+            // Return balance in stroops (multiply by 10^7)
+            const xlm = parseFloat(native?.balance ?? '0');
+            return Math.round(xlm * 1e7).toString();
+        } catch {
+            return '0';
+        }
+    }, []);
+
+    /**
+     * Fetch the vault's balance for a SAC token via contract simulation.
+     * Returns human-readable balance string.
+     */
+    const fetchTokenBalance = useCallback(async (token: TokenInfo): Promise<string> => {
+        if (token.isNative) {
+            // XLM: use Horizon, return in XLM (not stroops)
+            try {
+                const res = await fetch(`${env.horizonUrl}/accounts/${env.contractId}`);
+                if (!res.ok) return '0';
+                const data = await res.json() as { balances?: Array<{ asset_type: string; balance: string }> };
+                const native = data.balances?.find(b => b.asset_type === 'native');
+                return native?.balance ?? '0';
+            } catch {
+                return '0';
+            }
+        }
+        // SAC token: call token contract's balance() function
+        try {
+            const source = address ?? env.contractId;
+            const account = await server.getAccount(source);
+            const vaultAddress = Address.fromString(env.contractId);
+            const tx = new TransactionBuilder(account, { fee: '100' })
+                .setNetworkPassphrase(env.networkPassphrase)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(token.address).toScAddress(),
+                            functionName: 'balance',
+                            args: [vaultAddress.toScVal()],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) return '0';
+            const retval = (simulation as { result?: { retval?: unknown } })?.result?.retval;
+            if (retval == null) return '0';
+            let raw: unknown;
+            if (typeof retval === 'string') {
+                try { raw = scValToNative(xdr.ScVal.fromXDR(retval, 'base64')); } catch { return '0'; }
+            } else {
+                try { raw = scValToNative(retval as xdr.ScVal); } catch { return '0'; }
+            }
+            // raw is i128 as bigint or number; convert to human-readable with decimals
+            const rawNum = typeof raw === 'bigint' ? raw : BigInt(Math.trunc(Number(raw ?? 0)));
+            const divisor = BigInt(10 ** token.decimals);
+            const whole = rawNum / divisor;
+            const frac = rawNum % divisor;
+            if (frac === 0n) return whole.toString();
+            const fracStr = frac.toString().padStart(token.decimals, '0').replace(/0+$/, '');
+            return `${whole}.${fracStr}`;
+        } catch {
+            return '0';
+        }
+    }, [address]);
+
+    /**
+     * Fetch token metadata (symbol, name, decimals) from a SAC contract.
+     */
+    const fetchTokenMetadata = useCallback(async (tokenAddress: string): Promise<Partial<TokenInfo>> => {
+        const source = address ?? env.contractId;
+        try {
+            const account = await server.getAccount(source);
+            const contractAddr = Address.fromString(tokenAddress).toScAddress();
+
+            const buildTx = (fn: string) => new TransactionBuilder(account, { fee: '100' })
+                .setNetworkPassphrase(env.networkPassphrase)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({ contractAddress: contractAddr, functionName: fn, args: [] })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const parseResult = async (fn: string): Promise<unknown> => {
+                const sim = await server.simulateTransaction(buildTx(fn));
+                if (SorobanRpc.Api.isSimulationError(sim)) return null;
+                const retval = (sim as { result?: { retval?: unknown } })?.result?.retval;
+                if (retval == null) return null;
+                if (typeof retval === 'string') {
+                    try { return scValToNative(xdr.ScVal.fromXDR(retval, 'base64')); } catch { return null; }
+                }
+                try { return scValToNative(retval as xdr.ScVal); } catch { return null; }
+            };
+
+            const [symbol, name, decimals] = await Promise.all([
+                parseResult('symbol').catch(() => null),
+                parseResult('name').catch(() => null),
+                parseResult('decimals').catch(() => null),
+            ]);
+
+            return {
+                symbol: typeof symbol === 'string' ? symbol : undefined,
+                name: typeof name === 'string' ? name : undefined,
+                decimals: typeof decimals === 'number' ? decimals : (typeof decimals === 'bigint' ? Number(decimals) : 7),
+            };
+        } catch {
+            return {};
+        }
+    }, [address]);
+
+    /**
+     * Load balances for all tracked tokens (default + custom).
+     * Each token is fetched independently so partial failures don't block others.
+     */
+    const getTokenBalances = useCallback(async (): Promise<TokenBalance[]> => {
+        const tokens = getAllTrackedTokens();
+        const results = await Promise.allSettled(
+            tokens.map(async (token): Promise<TokenBalance> => {
+                const balance = await fetchTokenBalance(token);
+                return { token, balance, isLoading: false };
+            })
+        );
+        return results
+            .filter((r): r is PromiseFulfilledResult<TokenBalance> => r.status === 'fulfilled')
+            .map(r => r.value);
+    }, [fetchTokenBalance]);
+
+    /**
+     * Compute portfolio value by summing USD values.
+     * Uses Stellar Expert price API for XLM; other tokens default to 0 if unavailable.
+     */
+    const getPortfolioValue = useCallback(async (): Promise<string> => {
+        try {
+            const balances = await getTokenBalances();
+            // Fetch XLM price from Stellar Expert
+            let xlmPrice = 0;
+            try {
+                const priceRes = await fetch('https://api.stellar.expert/explorer/testnet/asset/XLM/price');
+                if (priceRes.ok) {
+                    const priceData = await priceRes.json() as { price?: number };
+                    xlmPrice = priceData.price ?? 0;
+                }
+            } catch { /* price unavailable */ }
+
+            let total = 0;
+            for (const tb of balances) {
+                const amount = parseFloat(tb.balance);
+                if (isNaN(amount) || amount <= 0) continue;
+                if (tb.token.isNative) {
+                    total += amount * xlmPrice;
+                }
+                // Non-native tokens: USD value unknown without price feed; skip for now
+            }
+            return total.toFixed(2);
+        } catch {
+            return '0';
+        }
+    }, [getTokenBalances]);
+
+    /**
+     * Add a custom token by address. Validates the address, fetches metadata
+     * from the contract, persists to localStorage, and returns the TokenInfo.
+     */
+    const addCustomToken = useCallback(async (tokenAddress: string): Promise<TokenInfo | null> => {
+        if (!isValidStellarAddress(tokenAddress)) {
+            throw new Error('Invalid Stellar token address');
+        }
+
+        // Check for duplicates
+        const existing = getAllTrackedTokens();
+        if (existing.some(t => t.address === tokenAddress)) {
+            throw new Error('Token already tracked');
+        }
+
+        // Fetch metadata from the contract
+        const meta = await fetchTokenMetadata(tokenAddress);
+
+        const tokenInfo: TokenInfo = {
+            address: tokenAddress,
+            symbol: meta.symbol ?? tokenAddress.slice(0, 6),
+            name: meta.name ?? 'Unknown Token',
+            decimals: meta.decimals ?? 7,
+            isNative: false,
+        };
+
+        // Persist to localStorage
+        const customTokens = loadCustomTokens();
+        saveCustomTokens([...customTokens, tokenInfo]);
+
+        return tokenInfo;
+    }, [fetchTokenMetadata]);
+
     return {
         proposeTransfer, approveProposal, rejectProposal, executeProposal,
         addSigner, removeSigner, updateThreshold,
@@ -842,10 +1055,10 @@ export const useVaultContract = () => {
         addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist,
         isWhitelisted, isBlacklisted,
         getVaultConfig,
-        getTokenBalances: async () => [],
-        getPortfolioValue: async () => "0",
-        addCustomToken: async () => null,
-        getVaultBalance: async () => "0",
+        getTokenBalances,
+        getPortfolioValue,
+        addCustomToken,
+        getVaultBalance,
         getRecurringPayments: async () => [],
         getRecurringPaymentHistory: async () => [],
         schedulePayment: async () => "1",
