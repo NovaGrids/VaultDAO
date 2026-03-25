@@ -2,6 +2,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { WebSocketClient, createWebSocketClient, type WebSocketStatus } from '../utils/websocket';
 
+/** Max number of seen event IDs to retain for deduplication. */
+const SEEN_IDS_LIMIT = 500;
+
 export interface UserPresence {
   userId: string;
   username: string;
@@ -15,6 +18,8 @@ export interface RealtimeUpdate {
   type: 'proposal_created' | 'proposal_updated' | 'proposal_approved' | 'proposal_rejected' | 'activity_new' | 'user_joined' | 'user_left';
   data: any;
   timestamp: number;
+  /** Unique event ID used for deduplication across reconnects. */
+  eventId?: string;
   userId?: string;
 }
 
@@ -25,6 +30,8 @@ interface RealtimeContextValue {
   subscribe: (type: string, handler: (data: any) => void) => () => void;
   sendUpdate: (type: string, data: any) => void;
   updatePresence: (status: 'online' | 'away', currentPage?: string) => void;
+  /** Returns true and marks the id as seen if it hasn't been seen before. */
+  trackEvent: (id: string) => boolean;
 }
 
 const RealtimeContext = createContext<RealtimeContextValue | null>(null);
@@ -34,6 +41,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const [connectionStatus, setConnectionStatus] = useState<WebSocketStatus>('disconnected');
   const [onlineUsers, setOnlineUsers] = useState<UserPresence[]>([]);
   const wsClient = useRef<WebSocketClient | null>(null);
+  const seenEventIds = useRef<Set<string>>(new Set());
+  const currentPresence = useRef<{ status: 'online' | 'away'; currentPage?: string } | null>(null);
 
   // Initialize WebSocket connection
   useEffect(() => {
@@ -48,6 +57,13 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       onConnect: () => {
         console.log('[Realtime] Connected');
         setIsConnected(true);
+        // Re-announce presence so the server has fresh state after reconnect
+        if (currentPresence.current) {
+          wsClient.current?.send('presence_update', {
+            ...currentPresence.current,
+            timestamp: Date.now(),
+          });
+        }
       },
       onDisconnect: () => {
         console.log('[Realtime] Disconnected');
@@ -140,12 +156,24 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     if (!wsClient.current) {
       return;
     }
-
+    currentPresence.current = { status, currentPage };
     wsClient.current.send('presence_update', {
       status,
       currentPage,
       timestamp: Date.now(),
     });
+  }, []);
+
+  // Deduplication helper: returns true the first time an id is seen
+  const trackEvent = useCallback((id: string): boolean => {
+    if (seenEventIds.current.has(id)) return false;
+    seenEventIds.current.add(id);
+    // Trim the set to avoid unbounded growth
+    if (seenEventIds.current.size > SEEN_IDS_LIMIT) {
+      const [oldest] = seenEventIds.current;
+      seenEventIds.current.delete(oldest);
+    }
+    return true;
   }, []);
 
   const value: RealtimeContextValue = {
@@ -155,6 +183,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     subscribe,
     sendUpdate,
     updatePresence,
+    trackEvent,
   };
 
   return (

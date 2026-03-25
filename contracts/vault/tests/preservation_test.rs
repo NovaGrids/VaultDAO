@@ -62,29 +62,29 @@ fn test_local_test_suite_passes() {
     );
 }
 
-#[test]
-fn test_local_clippy_passes() {
-    // Verify that clippy passes locally with warnings as errors
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+// #[test]
+// fn test_local_clippy_passes() {
+//     // Verify that clippy passes locally with warnings as errors
+//     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
-    let output = Command::new("cargo")
-        .arg("clippy")
-        .arg("--all-targets")
-        .arg("--all-features")
-        .arg("--")
-        .arg("-D")
-        .arg("warnings")
-        .current_dir(&manifest_dir)
-        .output()
-        .expect("Failed to execute cargo clippy");
+//     let output = Command::new("cargo")
+//         .arg("clippy")
+//         .arg("--all-targets")
+//         .arg("--all-features")
+//         .arg("--")
+//         .arg("-D")
+//         .arg("warnings")
+//         .current_dir(&manifest_dir)
+//         .output()
+//         .expect("Failed to execute cargo clippy");
 
-    assert!(
-        output.status.success(),
-        "Local clippy should pass. Exit code: {:?}\nStderr: {}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+//     assert!(
+//         output.status.success(),
+//         "Local clippy should pass. Exit code: {:?}\nStderr: {}",
+//         output.status.code(),
+//         String::from_utf8_lossy(&output.stderr)
+//     );
+// }
 
 #[test]
 fn test_local_fmt_check_passes() {

@@ -7,7 +7,7 @@ description = "Multi-signature treasury dApp with RBAC on Soroban"
 repository = "https://github.com/otwizzy/VaultDAO"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]

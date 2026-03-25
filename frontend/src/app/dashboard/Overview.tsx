@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
+import { FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3, Users } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
 import TokenBalanceCard from '../../components/TokenBalanceCard';
 import DashboardBuilder from '../../components/DashboardBuilder';
@@ -27,6 +27,8 @@ const Overview: React.FC = () => {
     const { t } = useTranslation();
     const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, getVaultBalance, loading } = useVaultContract();
     const [stats, setStats] = useState<DashboardStats | null>(null);
+    const [statsLoading, setStatsLoading] = useState(true);
+    const [statsError, setStatsError] = useState<string | null>(null);
     const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
     const [portfolioValue, setPortfolioValue] = useState<{ total: number; change24h: number } | null>(null);
     const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
@@ -65,19 +67,24 @@ const Overview: React.FC = () => {
         }
     };
 
+    const fetchStats = useCallback(async () => {
+        setStatsLoading(true);
+        setStatsError(null);
+        try {
+            const result = await getDashboardStats();
+            setStats(result as DashboardStats);
+        } catch (error) {
+            console.error('Failed to fetch dashboard data', error);
+            setStatsError('Failed to load stats');
+        } finally {
+            setStatsLoading(false);
+        }
+    }, [getDashboardStats]);
+
     useEffect(() => {
         let isMounted = true;
-        const fetchData = async () => {
-            try {
-                const result = await getDashboardStats();
-                if (isMounted) {
-                    setStats(result as DashboardStats);
-                }
-            } catch (error) {
-                console.error('Failed to fetch dashboard data', error);
-            }
-        };
-        fetchData();
+        fetchStats().then(() => { if (!isMounted) return; });
+
         fetchBalance();
 
         const layout = loadDashboardLayout();
@@ -88,7 +95,7 @@ const Overview: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [getDashboardStats, fetchBalance]);
+    }, [fetchStats]);
 
     const fetchTokenBalances = useCallback(async () => {
         setIsLoadingBalances(true);
@@ -129,13 +136,10 @@ const Overview: React.FC = () => {
         setAddError(null);
 
         try {
-            const tokenInfo = await addCustomToken?.();
+            const tokenInfo = await addCustomToken?.(newTokenAddress.trim());
             if (tokenInfo) {
-                setTokenBalances(prev => [...prev, {
-                    token: tokenInfo,
-                    balance: '0',
-                    isLoading: false,
-                }]);
+                // Refresh all balances to include the new token
+                await fetchTokenBalances();
                 setShowAddTokenModal(false);
                 setNewTokenAddress('');
             }
@@ -150,15 +154,7 @@ const Overview: React.FC = () => {
         setSelectedToken(selectedToken?.address === token.address ? null : token);
     };
 
-    const formatPortfolioValue = (value: number): string => {
-        if (value < 0.01) return '<$0.01';
-        return `$${value.toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        })}`;
-    };
-
-    if (loading && !stats) {
+    if (loading && !stats && statsLoading) {
         return (
             <div className="h-96 flex items-center justify-center">
                 <Loader2 className="h-10 w-10 animate-spin text-purple-500" />
@@ -172,6 +168,14 @@ const Overview: React.FC = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">{t('dashboard.treasuryOverview')}</h2>
                 <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => { void fetchStats(); fetchBalance(); }}
+                        disabled={statsLoading || balanceLoading}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700 text-slate-600 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700 text-sm transition-colors disabled:opacity-50 shadow-sm"
+                        title="Refresh stats"
+                    >
+                        <RefreshCw className={`h-4 w-4 ${statsLoading || balanceLoading ? 'animate-spin' : ''}`} />
+                    </button>
                     <button
                         onClick={() => setShowAdvancedDashboard(!showAdvancedDashboard)}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
@@ -237,24 +241,25 @@ const Overview: React.FC = () => {
                         </div>
                         
                         <StatCard
-                            title={t('dashboard.totalStaked')}
-                            value={`${stats?.totalBalance || '0'} XLM`}
-                            icon={Wallet}
-                            variant="primary"
-                        />
-                        <StatCard
                             title={t('dashboard.activeProposals')}
-                            value={stats?.totalProposals || 0}
-                            subtitle={`${stats?.pendingApprovals || 0} ${t('dashboard.pendingVote')}`}
+                            value={statsLoading ? '—' : (stats?.totalProposals ?? 0)}
+                            subtitle={statsLoading ? '' : `${stats?.pendingApprovals ?? 0} ${t('dashboard.pendingVote')}`}
                             icon={FileText}
                             variant="warning"
                         />
                         <StatCard
                             title={t('dashboard.readyToExecute')}
-                            value={stats?.readyToExecute || 0}
-                            subtitle={t('dashboard.passedTimelock')}
+                            value={statsLoading ? '—' : (stats?.readyToExecute ?? 0)}
+                            subtitle={statsError ? t('common.retry') : t('dashboard.passedTimelock')}
                             icon={CheckCircle}
                             variant="success"
+                        />
+                        <StatCard
+                            title={t('dashboard.signers')}
+                            value={statsLoading ? '—' : (stats?.threshold ?? '0/0')}
+                            subtitle={statsLoading ? '' : `${stats?.activeSigners ?? 0} active`}
+                            icon={Users}
+                            variant="primary"
                         />
                     </div>
 

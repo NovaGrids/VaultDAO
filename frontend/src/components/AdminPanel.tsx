@@ -3,9 +3,11 @@ import { StrKey } from 'stellar-sdk';
 import { AlertTriangle, ExternalLink, KeyRound, Shield, UserMinus, UserPlus } from 'lucide-react';
 import { useVaultContract, type VaultConfig } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';
+import { useActionReadiness } from '../hooks/useActionReadiness';
 import { truncateAddress } from '../utils/formatters';
 import CopyButton from './CopyButton';
 import ConfirmationModal from './modals/ConfirmationModal';
+import ReadinessWarning from './ReadinessWarning';
 
 interface AdminPanelProps {
   vaultConfig: VaultConfig | null;
@@ -20,6 +22,7 @@ type ConfirmAction =
 const AdminPanel: React.FC<AdminPanelProps> = ({ vaultConfig, onConfigUpdated }) => {
   const { addSigner, removeSigner, updateThreshold, loading } = useVaultContract();
   const { notify } = useToast();
+  const { checkReady } = useActionReadiness();
 
   const [newSignerAddress, setNewSignerAddress] = useState('');
   const [newThreshold, setNewThreshold] = useState('');
@@ -113,6 +116,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ vaultConfig, onConfigUpdated })
   const executeAction = async () => {
     if (!pendingAction) return;
 
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('config_updated', message ?? 'Not ready', 'error');
+      setPendingAction(null);
+      return;
+    }
+
     setSubmitting(true);
     try {
       if (pendingAction.type === 'add') {
@@ -157,6 +167,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ vaultConfig, onConfigUpdated })
 
   return (
     <div className="space-y-6">
+      <ReadinessWarning />
       <div>
         <h4 className="text-lg font-semibold">Signer Management</h4>
         <p className="text-sm text-gray-400 mt-1">

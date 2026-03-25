@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { visualizer } from 'rollup-plugin-visualizer'
+import { resolve } from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -39,7 +40,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': '/src',
+      '@': resolve(__dirname, 'src'),
+      // is-lite ships without its ESM build — point to the CJS entry instead
+      'is-lite': resolve(__dirname, 'node_modules/is-lite/dist/index.js'),
     },
   },
   // Optimize dependencies

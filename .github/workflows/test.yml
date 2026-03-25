@@ -26,7 +26,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          working-directory: contracts/vault
+          workspaces: contracts/vault
 
       - name: Run fmt check
         run: cargo fmt --all -- --check
@@ -65,6 +65,10 @@ jobs:
         run: npm run build
         working-directory: frontend
         env:
-          VITE_NETWORK: testnet
           VITE_CONTRACT_ID: "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-          VITE_RPC_URL: "https://soroban-testnet.stellar.org"
+          VITE_SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"
+          VITE_STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          VITE_STELLAR_NETWORK: "TESTNET"
+          VITE_HORIZON_URL: "https://horizon-testnet.stellar.org"
+          VITE_STELLAR_EXPLORER_URL: "https://stellar.expert/explorer/testnet"
+          VITE_COLLAB_WS_URL: "ws://localhost:1234"

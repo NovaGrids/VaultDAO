@@ -67,7 +67,7 @@ function generateSOC2ReportPDF(config: ReportConfig, data: ReportData): jsPDF {
       entry.transactionHash.slice(0, 12) + '...',
     ]);
     
-    autoTable(doc, {
+    autoTable(doc as unknown as import('jspdf').jsPDF, {
       startY: yPos,
       head: [['Date', 'User', 'Action', 'Transaction']],
       body: tableData,
@@ -162,7 +162,7 @@ function generateISO27001ReportPDF(config: ReportConfig, data: ReportData): jsPD
   yPos += 10;
   
   const actionTypes = Object.entries(data.summary.actionsByType);
-  autoTable(doc, {
+  autoTable(doc as unknown as import('jspdf').jsPDF, {
     startY: yPos,
     head: [['Action Type', 'Count']],
     body: actionTypes.map(([type, count]) => [type, count.toString()]),
@@ -178,14 +178,31 @@ function generateISO27001ReportPDF(config: ReportConfig, data: ReportData): jsPD
 }
 
 export function exportToCSV(entries: AuditEntry[]): Blob {
-  const headers = ['Timestamp', 'Ledger', 'User', 'Action', 'Details', 'Transaction Hash'];
+  const headers = [
+    'Timestamp',
+    'Ledger',
+    'ContractId',
+    'User',
+    'Action',
+    'Details',
+    'TxRef',
+    'SourceEventId',
+    'PayloadDigest',
+    'PreviousHash',
+    'EntryHash',
+  ];
   const rows = entries.map(entry => [
     entry.timestamp,
     entry.ledger,
+    entry.contractId,
     entry.user,
     entry.action,
     JSON.stringify(entry.details),
     entry.transactionHash,
+    entry.sourceEventId,
+    entry.payloadDigest,
+    entry.previousHash ?? '',
+    entry.hash ?? '',
   ]);
   
   const csvContent = [

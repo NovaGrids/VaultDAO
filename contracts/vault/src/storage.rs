@@ -26,8 +26,8 @@ use crate::types::{
     DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure, FundingRound,
     FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
     PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
-    RetryState, Role, StakeRecord, StakingConfig, SwapProposal, SwapResult, TimeWeightedConfig,
-    TokenLock, VaultMetrics, VelocityConfig, VotingStrategy,
+    RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, SwapProposal, SwapResult,
+    TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig, VotingStrategy,
 };
 
 /// Core storage key definitions (kept minimal to avoid size limits)
@@ -40,6 +40,8 @@ pub enum DataKey {
     Config,
     /// Role assignment for address -> Role
     Role(Address),
+    /// Index of addresses with explicitly tracked roles -> Vec<Address>
+    RoleIndex,
     /// Proposal by ID -> Proposal
     Proposal(u64),
     /// Next proposal ID counter -> u64
@@ -284,6 +286,38 @@ pub fn set_role(env: &Env, addr: &Address, role: Role) {
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+    add_role_index_address(env, addr);
+}
+
+pub fn get_role_index(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::RoleIndex)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_role_index_address(env: &Env, addr: &Address) {
+    let mut index = get_role_index(env);
+    if !index.contains(addr) {
+        index.push_back(addr.clone());
+        env.storage().instance().set(&DataKey::RoleIndex, &index);
+    }
+}
+
+pub fn get_role_assignments(env: &Env) -> Vec<RoleAssignment> {
+    let index = get_role_index(env);
+    let mut assignments = Vec::new(env);
+
+    for i in 0..index.len() {
+        if let Some(addr) = index.get(i) {
+            assignments.push_back(RoleAssignment {
+                role: get_role(env, &addr),
+                addr,
+            });
+        }
+    }
+
+    assignments
 }
 
 // ============================================================================
@@ -325,6 +359,40 @@ pub fn increment_proposal_id(env: &Env) -> u64 {
         .instance()
         .set(&DataKey::NextProposalId, &(id + 1));
     id
+}
+
+/// Return a page of existing proposal IDs in ascending creation order.
+///
+/// IDs are assigned sequentially starting at 1. This function scans the
+/// range `[offset+1 .. next_id)` and collects up to `limit` IDs that have
+/// a stored proposal entry, skipping any gaps left by deleted proposals.
+///
+/// # Arguments
+/// * `offset` - Number of proposals to skip (0-based).
+/// * `limit`  - Maximum number of IDs to return. Capped at 100 internally.
+///
+/// # Returns
+/// A vector of proposal IDs in ascending order, paginated by offset/limit.
+pub fn get_proposal_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64> {
+    let cap: u64 = if limit > 100 { 100 } else { limit };
+    let next_id = get_next_proposal_id(env);
+    let mut ids: Vec<u64> = Vec::new(env);
+    let mut skipped: u64 = 0;
+
+    for id in 1..next_id {
+        if !env.storage().persistent().has(&DataKey::Proposal(id)) {
+            continue;
+        }
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        ids.push_back(id);
+        if ids.len() as u64 >= cap {
+            break;
+        }
+    }
+    ids
 }
 
 // ============================================================================
@@ -452,6 +520,69 @@ pub fn get_recurring_payment(
 }
 
 // ============================================================================
+// Recurring Payments - Listing
+// ============================================================================
+
+/// Return a page of existing recurring payment IDs in ascending creation order.
+///
+/// IDs are assigned sequentially starting at 1. This function scans the
+/// range `[offset+1 .. next_id)` and collects up to `limit` IDs that have
+/// a stored recurring payment entry.
+///
+/// # Arguments
+/// * `offset` - Number of payments to skip (0-based).
+/// * `limit`  - Maximum number of IDs to return. Capped at 100 internally.
+///
+/// # Returns
+/// A vector of recurring payment IDs in ascending order, paginated by offset/limit.
+pub fn get_recurring_payment_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64> {
+    let cap: u64 = if limit > 100 { 100 } else { limit };
+    let next_id = get_next_recurring_id(env);
+    let mut ids: Vec<u64> = Vec::new(env);
+    let mut skipped: u64 = 0;
+
+    for id in 1..next_id {
+        if !env.storage().persistent().has(&DataKey::Recurring(id)) {
+            continue;
+        }
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        ids.push_back(id);
+        if ids.len() as u64 >= cap {
+            break;
+        }
+    }
+    ids
+}
+
+/// Return a page of recurring payments in ascending creation order.
+///
+/// # Arguments
+/// * `offset` - Number of payments to skip (0-based).
+/// * `limit`  - Maximum number of payments to return. Capped at 50 internally.
+///
+/// # Returns
+/// A vector of RecurringPayment structs in ascending order by ID.
+pub fn get_recurring_payments_paginated(
+    env: &Env,
+    offset: u64,
+    limit: u64,
+) -> Vec<crate::types::RecurringPayment> {
+    let cap: u64 = if limit > 50 { 50 } else { limit };
+    let ids = get_recurring_payment_ids_paginated(env, offset, cap);
+    let mut payments: Vec<crate::types::RecurringPayment> = Vec::new(env);
+
+    for id in ids {
+        if let Ok(payment) = get_recurring_payment(env, id) {
+            payments.push_back(payment);
+        }
+    }
+    payments
+}
+
+// ============================================================================
 // Streaming Payments
 // ============================================================================
 
@@ -557,6 +688,25 @@ pub fn remove_from_blacklist(env: &Env, addr: &Address) {
     env.storage()
         .persistent()
         .remove(&DataKey::Blacklist(addr.clone()));
+}
+
+pub fn validate_recipient_list(env: &Env, recipient: &Address) -> Result<(), VaultError> {
+    let mode = get_list_mode(env);
+    match mode {
+        ListMode::Disabled => Ok(()),
+        ListMode::Whitelist => {
+            if !is_whitelisted(env, recipient) {
+                return Err(VaultError::RecipientNotWhitelisted);
+            }
+            Ok(())
+        }
+        ListMode::Blacklist => {
+            if is_blacklisted(env, recipient) {
+                return Err(VaultError::RecipientBlacklisted);
+            }
+            Ok(())
+        }
+    }
 }
 
 // ============================================================================

@@ -56,7 +56,7 @@ function TransactionDetail({
   transaction,
   onClose,
   explorerBaseUrl = DEFAULT_EXPLORER_BASE,
-}: TransactionDetailProps): JSX.Element | null {
+}: TransactionDetailProps): React.ReactElement | null {
   useEffect(() => {
     if (!isOpen) return undefined;
 

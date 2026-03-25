@@ -4,7 +4,8 @@ import { generateSOC2Report, generateISO27001Report } from '../utils/reportGener
 import { useVaultContract } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';
 import type { AuditEntry } from '../utils/auditVerification';
-import { buildAuditChain } from '../utils/auditVerification';
+import { prepareChainedAuditLog } from '../utils/auditVerification';
+import { env } from '../config/env';
 
 type ReportType = 'SOC2' | 'ISO27001' | 'Custom';
 
@@ -34,7 +35,7 @@ const ISO27001_CONTROLS = [
 ];
 
 const ComplianceReports: React.FC = () => {
-  const { getVaultEvents } = useVaultContract();
+  const { getAllVaultEventsForAudit } = useVaultContract();
   const { notify } = useToast();
   
   const [auditData, setAuditData] = useState<AuditEntry[]>([]);
@@ -56,18 +57,8 @@ const ComplianceReports: React.FC = () => {
   const fetchAuditData = async () => {
     setLoading(true);
     try {
-      const result = await getVaultEvents();
-      const auditEntries: AuditEntry[] = result.activities.map((activity, index) => ({
-        id: activity.id,
-        timestamp: activity.timestamp,
-        ledger: activity.ledger,
-        user: activity.actor || 'System',
-        action: activity.type,
-        details: activity.details,
-        transactionHash: activity.eventId || `tx_${index}`,
-      }));
-      
-      const chainedEntries = buildAuditChain(auditEntries);
+      const result = await getAllVaultEventsForAudit(2000);
+      const chainedEntries = prepareChainedAuditLog(result.activities, env.contractId);
       setAuditData(chainedEntries);
     } catch (err) {
       console.error('Failed to fetch audit data:', err);

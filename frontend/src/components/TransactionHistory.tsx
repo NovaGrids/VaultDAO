@@ -1,9 +1,9 @@
 import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { ArrowDownUp, Download, RefreshCw } from 'lucide-react';
-import { useWallet } from '../hooks/useWallet';
 import type { GetVaultEventsResult, VaultActivity, VaultEventType } from '../types/activity';
 import { formatDateTime, formatRelativeTime } from '../utils/dateUtils';
+import { useVaultContract } from '../hooks/useVaultContract';
 import TransactionFilters, {
   DEFAULT_TRANSACTION_FILTERS,
   type TransactionFilterState,
@@ -30,8 +30,6 @@ const TYPE_LABELS: Record<VaultEventType, string> = {
 };
 
 const PAGE_SIZE = 30;
-const HORIZON_URL = (import.meta.env.VITE_HORIZON_URL as string | undefined) ?? 'https://horizon-testnet.stellar.org';
-const CONFIGURED_VAULT_ADDRESS = (import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined) ?? '';
 type TransactionSortBy = 'date' | 'amount' | 'status';
 type SortDirection = 'asc' | 'desc';
 type TransactionGroupBy = 'none' | 'date' | 'type' | 'status';
@@ -40,27 +38,6 @@ interface TransactionGroup {
   key: string;
   label: string;
   items: VaultActivity[];
-}
-
-interface HorizonTransaction {
-  id: string;
-  paging_token: string;
-  hash: string;
-  successful: boolean;
-  source_account: string;
-  created_at: string;
-  ledger_attr: number;
-  memo?: string;
-  memo_type: string;
-  fee_charged: string;
-  max_fee: string;
-  operation_count: number;
-}
-
-interface HorizonTransactionsResponse {
-  _embedded?: {
-    records?: HorizonTransaction[];
-  };
 }
 
 interface TransactionExportRow {
@@ -282,86 +259,34 @@ function getGroupData(activity: VaultActivity, groupBy: TransactionGroupBy): { k
   return { key: 'all', label: 'All Transactions' };
 }
 
-function isLikelyStellarAccount(value: string | null | undefined): value is string {
-  return Boolean(value && value.startsWith('G') && value.length >= 32);
-}
+function normalizeActivity(activity: VaultActivity): VaultActivity {
+  const timestamp = activity.timestamp && !Number.isNaN(Date.parse(activity.timestamp))
+    ? activity.timestamp
+    : new Date().toISOString();
+  const normalizedDetails = activity.details ?? {};
+  const status = String(normalizedDetails.status ?? '').toLowerCase();
 
-function resolveHistoryAddress(walletAddress: string | null): string | null {
-  if (isLikelyStellarAccount(CONFIGURED_VAULT_ADDRESS)) return CONFIGURED_VAULT_ADDRESS;
-  if (isLikelyStellarAccount(walletAddress)) return walletAddress;
-  return null;
-}
-
-function inferTypeFromHorizonTransaction(tx: HorizonTransaction): VaultEventType {
-  const memo = tx.memo?.toLowerCase() ?? '';
-  if (memo.includes('created')) return 'proposal_created';
-  if (memo.includes('approve')) return 'proposal_approved';
-  if (memo.includes('ready')) return 'proposal_ready';
-  if (memo.includes('execute')) return 'proposal_executed';
-  if (memo.includes('reject') || !tx.successful) return 'proposal_rejected';
-  return 'unknown';
-}
-
-function mapHorizonTransaction(tx: HorizonTransaction): VaultActivity {
   return {
-    id: tx.id,
-    type: inferTypeFromHorizonTransaction(tx),
-    timestamp: tx.created_at,
-    ledger: String(tx.ledger_attr),
-    actor: tx.source_account,
+    ...activity,
+    id: activity.id || activity.eventId || `${activity.ledger}-${timestamp}-${activity.type}`,
+    type: activity.type ?? 'unknown',
+    timestamp,
+    ledger: activity.ledger ? String(activity.ledger) : '0',
+    actor: activity.actor ?? '',
     details: {
-      recipient: tx.source_account,
-      status: tx.successful ? 'success' : 'failed',
-      memo: tx.memo ?? '',
-      memoType: tx.memo_type,
-      feeCharged: tx.fee_charged,
-      maxFee: tx.max_fee,
-      operationCount: tx.operation_count,
-      hash: tx.hash,
-      ledger: tx.ledger_attr,
+      ...normalizedDetails,
+      status: status === 'success' || status === 'failed' || status === 'pending' ? status : 'pending',
     },
-    txHash: tx.hash,
-    eventId: tx.hash,
-    pagingToken: tx.paging_token,
-  };
-}
-
-function buildHorizonTransactionsUrl(account: string, cursor?: string): string {
-  const normalizedBase = HORIZON_URL.replace(/\/+$/, '');
-  const url = new URL(`${normalizedBase}/accounts/${account}/transactions`);
-  url.searchParams.set('order', 'desc');
-  url.searchParams.set('include_failed', 'true');
-  url.searchParams.set('limit', String(PAGE_SIZE));
-  if (cursor) url.searchParams.set('cursor', cursor);
-  return url.toString();
-}
-
-async function fetchTransactionsFromHorizon(
-  account: string,
-  cursor?: string
-): Promise<GetVaultEventsResult> {
-  const url = buildHorizonTransactionsUrl(account, cursor);
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Horizon request failed (${response.status})`);
-  }
-
-  const data = (await response.json()) as HorizonTransactionsResponse;
-  const records = data._embedded?.records ?? [];
-  const activities = records.map(mapHorizonTransaction);
-  const nextCursor = records.length > 0 ? records[records.length - 1].paging_token : undefined;
-
-  return {
-    activities,
-    latestLedger: records.length > 0 ? String(records[0].ledger_attr) : '0',
-    cursor: nextCursor,
-    hasMore: records.length === PAGE_SIZE && Boolean(nextCursor),
+    eventId: activity.eventId || activity.id || `${activity.ledger}-${timestamp}`,
+    txHash:
+      activity.txHash ??
+      (typeof normalizedDetails.hash === 'string' ? normalizedDetails.hash : undefined),
+    pagingToken: activity.pagingToken ?? undefined,
   };
 }
 
 const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsLoaded }) => {
-  const { address } = useWallet();
+  const { getVaultEvents } = useVaultContract();
   const [transactions, setTransactions] = useState<VaultActivity[]>([]);
   const [loadingInitial, setLoadingInitial] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -374,28 +299,20 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
   const [filters, setFilters] = useState<TransactionFilterState>(DEFAULT_TRANSACTION_FILTERS);
   const [mobilePullToRefresh, setMobilePullToRefresh] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<VaultActivity | null>(null);
-  const historyAddress = useMemo(() => resolveHistoryAddress(address), [address]);
   const deferredTransactions = useDeferredValue(transactions);
 
   const loadInitialTransactions = useCallback(async () => {
-    if (!historyAddress) {
-      setTransactions([]);
-      setCursor(undefined);
-      setHasMore(false);
-      setError('Connect a Stellar account to load transaction history from Horizon.');
-      return;
-    }
-
     setLoadingInitial(true);
     setError(null);
 
     try {
-      const result = await fetchTransactionsFromHorizon(historyAddress);
-      const sorted = mergeAndSortTransactions([], result.activities);
+      const result: GetVaultEventsResult = await getVaultEvents(undefined, PAGE_SIZE);
+      const normalized = result.activities.map(normalizeActivity);
+      const sorted = mergeAndSortTransactions([], normalized);
 
       setTransactions(sorted);
       setCursor(result.cursor);
-      setHasMore(result.hasMore);
+      setHasMore(result.hasMore && Boolean(result.cursor));
     } catch (err) {
       console.error('Failed to load transaction history:', err);
       setError('Failed to load transaction history. Please try again.');
@@ -405,18 +322,19 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
     } finally {
       setLoadingInitial(false);
     }
-  }, [historyAddress]);
+  }, [getVaultEvents]);
 
   const loadMoreTransactions = useCallback(async () => {
-    if (loadingInitial || loadingMore || !hasMore || !historyAddress) return;
+    if (loadingInitial || loadingMore || !hasMore || !cursor) return;
 
     setLoadingMore(true);
 
     try {
-      const result = await fetchTransactionsFromHorizon(historyAddress, cursor);
-      setTransactions((prev) => mergeAndSortTransactions(prev, result.activities));
+      const result: GetVaultEventsResult = await getVaultEvents(cursor, PAGE_SIZE);
+      const normalized = result.activities.map(normalizeActivity);
+      setTransactions((prev) => mergeAndSortTransactions(prev, normalized));
       setCursor(result.cursor);
-      setHasMore(result.hasMore);
+      setHasMore(result.hasMore && Boolean(result.cursor));
     } catch (err) {
       console.error('Failed to load additional transactions:', err);
       setError('Failed to load more transactions.');
@@ -424,7 +342,7 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
     } finally {
       setLoadingMore(false);
     }
-  }, [cursor, hasMore, historyAddress, loadingInitial, loadingMore]);
+  }, [cursor, getVaultEvents, hasMore, loadingInitial, loadingMore]);
 
   useEffect(() => {
     void loadInitialTransactions();
@@ -447,10 +365,6 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
       touchQuery.removeEventListener('change', updatePullToRefresh);
     };
   }, []);
-
-  useEffect(() => {
-    onTransactionsLoaded?.(transactions);
-  }, [onTransactionsLoaded, transactions]);
 
   const totalExecuted = useMemo(
     () => transactions.filter((t) => t.type === 'proposal_executed').length,
@@ -514,6 +428,10 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
       return (left - right) * directionMultiplier;
     });
   }, [filteredTransactions, sortBy, sortDirection]);
+
+  useEffect(() => {
+    onTransactionsLoaded?.(sortedTransactions);
+  }, [onTransactionsLoaded, sortedTransactions]);
 
   const groupedTransactions = useMemo(() => {
     const grouped = new Map<string, TransactionGroup>();
