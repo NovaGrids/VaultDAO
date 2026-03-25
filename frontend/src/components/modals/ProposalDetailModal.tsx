@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare } from 'lucide-react';
+import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare, Loader2 } from 'lucide-react';
 import SignatureStatus, { type Signer } from '../SignatureStatus';
 import SignatureFlow, { type FlowStep } from '../SignatureFlow';
-import QRSignature from '../QRSignature';
 import { useVaultContract } from '../../hooks/useVaultContract';
+import { useWallet } from '../../hooks/useWallet';
 
 // Define the shape of a Proposal to fix the 'any' error
 export interface Proposal {
@@ -25,10 +25,11 @@ interface ProposalDetailModalProps {
 
 const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClose, proposal }) => {
     const [activeTab, setActiveTab] = useState<'details' | 'comments'>('details');
-    const { getProposalSignatures, remindSigner, exportSignatures } = useVaultContract();
+    const { getProposalSignatures, approveProposal, rejectProposal } = useVaultContract();
+    const { address } = useWallet();
     const [signers, setSigners] = useState<Signer[]>([]);
-    const [showQR, setShowQR] = useState(false);
-    const [mockXDR] = useState('AAAAAgAAAAC...'); // Mock XDR for demo
+    const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | null>(null);
+    const [actionError, setActionError] = useState<string | null>(null);
 
     useEffect(() => {
         if (isOpen && proposal) {
@@ -62,17 +63,46 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
         navigator.clipboard.writeText(text);
     };
 
-    const handleRemind = async (address: string) => {
-        await remindSigner(parseInt(proposal.id), address);
+    const handleRemind = async (_address: string) => {
+        // Not yet available — no-op
     };
 
     const handleExport = () => {
-        exportSignatures(parseInt(proposal.id));
+        // Not yet available — no-op
     };
 
     const handleRefreshSignatures = async () => {
-        const updated = await getProposalSignatures?.(parseInt(proposal.id)) ?? [];
+        if (!proposal) return;
+        const updated = await getProposalSignatures(parseInt(proposal.id)) ?? [];
         setSigners(updated);
+    };
+
+    const handleApprove = async () => {
+        if (!proposal || !address) return;
+        setActionLoading('approve');
+        setActionError(null);
+        try {
+            await approveProposal(parseInt(proposal.id));
+            onClose();
+        } catch (e) {
+            setActionError(e instanceof Error ? e.message : 'Failed to approve');
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    const handleReject = async () => {
+        if (!proposal || !address) return;
+        setActionLoading('reject');
+        setActionError(null);
+        try {
+            await rejectProposal(parseInt(proposal.id));
+            onClose();
+        } catch (e) {
+            setActionError(e instanceof Error ? e.message : 'Failed to reject');
+        } finally {
+            setActionLoading(null);
+        }
     };
 
     const flowSteps: FlowStep[] = [
@@ -148,35 +178,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         />
                     </div>
 
-                    {/* QR Code Section - Mobile Optimized */}
-                    <div className="lg:hidden">
-                        <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Mobile Signing</h3>
-                        <button
-                            onClick={() => setShowQR(!showQR)}
-                            className="w-full bg-accent/10 border border-accent/20 text-accent py-3 rounded-xl font-bold text-sm hover:bg-accent/20 transition-colors"
-                        >
-                            {showQR ? 'Hide QR Code' : 'Show QR Code'}
-                        </button>
-                        {showQR && (
-                            <div className="mt-4">
-                                <QRSignature
-                                    transactionXDR={mockXDR}
-                                    onRefresh={handleRefreshSignatures}
-                                    signed={signers.filter(s => s.signed).length >= (proposal.threshold || 3)}
-                                />
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Desktop QR Code */}
-                    <div className="hidden lg:block">
-                        <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Mobile Signing</h3>
-                        <QRSignature
-                            transactionXDR={mockXDR}
-                            onRefresh={handleRefreshSignatures}
-                            signed={signers.filter(s => s.signed).length >= (proposal.threshold || 3)}
-                        />
-                    </div>
+                    {/* QR Code Section removed — real XDR not available until transaction is built */}
 
                     {/* Visual Timeline Section */}
                     <div>
@@ -229,7 +231,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         </div>
                     </div>
 
-                    {/* History Section */}
+                    {/* Approval History from real signers */}
                     <div className="bg-primary/20 rounded-xl border border-gray-800 overflow-hidden">
                         <div className="px-4 py-3 border-b border-gray-800 bg-white/5 flex justify-between items-center">
                             <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Approval History</h4>
@@ -238,29 +240,54 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                             </span>
                         </div>
                         <div className="divide-y divide-gray-800/50">
-                            {[1, 2].map((_, i) => (
-                                <div key={i} className="px-4 py-3.5 flex justify-between items-center text-xs hover:bg-white/[0.02] transition-colors">
-                                    <div className="flex items-center gap-2.5 overflow-hidden">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                                        <span className="text-gray-300 font-mono truncate tracking-tight">GB2R...4M1P</span>
+                            {signers.filter(s => s.signed).length === 0 ? (
+                                <div className="px-4 py-4 text-xs text-gray-500 text-center">No approvals yet</div>
+                            ) : (
+                                signers.filter(s => s.signed).map((signer, i) => (
+                                    <div key={i} className="px-4 py-3.5 flex justify-between items-center text-xs hover:bg-white/[0.02] transition-colors">
+                                        <div className="flex items-center gap-2.5 overflow-hidden">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
+                                            <span className="text-gray-300 font-mono truncate tracking-tight">{signer.address}</span>
+                                        </div>
+                                        <span className="text-gray-500 shrink-0 font-medium ml-4 uppercase text-[9px]">
+                                            {signer.timestamp ? new Date(signer.timestamp).toLocaleDateString() : '—'}
+                                        </span>
                                     </div>
-                                    <span className="text-gray-500 shrink-0 font-medium ml-4 uppercase text-[9px]">Feb 19, 14:20</span>
-                                </div>
-                            ))}
+                                ))
+                            )}
                         </div>
                     </div>
                 </div>
 
                 {/* 3. Footer */}
                 <div className="p-4 sm:p-6 border-t border-gray-800 bg-secondary/80 shrink-0 backdrop-blur-md">
-                    <div className="flex flex-col sm:flex-row gap-3">
-                        <button className="flex-1 bg-accent hover:bg-accent/90 text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.98] shadow-lg shadow-accent/10 text-sm">
-                            <CheckCircle2 size={18} /> Approve Proposal
-                        </button>
-                        <button className="flex-1 bg-secondary border border-red-500/20 text-red-500 hover:bg-red-500/10 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] text-sm">
-                            <Ban size={18} /> Reject
-                        </button>
-                    </div>
+                    {actionError && (
+                        <p className="text-red-400 text-xs mb-3 text-center">{actionError}</p>
+                    )}
+                    {proposal.status === 'Pending' && address ? (
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <button
+                                onClick={handleApprove}
+                                disabled={actionLoading !== null}
+                                className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all text-sm"
+                            >
+                                {actionLoading === 'approve' ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+                                {actionLoading === 'approve' ? 'Approving...' : 'Approve Proposal'}
+                            </button>
+                            <button
+                                onClick={handleReject}
+                                disabled={actionLoading !== null}
+                                className="flex-1 bg-secondary border border-red-500/20 text-red-500 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all text-sm"
+                            >
+                                {actionLoading === 'reject' ? <Loader2 size={18} className="animate-spin" /> : <Ban size={18} />}
+                                {actionLoading === 'reject' ? 'Rejecting...' : 'Reject'}
+                            </button>
+                        </div>
+                    ) : (
+                        <p className="text-center text-gray-500 text-sm">
+                            {!address ? 'Connect wallet to take action' : `Proposal is ${proposal.status}`}
+                        </p>
+                    )}
                 </div>
             </div>
         </div>

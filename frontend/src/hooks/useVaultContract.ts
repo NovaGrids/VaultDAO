@@ -258,13 +258,37 @@ export const useVaultContract = () => {
                 const accountInfo = await server.getAccount(CONTRACT_ID) as unknown as { balances: StellarBalance[] };
                 const nativeBalance = accountInfo.balances.find((b: StellarBalance) => b.asset_type === 'native');
                 const balance = nativeBalance ? parseFloat(nativeBalance.balance).toLocaleString() : "0";
+
+                // Derive proposal counts from on-chain events
+                const eventsResult = await getVaultEvents(undefined, 200);
+                const proposalMap = new Map<string, string>(); // id -> status
+                for (const ev of eventsResult.activities) {
+                    const id = String(ev.eventId.split('-')[0] ?? ev.eventId);
+                    if (ev.type === 'proposal_created') proposalMap.set(id, 'Pending');
+                    else if (ev.type === 'proposal_approved' || ev.type === 'proposal_ready') proposalMap.set(id, 'Approved');
+                    else if (ev.type === 'proposal_rejected') proposalMap.set(id, 'Rejected');
+                    else if (ev.type === 'proposal_executed') proposalMap.set(id, 'Executed');
+                }
+                const statuses = Array.from(proposalMap.values());
+                const totalProposals = statuses.length;
+                const pendingApprovals = statuses.filter(s => s === 'Pending').length;
+                const readyToExecute = statuses.filter(s => s === 'Approved').length;
+
+                // Derive signer info from vault config
+                const config = await readContractValue('get_config').catch(() => null)
+                    ?? await readContractValue('get_vault_config').catch(() => null);
+                const configObj = (config && typeof config === 'object') ? config as Record<string, unknown> : {};
+                const signers = parseSignerAddresses(configObj.signers);
+                const threshold = parseNumericValue(configObj.threshold);
+                const activeSigners = signers.length;
+
                 return {
                     totalBalance: balance,
-                    totalProposals: 24,
-                    pendingApprovals: 3,
-                    readyToExecute: 1,
-                    activeSigners: 5,
-                    threshold: "3/5"
+                    totalProposals,
+                    pendingApprovals,
+                    readyToExecute,
+                    activeSigners,
+                    threshold: threshold > 0 ? `${threshold}/${activeSigners}` : '—',
                 };
             }, { maxAttempts: 3, initialDelayMs: 1000 });
         } catch (e) {
@@ -275,10 +299,10 @@ export const useVaultContract = () => {
                 pendingApprovals: 0,
                 readyToExecute: 0,
                 activeSigners: 0,
-                threshold: "0/0"
+                threshold: "—"
             };
         }
-    }, []);
+    }, [getVaultEvents, readContractValue]);
 
     const getVaultConfig = useCallback(async (): Promise<VaultConfig> => {
         const [configRawPrimary, configRawLegacy, userRole, isSigner] = await Promise.all([
@@ -862,21 +886,42 @@ export const useVaultContract = () => {
     };
 
     const getProposalSignatures = useCallback(async (proposalId: number) => {
-        console.log('Getting signatures for proposal:', proposalId);
-        return Promise.resolve([
-            { address: 'GABC...XYZ', name: 'Signer 1', signed: true, timestamp: new Date().toISOString() },
-            { address: 'GDEF...UVW', name: 'Signer 2', signed: false, timestamp: undefined },
-        ]);
+        try {
+            // Get vault signers from config
+            const config = await readContractValue('get_config').catch(() => null)
+                ?? await readContractValue('get_vault_config').catch(() => null);
+            const configObj = (config && typeof config === 'object') ? config as Record<string, unknown> : {};
+            const signerAddresses = parseSignerAddresses(configObj.signers);
+
+            // Get approval events for this proposal to determine who has signed
+            const eventsResult = await getVaultEvents(undefined, 200);
+            const approvedBy = new Set<string>();
+            for (const ev of eventsResult.activities) {
+                const id = String(ev.eventId.split('-')[0] ?? ev.eventId);
+                if (String(proposalId) === id && ev.type === 'proposal_approved' && ev.actor) {
+                    approvedBy.add(ev.actor);
+                }
+            }
+
+            return signerAddresses.map((addr, idx) => ({
+                address: addr,
+                name: `Signer ${idx + 1}`,
+                signed: approvedBy.has(addr),
+                timestamp: approvedBy.has(addr) ? new Date().toISOString() : undefined,
+            }));
+        } catch {
+            return [];
+        }
+    }, [readContractValue, getVaultEvents]);
+
+    const remindSigner = useCallback(async (_proposalId: number, _signerAddress: string) => {
+        // Off-chain notification — not yet implemented
+        throw new Error('Signer reminders are not yet available.');
     }, []);
 
-    const remindSigner = useCallback(async (proposalId: number, signerAddress: string) => {
-        console.log('Reminding signer:', signerAddress, 'for proposal:', proposalId);
-        return Promise.resolve();
-    }, []);
-
-    const exportSignatures = useCallback(async (proposalId: number) => {
-        console.log('Exporting signatures for proposal:', proposalId);
-        return Promise.resolve();
+    const exportSignatures = useCallback(async (_proposalId: number) => {
+        // Export not yet implemented
+        throw new Error('Signature export is not yet available.');
     }, []);
 
     const getProposalComments = useCallback(async (proposalId: string): Promise<Comment[]> => {
