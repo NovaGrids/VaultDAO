@@ -9151,7 +9151,10 @@ fn test_attachment_valid_cidv0_accepted() {
     signers.push_back(admin.clone());
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    let cid = soroban_sdk::String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    let cid = soroban_sdk::String::from_str(
+        &env,
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+    );
     assert_eq!(cid.len(), 46);
     assert!(client.try_add_attachment(&admin, &pid, &cid).is_ok());
 }
@@ -9257,7 +9260,10 @@ fn test_attachment_max_count_enforced() {
     for cid in &cids {
         client.add_attachment(&admin, &pid, &soroban_sdk::String::from_str(&env, cid));
     }
-    let extra = soroban_sdk::String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdQ");
+    let extra = soroban_sdk::String::from_str(
+        &env,
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdQ",
+    );
     let res = client.try_add_attachment(&admin, &pid, &extra);
     assert_eq!(res.err(), Some(Ok(VaultError::TooManyAttachments)));
 }
@@ -9277,7 +9283,10 @@ fn test_attachment_duplicate_returns_explicit_error() {
     signers.push_back(admin.clone());
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    let cid = soroban_sdk::String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    let cid = soroban_sdk::String::from_str(
+        &env,
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+    );
     client.add_attachment(&admin, &pid, &cid);
     let res = client.try_add_attachment(&admin, &pid, &cid);
     assert_eq!(res.err(), Some(Ok(VaultError::DuplicateAttachment)));
@@ -9317,7 +9326,11 @@ fn test_attachment_no_state_change_on_invalid_cid() {
     signers.push_back(admin.clone());
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    let _ = client.try_add_attachment(&admin, &pid, &soroban_sdk::String::from_str(&env, "short"));
+    let _ = client.try_add_attachment(
+        &admin,
+        &pid,
+        &soroban_sdk::String::from_str(&env, "short"),
+    );
     let proposal = client.get_proposal(&pid);
     assert_eq!(proposal.attachments.len(), 0);
 }
@@ -9362,7 +9375,9 @@ fn test_tag_up_to_max_succeeds() {
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
     for name in &["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"] {
-        assert!(client.try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, name)).is_ok());
+        assert!(client
+            .try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, name))
+            .is_ok());
     }
     assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
 }
@@ -9448,7 +9463,9 @@ fn test_tag_add_remove_add_deterministic() {
         client.add_proposal_tag(&admin, &pid, &Symbol::new(&env, name));
     }
     client.remove_proposal_tag(&admin, &pid, &Symbol::new(&env, "t1"));
-    assert!(client.try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, "new")).is_ok());
+    assert!(client
+        .try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, "new"))
+        .is_ok());
     assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
 }
 
@@ -9470,7 +9487,10 @@ fn test_metadata_empty_value_rejected() {
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
     let res = client.try_set_proposal_metadata(
-        &admin, &pid, &Symbol::new(&env, "k"), &soroban_sdk::String::from_str(&env, ""),
+        &admin,
+        &pid,
+        &Symbol::new(&env, "k"),
+        &soroban_sdk::String::from_str(&env, ""),
     );
     assert_eq!(res.err(), Some(Ok(VaultError::MetadataValueInvalid)));
 }
@@ -9491,7 +9511,10 @@ fn test_metadata_valid_value_accepted() {
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
     let res = client.try_set_proposal_metadata(
-        &admin, &pid, &Symbol::new(&env, "k"), &soroban_sdk::String::from_str(&env, "valid"),
+        &admin,
+        &pid,
+        &Symbol::new(&env, "k"),
+        &soroban_sdk::String::from_str(&env, "valid"),
     );
     assert!(res.is_ok());
 }
@@ -9518,7 +9541,10 @@ fn test_metadata_value_too_long_rejected() {
     );
     assert_eq!(long_val.len(), 257);
     let res = client.try_set_proposal_metadata(
-        &admin, &pid, &Symbol::new(&env, "k"), &long_val,
+        &admin,
+        &pid,
+        &Symbol::new(&env, "k"),
+        &long_val,
     );
     assert_eq!(res.err(), Some(Ok(VaultError::MetadataValueInvalid)));
 }
@@ -9539,12 +9565,20 @@ fn test_metadata_no_state_change_on_invalid_value() {
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
     client.set_proposal_metadata(
-        &admin, &pid, &Symbol::new(&env, "k"), &soroban_sdk::String::from_str(&env, "original"),
+        &admin,
+        &pid,
+        &Symbol::new(&env, "k"),
+        &soroban_sdk::String::from_str(&env, "original"),
     );
     let _ = client.try_set_proposal_metadata(
-        &admin, &pid, &Symbol::new(&env, "k"), &soroban_sdk::String::from_str(&env, ""),
+        &admin,
+        &pid,
+        &Symbol::new(&env, "k"),
+        &soroban_sdk::String::from_str(&env, ""),
     );
-    let val = client.get_proposal_metadata_value(&pid, &Symbol::new(&env, "k")).unwrap();
+    let val = client
+        .get_proposal_metadata_value(&pid, &Symbol::new(&env, "k"))
+        .unwrap();
     assert_eq!(val, Some(soroban_sdk::String::from_str(&env, "original")));
 }
 
@@ -9563,8 +9597,16 @@ fn test_metadata_remove_and_readd_stays_at_max() {
     signers.push_back(admin.clone());
     client.initialize(&admin, &default_init_config(&env, signers, 1));
     let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    for k in &["k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16"] {
-        client.set_proposal_metadata(&admin, &pid, &Symbol::new(&env, k), &soroban_sdk::String::from_str(&env, "v"));
+    for k in &[
+        "k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08", "k09", "k10", "k11", "k12",
+        "k13", "k14", "k15", "k16",
+    ] {
+        client.set_proposal_metadata(
+            &admin,
+            &pid,
+            &Symbol::new(&env, k),
+            &soroban_sdk::String::from_str(&env, "v"),
+        );
     }
     assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
     client.remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k01"));
