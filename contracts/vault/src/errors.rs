@@ -60,6 +60,14 @@ pub enum VaultError {
     TooManyTags = 232,
     /// Metadata value is empty or exceeds the maximum allowed length
     MetadataValueInvalid = 233,
+    /// Tag already exists on the proposal
+    DuplicateTag = 234,
+    /// Tag was not found on the proposal
+    TagNotFound = 235,
+    /// Attachment CID already exists on the proposal
+    DuplicateAttachment = 236,
+    /// Attachment index is out of range
+    AttachmentIndexOutOfRange = 237,
 }
 
 // Compatibility markers for CI source checks:

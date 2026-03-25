@@ -1531,7 +1531,7 @@ fn test_attachment_duplicate() {
 
     client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
     let result = client.try_add_attachment(&signer1, &proposal_id, &ipfs_hash);
-    assert_eq!(result.err(), Some(Ok(VaultError::AlreadyApproved)));
+    assert_eq!(result.err(), Some(Ok(VaultError::DuplicateAttachment)));
 }
 
 #[test]
@@ -9819,4 +9819,465 @@ fn test_metadata_valid_value_accepted() {
         &admin, &pid, &Symbol::new(&env, "key"), &String::from_str(&env, "valid"),
     );
     assert!(res.is_ok(), "Valid metadata value should be accepted");
+}
+
+// ============================================================================
+// Strengthened validation tests: metadata, tags, attachments
+// ============================================================================
+
+// --- Attachment: explicit error codes ---
+
+/// Duplicate attachment returns DuplicateAttachment (not AlreadyApproved).
+#[test]
+fn test_attachment_duplicate_returns_explicit_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    let cid = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    client.add_attachment(&admin, &pid, &cid);
+    let res = client.try_add_attachment(&admin, &pid, &cid);
+    assert_eq!(res.err(), Some(Ok(VaultError::DuplicateAttachment)));
+}
+
+/// remove_attachment with an out-of-range index returns AttachmentIndexOutOfRange.
+#[test]
+fn test_remove_attachment_out_of_range_returns_explicit_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // No attachments added — index 0 is out of range.
+    let res = client.try_remove_attachment(&admin, &pid, &0u32);
+    assert_eq!(res.err(), Some(Ok(VaultError::AttachmentIndexOutOfRange)));
+}
+
+/// remove_attachment with index equal to length is out of range.
+#[test]
+fn test_remove_attachment_index_equals_len_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    let cid = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    client.add_attachment(&admin, &pid, &cid);
+    // len is 1, so index 1 is out of range
+    let res = client.try_remove_attachment(&admin, &pid, &1u32);
+    assert_eq!(res.err(), Some(Ok(VaultError::AttachmentIndexOutOfRange)));
+}
+
+/// Attachment CID at exactly MIN_ATTACHMENT_LEN (46) is accepted.
+#[test]
+fn test_attachment_exactly_min_len_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // Exactly 46 chars
+    let cid = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    assert_eq!(cid.len(), 46);
+    let res = client.try_add_attachment(&admin, &pid, &cid);
+    assert!(res.is_ok());
+}
+
+/// Attachment CID at exactly MAX_ATTACHMENT_LEN (128) is accepted.
+#[test]
+fn test_attachment_exactly_max_len_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // Exactly 128 chars
+    let cid = String::from_str(&env, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi00000000000000000000000000000000000000000000000000000000000000000000000000");
+    assert_eq!(cid.len(), 128);
+    let res = client.try_add_attachment(&admin, &pid, &cid);
+    assert!(res.is_ok());
+}
+
+/// Attachment CID at MIN_ATTACHMENT_LEN - 1 (45) is rejected.
+#[test]
+fn test_attachment_one_below_min_len_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // 45 chars
+    let cid = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbd");
+    assert_eq!(cid.len(), 45);
+    let res = client.try_add_attachment(&admin, &pid, &cid);
+    assert_eq!(res.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
+}
+
+/// Attachment CID at MAX_ATTACHMENT_LEN + 1 (129) is rejected.
+#[test]
+fn test_attachment_one_above_max_len_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // 129 chars
+    let cid = String::from_str(&env, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi000000000000000000000000000000000000000000000000000000000000000000000000000");
+    assert_eq!(cid.len(), 129);
+    let res = client.try_add_attachment(&admin, &pid, &cid);
+    assert_eq!(res.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
+}
+
+/// Validation rejects invalid CID before checking proposal existence.
+#[test]
+fn test_attachment_invalid_cid_rejected_before_proposal_lookup() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    // proposal_id 999 does not exist; short CID should still fail with AttachmentHashInvalid
+    let short = String::from_str(&env, "short");
+    let res = client.try_add_attachment(&admin, &999u64, &short);
+    assert_eq!(res.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
+}
+
+// --- Tag: explicit error codes ---
+
+/// Duplicate tag returns DuplicateTag (not AlreadyApproved).
+#[test]
+fn test_tag_duplicate_returns_explicit_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    let tag = Symbol::new(&env, "ops");
+    client.add_proposal_tag(&admin, &pid, &tag);
+    let res = client.try_add_proposal_tag(&admin, &pid, &tag);
+    assert_eq!(res.err(), Some(Ok(VaultError::DuplicateTag)));
+}
+
+/// Removing a tag that does not exist returns TagNotFound (not ProposalNotFound).
+#[test]
+fn test_remove_nonexistent_tag_returns_explicit_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    let res = client.try_remove_proposal_tag(&admin, &pid, &Symbol::new(&env, "ghost"));
+    assert_eq!(res.err(), Some(Ok(VaultError::TagNotFound)));
+}
+
+/// Add then remove a tag, then removing again returns TagNotFound.
+#[test]
+fn test_remove_tag_twice_second_returns_tag_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    let tag = Symbol::new(&env, "ops");
+    client.add_proposal_tag(&admin, &pid, &tag);
+    client.remove_proposal_tag(&admin, &pid, &tag);
+    let res = client.try_remove_proposal_tag(&admin, &pid, &tag);
+    assert_eq!(res.err(), Some(Ok(VaultError::TagNotFound)));
+}
+
+/// Adding a tag after removing one frees a slot (count stays deterministic).
+#[test]
+fn test_tag_add_remove_add_deterministic() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+
+    // Fill to max
+    let tag_names = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"];
+    for name in &tag_names {
+        client.add_proposal_tag(&admin, &pid, &Symbol::new(&env, name));
+    }
+    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+
+    // Remove one, then add a new one — should succeed
+    client.remove_proposal_tag(&admin, &pid, &Symbol::new(&env, "t1"));
+    let res = client.try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, "new"));
+    assert!(res.is_ok(), "Should be able to add after removing one");
+    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+}
+
+/// Tags are stored without duplicates after add/remove cycles.
+#[test]
+fn test_tag_no_duplicates_after_cycles() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+
+    let tag = Symbol::new(&env, "ops");
+    client.add_proposal_tag(&admin, &pid, &tag);
+    client.remove_proposal_tag(&admin, &pid, &tag);
+    client.add_proposal_tag(&admin, &pid, &tag);
+
+    let tags = client.get_proposal_tags(&pid).unwrap();
+    assert_eq!(tags.len(), 1);
+    assert!(tags.contains(&tag));
+}
+
+// --- Metadata: boundary and edge cases ---
+
+/// Metadata value of exactly MAX_METADATA_VALUE_LEN (256) chars is accepted.
+#[test]
+fn test_metadata_value_exactly_max_len_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // Exactly 256 'a' chars
+    let val = String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_eq!(val.len(), 256);
+    let res = client.try_set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k"), &val);
+    assert!(res.is_ok(), "Value of exactly 256 chars should be accepted");
+}
+
+/// Metadata value of exactly 1 char is accepted (minimum valid).
+#[test]
+fn test_metadata_value_exactly_min_len_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    let res = client.try_set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k"), &String::from_str(&env, "x"));
+    assert!(res.is_ok(), "Single-char value should be accepted");
+}
+
+/// Metadata value of 257 chars is rejected.
+#[test]
+fn test_metadata_value_one_above_max_len_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // 257 chars
+    let val = String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_eq!(val.len(), 257);
+    let res = client.try_set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k"), &val);
+    assert_eq!(res.err(), Some(Ok(VaultError::MetadataValueInvalid)));
+}
+
+/// Removing a non-existent metadata key is a no-op (does not panic or error).
+#[test]
+fn test_remove_nonexistent_metadata_key_is_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+    // Removing a key that was never set should succeed without error
+    let res = client.try_remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "ghost"));
+    assert!(res.is_ok(), "Removing non-existent key should be a no-op");
+    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 0);
+}
+
+/// Metadata count stays at MAX after removing and re-adding a key.
+#[test]
+fn test_metadata_remove_and_readd_stays_at_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+
+    let keys = ["k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16"];
+    for &k in &keys {
+        client.set_proposal_metadata(&admin, &pid, &Symbol::new(&env, k), &String::from_str(&env, "v"));
+    }
+    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+
+    // Remove one, add a new key — should succeed
+    client.remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k01"));
+    let res = client.try_set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "knew"), &String::from_str(&env, "v"));
+    assert!(res.is_ok());
+    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+}
+
+/// No state change occurs when metadata validation fails (value too long).
+#[test]
+fn test_metadata_no_state_change_on_invalid_value() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+
+    // Set a valid value first
+    client.set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k"), &String::from_str(&env, "original"));
+
+    // Attempt to overwrite with an invalid (empty) value
+    let _ = client.try_set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k"), &String::from_str(&env, ""));
+
+    // Original value must be unchanged
+    let val = client.get_proposal_metadata_value(&pid, &Symbol::new(&env, "k")).unwrap();
+    assert_eq!(val, Some(String::from_str(&env, "original")));
+}
+
+/// No state change occurs when attachment validation fails (CID too short).
+#[test]
+fn test_attachment_no_state_change_on_invalid_cid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
+
+    // Attempt to add an invalid CID
+    let _ = client.try_add_attachment(&admin, &pid, &String::from_str(&env, "short"));
+
+    // Attachment list must remain empty
+    let proposal = client.get_proposal(&pid);
+    assert_eq!(proposal.attachments.len(), 0);
 }

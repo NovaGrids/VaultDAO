@@ -2511,6 +2511,28 @@ impl VaultDAO {
     }
 
     // ========================================================================
+    // Validation Helpers (private)
+    // ========================================================================
+
+    /// Validate an attachment CID: must be within [MIN_ATTACHMENT_LEN, MAX_ATTACHMENT_LEN].
+    fn validate_attachment_cid(attachment: &String) -> Result<(), VaultError> {
+        let len = attachment.len();
+        if !(MIN_ATTACHMENT_LEN..=MAX_ATTACHMENT_LEN).contains(&len) {
+            return Err(VaultError::AttachmentHashInvalid);
+        }
+        Ok(())
+    }
+
+    /// Validate a metadata value: must be non-empty and within MAX_METADATA_VALUE_LEN.
+    fn validate_metadata_value(value: &String) -> Result<(), VaultError> {
+        let len = value.len();
+        if len == 0 || len > MAX_METADATA_VALUE_LEN {
+            return Err(VaultError::MetadataValueInvalid);
+        }
+        Ok(())
+    }
+
+    // ========================================================================
     // Attachment Management
     // ========================================================================
 
@@ -2523,6 +2545,9 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         caller.require_auth();
 
+        // Validate CID length before any storage reads.
+        Self::validate_attachment_cid(&attachment)?;
+
         let proposal = storage::get_proposal(&env, proposal_id)?;
 
         let role = storage::get_role(&env, &caller);
@@ -2530,19 +2555,12 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        // IPFS CID v0 is 46 chars; CIDv1 base32 is 59+ chars; reject anything
-        // outside the valid range with a dedicated error code.
-        let alen = attachment.len();
-        if !(MIN_ATTACHMENT_LEN..=MAX_ATTACHMENT_LEN).contains(&alen) {
-            return Err(VaultError::AttachmentHashInvalid);
-        }
-
         let mut attachments = storage::get_attachments(&env, proposal_id);
         if attachments.len() >= MAX_ATTACHMENTS {
             return Err(VaultError::TooManyAttachments);
         }
         if attachments.contains(attachment.clone()) {
-            return Err(VaultError::AlreadyApproved); // duplicate attachment
+            return Err(VaultError::DuplicateAttachment);
         }
         attachments.push_back(attachment);
         storage::set_attachments(&env, proposal_id, &attachments);
@@ -2569,7 +2587,7 @@ impl VaultDAO {
 
         let mut attachments = storage::get_attachments(&env, proposal_id);
         if index >= attachments.len() {
-            return Err(VaultError::ProposalNotFound); // reuse as "index out of range"
+            return Err(VaultError::AttachmentIndexOutOfRange);
         }
         attachments.remove(index);
         storage::set_attachments(&env, proposal_id, &attachments);
@@ -2602,10 +2620,7 @@ impl VaultDAO {
         }
 
         // Metadata validation: non-empty bounded value and bounded entry count.
-        let value_len = value.len();
-        if value_len == 0 || value_len > MAX_METADATA_VALUE_LEN {
-            return Err(VaultError::MetadataValueInvalid);
-        }
+        Self::validate_metadata_value(&value)?;
 
         let exists = proposal.metadata.get(key.clone()).is_some();
         if !exists && proposal.metadata.len() >= MAX_METADATA_ENTRIES {
@@ -2686,7 +2701,7 @@ impl VaultDAO {
         }
 
         if proposal.tags.contains(&tag) {
-            return Err(VaultError::AlreadyApproved); // duplicate tag
+            return Err(VaultError::DuplicateTag);
         }
 
         if proposal.tags.len() >= MAX_TAGS {
@@ -2728,7 +2743,7 @@ impl VaultDAO {
         }
 
         if !found {
-            return Err(VaultError::ProposalNotFound); // tag not found
+            return Err(VaultError::TagNotFound);
         }
 
         storage::set_proposal(&env, &proposal);
