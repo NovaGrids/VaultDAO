@@ -79,4 +79,8 @@ pub enum VaultError {
     BalanceConditionFailed = 701,
     /// Date condition not satisfied
     DateConditionFailed = 702,
+
+    // Metadata errors (8xx)
+    /// Metadata value is empty or exceeds maximum length
+    MetadataValueInvalid = 800,
 }

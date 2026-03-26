@@ -15,8 +15,13 @@ mod types;
 pub use types::InitConfig;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
 use types::{Config, ListMode, Proposal, ProposalStatus, Role};
+
+/// Maximum length of a metadata value in bytes
+const MAX_METADATA_VALUE_LEN: u32 = 256;
+/// Maximum number of metadata entries per proposal
+const MAX_METADATA_ENTRIES: u32 = 16;
 
 /// The main contract structure for VaultDAO.
 ///
@@ -178,6 +183,7 @@ impl VaultDAO {
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
+            metadata: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -646,6 +652,49 @@ impl VaultDAO {
     /// Get proposal by ID
     pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, VaultError> {
         storage::get_proposal(&env, proposal_id)
+    }
+
+    // ========================================================================
+    // Proposal Metadata
+    // ========================================================================
+
+    /// Set a metadata key-value pair on a proposal.
+    ///
+    /// Only Admin or the original proposer can set metadata.
+    /// Values must be non-empty and at most MAX_METADATA_VALUE_LEN bytes.
+    /// At most MAX_METADATA_ENTRIES unique keys are allowed per proposal.
+    /// Updating an existing key does not count toward the entry limit.
+    pub fn set_proposal_metadata(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        key: Symbol,
+        value: String,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let value_len = value.len();
+        if value_len == 0 || value_len > MAX_METADATA_VALUE_LEN {
+            return Err(VaultError::MetadataValueInvalid);
+        }
+
+        let exists = proposal.metadata.get(key.clone()).is_some();
+        if !exists && proposal.metadata.len() >= MAX_METADATA_ENTRIES {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        proposal.metadata.set(key, value);
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
     }
 
     /// Get role for an address

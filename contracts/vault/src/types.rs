@@ -2,7 +2,7 @@
 //!
 //! Core data structures for the multisig treasury contract.
 
-use soroban_sdk::{contracttype, Address, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
 
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
@@ -142,6 +142,8 @@ pub struct Proposal {
     pub expires_at: u64,
     /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
     pub unlock_ledger: u64,
+    /// Arbitrary key-value metadata
+    pub metadata: Map<Symbol, String>,
 }
 
 /// Recurring payment schedule
