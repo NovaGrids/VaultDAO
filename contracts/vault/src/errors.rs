@@ -75,33 +75,33 @@ pub enum VaultError {
     RecurringPaymentTooEarly = 239,
     /// Recurring payment was already executed in this interval
     RecurringAlreadyExecuted = 240,
-    
+
     /// Hook contract execution failed
     HookExecutionFailed = 241,
     /// Hook not found in registered list
     HookNotRegistered = 242,
     /// Caller not authorized to register hooks
     HookUnauthorized = 243,
-    
+
     /// Guardian threshold not met for recovery
     GuardianThresholdNotMet = 244,
     /// Recovery still in timelock period
     RecoveryTimelockActive = 245,
     /// Recovery proposal already executed
     RecoveryAlreadyExecuted = 246,
-    
+
     /// Funding milestone not verified
     MilestoneNotVerified = 247,
     /// Funding round inactive or expired
     FundingRoundInactive = 248,
-    
+
     /// Escrow milestone not yet eligible for completion
     EscrowMilestoneNotEligible = 249,
     /// Escrow currently in dispute
     EscrowDisputed = 250,
     /// Caller not authorized as escrow arbitrator
     ArbitratorUnauthorized = 251,
-    
+
     /// Permission explicitly denied
     PermissionDenied = 252,
 
@@ -142,4 +142,3 @@ pub enum VaultError {
 
 // Compatibility markers for CI source checks:
 // DelegationError, DelegationChainTooLong, CircularDelegation
-

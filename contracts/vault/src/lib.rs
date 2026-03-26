@@ -17,7 +17,7 @@
 //! - Bridge module (EXPLICITLY EXCLUDED via #[cfg(feature = "bridge")])
 //! - Wallet recovery proposals
 //! - Proposal templates
-//! 
+//!
 //! A Soroban smart contract implementing M-of-N multisig with RBAC,
 
 //! proposal workflows, spending limits, reputation, insurance, and batch execution.
@@ -2090,7 +2090,7 @@ impl VaultDAO {
     /// 🟡 EXPERIMENTAL - Recurring payment scheduling
     ///
     /// Schedule a new recurring payment
-    /// 
+    ///
     /// Only Treasurer or Admin can schedule.
 
     pub fn schedule_payment(
@@ -2817,13 +2817,13 @@ impl VaultDAO {
     /// Stricter CID validation: Qm/Qb prefix + base58/base32 chars only
     fn validate_strict_attachment_cid(attachment: &String) -> Result<(), VaultError> {
         Self::validate_attachment_cid(attachment)?;
-        
+
         let s = attachment.as_str();
         // Must start with valid CID prefix
         if !s.starts_with("Qm") && !s.starts_with("Qb") {
             return Err(VaultError::AttachmentCIDInvalid);
         }
-        
+
         // Base58 chars + / only (CIDv0), or base32 chars (CIDv1)
         let valid_chars = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
         for c in s.as_bytes() {
