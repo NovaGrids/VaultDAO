@@ -20,13 +20,18 @@ mod token;
 mod types;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
-use types::{Config, ListMode, Proposal, ProposalStatus, Role};
-
-/// Maximum length of a metadata value in bytes
-const MAX_METADATA_VALUE_LEN: u32 = 256;
-/// Maximum number of metadata entries per proposal
-const MAX_METADATA_ENTRIES: u32 = 16;
+use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, Map, String, Symbol, Vec};
+use types::{
+    AuditAction, AuditEntry, BatchExecutionResult, BatchOperation, BatchStatus, BatchTransaction,
+    CancellationRecord, Comment, Condition, ConditionLogic, Config, DexConfig, Escrow,
+    EscrowStatus, ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
+    FundingRoundConfig, FundingRoundStatus, GasConfig, InitConfig, InsuranceConfig, ListMode,
+    Milestone, NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal,
+    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal,
+    RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, RoleAssignment,
+    StreamStatus, StreamingPayment, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
+    TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData, VotingStrategy,
+};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -507,8 +512,21 @@ impl VaultDAO {
             condition_logic,
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
-            unlock_ledger: 0,
-            metadata: Map::new(&env),
+            unlock_ledger,
+            execution_time,
+            insurance_amount: actual_insurance,
+            stake_amount: actual_stake,
+            gas_limit: proposal_gas_limit,
+            gas_used: 0,
+            snapshot_ledger: current_ledger,
+            snapshot_signers: config.signers.clone(),
+            depends_on: depends_on.clone(),
+            is_swap: false,
+            voting_deadline: if config.default_voting_deadline > 0 {
+                current_ledger + config.default_voting_deadline
+            } else {
+                0
+            },
         };
 
         storage::set_proposal(&env, &proposal);
@@ -2145,57 +2163,18 @@ impl VaultDAO {
         Ok(())
     }
 
-    /// Get proposal by ID
-    pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, VaultError> {
-        storage::get_proposal(&env, proposal_id)
-    }
-
-    // ========================================================================
-    // Proposal Metadata
-    // ========================================================================
-
-    /// Set a metadata key-value pair on a proposal.
+    /// Get a recurring payment by ID
     ///
-    /// Only Admin or the original proposer can set metadata.
-    /// Values must be non-empty and at most MAX_METADATA_VALUE_LEN bytes.
-    /// At most MAX_METADATA_ENTRIES unique keys are allowed per proposal.
-    /// Updating an existing key does not count toward the entry limit.
-    pub fn set_proposal_metadata(
+    /// # Arguments
+    /// * `payment_id` - ID of the recurring payment to retrieve.
+    ///
+    /// # Returns
+    /// The RecurringPayment if found.
+    pub fn get_recurring_payment(
         env: Env,
-        caller: Address,
-        proposal_id: u64,
-        key: Symbol,
-        value: String,
-    ) -> Result<(), VaultError> {
-        caller.require_auth();
-
-        let mut proposal = storage::get_proposal(&env, proposal_id)?;
-
-        let role = storage::get_role(&env, &caller);
-        if role != Role::Admin && caller != proposal.proposer {
-            return Err(VaultError::Unauthorized);
-        }
-
-        let value_len = value.len();
-        if value_len == 0 || value_len > MAX_METADATA_VALUE_LEN {
-            return Err(VaultError::MetadataValueInvalid);
-        }
-
-        let exists = proposal.metadata.get(key.clone()).is_some();
-        if !exists && proposal.metadata.len() >= MAX_METADATA_ENTRIES {
-            return Err(VaultError::ExceedsProposalLimit);
-        }
-
-        proposal.metadata.set(key, value);
-        storage::set_proposal(&env, &proposal);
-        storage::extend_instance_ttl(&env);
-
-        Ok(())
-    }
-
-    /// Get role for an address
-    pub fn get_role(env: Env, addr: Address) -> Role {
-        storage::get_role(&env, &addr)
+        payment_id: u64,
+    ) -> Result<RecurringPayment, VaultError> {
+        storage::get_recurring_payment(&env, payment_id)
     }
 
     /// List recurring payment IDs with pagination
