@@ -23,17 +23,69 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-charts': ['recharts'],
-          'vendor-soroban': ['@soroban-react/core', '@stellar/freighter-api', 'stellar-sdk'],
-          'vendor-ui': ['lucide-react', 'qrcode.react'],
+        manualChunks(id) {
+          // PDF / image export — loaded only in AdvancedChart / ExportModal
+          if (id.includes('jspdf') || id.includes('jspdf-autotable') || id.includes('html2canvas')) {
+            return 'vendor-pdf';
+          }
+          // Collaborative editing (yjs, y-websocket)
+          if (id.includes('yjs') || id.includes('y-websocket') || id.includes('lib0')) {
+            return 'vendor-collab';
+          }
+          // IPFS — only used in IPFSUploader
+          if (id.includes('ipfs-http-client') || id.includes('multiformats') || id.includes('@ipld')) {
+            return 'vendor-ipfs';
+          }
+          // Video player — only used in VideoPlayer
+          if (id.includes('react-player')) {
+            return 'vendor-player';
+          }
+          // Grid layout — only used in DashboardBuilder
+          if (id.includes('react-grid-layout')) {
+            return 'vendor-grid';
+          }
+          // Charts
+          if (id.includes('recharts') || id.includes('d3-') || id.includes('victory-')) {
+            return 'vendor-charts';
+          }
+          // Stellar / Soroban
+          if (
+            id.includes('stellar-sdk') ||
+            id.includes('@stellar/') ||
+            id.includes('@soroban-react') ||
+            id.includes('stellar-base')
+          ) {
+            return 'vendor-soroban';
+          }
+          // Drag-and-drop
+          if (id.includes('@dnd-kit')) {
+            return 'vendor-dnd';
+          }
+          // Fuzzy search
+          if (id.includes('fuse.js')) {
+            return 'vendor-fuse';
+          }
+          // i18n
+          if (id.includes('i18next') || id.includes('react-i18next')) {
+            return 'vendor-i18n';
+          }
+          // Core React runtime
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+            return 'vendor-react';
+          }
+          // React ecosystem (router, hooks, etc.)
+          if (id.includes('node_modules/react-')) {
+            return 'vendor-react-ecosystem';
+          }
+          // UI utilities
+          if (id.includes('lucide-react') || id.includes('qrcode.react')) {
+            return 'vendor-ui';
+          }
         },
       },
     },
     chunkSizeWarningLimit: 1000,
     minify: 'terser',
-    // Performance optimizations
     sourcemap: false,
     reportCompressedSize: true,
     cssCodeSplit: true,
@@ -45,7 +97,6 @@ export default defineConfig({
       'is-lite': resolve(__dirname, 'node_modules/is-lite/dist/index.js'),
     },
   },
-  // Optimize dependencies
   optimizeDeps: {
     include: [
       'react',

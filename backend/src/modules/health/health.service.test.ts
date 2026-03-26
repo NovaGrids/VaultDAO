@@ -16,14 +16,19 @@ const mockEnv = {
   horizonUrl: "https://horizon-testnet.stellar.org",
   contractId: "CDTEST",
   websocketUrl: "ws://localhost:8080",
+  eventPollingIntervalMs: 5000,
+  eventPollingEnabled: false,
 };
 
 const mockRuntime = {
   startedAt: "2026-03-25T00:00:00.000Z",
+  eventPollingService: {
+    getStatus: () => ({ running: false, lastCheck: null }),
+  },
 };
 
 test("builds a healthy service payload", () => {
-  const payload = buildHealthPayload(mockEnv);
+  const payload = buildHealthPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.ok, true);
   assert.equal(payload.service, "vaultdao-backend");
@@ -33,7 +38,7 @@ test("builds a healthy service payload", () => {
 });
 
 test("builds a status payload", () => {
-  const payload = buildStatusPayload(mockEnv);
+  const payload = buildStatusPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.service, "vaultdao-backend");
   assert.equal(payload.environment, "test");
@@ -41,7 +46,7 @@ test("builds a status payload", () => {
 });
 
 test("builds a readiness payload with dependency checks", () => {
-  const payload = buildReadinessPayload(mockEnv, mockRuntime);
+  const payload = buildReadinessPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.ready, true);
   assert.equal(payload.service, "vaultdao-backend");

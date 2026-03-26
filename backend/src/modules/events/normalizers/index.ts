@@ -2,6 +2,7 @@ import type { ContractEvent } from "../events.types.js";
 import type { NormalizedEvent } from "../types.js";
 import { EventType, CONTRACT_EVENT_MAP } from "../types.js";
 import { ProposalNormalizer } from "./proposal.normalizer.js";
+import { SnapshotNormalizer } from "../../snapshots/normalizer.js";
 
 /**
  * EventNormalizer
@@ -23,6 +24,10 @@ export class EventNormalizer {
           return ProposalNormalizer.normalizeCreated(event);
         case EventType.PROPOSAL_EXECUTED:
           return ProposalNormalizer.normalizeExecuted(event);
+        case EventType.ROLE_ASSIGNED:
+          return SnapshotNormalizer.normalizeRoleAssigned(event);
+        case EventType.INITIALIZED:
+          return SnapshotNormalizer.normalizeInitialized(event);
         case EventType.UNKNOWN:
           return this.normalizeUnknown(event, "Unmapped topic");
         default:

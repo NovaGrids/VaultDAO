@@ -1,6 +1,8 @@
 import type { BackendEnv } from "./config/env.js";
 import { loadEnv } from "./config/env.js";
 import { startServer } from "./server.js";
+import { createLogger } from "./shared/logging/logger.js";
+import { LifecycleManager } from "./app/lifecycle/lifecycle-manager.js";
 
 function maskContractId(contractId: string): string {
   if (contractId.length <= 10) return contractId;
@@ -8,18 +10,24 @@ function maskContractId(contractId: string): string {
 }
 
 function logStartupConfig(env: BackendEnv) {
-  console.log("[vaultdao-backend] startup config");
-  console.log(`- host: ${env.host}`);
-  console.log(`- port: ${env.port}`);
-  console.log(`- environment: ${env.nodeEnv}`);
-  console.log(`- stellar network: ${env.stellarNetwork}`);
-  console.log(`- contract id: ${maskContractId(env.contractId)}`);
-  console.log(`- soroban rpc: ${env.sorobanRpcUrl}`);
-  console.log(`- horizon: ${env.horizonUrl}`);
-  console.log(`- websocket: ${env.websocketUrl}`);
+  const logger = createLogger("vaultdao-backend");
+  logger.info("startup config", {
+    host: env.host,
+    port: env.port,
+    environment: env.nodeEnv,
+    stellarNetwork: env.stellarNetwork,
+    contractId: maskContractId(env.contractId),
+    sorobanRpcUrl: env.sorobanRpcUrl,
+    horizonUrl: env.horizonUrl,
+    websocketUrl: env.websocketUrl,
+  });
 }
 
 const env = loadEnv();
 
 logStartupConfig(env);
-startServer(env);
+
+// Start server and integrate with lifecycle management
+const server = startServer(env);
+const lifecycle = new LifecycleManager(server);
+lifecycle.initialize();

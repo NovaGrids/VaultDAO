@@ -1,3 +1,4 @@
+s
 # Stable vs Experimental Boundaries - Implementation TODO
 
 ## Plan Status: ✅ Approved
@@ -13,3 +14,19 @@
 - ✅ 7. `gh pr create --title \"Define stable vs experimental contract boundaries closes #289\" --body \"...\"` 
 
 **All steps complete! Ready for review.**
+
+# Structured Logging Task
+
+## Steps
+- [ ] Create git branch
+- [ ] Create backend/src/shared/logging/logger.ts
+- [ ] Update backend/src/index.ts to use logger
+- [ ] Optional: Update other files (server.ts, events.service.ts)
+- [ ] Test structured logs
+- [ ] Commit 'feat: add structured logging utilities to backend'
+
+## Acceptance
+- Shared logger with levels
+- Startup logs refactored
+- Structured format readable
+
