@@ -17,7 +17,7 @@
 //! - Bridge module (EXPLICITLY EXCLUDED via #[cfg(feature = "bridge")])
 //! - Wallet recovery proposals
 //! - Proposal templates
-//! 
+//!
 //! A Soroban smart contract implementing M-of-N multisig with RBAC,
 
 //! proposal workflows, spending limits, reputation, insurance, and batch execution.
@@ -2084,7 +2084,7 @@ impl VaultDAO {
     /// 🟡 EXPERIMENTAL - Recurring payment scheduling
     ///
     /// Schedule a new recurring payment
-    /// 
+    ///
     /// Only Treasurer or Admin can schedule.
 
     pub fn schedule_payment(
