@@ -68,7 +68,78 @@ pub enum VaultError {
     DuplicateAttachment = 236,
     /// Attachment index is out of range
     AttachmentIndexOutOfRange = 237,
+
+    /// Recurring payment is not active
+    RecurringPaymentNotActive = 238,
+    /// Attempt to execute recurring payment before scheduled time
+    RecurringPaymentTooEarly = 239,
+    /// Recurring payment was already executed in this interval
+    RecurringAlreadyExecuted = 240,
+    
+    /// Hook contract execution failed
+    HookExecutionFailed = 241,
+    /// Hook not found in registered list
+    HookNotRegistered = 242,
+    /// Caller not authorized to register hooks
+    HookUnauthorized = 243,
+    
+    /// Guardian threshold not met for recovery
+    GuardianThresholdNotMet = 244,
+    /// Recovery still in timelock period
+    RecoveryTimelockActive = 245,
+    /// Recovery proposal already executed
+    RecoveryAlreadyExecuted = 246,
+    
+    /// Funding milestone not verified
+    MilestoneNotVerified = 247,
+    /// Funding round inactive or expired
+    FundingRoundInactive = 248,
+    
+    /// Escrow milestone not yet eligible for completion
+    EscrowMilestoneNotEligible = 249,
+    /// Escrow currently in dispute
+    EscrowDisputed = 250,
+    /// Caller not authorized as escrow arbitrator
+    ArbitratorUnauthorized = 251,
+    
+    /// Permission explicitly denied
+    PermissionDenied = 252,
+
+    /// Metadata key is invalid (empty, too long, invalid chars)
+    MetadataKeyInvalid = 270,
+    /// Tag is invalid (empty, too long, invalid chars)
+    TagInvalid = 271,
+    /// Attachment CID is malformed (no Qm/Qb prefix, invalid chars)
+    AttachmentCIDInvalid = 272,
+    /// Cannot modify approved/immutable proposal
+    ProposalImmutable = 273,
+
+    /// DEX swap operation failed
+    SwapFailed = 253,
+    /// Insufficient stake amount provided
+    StakeInsufficient = 254,
+    /// Token lock period has expired
+    LockExpired = 255,
+    /// Batch transaction validation failed
+    BatchValidationFailed = 256,
+    /// Oracle price data is stale (exceeds max staleness)
+    OracleStale = 257,
+    /// Recovery guardian list is empty
+    NoRecoveryGuardians = 258,
+    /// Proposed recovery threshold exceeds new signer count
+    RecoveryThresholdInvalid = 259,
+    /// Escrow duration too short
+    EscrowDurationTooShort = 260,
+    /// Funding round contribution limit exceeded
+    ContributionLimitExceeded = 261,
+    /// Hook callback returned invalid response
+    HookInvalidResponse = 262,
+    /// Recurring payment interval mismatch
+    IntervalMismatch = 263,
+    /// Proposal template override exceeds limits
+    TemplateOverrideInvalid = 264,
 }
 
 // Compatibility markers for CI source checks:
 // DelegationError, DelegationChainTooLong, CircularDelegation
+

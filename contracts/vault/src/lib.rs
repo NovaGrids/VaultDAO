@@ -90,6 +90,12 @@ const MIN_ATTACHMENT_LEN: u32 = 46;
 /// Maximum length for an attachment CID
 const MAX_ATTACHMENT_LEN: u32 = 128;
 
+/// Metadata key limits
+const MAX_METADATA_KEY_LEN: u32 = 64;
+
+/// Tag limits  
+const MAX_TAG_LEN: u32 = 32;
+
 /// Reputation adjustments
 const REP_EXEC_PROPOSER: u32 = 10;
 const REP_EXEC_APPROVER: u32 = 5;
@@ -2143,12 +2149,12 @@ impl VaultDAO {
         let mut payment = storage::get_recurring_payment(&env, payment_id)?;
 
         if !payment.is_active {
-            return Err(VaultError::ProposalNotFound); // Or specific "NotActive" error
+            return Err(VaultError::RecurringPaymentNotActive);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger < payment.next_payment_ledger {
-            return Err(VaultError::TimelockNotExpired); // Reuse error for "Too Early"
+            return Err(VaultError::RecurringPaymentTooEarly);
         }
 
         // Check spending limits (Daily & Weekly)
@@ -2806,6 +2812,64 @@ impl VaultDAO {
             return Err(VaultError::AttachmentHashInvalid);
         }
         Ok(())
+    }
+
+    /// Stricter CID validation: Qm/Qb prefix + base58/base32 chars only
+    fn validate_strict_attachment_cid(attachment: &String) -> Result<(), VaultError> {
+        Self::validate_attachment_cid(attachment)?;
+        
+        let s = attachment.as_str();
+        // Must start with valid CID prefix
+        if !s.starts_with("Qm") && !s.starts_with("Qb") {
+            return Err(VaultError::AttachmentCIDInvalid);
+        }
+        
+        // Base58 chars + / only (CIDv0), or base32 chars (CIDv1)
+        let valid_chars = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        for c in s.as_bytes() {
+            if !valid_chars.contains(c) && *c != b'/' {
+                return Err(VaultError::AttachmentCIDInvalid);
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate metadata key: non-empty, <=64 chars, alphanumeric+underscore only
+    fn validate_metadata_key(key: &Symbol) -> Result<(), VaultError> {
+        let key_str = key.to_string();
+        let len = key_str.len();
+        if len == 0 || len > MAX_METADATA_KEY_LEN as usize {
+            return Err(VaultError::MetadataKeyInvalid);
+        }
+        // Alphanumeric + underscore only
+        for c in key_str.chars() {
+            if !c.is_alphanumeric() && c != '_' {
+                return Err(VaultError::MetadataKeyInvalid);
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate tag: <=32 chars, alphanumeric+hyphen+underscore only
+    fn validate_tag(tag: &Symbol) -> Result<Symbol, VaultError> {
+        let tag_str = tag.to_string();
+        let len = tag_str.len();
+        if len == 0 || len > MAX_TAG_LEN as usize {
+            return Err(VaultError::TagInvalid);
+        }
+        // Alphanumeric + hyphen + underscore only
+        for c in tag_str.chars() {
+            if !c.is_alphanumeric() && c != '-' && c != '_' {
+                return Err(VaultError::TagInvalid);
+            }
+        }
+        // Return lowercase normalized version
+        Ok(Symbol::new(tag.env(), tag_str.to_lowercase().as_str()))
+    }
+
+    /// Check if proposal can still be modified (before Approved)
+    fn is_proposal_modifiable(proposal: &Proposal) -> bool {
+        proposal.status == ProposalStatus::Pending
     }
 
     /// Validate a metadata value: must be non-empty and within MAX_METADATA_VALUE_LEN.
@@ -3924,7 +3988,7 @@ impl VaultDAO {
 
         let mut config = storage::get_config(&env)?;
         if config.pre_execution_hooks.contains(&hook) {
-            return Err(VaultError::SignerAlreadyExists);
+            return Err(VaultError::HookNotRegistered);
         }
 
         config.pre_execution_hooks.push_back(hook.clone());
@@ -3943,7 +4007,7 @@ impl VaultDAO {
 
         let mut config = storage::get_config(&env)?;
         if config.post_execution_hooks.contains(&hook) {
-            return Err(VaultError::SignerAlreadyExists);
+            return Err(VaultError::HookNotRegistered);
         }
 
         config.post_execution_hooks.push_back(hook.clone());
