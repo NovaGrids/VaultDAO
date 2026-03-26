@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare } from 'lucide-react';
+import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare, FileText, Plus } from 'lucide-react';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
 import NewProposalModal from '../../components/modals/NewProposalModal';
 import ProposalDetailModal from '../../components/modals/ProposalDetailModal';
@@ -493,12 +493,35 @@ const Proposals: React.FC = () => {
                 </div>
               );
             })
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 px-4 bg-gray-800/20 rounded-3xl border border-dashed border-gray-700">
-              <SearchX size={48} className="text-gray-600 mb-4" />
-              <p className="text-gray-400 text-lg font-medium">
-                {localProposals.length === 0 ? 'No proposals found on-chain yet' : 'No proposals match your filters'}
+          ) : localProposals.length === 0 ? (
+            // True empty state — no proposals exist at all
+            <div className="flex flex-col items-center justify-center py-20 px-4 bg-gray-800/20 rounded-3xl border border-dashed border-gray-700">
+              <div className="p-5 bg-gray-800/60 rounded-2xl mb-6">
+                <FileText size={48} className="text-purple-400" />
+              </div>
+              <h3 className="text-white text-xl font-semibold mb-2">No proposals yet</h3>
+              <p className="text-gray-400 text-sm text-center max-w-sm mb-8">
+                This vault has no proposals. Create the first one to start the approval process.
               </p>
+              <button
+                onClick={() => {
+                  const { ready, message } = checkReady();
+                  if (!ready) { notify('proposal_rejected', message ?? 'Not ready', 'error'); return; }
+                  setShowNewProposalModal(true);
+                }}
+                disabled={!isReady}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 rounded-lg font-medium transition min-h-[44px]"
+              >
+                <Plus size={18} />
+                Create First Proposal
+              </button>
+            </div>
+          ) : (
+            // Filtered empty state — proposals exist but none match current filters
+            <div className="flex flex-col items-center justify-center py-16 px-4 bg-gray-800/20 rounded-3xl border border-dashed border-gray-700">
+              <SearchX size={48} className="text-gray-600 mb-4" />
+              <p className="text-gray-400 text-lg font-medium">No proposals match your filters</p>
+              <p className="text-gray-500 text-sm mt-1">Try adjusting or clearing your filters</p>
             </div>
           )}
         </div>
