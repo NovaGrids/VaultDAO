@@ -38,13 +38,7 @@ pub enum OptionalVaultOracleConfig {
     Some(VaultOracleConfig),
 }
 
-/// Price data from an oracle
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VaultPriceData {
-    pub price: i128,
-    pub timestamp: u64,
-}
+use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
 
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
@@ -398,40 +392,8 @@ pub struct Proposal {
     pub expires_at: u64,
     /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
     pub unlock_ledger: u64,
-    /// Optional scheduled execution time (ledger number) for delayed execution
-    pub execution_time: Option<u64>,
-    /// Insurance amount staked by proposer (0 = no insurance). Held in vault.
-    pub insurance_amount: i128,
-    /// Stake amount locked by proposer (0 = no stake). Held in vault.
-    pub stake_amount: i128,
-    /// Gas (CPU instruction) limit for execution (0 = use global config default)
-    pub gas_limit: u64,
-    /// Estimated gas used during execution (populated on execution)
-    pub gas_used: u64,
-    /// Ledger sequence at which signers were snapshotted for this proposal
-    pub snapshot_ledger: u64,
-    /// Voting power snapshot — addresses eligible to vote at creation time
-    pub snapshot_signers: Vec<Address>,
-    /// Proposal IDs that must be executed before this proposal can execute
-    pub depends_on: Vec<u64>,
-    /// Flag indicating if this is a swap proposal
-    pub is_swap: bool,
-    /// Ledger sequence when voting must complete (0 = no deadline)
-    pub voting_deadline: u64,
-}
-
-/// On-chain comment on a proposal
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct Comment {
-    pub id: u64,
-    pub proposal_id: u64,
-    pub author: Address,
-    pub text: Symbol,
-    /// Parent comment ID (0 = top-level)
-    pub parent_id: u64,
-    pub created_at: u64,
-    pub edited_at: u64,
+    /// Arbitrary key-value metadata
+    pub metadata: Map<Symbol, String>,
 }
 
 /// Recurring payment schedule

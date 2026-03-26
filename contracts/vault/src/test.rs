@@ -6,8 +6,7 @@ use crate::types::{
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token::StellarAssetClient,
-    Env, Symbol, Vec,
+    Env, String, Symbol, Vec,
 };
 
 // ---------------------------------------------------------------------------

@@ -6,60 +6,80 @@ use soroban_sdk::contracterror;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum VaultError {
-    AlreadyInitialized = 1,
-    NotInitialized = 2,
-    NoSigners = 3,
-    ThresholdTooLow = 4,
-    ThresholdTooHigh = 5,
-    QuorumTooHigh = 6,
-    QuorumNotReached = 7,
-    Unauthorized = 10,
-    NotASigner = 11,
-    InsufficientRole = 12,
-    VoterNotInSnapshot = 13,
-    ProposalNotFound = 20,
-    ProposalNotPending = 21,
-    ProposalNotApproved = 22,
-    ProposalAlreadyExecuted = 23,
-    ProposalExpired = 24,
-    ProposalAlreadyCancelled = 25,
-    VotingDeadlinePassed = 26,
-    AlreadyApproved = 30,
-    InvalidAmount = 40,
-    ExceedsProposalLimit = 41,
-    ExceedsDailyLimit = 42,
-    ExceedsWeeklyLimit = 43,
-    VelocityLimitExceeded = 50,
-    TimelockNotExpired = 60,
-    SchedulingError = 61,
-    InsufficientBalance = 70,
-    TransferFailed = 71,
-    SignerAlreadyExists = 80,
-    SignerNotFound = 81,
-    CannotRemoveSigner = 82,
-    RecipientNotWhitelisted = 90,
-    RecipientBlacklisted = 91,
-    AddressAlreadyOnList = 92,
-    AddressNotOnList = 93,
-    InsuranceInsufficient = 110,
-    GasLimitExceeded = 120,
-    BatchTooLarge = 130,
-    ConditionsNotMet = 140,
-    IntervalTooShort = 150,
-    DexError = 160,
-    RetryError = 168,
-    TemplateNotFound = 210,
-    TemplateInactive = 211,
-    TemplateValidationFailed = 212,
-    FundingRoundError = 220,
-    /// Attachment hash is too short or too long to be a valid CID
-    AttachmentHashInvalid = 230,
-    /// Proposal has reached the maximum number of attachments
-    TooManyAttachments = 231,
-    /// Proposal has reached the maximum number of tags
-    TooManyTags = 232,
-    /// Metadata value is empty or exceeds the maximum allowed length
-    MetadataValueInvalid = 233,
+    // Initialization errors (1xx)
+    /// Contract has already been initialized
+    AlreadyInitialized = 100,
+    /// Contract has not been initialized
+    NotInitialized = 101,
+
+    // Authorization errors (2xx)
+    /// Caller is not authorized for this action
+    Unauthorized = 200,
+    /// Caller is not a signer
+    NotASigner = 201,
+    /// Caller lacks required role
+    InsufficientRole = 202,
+
+    // Proposal errors (3xx)
+    /// Proposal does not exist
+    ProposalNotFound = 300,
+    /// Proposal is not in pending status
+    ProposalNotPending = 301,
+    /// Proposal has already been approved by this signer
+    AlreadyApproved = 302,
+    /// Proposal has expired
+    ProposalExpired = 303,
+    /// Proposal is not approved (threshold not met)
+    ProposalNotApproved = 304,
+    /// Proposal has already been executed
+    ProposalAlreadyExecuted = 305,
+
+    // Spending limit errors (4xx)
+    /// Amount exceeds per-proposal spending limit
+    ExceedsProposalLimit = 400,
+    /// Amount would exceed daily spending limit
+    ExceedsDailyLimit = 401,
+    /// Amount would exceed weekly spending limit
+    ExceedsWeeklyLimit = 402,
+    /// Amount must be positive
+    InvalidAmount = 403,
+    /// Proposal is timelocked and cannot be executed yet
+    TimelockNotExpired = 404,
+    /// Recurring payment interval too short
+    IntervalTooShort = 405,
+
+    // Configuration errors (5xx)
+    /// Threshold must be at least 1
+    ThresholdTooLow = 500,
+    /// Threshold cannot exceed number of signers
+    ThresholdTooHigh = 501,
+    /// Signer already exists
+    SignerAlreadyExists = 502,
+    /// Signer does not exist
+    SignerNotFound = 503,
+    /// Cannot remove signer: would make threshold unreachable
+    CannotRemoveSigner = 504,
+    /// At least one signer is required
+    NoSigners = 505,
+
+    // Token errors (6xx)
+    /// Token transfer failed
+    TransferFailed = 600,
+    /// Insufficient vault balance
+    InsufficientBalance = 601,
+
+    VelocityLimitExceeded = 120,
+    // Condition errors (7xx)
+    /// Execution conditions not met
+    ConditionsNotMet = 700,
+    /// Balance condition not satisfied
+    BalanceConditionFailed = 701,
+    /// Date condition not satisfied
+    DateConditionFailed = 702,
+
+    // Metadata errors (8xx)
+    /// Metadata value is empty or exceeds maximum length
+    MetadataValueInvalid = 800,
 }
 
 // Compatibility markers for CI source checks:

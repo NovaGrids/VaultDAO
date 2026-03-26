@@ -1,6 +1,24 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
+/**
+ * Strip HTML tags from a string, converting <br> variants to spaces
+ * and decoding common HTML entities. Safe to call on plain text.
+ */
+export function stripHtml(value: unknown): string {
+  if (value == null) return '';
+  const str = String(value)
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+  return str.trim();
+}
+
 interface ProposalForExport {
   id: string;
   status: string;
