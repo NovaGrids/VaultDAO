@@ -3,10 +3,35 @@ import type { ContractEvent, PollingState } from "./events.types.js";
 import type { CursorStorage } from "./cursor/index.js";
 
 /**
+ * Shape of a single event entry returned by getContractEvents.
+ */
+interface RpcEventEntry {
+  id: string;
+  contractId: string;
+  topic: string[];
+  value: { xdr: string };
+  ledger: number;
+  ledgerClosedAt: string;
+}
+
+/**
+ * Shape of the getContractEvents JSON-RPC response.
+ */
+interface RpcGetContractEventsResult {
+  events: RpcEventEntry[];
+  latestLedger: number;
+}
+
+interface RpcResponse {
+  result?: RpcGetContractEventsResult;
+  error?: { code: number; message: string };
+}
+
+/**
  * EventPollingService
- * 
+ *
  * A background service that polls the Soroban RPC for contract events.
- * Now supports cursor persistence to resume safely across restarts.
+ * Supports cursor persistence to resume safely across restarts.
  */
 export class EventPollingService {
   private isRunning: boolean = false;
@@ -29,15 +54,17 @@ export class EventPollingService {
       return;
     }
 
-    // Load last cursor from storage
     const lastCursor = await this.storage.getCursor();
     if (lastCursor) {
       this.lastLedgerPolled = lastCursor.lastLedger;
-      console.log(`[events-service] resuming from cursor: ledger ${this.lastLedgerPolled}`);
+      console.log(
+        `[events-service] resuming from cursor: ledger ${this.lastLedgerPolled}`,
+      );
     } else {
-      // Default to 0 or a safe starter ledger from env
       this.lastLedgerPolled = 0;
-      console.log("[events-service] no cursor found, starting from default ledger 0");
+      console.log(
+        "[events-service] no cursor found, starting from default ledger 0",
+      );
     }
 
     this.isRunning = true;
@@ -70,7 +97,6 @@ export class EventPollingService {
     if (!this.isRunning) return;
 
     this.timer = setTimeout(async () => {
-      // Re-check running state in case stop() was called during timer wait
       if (!this.isRunning) return;
 
       try {
@@ -78,9 +104,10 @@ export class EventPollingService {
         this.consecutiveErrors = 0;
       } catch (error) {
         this.consecutiveErrors++;
-        console.error(`[events-service] poll error (attempt ${this.consecutiveErrors}):`, error);
-        
-        // Potential backoff strategy could be implemented here
+        console.error(
+          `[events-service] poll error (attempt ${this.consecutiveErrors}):`,
+          error,
+        );
       } finally {
         this.scheduleNextPoll();
       }
@@ -88,28 +115,69 @@ export class EventPollingService {
   }
 
   /**
-   * Performs the actual RPC call to find new events.
+   * Calls the Soroban RPC getContractEvents method and processes results.
    */
   private async poll(): Promise<void> {
-    // Placeholder for RPC call to get events
-    // Example (future implementation):
-    // const results = await this.rpcService.getContractEvents({
-    //   startLedger: this.lastLedgerPolled + 1,
-    //   contractIds: [this.env.contractId],
-    // });
-    
-    // For now, we mock the polling activity
-    const mockEvents: ContractEvent[] = []; 
-    
-    if (mockEvents.length > 0) {
-      this.handleBatch(mockEvents);
+    const startLedger = this.lastLedgerPolled + 1;
+
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getContractEvents",
+      params: {
+        startLedger,
+        filters: [
+          {
+            type: "contract",
+            contractIds: [this.env.contractId],
+          },
+        ],
+      },
+    });
+
+    const response = await fetch(this.env.sorobanRpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `[events-service] RPC HTTP error: ${response.status} ${response.statusText}`,
+      );
     }
 
-    // Advance the "last polled" pointer (simulation)
-    // Normally this would be updated based on the last event's ledger or the RPC's newest ledger.
-    this.lastLedgerPolled += 1;
+    const json = (await response.json()) as RpcResponse;
 
-    // Persist new cursor
+    if (json.error) {
+      throw new Error(
+        `[events-service] RPC error ${json.error.code}: ${json.error.message}`,
+      );
+    }
+
+    const result = json.result;
+    if (!result) {
+      throw new Error("[events-service] RPC response missing result field");
+    }
+
+    const events: ContractEvent[] = (result.events ?? []).map((e) => ({
+      id: e.id,
+      contractId: e.contractId,
+      topic: e.topic,
+      value: e.value,
+      ledger: e.ledger,
+      ledgerClosedAt: e.ledgerClosedAt,
+    }));
+
+    if (events.length > 0) {
+      this.handleBatch(events);
+    }
+
+    // Update lastLedgerPolled to the actual latest ledger from the RPC.
+    // This ensures the cursor reflects real chain progress even when there
+    // are no events in the range.
+    this.lastLedgerPolled = result.latestLedger;
+
     await this.storage.saveCursor({
       lastLedger: this.lastLedgerPolled,
       updatedAt: new Date().toISOString(),
@@ -120,7 +188,9 @@ export class EventPollingService {
    * Processes a batch of events discovered during polling.
    */
   private handleBatch(events: ContractEvent[]): void {
-    console.log(`[events-service] processing batch of ${events.length} events`);
+    console.log(
+      `[events-service] processing batch of ${events.length} events`,
+    );
     for (const event of events) {
       this.processEvent(event);
     }
@@ -132,10 +202,11 @@ export class EventPollingService {
    */
   private processEvent(event: ContractEvent): void {
     const mainTopic = event.topic[0];
-    
-    console.log(`[events-service] routing event: ${mainTopic} (id: ${event.id})`);
 
-    // Placeholder routing logic
+    console.log(
+      `[events-service] routing event: ${mainTopic} (id: ${event.id})`,
+    );
+
     switch (mainTopic) {
       case "proposal_created":
         this.handleProposalCreated(event);
@@ -143,20 +214,25 @@ export class EventPollingService {
       case "proposal_executed":
         this.handleProposalExecuted(event);
         break;
-      // Add more cases as needed based on events.rs
       default:
-        console.debug(`[events-service] ignoring unhandled event type: ${mainTopic}`);
+        console.debug(
+          `[events-service] ignoring unhandled event type: ${mainTopic}`,
+        );
     }
   }
 
-  // --- Specialized Event Handlers (Scaffold) ---
-
   private handleProposalCreated(event: ContractEvent): void {
-    console.log("[events-service] TODO: persistent indexing for proposal_created", event.value);
+    console.log(
+      "[events-service] TODO: persistent indexing for proposal_created",
+      event.value,
+    );
   }
 
   private handleProposalExecuted(event: ContractEvent): void {
-    console.log("[events-service] TODO: persistent indexing for proposal_executed", event.value);
+    console.log(
+      "[events-service] TODO: persistent indexing for proposal_executed",
+      event.value,
+    );
   }
 
   /**
