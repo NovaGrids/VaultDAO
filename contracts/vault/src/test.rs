@@ -11494,3 +11494,183 @@ fn test_portfolio_valuation_saturating_arithmetic() {
     assets.push_back(token);
     // This would fail without oracle mock, but demonstrates the API accepts large amounts
 }
+
+#[test]
+fn test_quadratic_voting_reduces_effective_weight() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+    let signer4 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+    signers.push_back(signer3.clone());
+    signers.push_back(signer4.clone());
+
+    // threshold = 4, so isqrt(4) = 2 effective votes needed
+    let config = default_init_config(&env, signers, 4);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+    client.set_role(&admin, &signer3, &Role::Treasurer);
+    client.set_role(&admin, &signer4, &Role::Treasurer);
+
+    client.set_voting_strategy(&admin, &VotingStrategy::Quadratic);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // 1 approval: isqrt(1) = 1 < isqrt(4) = 2 — not approved
+    client.approve_proposal(&signer1, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+
+    // 2 approvals: isqrt(2) = 1 < 2 — still pending
+    client.approve_proposal(&signer2, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+
+    // 4 approvals: isqrt(4) = 2 >= isqrt(4) = 2 — approved
+    client.approve_proposal(&signer3, &proposal_id);
+    client.approve_proposal(&signer4, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_simple_voting_unaffected_by_strategy_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Simple strategy (default) — threshold = 2 approvals
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+
+    client.approve_proposal(&signer2, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_conviction_voting_weights_older_approvals() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    // threshold = 2, so conviction needs total_weight >= 2 * 5_000 = 10_000 bps
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    client.set_voting_strategy(&admin, &VotingStrategy::Conviction);
+
+    env.ledger().set_sequence_number(100);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Approve at ledger 100 — age = 0, weight = 0 — not approved yet
+    client.approve_proposal(&signer1, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Pending);
+
+    // Advance time so approvals gain conviction weight
+    env.ledger().set_sequence_number(200);
+
+    // Second approval at ledger 200 — signer1 age = 100, signer2 age = 0
+    client.approve_proposal(&signer2, &proposal_id);
+
+    // At ledger 200: proposal_age = 100
+    // signer1 weight = 100/100 * 10_000 = 10_000 bps
+    // signer2 weight = 0/100 * 10_000 = 0 bps
+    // total = 10_000 >= 2 * 5_000 = 10_000 — approved
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+}

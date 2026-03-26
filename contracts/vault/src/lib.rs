@@ -3414,14 +3414,53 @@ impl VaultDAO {
                 proposal.approvals.len() >= required
             }
             VotingStrategy::Quadratic => {
+                // Effective votes = isqrt(approval_count)
+                // Threshold = isqrt(required)
                 let required = Self::calculate_threshold(config, &proposal.amount);
-                proposal.approvals.len() >= required
+                let effective = Self::isqrt(proposal.approvals.len());
+                let threshold = Self::isqrt(required);
+                effective >= threshold
             }
             VotingStrategy::Conviction => {
+                // Weight each approval by how long ago it was cast.
+                // conviction_weight = sum(ledgers_since_approval) in basis points
+                // Threshold is met when total weight >= required * 10_000
                 let required = Self::calculate_threshold(config, &proposal.amount);
-                proposal.approvals.len() >= required
+                let current_ledger = env.ledger().sequence() as u64;
+                let proposal_age = current_ledger.saturating_sub(proposal.created_at).max(1);
+                let mut total_weight: u64 = 0;
+                for i in 0..proposal.approvals.len() {
+                    if let Some(voter) = proposal.approvals.get(i) {
+                        let approval_ledger = storage::get_approval_ledger(
+                            env,
+                            proposal.id,
+                            &voter,
+                        )
+                        .unwrap_or(current_ledger);
+                        let age = current_ledger.saturating_sub(approval_ledger);
+                        // weight in basis points: age / proposal_age * 10_000
+                        let weight = age.saturating_mul(10_000) / proposal_age;
+                        total_weight = total_weight.saturating_add(weight);
+                    }
+                }
+                // Each required approval needs at least 5_000 bps (50%) conviction
+                total_weight >= (required as u64).saturating_mul(5_000)
             }
         }
+    }
+
+    /// Integer square root (floor) — no floating point needed.
+    fn isqrt(n: u32) -> u32 {
+        if n == 0 {
+            return 0;
+        }
+        let mut x = n;
+        let mut y = (x + 1) / 2;
+        while y < x {
+            x = y;
+            y = (x + n / x) / 2;
+        }
+        x
     }
 
     /// Validate that approvals and quorum participation both satisfy current requirements.
