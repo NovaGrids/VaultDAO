@@ -3452,12 +3452,9 @@ impl VaultDAO {
                 let mut total_weight: u64 = 0;
                 for i in 0..proposal.approvals.len() {
                     if let Some(voter) = proposal.approvals.get(i) {
-                        let approval_ledger = storage::get_approval_ledger(
-                            env,
-                            proposal.id,
-                            &voter,
-                        )
-                        .unwrap_or(current_ledger);
+                        let approval_ledger =
+                            storage::get_approval_ledger(env, proposal.id, &voter)
+                                .unwrap_or(current_ledger);
                         let age = current_ledger.saturating_sub(approval_ledger);
                         // weight in basis points: age / proposal_age * 10_000
                         let weight = age.saturating_mul(10_000) / proposal_age;
