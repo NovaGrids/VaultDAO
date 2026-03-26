@@ -18,6 +18,37 @@ pnpm test
 pnpm build
 ```
 
+## Docker
+
+Run the backend in a container for consistent local development across different environments.
+
+### Build Image
+
+```bash
+docker build -t vaultdao-backend .
+```
+
+### Run Container
+
+```bash
+# Copy environment file
+cp .env.example .env
+
+# Run with default port
+docker run --env-file .env -p 8787:8787 vaultdao-backend
+
+# Run with custom port mapping
+docker run --env-file .env -p 3000:8787 vaultdao-backend
+```
+
+### Development with Volume Mount
+
+For live development with hot reload, mount your source code:
+
+```bash
+docker run --env-file .env -p 8787:8787 -v "$(pwd)/src:/app/src" --entrypoint "npm" vaultdao-backend run dev
+```
+
 ## Environment
 
 Copy the example file and adjust the values for your local environment:
@@ -116,6 +147,37 @@ src/
       health.service.ts
       health.service.test.ts
 ```
+
+## Architecture
+
+The backend is a **lightweight support layer** for VaultDAO, not a replacement for the Soroban contract.
+
+### Purpose
+
+- Index and query blockchain events asynchronously
+- Provide webhooks and notifications (future work)
+- Support keepers and alert systems (future work)
+- Keep contract logic on-chain; backend handles visibility and notifications
+
+### Responsibilities
+
+| On-Chain (Soroban Contract) | Off-Chain (Backend) |
+|---|---|
+| Vault creation and updates | Indexing vault events |
+| Proposal logic | Storing historical snapshots |
+| Cryptographic verification | Real-time status queries |
+| Token transfers | Notification delivery |
+| State mutations | Analytics and reporting |
+
+### Module Structure
+
+- **config**: Environment validation and bootstrap configuration
+- **modules**: Feature-specific logic organized by domain (health, events, etc.)
+- **shared**: HTTP utilities, logging, and cross-module helpers
+
+### Rate Limiting
+
+All public endpoints are rate-limited to 100 requests per minute per IP. Return code `429 Too Many Requests` when exceeded.
 
 ## Current Endpoints
 

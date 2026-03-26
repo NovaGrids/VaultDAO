@@ -234,6 +234,7 @@ pub fn emit_quorum_reached(env: &Env, proposal_id: u64, quorum_votes: u32, requi
 }
 
 /// Emit when a signer is added
+#[allow(dead_code)]
 pub fn emit_signer_added(env: &Env, signer: &Address, total_signers: u32) {
     env.events().publish(
         (Symbol::new(env, "signer_added"),),
@@ -242,6 +243,7 @@ pub fn emit_signer_added(env: &Env, signer: &Address, total_signers: u32) {
 }
 
 /// Emit when a signer is removed
+#[allow(dead_code)]
 pub fn emit_signer_removed(env: &Env, signer: &Address, total_signers: u32) {
     env.events().publish(
         (Symbol::new(env, "signer_removed"),),
@@ -413,6 +415,7 @@ pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: b
 }
 
 /// Emit when liquidity is removed
+#[allow(dead_code)]
 pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
     env.events().publish(
         (Symbol::new(env, "liquidity_removed"), proposal_id),
@@ -421,6 +424,7 @@ pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tok
 }
 
 /// Emit when LP tokens are staked
+#[allow(dead_code)]
 pub fn emit_lp_staked(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
     env.events().publish(
         (Symbol::new(env, "lp_staked"), proposal_id),
@@ -429,6 +433,7 @@ pub fn emit_lp_staked(env: &Env, proposal_id: u64, farm: &Address, amount: i128)
 }
 
 /// Emit when rewards are claimed
+#[allow(dead_code)]
 pub fn emit_rewards_claimed(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
     env.events().publish(
         (Symbol::new(env, "rewards_claimed"), proposal_id),
@@ -591,6 +596,7 @@ pub fn emit_retry_scheduled(
 }
 
 /// Emit when a retry execution attempt is made
+#[allow(dead_code)]
 pub fn emit_retry_attempted(env: &Env, proposal_id: u64, retry_count: u32, executor: &Address) {
     env.events().publish(
         (Symbol::new(env, "retry_attempted"), proposal_id),

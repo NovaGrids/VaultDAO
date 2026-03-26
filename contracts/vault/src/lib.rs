@@ -24,7 +24,6 @@
 
 #![no_std]
 #![allow(clippy::too_many_arguments)]
-#![allow(dead_code, unused_imports, unused_variables)]
 #![allow(clippy::empty_line_after_outer_attr)]
 #![allow(clippy::unwrap_or_default)]
 #![allow(clippy::unnecessary_unwrap)]
@@ -50,8 +49,7 @@ use types::{
     Milestone, NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal,
     ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal,
     RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, RoleAssignment,
-    StreamStatus, StreamingPayment, Subscription, SubscriptionPayment, SubscriptionStatus,
-    SubscriptionTier, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
+    StreamStatus, StreamingPayment, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
     TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData, VotingStrategy,
 };
 
@@ -3362,6 +3360,38 @@ impl VaultDAO {
     // ========================================================================
 
     /// Get vault-wide performance metrics.
+    ///
+    /// # Returns
+    /// `VaultMetrics` struct containing cumulative performance data:
+    /// - `total_proposals`: Total proposals ever created
+    /// - `executed_count`: Successfully executed proposals
+    /// - `rejected_count`: Rejected proposals
+    /// - `expired_count`: Proposals that expired without execution
+    /// - `total_execution_time_ledgers`: Cumulative ledgers from creation to execution
+    /// - `total_gas_used`: Total gas consumed across all executions
+    /// - `last_updated_ledger`: Ledger sequence when metrics were last updated
+    ///
+    /// # Derived Metrics
+    /// - `success_rate_bps()`: Success rate in basis points (0-10000 = 0-100%)
+    /// - `avg_execution_time_ledgers()`: Average ledgers per execution (0 if none executed)
+    ///
+    /// # Behavior
+    /// - Returns default metrics (all zeros) if no proposals have been created
+    /// - Metrics are cumulative and never reset
+    /// - Updated on proposal creation, execution, rejection, and expiration
+    /// - Thread-safe: uses instance storage with atomic updates
+    ///
+    /// # Units & Scaling
+    /// - Ledger times: Soroban ledger sequence numbers (1 ledger ≈ 5 seconds)
+    /// - Gas units: Soroban gas units (varies by operation)
+    /// - Basis points: 0-10000 (0-100%), 100 bps = 1%
+    ///
+    /// # Example
+    /// ```ignore
+    /// let metrics = VaultDAO::get_metrics(env);
+    /// let success_rate = metrics.success_rate_bps(); // 0-10000
+    /// let avg_time = metrics.avg_execution_time_ledgers(); // ledgers
+    /// ```
     pub fn get_metrics(env: Env) -> VaultMetrics {
         storage::get_metrics(&env)
     }
@@ -3484,6 +3514,7 @@ impl VaultDAO {
         }
     }
 
+    #[allow(dead_code)]
     fn integer_sqrt(value: i128) -> u32 {
         if value <= 0 {
             return 0;
@@ -3497,6 +3528,7 @@ impl VaultDAO {
         x as u32
     }
 
+    #[allow(dead_code)]
     fn validate_voting_strategy(strategy: &VotingStrategy) -> Result<(), VaultError> {
         match strategy {
             VotingStrategy::Simple => Ok(()),
@@ -3654,18 +3686,69 @@ impl VaultDAO {
     }
 
     /// Convert a token amount to USD using the oracle price.
+    ///
+    /// # Units & Scaling
+    /// - Input `amount`: Token amount in stroops (smallest unit, 7 decimals)
+    /// - Oracle price: USD price scaled by 10^7 (standard Stellar convention)
+    /// - Output: USD value in cents (scaled by 10^7 for precision)
+    /// - Formula: `(amount * price) / 10_000_000`
+    ///
+    /// # Errors
+    /// - `NotInitialized` - Oracle not configured
+    /// - `InvalidAmount` - Asset price not found
+    /// - `RetryError` - Price data is stale
     pub fn convert_to_usd(env: &Env, asset: Address, amount: i128) -> Result<i128, VaultError> {
+        if amount == 0 {
+            return Ok(0);
+        }
         let price = Self::get_asset_price(env, asset)?;
-        // Assuming price is scaled by some fixed decimals (e.g. 7 or 14)
-        // result = amount * price / 10^decimals
+        // Price is in USD scaled by 10^7, amount is in stroops (10^-7 units)
+        // Result: (amount * price) / 10^7 = USD value in cents
         Ok(amount.saturating_mul(price) / 10_000_000)
     }
 
+    /// Get the total USD valuation of the vault's holdings across multiple assets.
+    ///
+    /// # Parameters
+    /// - `assets`: Vector of token contract addresses to include in valuation
+    ///
+    /// # Returns
+    /// Total portfolio value in USD (scaled by 10^7 for precision)
+    ///
+    /// # Behavior
+    /// - Skips assets with zero balance
+    /// - Uses saturating arithmetic to prevent overflow
+    /// - Queries oracle for current price of each asset
+    /// - Returns error if any asset price cannot be determined
+    ///
+    /// # Units & Scaling
+    /// - Input: Asset addresses (any token contract)
+    /// - Output: Total USD value (scaled by 10^7)
+    /// - Each asset balance: stroops (10^-7 units)
+    /// - Each asset price: USD per token (scaled by 10^7)
+    ///
+    /// # Errors
+    /// - `NotInitialized` - Oracle not configured
+    /// - `InvalidAmount` - Any asset price not found
+    /// - `RetryError` - Any asset price is stale
+    ///
+    /// # Example
+    /// ```ignore
+    /// let assets = vec![usdc_address, xlm_address];
+    /// let total_usd = VaultDAO::get_portfolio_valuation(env, assets)?;
+    /// // total_usd is in USD cents (scaled by 10^7)
+    /// ```
     pub fn get_portfolio_valuation(env: Env, assets: Vec<Address>) -> Result<i128, VaultError> {
+        // Empty asset list is valid and returns 0
+        if assets.is_empty() {
+            return Ok(0);
+        }
+
         let mut total_usd = 0i128;
 
         for asset in assets.into_iter() {
             let balance = token::balance(&env, &asset);
+            // Skip zero balances to avoid unnecessary oracle queries
             if balance > 0 {
                 let usd_value = Self::convert_to_usd(&env, asset, balance)?;
                 total_usd = total_usd.saturating_add(usd_value);
@@ -5087,7 +5170,7 @@ impl VaultDAO {
         let mut success = true;
 
         // Execute operations sequentially
-        for (idx, op) in batch.operations.iter().enumerate() {
+        for op in batch.operations.iter() {
             match Self::execute_batch_operation(&env, &op, &mut rollback_state, &config) {
                 Ok(_) => {
                     executed_count += 1;

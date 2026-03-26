@@ -1,485 +1,1149 @@
-# VaultDAO SDK — API Reference
+# VaultDAO Contract API Reference
 
-Complete reference for the `@vaultdao/sdk` TypeScript package.
+Complete reference for the VaultDAO Soroban smart contract public surface.
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Authentication](#authentication)
-- [Contract Functions](#contract-functions)
-- [Types](#types)
+**Last Updated:** March 2026  
+**Status:** Aligned with contract implementation in `contracts/vault/src/lib.rs`
+
+## Table of Contents
+
+- [Initialization](#initialization)
+- [Proposal Management](#proposal-management)
+- [Voting & Execution](#voting--execution)
+- [Role & Access Control](#role--access-control)
+- [Configuration Management](#configuration-management)
+- [Spending Limits & Constraints](#spending-limits--constraints)
+- [Recurring & Streaming Payments](#recurring--streaming-payments)
+- [Recipient List Management](#recipient-list-management)
+- [Comments & Collaboration](#comments--collaboration)
+- [Audit Trail](#audit-trail)
+- [Batch Operations](#batch-operations)
+- [Metadata & Tags](#metadata--tags)
+- [Attachments](#attachments)
+- [Insurance & Staking](#insurance--staking)
+- [Dynamic Fees](#dynamic-fees)
+- [View Functions](#view-functions)
 - [Error Codes](#error-codes)
-- [Events](#events)
-- [Integration Guide](#integration-guide)
 
 ---
 
-## Installation
+## Initialization
 
-```bash
-npm install @vaultdao/sdk
-```
+### `initialize(admin: Address, config: InitConfig) -> Result<(), VaultError>`
 
-**Peer dependency for browser (signing):** [Freighter](https://www.freighter.app/) browser extension.
+Initialize the vault with core configuration. **Can only be called once.**
 
----
+**Parameters:**
+- `admin` - Initial administrator address (must authorize)
+- `config` - Initialization configuration with signers, threshold, limits
 
-## Quick Start
+**Returns:** `Ok(())` on success
 
-```ts
-import {
-  buildOptions,
-  connectWallet,
-  proposeTransfer,
-  signAndSubmit,
-} from "@vaultdao/sdk";
+**Errors:**
+- `AlreadyInitialized` - Contract already initialized
+- `NoSigners` - Signers list is empty
+- `ThresholdTooLow` - Threshold < 1
+- `ThresholdTooHigh` - Threshold > signers.len()
+- `QuorumTooHigh` - Quorum > signers.len()
+- `InvalidAmount` - Limits are non-positive
 
-const opts = buildOptions("testnet", "CXXXXXXX...");
-const wallet = await connectWallet();
-const txXdr = await proposeTransfer(
-  wallet.publicKey,
-  "GDEST...",
-  "CDLZFC3...",
-  BigInt(1e7),
-  "memo",
-  opts,
-);
-const hash = await signAndSubmit(txXdr, opts);
-```
-
----
-
-## Authentication
-
-### `connectWallet(): Promise<WalletConnection>`
-
-Connects to the Freighter browser extension. Throws if Freighter is not installed.
-
-```ts
-const wallet = await connectWallet();
-// { publicKey: "GABC...", network: "TESTNET", networkUrl: "https://..." }
-```
-
-### `buildOptions(network, contractId): SdkOptions`
-
-Creates the options object required by every SDK function.
-
-| Parameter    | Type      | Description                             |
-| ------------ | --------- | --------------------------------------- |
-| `network`    | `Network` | `"testnet"`, `"mainnet"`, `"futurenet"` |
-| `contractId` | `string`  | Deployed contract Strkey (`Cxxx...`)    |
-
----
-
-## Contract Functions
-
-All write functions return a **prepared transaction XDR string**. Pass this to `signAndSubmit()` to broadcast.
-
-### 🟢 STABLE API
-
-#### `initialize(adminPublicKey, config, opts)`
-
-🟢 **STABLE** - Core initialization (only call once).
-
-| Parameter        | Type         | Description                              |
-| ---------------- | ------------ | ---------------------------------------- |
-| `adminPublicKey` | `string`     | Admin's Stellar address                  |
-| `config`         | `InitConfig` | Full configuration (see [Types](#types)) |
-| `opts`           | `SdkOptions` | Connection options                       |
-
-**Errors:** `AlreadyInitialized`, `NoSigners`, `ThresholdTooLow`, `ThresholdTooHigh`, `InvalidAmount`
-
-```ts
-const txXdr = await initialize(
-  adminPublicKey,
-  {
-    signers: [admin, signer1, signer2],
+**Example:**
+```rust
+initialize(
+  admin,
+  InitConfig {
+    signers: vec![signer1, signer2, signer3],
     threshold: 2,
-    spendingLimit: BigInt(1000e7),
-    dailyLimit: BigInt(5000e7),
-    weeklyLimit: BigInt(10000e7),
-    timelockThreshold: BigInt(500e7),
-    timelockDelay: BigInt(17280), // ~1 day
-  },
-  opts,
-);
-const hash = await signAndSubmit(txXdr, opts);
+    quorum: 0, // 0 = disabled
+    spending_limit: 1000e7,
+    daily_limit: 5000e7,
+    weekly_limit: 10000e7,
+    timelock_threshold: 500e7,
+    timelock_delay: 17280, // ~1 day
+    velocity_limit: 10, // max proposals per ledger
+    threshold_strategy: ThresholdStrategy::Absolute,
+    pre_execution_hooks: vec![],
+    post_execution_hooks: vec![],
+    default_voting_deadline: 120960, // ~7 days
+    veto_addresses: vec![],
+    retry_config: RetryConfig { enabled: false, .. },
+    recovery_config: RecoveryConfig { .. },
+    staking_config: StakingConfig { enabled: false, .. },
+  }
+)
 ```
 
-#### `proposeTransfer(proposerPublicKey, recipient, tokenAddress, amount, memo, opts)`
+---
 
-🟢 **STABLE** - Core proposal creation.
+## Proposal Management
 
-| Parameter           | Type         | Description                          |
-| ------------------- | ------------ | ------------------------------------ |
-| `proposerPublicKey` | `string`     | Proposer's address                   |
-| `recipient`         | `string`     | Destination Stellar address          |
-| `tokenAddress`      | `string`     | Contract ID of the token to transfer |
-| `amount`            | `bigint`     | Amount in stroops (smallest unit)    |
-| `memo`              | `string`     | Short memo, ≤ 32 chars, no spaces    |
-| `opts`              | `SdkOptions` | Connection options                   |
+### `propose_transfer(...) -> Result<u64, VaultError>`
 
-**Returns:** `string` — prepared transaction XDR
+Create a single transfer proposal.
 
-**Errors:** `InsufficientRole`, `InvalidAmount`, `ExceedsProposalLimit`, `ExceedsDailyLimit`, `ExceedsWeeklyLimit`
+**Parameters:**
+- `proposer: Address` - Must have Treasurer or Admin role
+- `recipient: Address` - Destination address
+- `token_addr: Address` - Token contract ID
+- `amount: i128` - Transfer amount (stroops)
+- `memo: Symbol` - Descriptive label (≤32 chars)
+- `priority: Priority` - Low/Normal/High/Critical
+- `conditions: Vec<Condition>` - Optional execution conditions
+- `condition_logic: ConditionLogic` - And/Or logic
+- `insurance_amount: i128` - Proposer's insurance stake (0 = none)
+
+**Returns:** Proposal ID (u64)
+
+**Errors:**
+- `InsufficientRole` - Proposer lacks Treasurer/Admin role
+- `InvalidAmount` - Amount ≤ 0
+- `ExceedsProposalLimit` - Amount > spending_limit
+- `ExceedsDailyLimit` - Daily aggregate exceeded
+- `ExceedsWeeklyLimit` - Weekly aggregate exceeded
+- `VelocityLimitExceeded` - Too many proposals in current ledger
+- `InsuranceInsufficient` - Insurance below required minimum
+- `RecipientNotWhitelisted` - Recipient not on whitelist (if enabled)
+- `RecipientBlacklisted` - Recipient on blacklist (if enabled)
 
 ---
 
-### 🟡 EXPERIMENTAL API
+### `propose_scheduled_transfer(...) -> Result<u64, VaultError>`
 
-### `approveProposal(signerPublicKey, proposalId, opts)`
+Create a transfer proposal with scheduled execution time.
 
-Cast an approval vote. The proposal transitions to `Approved` once the threshold is reached.
+**Additional Parameters:**
+- `execution_time: u64` - Ledger at which execution is allowed
 
-| Parameter         | Type         | Description        |
-| ----------------- | ------------ | ------------------ |
-| `signerPublicKey` | `string`     | Signer's address   |
-| `proposalId`      | `bigint`     | Target proposal ID |
-| `opts`            | `SdkOptions` | Connection options |
+**Returns:** Proposal ID
 
-**Errors:** `NotASigner`, `InsufficientRole`, `ProposalNotPending`, `AlreadyApproved`, `ProposalExpired`
+**Errors:** Same as `propose_transfer` plus validation of execution_time
 
 ---
 
-### `executeProposal(executorPublicKey, proposalId, opts)`
+### `propose_transfer_with_deps(...) -> Result<u64, VaultError>`
 
-Execute an `Approved` proposal, transferring funds to the recipient.
+Create a transfer proposal with prerequisite dependencies.
 
-| Parameter           | Type         | Description        |
-| ------------------- | ------------ | ------------------ |
-| `executorPublicKey` | `string`     | Executor's address |
-| `proposalId`        | `bigint`     | Target proposal ID |
-| `opts`              | `SdkOptions` | Connection options |
+**Additional Parameters:**
+- `depends_on: Vec<u64>` - Proposal IDs that must execute first
 
-**Errors:** `ProposalNotApproved`, `ProposalAlreadyExecuted`, `TimelockNotExpired`, `InsufficientBalance`, `ProposalExpired`
+**Returns:** Proposal ID
 
-> **Note:** If `unlockLedger > 0`, wait until the current ledger sequence exceeds it before calling.
-
----
-
-### `rejectProposal(rejectorPublicKey, proposalId, opts)`
-
-Cancel a `Pending` proposal. Only the original proposer or an Admin may reject.
-
-**Errors:** `Unauthorized`, `ProposalNotPending`
+**Errors:** Same as `propose_transfer` plus:
+- Circular dependency detection
+- Non-existent dependency validation
 
 ---
 
-### `setRole(adminPublicKey, targetAddress, role, opts)`
+### `batch_propose_transfers(...) -> Result<Vec<u64>, VaultError>`
 
-Assign a `Role` to any address. Only `Admin` can call this.
+Create multiple transfer proposals in one call (multi-token support).
 
-| Parameter        | Type     | Description                                   |
-| ---------------- | -------- | --------------------------------------------- |
-| `adminPublicKey` | `string` | Admin's address                               |
-| `targetAddress`  | `string` | Address to assign the role to                 |
-| `role`           | `Role`   | `Role.Member`, `Role.Treasurer`, `Role.Admin` |
+**Parameters:**
+- `proposer: Address` - Must authorize
+- `transfers: Vec<TransferDetails>` - Vector of (recipient, token, amount, memo)
+- `priority: Priority` - Applied to all proposals
+- `conditions: Vec<Condition>` - Applied to all proposals
+- `condition_logic: ConditionLogic` - Applied to all proposals
+- `insurance_amount: i128` - Total insurance across batch
 
-**Errors:** `Unauthorized`
+**Returns:** Vector of proposal IDs
 
----
-
-### `addSigner(adminPublicKey, newSignerAddress, opts)`
-
-Add a new address to the signers list. Only `Admin`.
-
-**Errors:** `Unauthorized`, `SignerAlreadyExists`
+**Errors:**
+- `BatchTooLarge` - More than 10 proposals
+- Same as `propose_transfer` for aggregate limits
 
 ---
 
-### `removeSigner(adminPublicKey, signerAddress, opts)`
+### `amend_proposal(proposer: Address, proposal_id: u64, new_recipient: Address, new_amount: i128, new_memo: Symbol) -> Result<(), VaultError>`
 
-Remove a signer. Fails if removal would make the threshold unreachable.
+Modify a pending proposal (proposer only).
 
-**Errors:** `Unauthorized`, `SignerNotFound`, `CannotRemoveSigner`
+**Behavior:**
+- Resets all approvals and abstentions
+- Records amendment in audit trail
+- Recalculates timelock if amount changed
 
----
-
-### `updateLimits(adminPublicKey, spendingLimit, dailyLimit, opts)`
-
-Update per-proposal and daily spending limits. Only `Admin`.
-
-**Errors:** `Unauthorized`, `InvalidAmount`
-
----
-
-### `updateThreshold(adminPublicKey, threshold, opts)`
-
-Change the M-of-N approval threshold. Must satisfy `1 ≤ threshold ≤ signers.length`.
-
-**Errors:** `Unauthorized`, `ThresholdTooLow`, `ThresholdTooHigh`
+**Errors:**
+- `Unauthorized` - Caller is not proposer
+- `ProposalNotPending` - Proposal not in Pending state
+- `InvalidAmount` - New amount ≤ 0
+- Same limit checks as propose_transfer
 
 ---
 
-### `schedulePayment(proposerPublicKey, recipient, tokenAddress, amount, memo, intervalLedgers, opts)`
+### `get_proposal_amendments(proposal_id: u64) -> Vec<ProposalAmendment>`
 
-Schedule a recurring automatic payment. Minimum interval is 720 ledgers (~1 hour).
+Retrieve amendment history for a proposal.
 
-| Parameter         | Type     | Description                                 |
-| ----------------- | -------- | ------------------------------------------- |
-| `intervalLedgers` | `bigint` | Cadence in ledgers (720 min; 17280 ≈ 1 day) |
-
-**Errors:** `InsufficientRole`, `InvalidAmount`, `IntervalTooShort`
+**Returns:** Vector of amendments with timestamp, old/new values
 
 ---
 
-### `executeRecurringPayment(callerPublicKey, paymentId, opts)`
+## Voting & Execution
 
-Execute a due recurring payment. Anyone (keeper bot) can call this.
+### `approve_proposal(signer: Address, proposal_id: u64) -> Result<(), VaultError>`
 
-**Errors:** `TimelockNotExpired` (not yet due), `ExceedsDailyLimit`, `InsufficientBalance`
+Cast an approval vote on a pending proposal.
+
+**Behavior:**
+- Requires signer authorization
+- Signer must be in config.signers list
+- Supports delegation (vote recorded under effective voter)
+- Transitions to Approved when threshold + quorum satisfied
+
+**Errors:**
+- `NotASigner` - Caller not in signers list
+- `ProposalNotPending` - Proposal not in Pending state
+- `AlreadyApproved` - Signer already voted
+- `ProposalExpired` - Voting deadline passed
 
 ---
 
-### View Functions (read-only, no signature required)
+### `abstain_proposal(signer: Address, proposal_id: u64) -> Result<(), VaultError>`
 
-| Function                             | Description                | Returns    |
-| ------------------------------------ | -------------------------- | ---------- |
-| `getProposal(id, callerKey, opts)`   | Fetch proposal by ID       | `Proposal` |
-| `getRole(address, callerKey, opts)`  | Get role for address       | `Role`     |
-| `getTodaySpent(callerKey, opts)`     | Today's aggregate spending | `bigint`   |
-| `isSigner(address, callerKey, opts)` | Is address a signer?       | `boolean`  |
+Record explicit abstention (counts toward quorum, not threshold).
+
+**Behavior:**
+- Signer must be in signers list
+- Counts toward quorum requirement
+- Does not count toward approval threshold
+
+**Errors:** Same as `approve_proposal`
 
 ---
 
-## Types
+### `execute_proposal(executor: Address, proposal_id: u64) -> Result<(), VaultError>`
 
-### `InitConfig`
+Execute an approved proposal, transferring funds.
 
-```ts
-interface InitConfig {
-  signers: string[]; // List of signer addresses
-  threshold: number; // M in M-of-N
-  spendingLimit: bigint; // Max per proposal (stroops)
-  dailyLimit: bigint; // Max daily aggregate (stroops)
-  weeklyLimit: bigint; // Max weekly aggregate (stroops)
-  timelockThreshold: bigint; // Amount triggering timelock (stroops)
-  timelockDelay: bigint; // Timelock duration in ledgers
-}
-```
+**Checks:**
+- Proposal status is Approved
+- Timelock expired (if applicable)
+- All dependencies executed
+- Conditions satisfied
+- Sufficient vault balance
+- Gas limit not exceeded
 
-### `Proposal`
+**Behavior:**
+- Transfers amount to recipient
+- Returns insurance to proposer (if staked)
+- Refunds stake to proposer (if locked)
+- Updates reputation scores
+- Records in audit trail
 
-```ts
-interface Proposal {
-  id: bigint;
-  proposer: string;
-  recipient: string;
-  token: string;
-  amount: bigint;
-  memo: string;
-  approvals: string[];
-  status: ProposalStatus;
-  createdAt: bigint;
-  expiresAt: bigint;
-  unlockLedger: bigint; // 0 = no timelock
-}
-```
+**Errors:**
+- `ProposalNotApproved` - Threshold not met
+- `ProposalAlreadyExecuted` - Already executed
+- `TimelockNotExpired` - Unlock ledger not reached
+- `InsufficientBalance` - Vault balance too low
+- `ProposalExpired` - Proposal lifetime exceeded
+- `ConditionsNotSatisfied` - Execution conditions failed
+- `DependenciesNotExecuted` - Prerequisites not complete
 
-### `Role` enum
+---
 
-| Value            | Numeric | Permissions                   |
-| ---------------- | ------- | ----------------------------- |
-| `Role.Member`    | `0`     | Read-only                     |
-| `Role.Treasurer` | `1`     | Propose and approve transfers |
-| `Role.Admin`     | `2`     | Full control                  |
+### `veto_proposal(vetoer: Address, proposal_id: u64) -> Result<(), VaultError>`
 
-### `ProposalStatus` enum
+Veto an approved proposal (authorized vetoers only).
 
-| Value                     | Numeric | Meaning                            |
-| ------------------------- | ------- | ---------------------------------- |
-| `ProposalStatus.Pending`  | `0`     | Awaiting approvals                 |
-| `ProposalStatus.Approved` | `1`     | Threshold met, ready to execute    |
-| `ProposalStatus.Executed` | `2`     | Funds transferred                  |
-| `ProposalStatus.Rejected` | `3`     | Cancelled                          |
-| `ProposalStatus.Expired`  | `4`     | Expired without reaching threshold |
+**Behavior:**
+- Moves proposal to Vetoed status
+- Removes from priority queue
+- Blocks execution permanently
+
+**Errors:**
+- `Unauthorized` - Caller not in veto_addresses
+- `ProposalNotApproved` - Proposal not in Approved state
+
+---
+
+### `cancel_proposal(canceller: Address, proposal_id: u64, reason: Symbol) -> Result<(), VaultError>`
+
+Cancel a pending proposal with refunds.
+
+**Permissions:**
+- Proposer can always cancel
+- Admin can cancel any proposal
+
+**Behavior:**
+- Returns insurance to proposer
+- Returns stake to proposer
+- Reverses spending reservations
+- Records cancellation with reason
+
+**Errors:**
+- `Unauthorized` - Caller not proposer/admin
+- `ProposalNotPending` - Proposal not in Pending state
+
+---
+
+### `get_cancellation_record(proposal_id: u64) -> Result<CancellationRecord, VaultError>`
+
+Retrieve cancellation details for a cancelled proposal.
+
+**Returns:** CancellationRecord with canceller, reason, timestamp, refunds
+
+---
+
+### `get_cancellation_history() -> Vec<u64>`
+
+Get list of all cancelled proposal IDs.
+
+---
+
+### `get_retry_state(proposal_id: u64) -> Option<RetryState>`
+
+Get retry attempt state for a proposal (if retry enabled).
+
+---
+
+## Role & Access Control
+
+### `set_role(admin: Address, target: Address, role: Role) -> Result<(), VaultError>`
+
+Assign a role to an address (admin only).
+
+**Parameters:**
+- `admin` - Must have Admin role
+- `target` - Address to assign role to
+- `role` - Member (0) / Treasurer (1) / Admin (2)
+
+**Errors:**
+- `Unauthorized` - Caller not Admin
+
+---
+
+### `get_role(addr: Address) -> Role`
+
+Query the role of an address (read-only).
+
+**Returns:** Role enum value (default: Member)
+
+---
+
+### `get_role_assignments() -> Vec<RoleAssignment>`
+
+Get all role assignments for dashboard/admin views.
+
+**Returns:** Vector of (address, role) pairs
+
+---
+
+## Configuration Management
+
+### `update_threshold(admin: Address, threshold: u32) -> Result<(), VaultError>`
+
+Change the M-of-N approval threshold (admin only).
+
+**Constraints:**
+- 1 ≤ threshold ≤ signers.len()
+
+**Errors:**
+- `Unauthorized` - Caller not Admin
+- `ThresholdTooLow` - threshold < 1
+- `ThresholdTooHigh` - threshold > signers.len()
+
+---
+
+### `update_limits(admin: Address, spending_limit: i128, daily_limit: i128, weekly_limit: i128) -> Result<(), VaultError>`
+
+Update spending caps (admin only).
+
+**Constraints:**
+- All values > 0
+- spending_limit ≤ daily_limit ≤ weekly_limit
+
+**Errors:**
+- `Unauthorized` - Caller not Admin
+- `InvalidAmount` - Constraint violated
+
+---
+
+### `update_quorum(admin: Address, quorum: u32) -> Result<(), VaultError>`
+
+Set quorum requirement (admin only).
+
+**Constraints:**
+- 0 ≤ quorum ≤ signers.len()
+- 0 = disabled
+
+**Errors:**
+- `Unauthorized` - Caller not Admin
+- `QuorumTooHigh` - quorum > signers.len()
+
+---
+
+### `update_voting_strategy(admin: Address, strategy: VotingStrategy) -> Result<(), VaultError>`
+
+Change voting strategy (admin only).
+
+**Strategies:**
+- Simple - Threshold only
+- Weighted - Reputation-weighted votes
+- Tiered - Role-based thresholds
+
+---
+
+### `extend_voting_deadline(admin: Address, proposal_id: u64, new_deadline: u64) -> Result<(), VaultError>`
+
+Extend voting window for a proposal (admin only).
+
+---
+
+## Spending Limits & Constraints
+
+### `get_today_spent() -> i128`
+
+Get today's aggregate spending (read-only).
+
+---
+
+### `get_daily_spent(day: u64) -> i128`
+
+Get spending for a specific day (read-only).
+
+---
+
+### `get_config() -> Result<Config, VaultError>`
+
+Get current vault configuration (read-only).
+
+**Returns:** Full Config struct with all parameters
+
+---
+
+### `get_signers() -> Result<Vec<Address>, VaultError>`
+
+Get current signer list (read-only).
+
+---
+
+### `is_signer(addr: Address) -> Result<bool, VaultError>`
+
+Check if address is a signer (read-only).
+
+---
+
+## Recurring & Streaming Payments
+
+### `schedule_payment(proposer: Address, recipient: Address, token_addr: Address, amount: i128, memo: Symbol, interval: u64) -> Result<u64, VaultError>`
+
+Schedule a recurring automatic payment.
+
+**Constraints:**
+- interval ≥ 720 ledgers (~1 hour)
+- Proposer must have Treasurer/Admin role
+
+**Returns:** Payment ID
+
+**Errors:**
+- `InsufficientRole` - Proposer lacks permission
+- `InvalidAmount` - Amount ≤ 0
+- `IntervalTooShort` - interval < 720
+
+---
+
+### `execute_recurring_payment(payment_id: u64) -> Result<(), VaultError>`
+
+Execute a due recurring payment (anyone can call).
+
+**Checks:**
+- Payment is due (current_ledger ≥ next_execution_ledger)
+- Sufficient vault balance
+- Daily/weekly limits not exceeded
+
+**Errors:**
+- `TimelockNotExpired` - Not yet due
+- `ExceedsDailyLimit` - Daily cap exceeded
+- `InsufficientBalance` - Vault balance too low
+
+---
+
+### `get_recurring_payment(payment_id: u64) -> Result<RecurringPayment, VaultError>`
+
+Fetch a recurring payment by ID (read-only).
+
+---
+
+### `list_recurring_payment_ids(offset: u64, limit: u64) -> Vec<u64>`
+
+Paginated list of recurring payment IDs (capped at 100).
+
+---
+
+### `list_recurring_payments(offset: u64, limit: u64) -> Vec<RecurringPayment>`
+
+Paginated list of recurring payments (capped at 50).
+
+---
+
+### `create_stream(sender: Address, recipient: Address, token_addr: Address, amount: i128, duration: u64) -> Result<u64, VaultError>`
+
+Create a token stream (continuous payment over time).
+
+**Parameters:**
+- `duration` - Stream duration in ledgers
+- Funds transferred to escrow immediately
+
+**Returns:** Stream ID
+
+**Errors:**
+- `InvalidAmount` - amount ≤ 0 or duration = 0
+
+---
+
+## Recipient List Management
+
+### `set_list_mode(admin: Address, mode: ListMode) -> Result<(), VaultError>`
+
+Set recipient list mode (admin only).
+
+**Modes:**
+- Disabled - No restrictions
+- Whitelist - Only whitelisted recipients allowed
+- Blacklist - Blacklisted recipients blocked
+
+---
+
+### `get_list_mode() -> ListMode`
+
+Get current recipient list mode (read-only).
+
+---
+
+### `add_to_whitelist(admin: Address, addr: Address) -> Result<(), VaultError>`
+
+Add address to whitelist (admin only).
+
+**Errors:**
+- `Unauthorized` - Caller not Admin
+- `AddressAlreadyOnList` - Address already whitelisted
+
+---
+
+### `remove_from_whitelist(admin: Address, addr: Address) -> Result<(), VaultError>`
+
+Remove address from whitelist (admin only).
+
+---
+
+### `is_whitelisted(addr: Address) -> bool`
+
+Check if address is whitelisted (read-only).
+
+---
+
+### `add_to_blacklist(admin: Address, addr: Address) -> Result<(), VaultError>`
+
+Add address to blacklist (admin only).
+
+---
+
+### `remove_from_blacklist(admin: Address, addr: Address) -> Result<(), VaultError>`
+
+Remove address from blacklist (admin only).
+
+---
+
+### `is_blacklisted(addr: Address) -> bool`
+
+Check if address is blacklisted (read-only).
+
+---
+
+## Comments & Collaboration
+
+### `add_comment(author: Address, proposal_id: u64, text: Symbol, parent_id: u64) -> Result<u64, VaultError>`
+
+Add a comment to a proposal.
+
+**Parameters:**
+- `parent_id` - 0 for top-level, or ID of parent comment for threading
+
+**Returns:** Comment ID
+
+**Errors:**
+- `ProposalNotFound` - Proposal doesn't exist
+- Parent comment validation if parent_id > 0
+
+---
+
+### `edit_comment(author: Address, comment_id: u64, new_text: Symbol) -> Result<(), VaultError>`
+
+Edit a comment (author only).
+
+**Errors:**
+- `Unauthorized` - Caller not comment author
+
+---
+
+### `get_proposal_comments(proposal_id: u64) -> Vec<Comment>`
+
+Get all comments for a proposal (read-only).
+
+---
+
+### `get_comment(comment_id: u64) -> Result<Comment, VaultError>`
+
+Get a single comment by ID (read-only).
+
+---
+
+## Audit Trail
+
+### `get_audit_entry(entry_id: u64) -> Result<AuditEntry, VaultError>`
+
+Retrieve an audit entry by ID (read-only).
+
+**Returns:** AuditEntry with action, actor, timestamp, hash chain
+
+---
+
+### `get_audit_entry_count() -> u64`
+
+Get total number of audit entries (read-only).
+
+---
+
+### `verify_audit_trail(start_id: u64, end_id: u64) -> Result<bool, VaultError>`
+
+Verify audit trail integrity via hash chain (read-only).
+
+**Returns:** true if chain is valid, false if tampering detected
+
+---
+
+## Batch Operations
+
+### `batch_execute_proposals(executor: Address, proposal_ids: Vec<u64>) -> Result<(Vec<u64>, u32), VaultError>`
+
+Execute multiple approved proposals in one transaction.
+
+**Behavior:**
+- Skips proposals that fail validation
+- Gas-optimized single TTL extension
+- Returns (executed_ids, failed_count)
+
+**Errors:**
+- `Unauthorized` - Caller not authorized
+
+---
+
+## Metadata & Tags
+
+### `set_proposal_metadata(caller: Address, proposal_id: u64, key: Symbol, value: String) -> Result<(), VaultError>`
+
+Set metadata key-value for a proposal (proposer/admin only).
+
+**Constraints:**
+- Max 16 metadata entries per proposal
+- Value length: 1-256 chars
+
+**Errors:**
+- `Unauthorized` - Caller not proposer/admin
+- `MetadataValueInvalid` - Value length invalid
+- `ExceedsProposalLimit` - Too many entries
+
+---
+
+### `remove_proposal_metadata(caller: Address, proposal_id: u64, key: Symbol) -> Result<(), VaultError>`
+
+Remove metadata key from proposal (proposer/admin only).
+
+---
+
+### `get_proposal_metadata_value(proposal_id: u64, key: Symbol) -> Result<Option<String>, VaultError>`
+
+Get single metadata value (read-only).
+
+---
+
+### `get_proposal_metadata(proposal_id: u64) -> Result<Map<Symbol, String>, VaultError>`
+
+Get full metadata map (read-only).
+
+---
+
+### `add_proposal_tag(caller: Address, proposal_id: u64, tag: Symbol) -> Result<(), VaultError>`
+
+Add tag to proposal (proposer/admin only).
+
+**Constraints:**
+- Max 10 tags per proposal
+
+**Errors:**
+- `Unauthorized` - Caller not proposer/admin
+- `TooManyTags` - Exceeds limit
+
+---
+
+### `remove_proposal_tag(caller: Address, proposal_id: u64, tag: Symbol) -> Result<(), VaultError>`
+
+Remove tag from proposal (proposer/admin only).
+
+---
+
+### `get_proposal_tags(proposal_id: u64) -> Result<Vec<Symbol>, VaultError>`
+
+Get all tags for proposal (read-only).
+
+---
+
+### `get_proposals_by_tag(tag: Symbol) -> Vec<u64>`
+
+Get proposal IDs with specific tag (read-only).
+
+---
+
+## Attachments
+
+### `add_attachment(caller: Address, proposal_id: u64, attachment: String) -> Result<(), VaultError>`
+
+Add IPFS attachment hash to proposal (proposer/admin only).
+
+**Constraints:**
+- CID length: 46-128 chars (CIDv0/v1 support)
+- Max 10 attachments per proposal
+
+**Errors:**
+- `Unauthorized` - Caller not proposer/admin
+- `AttachmentHashInvalid` - CID length invalid
+- `TooManyAttachments` - Exceeds limit
+
+---
+
+### `remove_attachment(caller: Address, proposal_id: u64, index: u32) -> Result<(), VaultError>`
+
+Remove attachment by index (proposer/admin only).
+
+---
+
+## Insurance & Staking
+
+### `set_insurance_config(admin: Address, config: InsuranceConfig) -> Result<(), VaultError>`
+
+Update insurance configuration (admin only).
+
+**Parameters:**
+- `enabled` - Enable/disable insurance requirement
+- `min_amount` - Minimum proposal amount triggering insurance
+- `min_insurance_bps` - Basis points of proposal amount required
+
+---
+
+### `get_insurance_config() -> InsuranceConfig`
+
+Get current insurance configuration (read-only).
+
+---
+
+### `get_insurance_pool(token_addr: Address) -> i128`
+
+Get slashed insurance balance for token (read-only).
+
+---
+
+### `withdraw_insurance_pool(admin: Address, token: Address, recipient: Address, amount: i128) -> Result<(), VaultError>`
+
+Withdraw slashed insurance funds (admin only).
+
+---
+
+### `update_staking_config(admin: Address, config: StakingConfig) -> Result<(), VaultError>`
+
+Update staking configuration (admin only).
+
+---
+
+### `withdraw_stake_pool(admin: Address, token: Address, recipient: Address, amount: i128) -> Result<(), VaultError>`
+
+Withdraw slashed stake funds (admin only).
+
+---
+
+## Dynamic Fees
+
+### `set_fee_structure(admin: Address, fee_structure: FeeStructure) -> Result<(), VaultError>`
+
+Configure dynamic fee structure (admin only).
+
+**Constraints:**
+- base_fee_bps ≤ 10,000
+- Tiers sorted by min_volume
+- reputation_discount_percentage ≤ 100
+
+---
+
+### `get_fee_structure() -> FeeStructure`
+
+Get current fee structure (read-only).
+
+---
+
+### `calculate_fee(user: Address, amount: i128) -> i128`
+
+Calculate fee for transaction without collecting (read-only).
+
+---
+
+## View Functions
+
+### `get_proposal(proposal_id: u64) -> Result<Proposal, VaultError>`
+
+Fetch proposal by ID (read-only).
+
+**Returns:** Full Proposal struct with all fields
+
+---
+
+### `list_proposal_ids(offset: u64, limit: u64) -> Vec<u64>`
+
+Paginated proposal IDs (capped at 100).
+
+---
+
+### `list_proposals(offset: u64, limit: u64) -> Vec<Proposal>`
+
+Paginated full proposals (capped at 50).
+
+---
+
+### `get_voting_strategy() -> VotingStrategy`
+
+Get current voting strategy (read-only).
+
+---
+
+### `get_quorum_status(proposal_id: u64) -> Result<(u32, u32, bool), VaultError>`
+
+Get quorum status for proposal (read-only).
+
+**Returns:** (current_votes, required_quorum, quorum_reached)
+
+---
+
+### `get_executable_proposals() -> Vec<u64>`
+
+Get proposal IDs currently executable (read-only).
+
+**Checks:**
+- Status is Approved
+- Not expired
+- Timelock elapsed
+- Dependencies satisfied
+
+---
+
+### `change_priority(caller: Address, proposal_id: u64, new_priority: Priority) -> Result<(), VaultError>`
+
+Change priority of pending proposal (proposer/admin only).
+
+---
+
+### `get_proposals_by_priority(priority: Priority) -> Vec<u64>`
+
+Get proposal IDs filtered by priority (read-only).
 
 ---
 
 ## Error Codes
 
-All contract errors surface as `VaultError` instances with a `.code` property.
+| Code | Name | Description |
+|------|------|-------------|
+| 100 | `AlreadyInitialized` | Contract already initialized |
+| 101 | `NotInitialized` | Contract not yet initialized |
+| 200 | `Unauthorized` | Caller not authorized |
+| 201 | `NotASigner` | Address not in signers list |
+| 202 | `InsufficientRole` | Role too low for action |
+| 300 | `ProposalNotFound` | Proposal ID doesn't exist |
+| 301 | `ProposalNotPending` | Proposal not in Pending state |
+| 302 | `AlreadyApproved` | Signer already voted / duplicate item |
+| 303 | `ProposalExpired` | Proposal lifetime exceeded |
+| 304 | `ProposalNotApproved` | Threshold not met |
+| 305 | `ProposalAlreadyExecuted` | Proposal already executed |
+| 400 | `ExceedsProposalLimit` | Amount > per-proposal limit |
+| 401 | `ExceedsDailyLimit` | Daily cap exceeded |
+| 402 | `ExceedsWeeklyLimit` | Weekly cap exceeded |
+| 403 | `InvalidAmount` | Amount ≤ 0 or invalid value |
+| 404 | `TimelockNotExpired` | Timelock still active |
+| 405 | `IntervalTooShort` | Recurring interval < 720 ledgers |
+| 500 | `ThresholdTooLow` | Threshold < 1 |
+| 501 | `ThresholdTooHigh` | Threshold > signers.len() |
+| 502 | `SignerAlreadyExists` | Address already a signer |
+| 503 | `SignerNotFound` | Address not in signers list |
+| 504 | `CannotRemoveSigner` | Removal breaks threshold |
+| 505 | `NoSigners` | Empty signers list |
+| 600 | `TransferFailed` | Token transfer failed |
+| 601 | `InsufficientBalance` | Vault balance too low |
+| 602 | `RecipientNotWhitelisted` | Recipient not on whitelist |
+| 603 | `RecipientBlacklisted` | Recipient on blacklist |
+| 604 | `AddressAlreadyOnList` | Address already on list |
+| 605 | `AddressNotOnList` | Address not on list |
+| 606 | `VelocityLimitExceeded` | Too many proposals in ledger |
+| 607 | `InsuranceInsufficient` | Insurance below minimum |
+| 608 | `BatchTooLarge` | Batch > 10 proposals |
+| 609 | `AttachmentHashInvalid` | CID length invalid |
+| 610 | `TooManyAttachments` | > 10 attachments |
+| 611 | `TooManyTags` | > 10 tags |
+| 612 | `MetadataValueInvalid` | Metadata value length invalid |
+| 613 | `QuorumTooHigh` | Quorum > signers.len() |
+| 614 | `ConditionsNotSatisfied` | Execution conditions failed |
+| 615 | `DependenciesNotExecuted` | Prerequisites not complete |
 
-```ts
-import { parseError, VaultError, VaultErrorCode } from "@vaultdao/sdk";
+---
 
-try {
-  await proposeTransfer(/* ... */);
-} catch (err) {
-  const parsed = parseError(err);
-  if (parsed instanceof VaultError) {
-    console.error(parsed.code, VaultErrorCode[parsed.code]);
-  }
-}
+## Notes
+
+- All write functions require caller authorization via `require_auth()`
+- Read-only functions have no authorization requirement
+- Pagination limits: 100 for IDs, 50 for full objects
+- Timelock is calculated in ledgers (~5 seconds per ledger)
+- Reputation scores decay over time and affect spending limits
+- Insurance and staking are optional features (configurable)
+
+
+---
+
+## Integration Notes
+
+> For a full gap analysis between the contract API and the frontend hook, see [INTEGRATION_CHECKLIST.md](./INTEGRATION_CHECKLIST.md).
+
+### SDK Wrapper Status
+
+The TypeScript SDK (`sdk/src/contract.ts`) wraps a subset of these contract functions. Not all contract methods are exposed through the SDK yet. For direct contract calls, use Soroban SDK directly.
+
+**Commonly Wrapped Functions:**
+- `initialize()`
+- `propose_transfer()`
+- `approve_proposal()`
+- `execute_proposal()`
+- `cancel_proposal()` (mapped as `rejectProposal` in SDK)
+- `set_role()`
+- `update_limits()`
+- `schedule_payment()`
+- `execute_recurring_payment()`
+- `get_proposal()`
+- `get_role()`
+- `get_today_spent()`
+- `is_signer()`
+
+**Advanced Functions (Direct Contract Calls Only):**
+- Batch operations
+- Proposal amendments
+- Delegation
+- Veto
+- Comments
+- Audit trail verification
+- Metadata/tags/attachments
+- Insurance/staking configuration
+- Dynamic fees
+
+### Frontend Integration
+
+The React frontend uses the SDK for browser-based signing with Freighter. For advanced features not wrapped by the SDK, build transactions directly using `soroban-sdk` and sign with Freighter.
+
+### Backend/Keeper Bot
+
+Node.js keeper bots can call contract functions directly using `soroban-sdk` with a keypair for signing. No Freighter required.
+
+### Reputation System
+
+Proposals and approvals affect reputation scores:
+- Successful execution: +10 for proposer, +5 for approvers
+- Rejection: -20 for proposer
+- Approval: +2 per approval
+
+High reputation (750+) unlocks:
+- 1.5x daily/weekly limits
+- 50% insurance discount
+- Reduced staking requirements
+
+### Timelock Behavior
+
+If `amount >= timelock_threshold`, execution is blocked until `current_ledger >= unlock_ledger`. The unlock ledger is calculated as:
+```
+unlock_ledger = creation_ledger + timelock_delay
 ```
 
-| Code | Name                      | Description                           | How to handle                   |
-| ---- | ------------------------- | ------------------------------------- | ------------------------------- |
-| 100  | `AlreadyInitialized`      | Contract already set up               | Don't call `initialize()` twice |
-| 101  | `NotInitialized`          | Contract not yet set up               | Call `initialize()` first       |
-| 200  | `Unauthorized`            | Caller not authorised for this action | Check your role                 |
-| 201  | `NotASigner`              | Address not in the signers list       | Add via `addSigner()`           |
-| 202  | `InsufficientRole`        | Role too low for this action          | Elevate with `setRole()`        |
-| 300  | `ProposalNotFound`        | Proposal ID doesn't exist             | Verify the ID                   |
-| 301  | `ProposalNotPending`      | Proposal not in Pending state         | Check status first              |
-| 302  | `AlreadyApproved`         | Signer already voted                  | Each signer votes once          |
-| 303  | `ProposalExpired`         | Proposal lifetime exceeded (~7 days)  | Create a new proposal           |
-| 304  | `ProposalNotApproved`     | Threshold not met                     | Wait for more approvals         |
-| 305  | `ProposalAlreadyExecuted` | Proposal was already executed         | Nothing to do                   |
-| 400  | `ExceedsProposalLimit`    | Amount > per-proposal limit           | Reduce amount or increase limit |
-| 401  | `ExceedsDailyLimit`       | Daily cap would be exceeded           | Wait until next day             |
-| 402  | `ExceedsWeeklyLimit`      | Weekly cap would be exceeded          | Wait until next week            |
-| 403  | `InvalidAmount`           | Amount ≤ 0                            | Use a positive amount           |
-| 404  | `TimelockNotExpired`      | Timelock still active                 | Wait until `unlockLedger`       |
-| 405  | `IntervalTooShort`        | Recurring interval < 720 ledgers      | Use ≥ 720 ledgers               |
-| 500  | `ThresholdTooLow`         | Threshold < 1                         | Use threshold ≥ 1               |
-| 501  | `ThresholdTooHigh`        | Threshold > number of signers         | Add more signers                |
-| 502  | `SignerAlreadyExists`     | Address already a signer              | No duplicate signers            |
-| 503  | `SignerNotFound`          | Address not in signers list           | Check address                   |
-| 504  | `CannotRemoveSigner`      | Removal would break threshold         | Reduce threshold first          |
-| 505  | `NoSigners`               | Empty signers list                    | Provide at least one signer     |
-| 600  | `TransferFailed`          | Token transfer failed                 | Check token contract            |
-| 601  | `InsufficientBalance`     | Vault balance too low                 | Top up the vault                |
+### Dependency Chains
+
+Proposals can depend on other proposals. Dependencies are validated at creation time:
+- Circular dependencies rejected
+- Non-existent dependencies rejected
+- Execution blocked until all dependencies executed
+
+### Conditions & Execution
+
+Proposals can include execution conditions (e.g., price oracles, time windows). Conditions are evaluated at execution time using the specified logic (And/Or).
+
+### Gas Tracking
+
+If gas configuration is enabled, each proposal has a gas limit. Execution fails if estimated fee exceeds the limit.
+
+### Audit Trail
+
+Every action is recorded in an immutable audit trail with hash chain verification. Use `verify_audit_trail()` to detect tampering.
+
+### Batch Execution
+
+`batch_execute_proposals()` executes up to 10 proposals in one transaction. Failed proposals are skipped; returns count of successes and failures.
+
+### Delegation (Stubbed)
+
+`delegate_voting_power()` and `revoke_delegation()` are currently stubbed and return `Unauthorized`. Full implementation pending.
+
+### Recovery Mode
+
+If enabled, recovery configuration allows designated addresses to recover funds in emergency scenarios.
+
+### Retry Logic
+
+If retry configuration is enabled, failed executions can be retried. Use `get_retry_state()` to check retry attempts.
+
 
 ---
 
-## Events
+## Performance Metrics & Valuation
 
-The contract emits the following Soroban events that can be indexed by horizon or a custom listener.
+### `get_metrics() -> VaultMetrics`
 
-| Topic                              | Additional Data                        | Emitted by                             |
-| ---------------------------------- | -------------------------------------- | -------------------------------------- |
-| `initialized`                      | `(admin, threshold)`                   | `initialize()`                         |
-| `proposal_created` + `proposalId`  | `(proposer, recipient, amount)`        | `proposeTransfer()`                    |
-| `proposal_approved` + `proposalId` | `(approver, approvalCount, threshold)` | `approveProposal()`                    |
-| `proposal_ready` + `proposalId`    | —                                      | `approveProposal()` (on threshold met) |
-| `proposal_executed` + `proposalId` | `(executor, recipient, amount)`        | `executeProposal()`                    |
-| `proposal_rejected` + `proposalId` | `rejector`                             | `rejectProposal()`                     |
-| `role_assigned`                    | `(address, roleNumeric)`               | `setRole()`                            |
-| `config_updated`                   | `updaterAddress`                       | `updateLimits()`, `updateThreshold()`  |
-| `signer_added`                     | `(signer, totalSigners)`               | `addSigner()`                          |
-| `signer_removed`                   | `(signer, totalSigners)`               | `removeSigner()`                       |
+Retrieve vault-wide performance metrics accumulated since initialization.
+
+**Returns:** `VaultMetrics` struct with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_proposals` | u64 | Total proposals ever created |
+| `executed_count` | u64 | Successfully executed proposals |
+| `rejected_count` | u64 | Rejected proposals |
+| `expired_count` | u64 | Proposals that expired without execution |
+| `total_execution_time_ledgers` | u64 | Cumulative ledgers from creation to execution |
+| `total_gas_used` | u64 | Total gas consumed across all executions |
+| `last_updated_ledger` | u64 | Ledger sequence when metrics were last updated |
+
+**Derived Metrics (Methods):**
+
+- `success_rate_bps() -> u32` - Success rate in basis points (0-10000 = 0-100%)
+  - Formula: `(executed_count * 10_000) / (executed_count + rejected_count + expired_count)`
+  - Returns 0 if no proposals have been finalized
+
+- `avg_execution_time_ledgers() -> u64` - Average ledgers from creation to execution
+  - Formula: `total_execution_time_ledgers / executed_count`
+  - Returns 0 if no proposals have been executed
+
+**Behavior:**
+- Metrics are cumulative and never reset
+- Updated atomically on proposal creation, execution, rejection, and expiration
+- Thread-safe: uses instance storage with atomic updates
+- Returns default metrics (all zeros) if no proposals have been created
+
+**Units & Scaling:**
+- Ledger times: Soroban ledger sequence numbers (1 ledger ≈ 5 seconds)
+- Gas units: Soroban gas units (varies by operation)
+- Basis points: 0-10000 (0-100%), where 100 bps = 1%
+
+**Example:**
+```rust
+let metrics = vault.get_metrics();
+println!("Success rate: {}%", metrics.success_rate_bps() / 100);
+println!("Avg execution time: {} ledgers", metrics.avg_execution_time_ledgers());
+println!("Total proposals: {}", metrics.total_proposals);
+```
 
 ---
 
-## Integration Guide
+### `get_portfolio_valuation(assets: Vec<Address>) -> Result<i128, VaultError>`
 
-### React Application
+Calculate the total USD valuation of the vault's holdings across multiple assets.
 
-```tsx
-import {
-  buildOptions,
-  connectWallet,
-  proposeTransfer,
-  signAndSubmit,
-  parseError,
-  VaultError,
-} from "@vaultdao/sdk";
-import { useState } from "react";
+**Parameters:**
+- `assets` - Vector of token contract addresses to include in valuation
 
-const opts = buildOptions("testnet", import.meta.env.VITE_CONTRACT_ID);
+**Returns:** 
+- `Ok(total_usd)` - Total portfolio value in USD (scaled by 10^7 for precision)
+- `Err(VaultError)` - If valuation cannot be determined
 
-export function ProposeButton({
-  recipient,
-  amount,
-}: {
-  recipient: string;
-  amount: bigint;
-}) {
-  const [status, setStatus] = useState("");
+**Behavior:**
+- Empty asset list returns `Ok(0)` without error
+- Skips assets with zero balance (no oracle query needed)
+- Uses saturating arithmetic to prevent overflow
+- Queries oracle for current price of each asset with non-zero balance
+- Returns error if any asset price cannot be determined or is stale
 
-  const handlePropose = async () => {
-    try {
-      const wallet = await connectWallet();
-      const txXdr = await proposeTransfer(
-        wallet.publicKey,
-        recipient,
-        TOKEN_ID,
-        amount,
-        "memo",
-        opts,
-      );
-      const hash = await signAndSubmit(txXdr, opts);
-      setStatus(`Proposal submitted: ${hash}`);
-    } catch (err) {
-      const parsed = parseError(err);
-      setStatus(
-        parsed instanceof VaultError
-          ? `Error: ${parsed.message}`
-          : "Unknown error",
-      );
+**Units & Scaling:**
+
+| Component | Unit | Scaling | Example |
+|-----------|------|---------|---------|
+| Asset balance | stroops | 10^-7 (7 decimals) | 1,000,000 stroops = 0.1 token |
+| Oracle price | USD per token | 10^7 (scaled) | Price 1500 = $150.00 |
+| Output value | USD cents | 10^7 (scaled) | 1,500,000,000 = $150.00 |
+
+**Conversion Formula:**
+```
+usd_value = (balance * price) / 10_000_000
+```
+
+**Error Cases:**
+- `NotInitialized` - Oracle not configured
+- `InvalidAmount` - Asset price not found in oracle
+- `RetryError` - Asset price data is stale (exceeds `max_staleness`)
+
+**Example:**
+```rust
+let assets = vec![usdc_address, xlm_address, btc_address];
+match vault.get_portfolio_valuation(&assets) {
+    Ok(total_usd) => {
+        let usd_value = total_usd as f64 / 10_000_000.0;
+        println!("Portfolio value: ${:.2}", usd_value);
     }
-  };
-
-  return <button onClick={handlePropose}>Propose Transfer — {status}</button>;
+    Err(e) => println!("Valuation error: {:?}", e),
 }
 ```
 
-### Node.js / Backend Keeper Bot
+**Oracle Configuration:**
 
-```ts
-// keeper.ts — automatically execute due recurring payments
-import {
-  buildOptions,
-  executeRecurringPayment,
-  signAndSubmit,
-} from "@vaultdao/sdk";
-import { Keypair } from "stellar-sdk";
+Portfolio valuation requires oracle configuration via `update_oracle_config()`:
 
-const opts = buildOptions("testnet", process.env.CONTRACT_ID!);
-const keeper = Keypair.fromSecret(process.env.KEEPER_SECRET!);
-
-async function runKeeper(paymentId: bigint) {
-  // Build unsigned transaction
-  const txXdr = await executeRecurringPayment(
-    keeper.publicKey(),
-    paymentId,
-    opts,
-  );
-  // Sign locally (no Freighter in Node.js)
-  const { Transaction } = await import("stellar-sdk");
-  const tx = new Transaction(txXdr, opts.networkPassphrase);
-  tx.sign(keeper);
-  // Submit
-  const { SorobanRpc } = await import("stellar-sdk");
-  const server = new SorobanRpc.Server(opts.rpcUrl);
-  await server.sendTransaction(tx);
-}
+```rust
+vault.update_oracle_config(&admin, &VaultOracleConfig {
+    address: oracle_contract_address,
+    max_staleness: 1000, // max ledgers before price is considered stale
+});
 ```
 
-### Common Patterns
+The oracle contract must implement the `lastprice(asset: Address) -> Option<VaultPriceData>` interface.
 
-**Poll for proposal approval:**
+---
 
-```ts
-async function waitForApproval(
-  proposalId: bigint,
-  callerKey: string,
-  opts: SdkOptions,
-) {
-  while (true) {
-    const proposal = await getProposal(proposalId, callerKey, opts);
-    if (proposal.status !== ProposalStatus.Pending) return proposal;
-    await new Promise((r) => setTimeout(r, 5000)); // poll every 5 s
-  }
-}
-```
+## Query Semantics & Guarantees
 
-**Check timelock before executing:**
+### Metrics Query Semantics
 
-```ts
-import { SorobanRpc } from "stellar-sdk";
+- **Consistency**: Metrics are updated atomically with proposal state changes
+- **Completeness**: All proposal lifecycle events are tracked
+- **Predictability**: Metrics only increase (never decrease)
+- **Precision**: Uses u64 for all counters (no overflow risk for reasonable vault lifetimes)
 
-async function canExecute(
-  proposalId: bigint,
-  callerKey: string,
-  opts: SdkOptions,
-) {
-  const proposal = await getProposal(proposalId, callerKey, opts);
-  if (proposal.status !== ProposalStatus.Approved) return false;
-  if (proposal.unlockLedger === BigInt(0)) return true;
+### Portfolio Valuation Query Semantics
 
-  const server = new SorobanRpc.Server(opts.rpcUrl);
-  const ledger = await server.getLatestLedger();
-  return BigInt(ledger.sequence) >= proposal.unlockLedger;
-}
-```
+- **Consistency**: Valuation reflects current vault balances and oracle prices
+- **Predictability**: Empty asset list always returns 0; zero-balance assets are skipped
+- **Precision**: Uses i128 with saturating arithmetic to prevent overflow
+- **Staleness**: Validates oracle price freshness against configured `max_staleness`
+
+### Edge Cases
+
+**Metrics:**
+- No proposals created: All counters are 0, success_rate_bps() returns 0
+- Only rejected/expired proposals: success_rate_bps() returns 0
+- Single executed proposal: success_rate_bps() returns 10000 (100%)
+
+**Portfolio Valuation:**
+- Empty asset list: Returns Ok(0) immediately
+- All assets have zero balance: Returns Ok(0) without oracle queries
+- Mixed zero/non-zero balances: Only queries oracle for non-zero assets
+- Very large balances: Saturating arithmetic prevents overflow
+- Oracle not configured: Returns NotInitialized error
+- Stale price data: Returns RetryError; client should retry after staleness window
+

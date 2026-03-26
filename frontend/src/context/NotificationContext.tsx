@@ -138,10 +138,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   // Save to storage whenever notifications change
+  // Also save when the list is empty (cleared)
   useEffect(() => {
-    if (state.notifications.length > 0) {
-      saveNotificationsToStorage(state.notifications);
-    }
+    saveNotificationsToStorage(state.notifications);
   }, [state.notifications]);
 
   const addNotification = useCallback(
@@ -186,24 +185,45 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  const unreadCount = state.notifications.filter((n) => n.status === 'unread').length;
+  const unreadCount = React.useMemo(
+    () => state.notifications.filter((n) => n.status === 'unread').length,
+    [state.notifications]
+  );
 
-  const value: NotificationContextValue = {
-    notifications: state.notifications,
-    unreadCount,
-    filter: state.filter,
-    sort: state.sort,
-    page: state.page,
-    pageSize: state.pageSize,
-    addNotification,
-    markAsRead,
-    markAllAsRead,
-    dismissNotification,
-    setFilter,
-    setSort,
-    setPage,
-    clearAll,
-  };
+  const value: NotificationContextValue = React.useMemo(
+    () => ({
+      notifications: state.notifications,
+      unreadCount,
+      filter: state.filter,
+      sort: state.sort,
+      page: state.page,
+      pageSize: state.pageSize,
+      addNotification,
+      markAsRead,
+      markAllAsRead,
+      dismissNotification,
+      setFilter,
+      setSort,
+      setPage,
+      clearAll,
+    }),
+    [
+      state.notifications,
+      state.filter,
+      state.sort,
+      state.page,
+      state.pageSize,
+      unreadCount,
+      addNotification,
+      markAsRead,
+      markAllAsRead,
+      dismissNotification,
+      setFilter,
+      setSort,
+      setPage,
+      clearAll,
+    ]
+  );
 
   return (
     <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>

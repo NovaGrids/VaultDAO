@@ -16,14 +16,19 @@ const mockEnv = {
   horizonUrl: "https://horizon-testnet.stellar.org",
   contractId: "CDTEST",
   websocketUrl: "ws://localhost:8080",
+  eventPollingIntervalMs: 5000,
+  eventPollingEnabled: false,
 };
 
 const mockRuntime = {
   startedAt: "2026-03-25T00:00:00.000Z",
+  eventPollingService: {
+    getStatus: () => ({ running: false, lastCheck: null }),
+  },
 };
 
 test("builds a healthy service payload", () => {
-  const payload = buildHealthPayload(mockEnv);
+  const payload = buildHealthPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.ok, true);
   assert.equal(payload.service, "vaultdao-backend");
@@ -33,15 +38,28 @@ test("builds a healthy service payload", () => {
 });
 
 test("builds a status payload", () => {
-  const payload = buildStatusPayload(mockEnv);
+  const payload = buildStatusPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.service, "vaultdao-backend");
   assert.equal(payload.environment, "test");
+  assert.equal(payload.contractId, "CDTEST");
   assert.match(payload.rpcUrl, /soroban-testnet/);
 });
 
+test("health and status mask contractId in production", () => {
+  const longId =
+    "CDO4B7X6FUM2YUH2BNVQKSHSM5M7XED3SFEHVYJ4V47PVML2P5FCHQ4";
+  const prodEnv = { ...mockEnv, nodeEnv: "production", contractId: longId };
+
+  const health = buildHealthPayload(prodEnv, mockRuntime as any);
+  const status = buildStatusPayload(prodEnv, mockRuntime as any);
+
+  assert.equal(health.contractId, `${longId.slice(0, 6)}...${longId.slice(-6)}`);
+  assert.equal(status.contractId, health.contractId);
+});
+
 test("builds a readiness payload with dependency checks", () => {
-  const payload = buildReadinessPayload(mockEnv, mockRuntime);
+  const payload = buildReadinessPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.ready, true);
   assert.equal(payload.service, "vaultdao-backend");

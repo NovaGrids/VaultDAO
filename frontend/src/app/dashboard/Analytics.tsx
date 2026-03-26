@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import type { AnalyticsTimeRange, ActivityLike } from '../../types/analytics';
 import { aggregateAnalytics } from '../../utils/analyticsAggregation';
 import { exportAnalyticsToCsv, exportChartAsImage } from '../../utils/exportAnalytics';
@@ -81,6 +81,7 @@ const Analytics: React.FC = () => {
   const [timeRange, setTimeRange] = useState<AnalyticsTimeRange>('30d');
   const [loading] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'spending' | 'advanced'>('overview');
+  const [exporting, setExporting] = useState(false);
   const proposalChartRef = useRef<HTMLDivElement>(null);
   const spendingChartRef = useRef<HTMLDivElement>(null);
   const treasuryChartRef = useRef<HTMLDivElement>(null);
@@ -138,13 +139,17 @@ const Analytics: React.FC = () => {
     return list;
   }, [analytics]);
 
-  const handleExportCsv = () => {
+  const handleExportCsv = useCallback(() => {
     if (analytics) exportAnalyticsToCsv(analytics);
-  };
+  }, [analytics]);
 
-  const handleExportChart = (ref: React.RefObject<HTMLDivElement | null>, name: string) => {
+  const handleExportChart = useCallback((ref: React.RefObject<HTMLDivElement | null>, name: string) => {
+    if (exporting) return;
+    setExporting(true);
     exportChartAsImage(ref.current, `analytics-${name}.png`);
-  };
+    // exportChartAsImage is async internally; reset after a short delay
+    setTimeout(() => setExporting(false), 3000);
+  }, [exporting]);
 
   const hasData =
     analytics &&
@@ -184,10 +189,11 @@ const Analytics: React.FC = () => {
           <button
             type="button"
             onClick={() => handleExportChart(proposalChartRef, 'proposal-trends')}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm"
+            disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm disabled:opacity-50"
           >
             <Image size={16} />
-            Export charts
+            {exporting ? 'Exporting…' : 'Export charts'}
           </button>
         </div>
       </div>

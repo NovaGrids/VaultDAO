@@ -71,16 +71,42 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     [validateNetwork]
   );
 
+  // On mount: detect wallets, set selected wallet, then attempt auto-reconnect
+  // if the user had previously connected. All in one effect to avoid the race
+  // condition where the reconnect effect fires before selectedWalletId is set.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    detectWallets().then((wallets) => {
+    let cancelled = false;
+    detectWallets().then(async (wallets) => {
+      if (cancelled) return;
+
       const preferred = localStorage.getItem(PREFERRED_WALLET_KEY);
       const id = preferred && getAdapterById(preferred) ? preferred : wallets[0]?.id ?? null;
       if (id) setSelectedWalletId(id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detectWallets]);
 
+      const wasConnected = localStorage.getItem(WALLET_CONNECTED_KEY);
+      if (!wasConnected || !id) return;
+
+      const adapter = getAdapterById(id);
+      if (!adapter) return;
+
+      try {
+        const available = await adapter.isAvailable();
+        if (!cancelled && available) {
+          await updateWalletState(adapter);
+        } else if (!cancelled) {
+          // Stored wallet no longer available — clear persisted state silently
+          localStorage.removeItem(WALLET_CONNECTED_KEY);
+        }
+      } catch {
+        // Auto-reconnect failed — clear persisted state without crashing
+        if (!cancelled) localStorage.removeItem(WALLET_CONNECTED_KEY);
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Poll wallet state while connected to catch external disconnects
   useEffect(() => {
     if (!selectedWalletId || !connected) return;
     const adapter = getAdapterById(selectedWalletId);
@@ -94,17 +120,6 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWalletId, connected, updateWalletState]);
-
-  useEffect(() => {
-    const wasConnected = localStorage.getItem(WALLET_CONNECTED_KEY);
-    if (wasConnected && selectedWalletId) {
-      const adapter = getAdapterById(selectedWalletId);
-      if (adapter) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        updateWalletState(adapter);
-      }
-    }
-  }, [selectedWalletId, updateWalletState]);
 
   const connect = useCallback(async () => {
     const adapter = selectedWalletId ? getAdapterById(selectedWalletId) : availableWallets[0];

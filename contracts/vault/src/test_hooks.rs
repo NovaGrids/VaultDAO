@@ -2,7 +2,7 @@ use super::*;
 use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
+    testutils::{Address as _, Events},
     token::StellarAssetClient,
     Env, Vec,
 };

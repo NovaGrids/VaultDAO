@@ -53,22 +53,22 @@ const TokenBalanceCard: React.FC<TokenBalanceCardProps> = ({
           flex items-center gap-3 p-3 rounded-lg transition-all cursor-pointer
           ${isSelected
             ? 'bg-purple-600/20 border border-purple-500'
-            : 'bg-gray-800/50 border border-gray-700 hover:border-purple-500/50'
+            : 'bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 hover:border-purple-500/50'
           }
         `}
       >
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-lg">
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-lg">
           {icon}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-white">{token.symbol}</span>
-            <span className="text-xs text-gray-400 truncate">{token.name}</span>
+            <span className="font-semibold text-gray-900 dark:text-white">{token.symbol}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{token.name}</span>
           </div>
           {isLoading ? (
             <Loader2 size={14} className="animate-spin text-gray-400 mt-1" />
           ) : (
-            <span className="text-sm text-gray-300">
+            <span className="text-sm text-gray-600 dark:text-gray-300">
               {formatTokenBalance(balance, token.decimals)} {token.symbol}
             </span>
           )}
@@ -88,7 +88,7 @@ const TokenBalanceCard: React.FC<TokenBalanceCardProps> = ({
         relative overflow-hidden rounded-xl border p-4 sm:p-5 transition-all cursor-pointer
         ${isSelected
           ? 'bg-purple-600/10 border-purple-500 shadow-lg shadow-purple-500/10'
-          : 'bg-gray-800/50 border-gray-700 hover:border-purple-500/50 hover:shadow-lg'
+          : 'bg-white dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 hover:border-purple-500/50 hover:shadow-lg'
         }
         active:scale-[0.98]
       `}
@@ -101,7 +101,7 @@ const TokenBalanceCard: React.FC<TokenBalanceCardProps> = ({
           {/* Token Icon */}
           <div className={`
             flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center text-xl sm:text-2xl
-            ${isSelected ? 'bg-purple-600/30' : 'bg-gray-700'}
+            ${isSelected ? 'bg-purple-600/30 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'}
           `}>
             {icon}
           </div>
@@ -109,22 +109,22 @@ const TokenBalanceCard: React.FC<TokenBalanceCardProps> = ({
           {/* Token Info */}
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="font-bold text-white text-base sm:text-lg">{token.symbol}</h3>
+              <h3 className="font-bold text-gray-900 dark:text-white text-base sm:text-lg">{token.symbol}</h3>
               {token.isNative && (
                 <span className="px-2 py-0.5 text-xs rounded-full bg-purple-500/20 text-purple-300">
                   Native
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-gray-400 truncate max-w-[120px] sm:max-w-[180px]">
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 truncate max-w-[120px] sm:max-w-[180px]">
               {token.name}
             </p>
           </div>
         </div>
 
         {/* Wallet Icon */}
-        <div className="flex-shrink-0 p-2 rounded-lg bg-gray-700/50">
-          <Wallet size={16} className="text-gray-400" />
+        <div className="flex-shrink-0 p-2 rounded-lg bg-gray-100 dark:bg-gray-700/50">
+          <Wallet size={16} className="text-gray-500 dark:text-gray-400" />
         </div>
       </div>
 
@@ -138,16 +138,16 @@ const TokenBalanceCard: React.FC<TokenBalanceCardProps> = ({
         ) : (
           <>
             <div className="flex items-baseline gap-2">
-              <span className="text-xl sm:text-2xl font-bold text-white">
+              <span className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
                 {formatTokenBalance(balance, token.decimals)}
               </span>
-              <span className="text-sm text-gray-400">{token.symbol}</span>
+              <span className="text-sm text-gray-500 dark:text-gray-400">{token.symbol}</span>
             </div>
 
             {/* USD Value */}
             {showUsdValue && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-400">
+                <span className="text-sm text-gray-500 dark:text-gray-400">
                   {formatUsdValue(usdValue)}
                 </span>
                 {change24h !== undefined && (

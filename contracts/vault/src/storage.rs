@@ -259,6 +259,7 @@ pub fn set_approval_ledger(env: &Env, proposal_id: u64, voter: &Address, ledger:
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_approval_ledger(env: &Env, proposal_id: u64, voter: &Address) -> Option<u64> {
     let key = DataKey::ApprovalLedger(proposal_id, voter.clone());
     env.storage().persistent().get(&key)
@@ -690,6 +691,7 @@ pub fn remove_from_blacklist(env: &Env, addr: &Address) {
         .remove(&DataKey::Blacklist(addr.clone()));
 }
 
+#[allow(dead_code)]
 pub fn validate_recipient_list(env: &Env, recipient: &Address) -> Result<(), VaultError> {
     let mode = get_list_mode(env);
     match mode {
@@ -876,6 +878,7 @@ pub fn add_comment_to_proposal(env: &Env, proposal_id: u64, comment_id: u64) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
+#[allow(dead_code)]
 pub fn is_in_priority_queue(env: &Env, priority: u32, proposal_id: u64) -> bool {
     get_priority_queue(env, priority).contains(proposal_id)
 }
@@ -884,6 +887,7 @@ pub fn is_in_priority_queue(env: &Env, priority: u32, proposal_id: u64) -> bool 
 // Execution Snapshot Management
 // ============================================================================
 
+#[allow(dead_code)]
 pub fn set_execution_snapshot(env: &Env, proposal_id: u64, snapshot: &ExecutionSnapshot) {
     let key = DataKey::ExecutionSnapshot(proposal_id);
     env.storage().temporary().set(&key, snapshot);
@@ -892,12 +896,14 @@ pub fn set_execution_snapshot(env: &Env, proposal_id: u64, snapshot: &ExecutionS
         .extend_ttl(&key, DAY_IN_LEDGERS, DAY_IN_LEDGERS);
 }
 
+#[allow(dead_code)]
 pub fn get_execution_snapshot(env: &Env, proposal_id: u64) -> Option<ExecutionSnapshot> {
     env.storage()
         .temporary()
         .get(&DataKey::ExecutionSnapshot(proposal_id))
 }
 
+#[allow(dead_code)]
 pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
     env.storage()
         .temporary()
@@ -1110,12 +1116,14 @@ pub fn set_swap_proposal(env: &Env, proposal_id: u64, swap: &SwapProposal) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_swap_proposal(env: &Env, proposal_id: u64) -> Option<SwapProposal> {
     env.storage()
         .persistent()
         .get(&FeatureKey::SwapProposal(proposal_id))
 }
 
+#[allow(dead_code)]
 pub fn set_swap_result(env: &Env, proposal_id: u64, result: &SwapResult) {
     let key = FeatureKey::SwapResult(proposal_id);
     env.storage().persistent().set(&key, result);
@@ -1464,6 +1472,7 @@ pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment)
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_streaming_payment(
     env: &Env,
     id: u64,
@@ -1818,8 +1827,10 @@ pub fn add_user_volume(env: &Env, user: &Address, token: &Address, amount: i128)
 // Delegation (compatibility helpers)
 // ============================================================================
 
+#[allow(dead_code)]
 pub fn get_delegation(_env: &Env, _delegator: &Address) -> Option<crate::types::Delegation> {
     None
 }
 
+#[allow(dead_code)]
 pub fn set_delegation(_env: &Env, _delegation: &crate::types::Delegation) {}
