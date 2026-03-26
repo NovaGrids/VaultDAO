@@ -907,6 +907,8 @@ Get proposal IDs filtered by priority (read-only).
 
 ## Integration Notes
 
+> For a full gap analysis between the contract API and the frontend hook, see [INTEGRATION_CHECKLIST.md](./INTEGRATION_CHECKLIST.md).
+
 ### SDK Wrapper Status
 
 The TypeScript SDK (`sdk/src/contract.ts`) wraps a subset of these contract functions. Not all contract methods are exposed through the SDK yet. For direct contract calls, use Soroban SDK directly.
