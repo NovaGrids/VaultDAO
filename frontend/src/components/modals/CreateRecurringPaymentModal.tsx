@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useForm, Controller } from 'react-hook-form';
 import { Clock, AlertCircle } from 'lucide-react';
 
 export interface CreateRecurringPaymentFormData {
@@ -12,10 +13,9 @@ export interface CreateRecurringPaymentFormData {
 interface CreateRecurringPaymentModalProps {
   isOpen: boolean;
   loading: boolean;
-  formData: CreateRecurringPaymentFormData;
+  initialData?: Partial<CreateRecurringPaymentFormData>;
   onClose: () => void;
-  onSubmit: (event: React.FormEvent) => void;
-  onFieldChange: (field: keyof CreateRecurringPaymentFormData, value: string | number) => void;
+  onSubmit: (data: CreateRecurringPaymentFormData) => void;
 }
 
 // Interval presets in seconds
@@ -36,21 +36,56 @@ const CUSTOM_INTERVAL_UNITS = [
 const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = ({
   isOpen,
   loading,
-  formData,
+  initialData,
   onClose,
   onSubmit,
-  onFieldChange,
 }) => {
   const [useCustomInterval, setUseCustomInterval] = useState(false);
   const [customIntervalValue, setCustomIntervalValue] = useState('1');
   const [customIntervalUnit, setCustomIntervalUnit] = useState(86400); // Default to days
-  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    reset,
+    formState: { errors },
+  } = useForm<CreateRecurringPaymentFormData>({
+    defaultValues: {
+      recipient: '',
+      token: 'native',
+      amount: '',
+      memo: '',
+      interval: 86400,
+      ...initialData,
+    },
+  });
+
+  const interval = watch('interval');
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      reset({
+        recipient: '',
+        token: 'native',
+        amount: '',
+        memo: '',
+        interval: 86400,
+        ...initialData,
+      });
+      setUseCustomInterval(false);
+      setCustomIntervalValue('1');
+      setCustomIntervalUnit(86400);
+    }
+  }, [isOpen, reset, initialData]);
 
   // Calculate next payment preview
   const nextPaymentPreview = useMemo(() => {
-    if (!formData.interval || formData.interval <= 0) return null;
+    if (!interval || interval <= 0) return null;
     
-    const diffMs = formData.interval * 1000;
+    const diffMs = interval * 1000;
     
     const hours = Math.floor(diffMs / (1000 * 60 * 60));
     const days = Math.floor(hours / 24);
@@ -60,59 +95,21 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
       return `Next payment in ${days} day${days > 1 ? 's' : ''}${remainingHours > 0 ? ` ${remainingHours} hour${remainingHours > 1 ? 's' : ''}` : ''}`;
     }
     return `Next payment in ${hours} hour${hours > 1 ? 's' : ''}`;
-  }, [formData.interval]);
-
-  // Validate form
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    // Validate recipient address (Stellar public key format)
-    if (!formData.recipient.trim()) {
-      newErrors.recipient = 'Recipient address is required';
-    } else if (!/^G[A-Z2-7]{55}$/.test(formData.recipient.trim())) {
-      newErrors.recipient = 'Invalid Stellar public key format';
-    }
-
-    // Validate token address
-    if (!formData.token.trim()) {
-      newErrors.token = 'Token address is required';
-    } else if (!/^C[A-Z2-7]{55}$/.test(formData.token.trim()) && formData.token !== 'native') {
-      newErrors.token = 'Invalid token contract address';
-    }
-
-    // Validate amount
-    if (!formData.amount.trim()) {
-      newErrors.amount = 'Amount is required';
-    } else if (isNaN(Number(formData.amount)) || Number(formData.amount) <= 0) {
-      newErrors.amount = 'Amount must be a positive number';
-    }
-
-    // Validate interval
-    if (!formData.interval || formData.interval <= 0) {
-      newErrors.interval = 'Please select or set a valid interval';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (validateForm()) {
-      onSubmit(e);
-    }
-  };
+  }, [interval]);
 
   const handlePresetSelect = (value: number) => {
     setUseCustomInterval(false);
-    onFieldChange('interval', value);
+    setValue('interval', value, { shouldValidate: true });
   };
 
-  const handleCustomIntervalChange = () => {
-    const value = parseInt(customIntervalValue, 10);
-    if (value > 0) {
-      const totalSeconds = value * customIntervalUnit;
-      onFieldChange('interval', totalSeconds);
+  const handleCustomIntervalChange = (val?: string, unit?: number) => {
+    const v = val !== undefined ? parseInt(val, 10) : parseInt(customIntervalValue, 10);
+    const u = unit !== undefined ? unit : customIntervalUnit;
+    
+    if (!isNaN(v) && v > 0) {
+      setValue('interval', v * u, { shouldValidate: true });
+    } else {
+      setValue('interval', 0, { shouldValidate: true });
     }
   };
 
@@ -161,7 +158,7 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-6">
+        <form onSubmit={handleSubmit(onSubmit)} className="p-4 sm:p-6 space-y-6">
           {/* Recipient Address */}
           <div>
             <label htmlFor="recipient" className="block text-sm font-medium text-gray-300 mb-2">
@@ -170,8 +167,13 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             <input
               type="text"
               id="recipient"
-              value={formData.recipient}
-              onChange={(e) => onFieldChange('recipient', e.target.value)}
+              {...register('recipient', { 
+                required: 'Recipient address is required',
+                pattern: {
+                  value: /^G[A-Z2-7]{55}$/,
+                  message: 'Invalid Stellar public key format'
+                }
+              })}
               placeholder="GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
               className={`w-full px-4 py-3 bg-gray-800 border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors ${
                 errors.recipient ? 'border-red-500' : 'border-gray-600'
@@ -180,7 +182,7 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             {errors.recipient && (
               <p className="mt-1 text-sm text-red-400 flex items-center gap-1">
                 <AlertCircle className="w-4 h-4" />
-                {errors.recipient}
+                {errors.recipient.message}
               </p>
             )}
           </div>
@@ -193,8 +195,10 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             <input
               type="text"
               id="token"
-              value={formData.token}
-              onChange={(e) => onFieldChange('token', e.target.value)}
+              {...register('token', { 
+                required: 'Token address is required',
+                validate: (value) => value === 'native' || /^C[A-Z2-7]{55}$/.test(value) || 'Invalid token contract address'
+              })}
               placeholder="CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX or 'native' for XLM"
               className={`w-full px-4 py-3 bg-gray-800 border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors ${
                 errors.token ? 'border-red-500' : 'border-gray-600'
@@ -203,7 +207,7 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             {errors.token && (
               <p className="mt-1 text-sm text-red-400 flex items-center gap-1">
                 <AlertCircle className="w-4 h-4" />
-                {errors.token}
+                {errors.token.message}
               </p>
             )}
             <p className="mt-1 text-xs text-gray-500">Use 'native' for XLM or enter a token contract address</p>
@@ -217,8 +221,10 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             <input
               type="text"
               id="amount"
-              value={formData.amount}
-              onChange={(e) => onFieldChange('amount', e.target.value)}
+              {...register('amount', { 
+                required: 'Amount is required',
+                validate: (value) => (!isNaN(Number(value)) && Number(value) > 0) || 'Amount must be a positive number'
+              })}
               placeholder="1000000000 (100 XLM)"
               className={`w-full px-4 py-3 bg-gray-800 border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors ${
                 errors.amount ? 'border-red-500' : 'border-gray-600'
@@ -227,7 +233,7 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             {errors.amount && (
               <p className="mt-1 text-sm text-red-400 flex items-center gap-1">
                 <AlertCircle className="w-4 h-4" />
-                {errors.amount}
+                {errors.amount.message}
               </p>
             )}
             <p className="mt-1 text-xs text-gray-500">1 XLM = 10,000,000 stroops</p>
@@ -240,8 +246,7 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             </label>
             <textarea
               id="memo"
-              value={formData.memo}
-              onChange={(e) => onFieldChange('memo', e.target.value)}
+              {...register('memo')}
               placeholder="Payment description or reference"
               rows={2}
               className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors resize-none"
@@ -254,6 +259,15 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
               Payment Interval
             </label>
             
+            {/* Hidden field for interval validation */}
+            <input 
+              type="hidden" 
+              {...register('interval', { 
+                required: 'Interval is required',
+                min: { value: 1, message: 'Please select or set a valid interval' }
+              })} 
+            />
+
             {/* Preset Buttons */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
               {INTERVAL_PRESETS.map((preset) => (
@@ -262,7 +276,7 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
                   type="button"
                   onClick={() => handlePresetSelect(preset.value)}
                   className={`px-4 py-3 rounded-lg text-sm font-medium transition-all ${
-                    !useCustomInterval && formData.interval === preset.value
+                    !useCustomInterval && interval === preset.value
                       ? 'bg-purple-600 text-white border-purple-500'
                       : 'bg-gray-800 text-gray-300 border border-gray-600 hover:border-purple-500/50'
                   }`}
@@ -276,7 +290,10 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             <div className="flex items-center gap-2 mb-2">
               <button
                 type="button"
-                onClick={() => setUseCustomInterval(true)}
+                onClick={() => {
+                  setUseCustomInterval(true);
+                  handleCustomIntervalChange();
+                }}
                 className={`text-sm font-medium transition-colors ${
                   useCustomInterval ? 'text-purple-400' : 'text-gray-400 hover:text-gray-300'
                 }`}
@@ -293,17 +310,19 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
                   value={customIntervalValue}
                   onChange={(e) => {
                     setCustomIntervalValue(e.target.value);
-                    setTimeout(handleCustomIntervalChange, 0);
+                    handleCustomIntervalChange(e.target.value, customIntervalUnit);
                   }}
-                  onBlur={handleCustomIntervalChange}
                   placeholder="1"
-                  className="flex-1 px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className={`flex-1 px-4 py-3 bg-gray-800 border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                    errors.interval ? 'border-red-500' : 'border-gray-600'
+                  }`}
                 />
                 <select
                   value={customIntervalUnit}
                   onChange={(e) => {
-                    setCustomIntervalUnit(Number(e.target.value));
-                    setTimeout(handleCustomIntervalChange, 0);
+                    const unit = Number(e.target.value);
+                    setCustomIntervalUnit(unit);
+                    handleCustomIntervalChange(customIntervalValue, unit);
                   }}
                   className="px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                 >
@@ -319,20 +338,20 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
             {errors.interval && (
               <p className="mt-1 text-sm text-red-400 flex items-center gap-1">
                 <AlertCircle className="w-4 h-4" />
-                {errors.interval}
+                {errors.interval.message}
               </p>
             )}
           </div>
 
           {/* Preview */}
-          {formData.interval > 0 && (
+          {interval > 0 && (
             <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
               <div className="flex items-center gap-2 text-gray-300">
                 <Clock className="w-4 h-4 text-purple-400" />
                 <span className="text-sm font-medium">Schedule Preview</span>
               </div>
               <div className="mt-2 space-y-1">
-                <p className="text-white font-medium">{formatInterval(formData.interval)}</p>
+                <p className="text-white font-medium">{formatInterval(interval)}</p>
                 {nextPaymentPreview && (
                   <p className="text-sm text-gray-400">{nextPaymentPreview}</p>
                 )}

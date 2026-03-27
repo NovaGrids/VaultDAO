@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { ArrowDownUp, Download, RefreshCw } from 'lucide-react';
 import type { GetVaultEventsResult, VaultActivity, VaultEventType } from '../types/activity';
@@ -297,6 +297,7 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [groupBy, setGroupBy] = useState<TransactionGroupBy>('none');
   const [filters, setFilters] = useState<TransactionFilterState>(DEFAULT_TRANSACTION_FILTERS);
+  const isFetchingRef = useRef(false);
   const [mobilePullToRefresh, setMobilePullToRefresh] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<VaultActivity | null>(null);
   const deferredTransactions = useDeferredValue(transactions);
@@ -325,8 +326,9 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
   }, [getVaultEvents]);
 
   const loadMoreTransactions = useCallback(async () => {
-    if (loadingInitial || loadingMore || !hasMore || !cursor) return;
+    if (isFetchingRef.current || loadingInitial || !hasMore || !cursor) return;
 
+    isFetchingRef.current = true;
     setLoadingMore(true);
 
     try {
@@ -340,9 +342,10 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
       setError('Failed to load more transactions.');
       setHasMore(false);
     } finally {
+      isFetchingRef.current = false;
       setLoadingMore(false);
     }
-  }, [cursor, getVaultEvents, hasMore, loadingInitial, loadingMore]);
+  }, [cursor, getVaultEvents, hasMore, loadingInitial]);
 
   useEffect(() => {
     void loadInitialTransactions();

@@ -92,12 +92,12 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ activity, ledgerExplorerUrl
 
             {/* Content */}
             <div className="flex-1 min-w-0 pb-8">
-                <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 md:p-5 hover:border-gray-600 transition-colors">
+                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:p-5 hover:border-gray-400 dark:hover:border-gray-600 transition-colors">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <div className="min-w-0">
-                            <p className="font-medium text-white">{config.label}</p>
-                            <p className="text-sm text-gray-400 mt-0.5">{description}</p>
-                            <p className="text-xs text-gray-500 mt-1">{formatRelativeTime(activity.timestamp)}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{config.label}</p>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">{description}</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">{formatRelativeTime(activity.timestamp)}</p>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
                             <a
@@ -112,28 +112,28 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ activity, ledgerExplorerUrl
                             <button
                                 type="button"
                                 onClick={() => setExpanded((e) => !e)}
-                                className="text-gray-400 hover:text-white p-1 rounded"
+                                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-white p-1 rounded"
                                 aria-expanded={expanded}
                             >
                                 {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                             </button>
                         </div>
                     </div>
-
+ 
                     {expanded && (
-                        <div className="mt-4 pt-4 border-t border-gray-700 space-y-2 text-sm">
-                            <p className="text-gray-500">
-                                <span className="text-gray-400">Time:</span> {formatDateTime(activity.timestamp)}
+                        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2 text-sm">
+                            <p className="text-gray-600 dark:text-gray-500">
+                                <span className="text-gray-500 dark:text-gray-400">Time:</span> {formatDateTime(activity.timestamp)}
                             </p>
                             {activity.actor && (
-                                <p className="text-gray-500 break-all">
-                                    <span className="text-gray-400">Actor:</span> {activity.actor}
+                                <p className="text-gray-600 dark:text-gray-500 break-all">
+                                    <span className="text-gray-500 dark:text-gray-400">Actor:</span> {activity.actor}
                                 </p>
                             )}
                             {Object.entries(activity.details).map(([key, value]) =>
                                 key === 'parseError' || value == null ? null : (
-                                    <p key={key} className="text-gray-500 break-all">
-                                        <span className="text-gray-400">{key}:</span> {String(value)}
+                                    <p key={key} className="text-gray-600 dark:text-gray-500 break-all">
+                                        <span className="text-gray-500 dark:text-gray-400">{key}:</span> {String(value)}
                                     </p>
                                 )
                             )}

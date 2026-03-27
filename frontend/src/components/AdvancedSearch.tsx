@@ -7,12 +7,17 @@ import {
   getSearchSuggestions,
   saveSearch,
   exportSearchResultsToCsv,
+  filtersToSearchParams,
+  searchParamsToFilters,
+  filterValuesToRecord,
+  recordToFilterValues,
 } from '../utils/search';
 import SearchFilters, {
   type FilterFieldConfig,
   type FilterValue,
 } from './SearchFilters';
 import SavedSearches from './SavedSearches';
+import { useSearchParams } from 'react-router-dom';
 
 export interface AdvancedSearchProps<T extends Record<string, unknown>> {
   /** Current query (controlled) */
@@ -37,8 +42,10 @@ export interface AdvancedSearchProps<T extends Record<string, unknown>> {
   showSavedSearches?: boolean;
   /** Show export button */
   showExport?: boolean;
-  /** Enable voice search (default true; often only works on mobile over HTTPS) */
+  /** Enable voice search (default true) */
   voiceSearchEnabled?: boolean;
+  /** Optional key for URL persistence. If provided, query and filters sync to URL. */
+  persistenceKey?: string;
   className?: string;
 }
 
@@ -55,6 +62,7 @@ function AdvancedSearch<T extends Record<string, unknown>>({
   showSavedSearches = true,
   showExport = true,
   voiceSearchEnabled = true,
+  persistenceKey,
   className = '',
 }: AdvancedSearchProps<T>) {
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -62,6 +70,65 @@ function AdvancedSearch<T extends Record<string, unknown>>({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Sync from URL on mount
+  useEffect(() => {
+    if (!persistenceKey) return;
+    
+    const q = searchParams.get(`${persistenceKey}.q`);
+    if (q != null && q !== value) {
+      onChange(q);
+    }
+    
+    // Extract filters from params
+    const record: Record<string, any> = {};
+    searchParams.forEach((val: string, key: string) => {
+      if (key.startsWith(`${persistenceKey}.f.`)) {
+        const subKey = key.slice(`${persistenceKey}.f.`.length);
+        if (record[subKey]) {
+          if (Array.isArray(record[subKey])) record[subKey].push(val);
+          else record[subKey] = [record[subKey], val];
+        } else {
+          record[subKey] = val;
+        }
+      }
+    });
+    
+    const nextFilters = recordToFilterValues(record, filterFields);
+    if (nextFilters.length > 0 && JSON.stringify(nextFilters) !== JSON.stringify(filterValues)) {
+      onFilterChange(nextFilters);
+    }
+  }, [persistenceKey]);
+
+  // Sync to URL when state changes
+  useEffect(() => {
+    if (!persistenceKey) return;
+    
+    const nextParams = new URLSearchParams(searchParams);
+    
+    // Set query
+    if (value) nextParams.set(`${persistenceKey}.q`, value);
+    else nextParams.delete(`${persistenceKey}.q`);
+    
+    // Set filters
+    // Remove old filters for this key
+    const keysToRemove: string[] = [];
+    nextParams.forEach((_, key) => {
+      if (key.startsWith(`${persistenceKey}.f.`)) keysToRemove.push(key);
+    });
+    keysToRemove.forEach(k => nextParams.delete(k));
+    
+    const filterRecord = filterValuesToRecord(filterValues);
+    const filterParams = filtersToSearchParams(filterRecord);
+    filterParams.forEach((val, key) => {
+      nextParams.append(`${persistenceKey}.f.${key}`, val);
+    });
+    
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [value, filterValues, persistenceKey, setSearchParams]);
 
   const history = getSearchHistory();
   const saved = getSavedSearches();
@@ -257,7 +324,7 @@ function AdvancedSearch<T extends Record<string, unknown>>({
           />
           {showSavedSearches && (
             <SavedSearches
-              onSelect={(query, filters) => {
+              onSelect={(query: string, filters: Record<string, any>) => {
                 onChange(query);
                 handleSubmit(query);
                 if (Object.keys(filters).length && filterFields.length) {

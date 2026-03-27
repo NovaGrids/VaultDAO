@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useWallet } from '../../hooks/useWallet';
 import ExportModal, { type ExportDatasets } from '../../components/modals/ExportModal';
 import { saveExportHistoryItem } from '../../utils/exportHistory';
@@ -20,7 +21,7 @@ type ActivityTab = 'activity' | 'audit';
 
 const Activity: React.FC = () => {
   const { address } = useWallet();
-  const { subscribe, updatePresence } = useRealtime();
+  const { subscribe, updatePresence, connectionStatus } = useRealtime();
   const [loadedTransactions, setLoadedTransactions] = useState<VaultActivity[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
   const [activeTab, setActiveTab] = useState<ActivityTab>('activity');
@@ -73,6 +74,17 @@ const Activity: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {connectionStatus === 'connecting' && (
+        <div className="flex items-center gap-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 px-4 py-2 text-sm text-yellow-400">
+          <Loader2 size={14} className="animate-spin" />
+          Reconnecting to realtime updates…
+        </div>
+      )}
+      {connectionStatus === 'error' && (
+        <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2 text-sm text-red-400">
+          Realtime updates unavailable. Data may be stale.
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-3xl font-bold">Activity & Audit</h2>
         {activeTab === 'activity' && (

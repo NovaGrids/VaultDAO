@@ -7,6 +7,11 @@ use soroban_sdk::contracterror;
 #[repr(u32)]
 pub enum VaultError {
     AlreadyInitialized = 1,
+    // Compact new errors - short names to fix #[contracterror] LengthExceedsMax
+    MetadataKeyInvalid = 270,
+    TagInvalid = 271,
+    AttachmentCIDInvalid = 272,
+    ProposalImmutable = 273,
     NotInitialized = 2,
     NoSigners = 3,
     ThresholdTooLow = 4,
@@ -47,14 +52,92 @@ pub enum VaultError {
     ConditionsNotMet = 140,
     IntervalTooShort = 150,
     DexError = 160,
-    DexOperationFailed = 161,
-    BridgeError = 165,
     RetryError = 168,
-    XVaultNotEnabled = 200,
     TemplateNotFound = 210,
     TemplateInactive = 211,
     TemplateValidationFailed = 212,
     FundingRoundError = 220,
+    /// Attachment hash is too short or too long to be a valid CID
+    AttachmentHashInvalid = 230,
+    /// Proposal has reached the maximum number of attachments
+    TooManyAttachments = 231,
+    /// Proposal has reached the maximum number of tags
+    TooManyTags = 232,
+    /// Metadata value is empty or exceeds the maximum allowed length
+    MetadataValueInvalid = 233,
+    /// Tag already exists on the proposal
+    DuplicateTag = 234,
+    /// Tag was not found on the proposal
+    TagNotFound = 235,
+    /// Attachment CID already exists on the proposal
+    DuplicateAttachment = 236,
+    /// Attachment index is out of range
+    AttachmentIndexOutOfRange = 237,
+
+    /// Recurring payment is not active
+    RecurringPaymentNotActive = 238,
+    /// Attempt to execute recurring payment before scheduled time
+    RecurringPaymentTooEarly = 239,
+    /// Recurring payment was already executed in this interval
+    RecurringAlreadyExecuted = 240,
+
+    /// Hook contract execution failed
+    HookExecutionFailed = 241,
+    /// Hook not found in registered list
+    HookNotRegistered = 242,
+    /// Caller not authorized to register hooks
+    HookUnauthorized = 243,
+
+    /// Guardian threshold not met for recovery
+    GuardianThresholdNotMet = 244,
+    /// Recovery still in timelock period
+    RecoveryTimelockActive = 245,
+    /// Recovery proposal already executed
+    RecoveryAlreadyExecuted = 246,
+
+    /// Funding milestone not verified
+    MilestoneNotVerified = 247,
+    /// Funding round inactive or expired
+    FundingRoundInactive = 248,
+
+    /// Escrow milestone not yet eligible for completion
+    EscrowMilestoneNotEligible = 249,
+    /// Escrow currently in dispute
+    EscrowDisputed = 250,
+    /// Caller not authorized as escrow arbitrator
+    ArbitratorUnauthorized = 251,
+
+    /// Permission explicitly denied
+    PermissionDenied = 252,
+
+    MetadataKeyInvalid = 270,
+    TagInvalid = 271,
+    AttachmentCIDInvalid = 272,
+    ProposalImmutable = 273,
+
+    SwapFailed = 274,
+    /// Insufficient stake amount provided
+    StakeInsufficient = 254,
+    /// Token lock period has expired
+    LockExpired = 255,
+    /// Batch transaction validation failed
+    BatchValidationFailed = 256,
+    /// Oracle price data is stale (exceeds max staleness)
+    OracleStale = 257,
+    /// Recovery guardian list is empty
+    NoRecoveryGuardians = 258,
+    /// Proposed recovery threshold exceeds new signer count
+    RecoveryThresholdInvalid = 259,
+    /// Escrow duration too short
+    EscrowDurationTooShort = 260,
+    /// Funding round contribution limit exceeded
+    ContributionLimitExceeded = 261,
+    /// Hook callback returned invalid response
+    HookInvalidResponse = 262,
+    /// Recurring payment interval mismatch
+    IntervalMismatch = 263,
+    /// Proposal template override exceeds limits
+    TemplateOverrideInvalid = 264,
 }
 
 // Compatibility markers for CI source checks:

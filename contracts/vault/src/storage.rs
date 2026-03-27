@@ -26,8 +26,8 @@ use crate::types::{
     DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure, FundingRound,
     FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
     PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
-    RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, SwapProposal, SwapResult,
-    TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig, VotingStrategy,
+    RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, Subscription, SwapProposal,
+    SwapResult, TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig, VotingStrategy,
 };
 
 /// Core storage key definitions (kept minimal to avoid size limits)
@@ -199,6 +199,10 @@ pub enum FeatureKey {
     Permissions(Address),
     /// Delegated permissions (delegatee, delegator, permission as u32) -> DelegatedPermission
     DelegatedPermission(Address, Address, u32),
+    /// Subscription by ID -> Subscription
+    Subscription(u64),
+    /// Next subscription ID counter -> u64
+    NextSubscriptionId,
     // Stream payment storage (nested with StreamKey)
     // Stream(StreamKey), // Feature incomplete
 }
@@ -259,6 +263,7 @@ pub fn set_approval_ledger(env: &Env, proposal_id: u64, voter: &Address, ledger:
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_approval_ledger(env: &Env, proposal_id: u64, voter: &Address) -> Option<u64> {
     let key = DataKey::ApprovalLedger(proposal_id, voter.clone());
     env.storage().persistent().get(&key)
@@ -690,6 +695,26 @@ pub fn remove_from_blacklist(env: &Env, addr: &Address) {
         .remove(&DataKey::Blacklist(addr.clone()));
 }
 
+#[allow(dead_code)]
+pub fn validate_recipient_list(env: &Env, recipient: &Address) -> Result<(), VaultError> {
+    let mode = get_list_mode(env);
+    match mode {
+        ListMode::Disabled => Ok(()),
+        ListMode::Whitelist => {
+            if !is_whitelisted(env, recipient) {
+                return Err(VaultError::RecipientNotWhitelisted);
+            }
+            Ok(())
+        }
+        ListMode::Blacklist => {
+            if is_blacklisted(env, recipient) {
+                return Err(VaultError::RecipientBlacklisted);
+            }
+            Ok(())
+        }
+    }
+}
+
 // ============================================================================
 // Velocity Checking (Sliding Window)
 // ============================================================================
@@ -857,6 +882,7 @@ pub fn add_comment_to_proposal(env: &Env, proposal_id: u64, comment_id: u64) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
+#[allow(dead_code)]
 pub fn is_in_priority_queue(env: &Env, priority: u32, proposal_id: u64) -> bool {
     get_priority_queue(env, priority).contains(proposal_id)
 }
@@ -865,6 +891,7 @@ pub fn is_in_priority_queue(env: &Env, priority: u32, proposal_id: u64) -> bool 
 // Execution Snapshot Management
 // ============================================================================
 
+#[allow(dead_code)]
 pub fn set_execution_snapshot(env: &Env, proposal_id: u64, snapshot: &ExecutionSnapshot) {
     let key = DataKey::ExecutionSnapshot(proposal_id);
     env.storage().temporary().set(&key, snapshot);
@@ -873,12 +900,14 @@ pub fn set_execution_snapshot(env: &Env, proposal_id: u64, snapshot: &ExecutionS
         .extend_ttl(&key, DAY_IN_LEDGERS, DAY_IN_LEDGERS);
 }
 
+#[allow(dead_code)]
 pub fn get_execution_snapshot(env: &Env, proposal_id: u64) -> Option<ExecutionSnapshot> {
     env.storage()
         .temporary()
         .get(&DataKey::ExecutionSnapshot(proposal_id))
 }
 
+#[allow(dead_code)]
 pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
     env.storage()
         .temporary()
@@ -1091,12 +1120,14 @@ pub fn set_swap_proposal(env: &Env, proposal_id: u64, swap: &SwapProposal) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_swap_proposal(env: &Env, proposal_id: u64) -> Option<SwapProposal> {
     env.storage()
         .persistent()
         .get(&FeatureKey::SwapProposal(proposal_id))
 }
 
+#[allow(dead_code)]
 pub fn set_swap_result(env: &Env, proposal_id: u64, result: &SwapResult) {
     let key = FeatureKey::SwapResult(proposal_id);
     env.storage().persistent().set(&key, result);
@@ -1445,6 +1476,7 @@ pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment)
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
+#[allow(dead_code)]
 pub fn get_streaming_payment(
     env: &Env,
     id: u64,
@@ -1799,8 +1831,130 @@ pub fn add_user_volume(env: &Env, user: &Address, token: &Address, amount: i128)
 // Delegation (compatibility helpers)
 // ============================================================================
 
+#[allow(dead_code)]
 pub fn get_delegation(_env: &Env, _delegator: &Address) -> Option<crate::types::Delegation> {
     None
 }
 
+#[allow(dead_code)]
 pub fn set_delegation(_env: &Env, _delegation: &crate::types::Delegation) {}
+
+// ============================================================================
+// Cross-Vault
+// ============================================================================
+
+pub fn set_cross_vault_config(env: &Env, config: &crate::types::CrossVaultConfig) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::CrossVaultConfig, config);
+}
+
+pub fn get_cross_vault_config(env: &Env) -> Option<crate::types::CrossVaultConfig> {
+    env.storage().instance().get(&FeatureKey::CrossVaultConfig)
+}
+
+pub fn set_cross_vault_proposal(
+    env: &Env,
+    proposal_id: u64,
+    cv: &crate::types::CrossVaultProposal,
+) {
+    let key = FeatureKey::CrossVaultProposal(proposal_id);
+    env.storage().persistent().set(&key, cv);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_cross_vault_proposal(
+    env: &Env,
+    proposal_id: u64,
+) -> Option<crate::types::CrossVaultProposal> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::CrossVaultProposal(proposal_id))
+}
+
+// ============================================================================
+// Dispute Resolution
+// ============================================================================
+
+fn get_next_dispute_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NextDisputeId)
+        .unwrap_or(1)
+}
+
+pub fn increment_dispute_id(env: &Env) -> u64 {
+    let id = get_next_dispute_id(env);
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NextDisputeId, &(id + 1));
+    id
+}
+
+pub fn set_dispute(env: &Env, dispute: &crate::types::Dispute) {
+    let key = FeatureKey::Dispute(dispute.id);
+    env.storage().persistent().set(&key, dispute);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_dispute(env: &Env, id: u64) -> Result<crate::types::Dispute, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::Dispute(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn get_proposal_disputes(env: &Env, proposal_id: u64) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposalDisputes(proposal_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
+    let key = FeatureKey::ProposalDisputes(proposal_id);
+    let mut ids = get_proposal_disputes(env, proposal_id);
+    ids.push_back(dispute_id);
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Subscriptions
+// ============================================================================
+
+fn get_next_subscription_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NextSubscriptionId)
+        .unwrap_or(1)
+}
+
+pub fn increment_subscription_id(env: &Env) -> u64 {
+    let id = get_next_subscription_id(env);
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NextSubscriptionId, &(id + 1));
+    id
+}
+
+pub fn set_subscription(env: &Env, sub: &Subscription) {
+    let key = FeatureKey::Subscription(sub.id);
+    env.storage().persistent().set(&key, sub);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::Subscription(id))
+        .ok_or(VaultError::ProposalNotFound)
+}

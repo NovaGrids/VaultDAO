@@ -323,3 +323,29 @@ WebSocket is supported in all modern browsers:
 - [WebSocket Protocol RFC 6455](https://tools.ietf.org/html/rfc6455)
 - [React Context API](https://react.dev/reference/react/useContext)
 - [TypeScript Documentation](https://www.typescriptlang.org/docs/)
+
+## Local Collaboration Server
+
+For local collaborative editing development, a lightweight WebSocket server is included at `frontend/collab-server.js`.
+
+### Starting the server
+
+```bash
+cd frontend
+npm run collab-server
+```
+
+### Environment variables
+
+| Variable      | Default     | Description                  |
+| ------------- | ----------- | ---------------------------- |
+| `COLLAB_PORT` | `1234`      | Port the server listens on   |
+| `COLLAB_HOST` | `localhost` | Host/interface to bind to    |
+
+Example with custom port:
+
+```bash
+COLLAB_PORT=4000 npm run collab-server
+```
+
+The server uses only `ws` and `yjs` — both already present in the frontend package — so no additional installs are required.

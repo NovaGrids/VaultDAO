@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Shield, UserPlus, Search, Users } from 'lucide-react';
 import { useVaultContract } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';
+import { useActionReadiness } from '../hooks/useActionReadiness';
 import ConfirmationModal from './modals/ConfirmationModal';
+import ReadinessWarning from './ReadinessWarning';
 
 interface RoleAssignment {
   address: string;
@@ -24,6 +26,7 @@ const ROLE_PERMISSIONS = {
 const RoleManagement: React.FC = () => {
   const { getAllRoles, setRole, getUserRole, loading } = useVaultContract();
   const { notify } = useToast();
+  const { checkReady } = useActionReadiness();
   const [currentUserRole, setCurrentUserRole] = useState<number>(0);
   const [roleAssignments, setRoleAssignments] = useState<RoleAssignment[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -105,6 +108,12 @@ const RoleManagement: React.FC = () => {
   };
 
   const executeRoleChange = async () => {
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('config_updated', message ?? 'Not ready', 'error');
+      setConfirmModal({ isOpen: false, type: 'assign' });
+      return;
+    }
     try {
       const { type, address } = confirmModal;
 
@@ -155,6 +164,7 @@ const RoleManagement: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <ReadinessWarning />
       {/* Role Descriptions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {Object.entries(ROLES).map(([roleId, role]) => (
