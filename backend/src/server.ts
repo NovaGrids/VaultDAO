@@ -18,6 +18,11 @@ import {
   ProposalActivityAggregator,
 } from "./modules/proposals/index.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
+import {
+  DuePaymentsJob,
+  CursorCleanupJob,
+} from "./modules/jobs/index.js";
+import type { NotificationQueue } from "./modules/notifications/notification.types.js";
 import { createLogger } from "./shared/logging/logger.js";
 import type { Server } from "node:http";
 
@@ -35,7 +40,10 @@ export interface BackendServer {
   readonly runtime: BackendRuntime;
 }
 
-export function startServer(env: BackendEnv = loadEnv()): BackendServer {
+export function startServer(
+  env: BackendEnv = loadEnv(),
+  notificationQueue?: NotificationQueue,
+): BackendServer {
   const jobManager = new JobManager();
 
   // Initialize proposal activity components
@@ -76,6 +84,17 @@ export function startServer(env: BackendEnv = loadEnv()): BackendServer {
     stop: () => recurringIndexerService.stop(),
     isRunning: () => recurringIndexerService.getStatus().isIndexing,
   });
+
+  // Register new recurring jobs
+  if (notificationQueue) {
+    jobManager.registerJob(
+      new DuePaymentsJob(env, recurringIndexerService, notificationQueue)
+    );
+  }
+
+  jobManager.registerJob(
+    new CursorCleanupJob(env, proposalActivityAggregator)
+  );
 
   const runtime: BackendRuntime = {
     startedAt: new Date().toISOString(),

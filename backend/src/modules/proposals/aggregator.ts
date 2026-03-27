@@ -99,6 +99,37 @@ export class ProposalActivityAggregator {
   }
 
   /**
+   * Prunes activity records older than the specified retention date.
+   * Useful for background cleanup jobs.
+   */
+  public pruneRecords(olderThan: Date): number {
+    let prunedCount = 0;
+    const retentionTimestamp = olderThan.toISOString();
+
+    for (const [proposalId, records] of this.proposalCache.entries()) {
+      const filtered = records.filter((r) => r.timestamp >= retentionTimestamp);
+      const diff = records.length - filtered.length;
+      
+      if (diff > 0) {
+        prunedCount += diff;
+        if (filtered.length === 0) {
+          this.proposalCache.delete(proposalId);
+          this.proposalLatestActivity.delete(proposalId);
+        } else {
+          this.proposalCache.set(proposalId, filtered);
+          // Re-calculate latest if it was pruned (unlikely but safe)
+          const latest = filtered.reduce((prev, current) => 
+            (current.timestamp > prev.timestamp) ? current : prev
+          );
+          this.proposalLatestActivity.set(proposalId, latest);
+        }
+      }
+    }
+
+    return prunedCount;
+  }
+
+  /**
    * Adds multiple activity records to the aggregator.
    */
   public addRecords(records: ProposalActivityRecord[]): void {
