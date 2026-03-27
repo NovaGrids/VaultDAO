@@ -64,7 +64,7 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   });
   app.use(rateLimiter);
 
-  app.use(express.json());
+  app.use(express.json({ limit: env.requestBodyLimit }));
   app.use(createHealthRouter(env, runtime));
   app.use(createSnapshotRouter(runtime.snapshotService));
   app.use(

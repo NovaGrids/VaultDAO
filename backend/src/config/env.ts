@@ -9,7 +9,11 @@ export interface BackendEnv {
   readonly websocketUrl: string;
   readonly eventPollingIntervalMs: number;
   readonly eventPollingEnabled: boolean;
+
+  readonly requestBodyLimit: string;
+
   readonly corsOrigin: string[];
+
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -134,7 +138,11 @@ export function loadEnv(): BackendEnv {
   const websocketUrl = readString("VITE_WS_URL", "ws://localhost:8080");
   const eventPollingIntervalMs = readPort("EVENT_POLLING_INTERVAL_MS", 10000, issues);
   const eventPollingEnabled = readString("EVENT_POLLING_ENABLED", "true") === "true";
+
+  const requestBodyLimit = readString("REQUEST_BODY_LIMIT", "10kb");
+
   const corsOrigin = readCommaSeparatedString("CORS_ORIGIN", nodeEnv === "production" ? [] : ["*"]);
+
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -166,6 +174,9 @@ export function loadEnv(): BackendEnv {
     websocketUrl,
     eventPollingIntervalMs,
     eventPollingEnabled,
+    requestBodyLimit,
+
     corsOrigin,
+
   };
 }
