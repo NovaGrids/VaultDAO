@@ -57,17 +57,17 @@ export function startServer(env: BackendEnv = loadEnv()): BackendServer {
   const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
 
   jobManager.registerJob({
+    name: "proposal-consumer",
+    start: () => proposalActivityConsumer.start(),
+    stop: () => proposalActivityConsumer.stop(),
+    isRunning: () => proposalActivityConsumer.getIsRunning(),
+  });
+
+  jobManager.registerJob({
     name: "event-polling",
     start: () => eventPollingService.start(),
     stop: () => eventPollingService.stop(),
     isRunning: () => eventPollingService.getStatus().isPolling,
-  });
-
-  jobManager.registerJob({
-    name: "proposal-consumer",
-    start: () => proposalActivityConsumer.start(),
-    stop: () => proposalActivityConsumer.stop(),
-    isRunning: () => true, // TODO: Add isRunning method to consumer
   });
 
   jobManager.registerJob({

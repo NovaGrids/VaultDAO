@@ -96,6 +96,13 @@ export class ProposalActivityConsumer {
   }
 
   /**
+   * Returns whether the consumer is currently running.
+   */
+  public getIsRunning(): boolean {
+    return this.isRunning;
+  }
+
+  /**
    * Processes a single normalized event.
    */
   public async process(event: NormalizedEvent): Promise<void> {

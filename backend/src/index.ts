@@ -68,8 +68,16 @@ realtimeServer.start();
 jobRunner.start();
 
 // Start server and integrate with lifecycle management
-const { server } = startServer(env);
-const lifecycle = new LifecycleManager(server);
+const { server, runtime } = startServer(env);
+const lifecycle = new LifecycleManager(server, 10_000); // 10s shutdown timeout
+
+lifecycle.onShutdown({
+  name: "background-jobs",
+  handler: async () => {
+    await runtime.jobManager.stopAll();
+  },
+});
+
 lifecycle.onShutdown({
   name: "scheduled-job-runner",
   handler: () => {
