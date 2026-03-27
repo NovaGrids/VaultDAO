@@ -3485,8 +3485,15 @@ impl VaultDAO {
                 proposal.approvals.len() >= Self::calculate_threshold(config, &proposal.amount)
             }
             VotingStrategy::Weighted => {
+                // Sum the voting power of each approver; each baseline signer counts as 1.
+                // Threshold is met when total_power >= required_count.
                 let required = Self::calculate_threshold(config, &proposal.amount);
-                proposal.approvals.len() >= required
+                let total_power: i128 = proposal
+                    .approvals
+                    .iter()
+                    .map(|addr| storage::calculate_voting_power(env, &addr))
+                    .sum();
+                total_power >= required as i128
             }
             VotingStrategy::Quadratic => {
                 let required = Self::calculate_threshold(config, &proposal.amount);
@@ -5554,6 +5561,44 @@ impl VaultDAO {
         events::emit_tokens_unlocked(&env, &owner, amount);
 
         Ok(amount)
+    }
+
+    /// Unlock tokens before the lock period ends, applying a penalty.
+    ///
+    /// The penalty amount (defined in `TimeWeightedConfig.early_unlock_penalty_bps`) is
+    /// retained by the vault; the remainder is returned to the owner.
+    pub fn early_unlock(env: Env, owner: Address) -> Result<i128, VaultError> {
+        owner.require_auth();
+
+        let config = storage::get_time_weighted_config(&env);
+        if !config.enabled {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut lock = storage::get_token_lock(&env, &owner).ok_or(VaultError::ProposalNotFound)?;
+        if !lock.is_active {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        // If lock already expired, just do a normal unlock (no penalty).
+        if current_ledger >= lock.unlock_at {
+            return Self::unlock_tokens(env, owner);
+        }
+
+        let penalty = (lock.amount * config.early_unlock_penalty_bps as i128 + 9_999) / 10_000;
+        let returned = lock.amount - penalty;
+
+        token::transfer(&env, &lock.token, &owner, returned);
+
+        lock.is_active = false;
+        storage::set_token_lock(&env, &lock);
+        storage::set_total_locked(&env, &owner, 0);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_early_unlock(&env, &owner, returned, penalty);
+
+        Ok(returned)
     }
 
     /// Get token lock information for an address
