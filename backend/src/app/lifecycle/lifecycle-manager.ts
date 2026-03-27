@@ -1,5 +1,6 @@
 import type { Server } from "http";
 import { createLogger } from "../../shared/logging/logger.js";
+import type { InMemoryCacheAdapter } from "../../shared/cache/cache.adapter.js";
 
 export interface ShutdownHook {
   name: string;
@@ -25,7 +26,7 @@ export class LifecycleManager {
 
   constructor(
     private server: Server | null = null,
-    private shutdownTimeoutMs: number = 30_000
+    private shutdownTimeoutMs: number = 30_000,
   ) {}
 
   /**
@@ -35,6 +36,14 @@ export class LifecycleManager {
   public onShutdown(hook: ShutdownHook): void {
     this.hooks.push(hook);
     this.logger.info("shutdown hook registered", { hook: hook.name });
+  }
+
+  /**
+   * Register an InMemoryCacheAdapter for cleanup on shutdown.
+   * Calls destroy() during graceful shutdown to clear the cleanup interval.
+   */
+  public registerCache(name: string, cache: InMemoryCacheAdapter<any>): void {
+    this.onShutdown({ name: `cache:${name}`, handler: () => cache.destroy() });
   }
 
   /**
@@ -56,7 +65,9 @@ export class LifecycleManager {
       this.shutdown().catch((shutdownErr) => {
         this.logger.error("shutdown failed after exception", {
           error:
-            shutdownErr instanceof Error ? shutdownErr.message : String(shutdownErr),
+            shutdownErr instanceof Error
+              ? shutdownErr.message
+              : String(shutdownErr),
         });
         process.exit(1);
       });
@@ -74,6 +85,7 @@ export class LifecycleManager {
       return;
     }
 
+    const startTime = Date.now();
     this.shuttingDown = true;
     this.logger.info("starting graceful shutdown");
 
@@ -86,15 +98,19 @@ export class LifecycleManager {
     }, this.shutdownTimeoutMs);
 
     try {
-      // Close HTTP server first (stop accepting connections)
+      // 1. Execute shutdown hooks first (e.g. background services)
+      // Per requirement: Stop all background services before closing the HTTP server
+      await this.executeShutdownHooks();
+
+      // 2. Close HTTP server (stop accepting connections)
       if (this.server) {
         await this.closeServer();
       }
 
-      // Execute shutdown hooks in reverse order (LIFO)
-      await this.executeShutdownHooks();
-
-      this.logger.info("graceful shutdown completed");
+      const totalDuration = Date.now() - startTime;
+      this.logger.info("graceful shutdown completed", {
+        durationMs: totalDuration,
+      });
       process.exit(0);
     } catch (err) {
       this.logger.error("graceful shutdown failed", {
@@ -112,6 +128,7 @@ export class LifecycleManager {
    * Close the HTTP server.
    */
   private closeServer(): Promise<void> {
+    const stepStart = Date.now();
     return new Promise((resolve, reject) => {
       if (!this.server) {
         resolve();
@@ -124,10 +141,13 @@ export class LifecycleManager {
         if (err) {
           this.logger.error("HTTP server close error", {
             error: err.message,
+            durationMs: Date.now() - stepStart,
           });
           reject(err);
         } else {
-          this.logger.info("HTTP server closed");
+          this.logger.info("HTTP server closed", {
+            durationMs: Date.now() - stepStart,
+          });
           resolve();
         }
       });
@@ -148,14 +168,19 @@ export class LifecycleManager {
     const reversedHooks = [...this.hooks].reverse();
 
     for (const hook of reversedHooks) {
+      const stepStart = Date.now();
       try {
         this.logger.info("executing shutdown hook", { hook: hook.name });
         await Promise.resolve(hook.handler());
-        this.logger.info("shutdown hook completed", { hook: hook.name });
+        this.logger.info("shutdown hook completed", {
+          hook: hook.name,
+          durationMs: Date.now() - stepStart,
+        });
       } catch (err) {
         this.logger.error("shutdown hook failed", {
           hook: hook.name,
           error: err instanceof Error ? err.message : String(err),
+          durationMs: Date.now() - stepStart,
         });
       }
     }

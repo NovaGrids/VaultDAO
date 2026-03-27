@@ -1,6 +1,6 @@
 /**
  * Proposal Event Consumer
- * 
+ *
  * Consumes normalized events and transforms them into proposal activity records.
  * This is the main entry point for the proposal indexing service.
  */
@@ -26,7 +26,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 5000;
 
 /**
  * ProposalActivityConsumer
- * 
+ *
  * Main consumer class that processes normalized events and produces
  * proposal activity records. Supports batch processing for efficiency.
  */
@@ -34,18 +34,16 @@ export class ProposalActivityConsumer {
   private buffer: ProposalActivityRecord[] = [];
   private readonly batchSize: number;
   private readonly flushIntervalMs: number;
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
   private consumers: ProposalEventConsumer[] = [];
   private batchConsumers: ProposalBatchConsumer[] = [];
   private persistence: ProposalActivityPersistence | null = null;
   private isRunning: boolean = false;
 
-  constructor(options?: {
-    batchSize?: number;
-    flushIntervalMs?: number;
-  }) {
+  constructor(options?: { batchSize?: number; flushIntervalMs?: number }) {
     this.batchSize = options?.batchSize ?? DEFAULT_BATCH_SIZE;
-    this.flushIntervalMs = options?.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+    this.flushIntervalMs =
+      options?.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
   }
 
   /**
@@ -98,13 +96,23 @@ export class ProposalActivityConsumer {
   }
 
   /**
+   * Returns whether the consumer is currently running.
+   */
+  public getIsRunning(): boolean {
+    return this.isRunning;
+  }
+
+  /**
    * Processes a single normalized event.
    */
   public async process(event: NormalizedEvent): Promise<void> {
     const record = ProposalEventTransformer.transform(event);
 
     if (!record) {
-      console.debug("[proposal-consumer] skipped non-proposal event:", event.type);
+      console.debug(
+        "[proposal-consumer] skipped non-proposal event:",
+        event.type,
+      );
       return;
     }
 
@@ -138,7 +146,11 @@ export class ProposalActivityConsumer {
     }
 
     this.buffer.push(...records);
-    console.debug("[proposal-consumer] buffered", records.length, "records from batch");
+    console.debug(
+      "[proposal-consumer] buffered",
+      records.length,
+      "records from batch",
+    );
 
     // Notify batch consumers
     for (const consumer of this.batchConsumers) {
@@ -172,7 +184,11 @@ export class ProposalActivityConsumer {
     if (this.persistence) {
       try {
         await this.persistence.saveBatch(records);
-        console.debug("[proposal-consumer] persisted", records.length, "records");
+        console.debug(
+          "[proposal-consumer] persisted",
+          records.length,
+          "records",
+        );
       } catch (error) {
         console.error("[proposal-consumer] persistence error:", error);
         // Re-add records to buffer on persistence failure
@@ -186,7 +202,10 @@ export class ProposalActivityConsumer {
       try {
         await consumer(records);
       } catch (error) {
-        console.error("[proposal-consumer] batch consumer error during flush:", error);
+        console.error(
+          "[proposal-consumer] batch consumer error during flush:",
+          error,
+        );
       }
     }
   }
@@ -206,17 +225,15 @@ export class ProposalActivityConsumer {
   }
 
   /**
-   * Starts the periodic flush timer.
+   * Starts the periodic flush timer using setInterval for reliability.
+   * Flush errors are caught and logged without stopping the interval.
    */
   private startFlushTimer(): void {
-    this.flushTimer = setTimeout(async () => {
-      if (this.isRunning) {
-        try {
-          await this.flush();
-        } catch (error) {
-          console.error("[proposal-consumer] flush timer error:", error);
-        }
-        this.startFlushTimer(); // Reschedule
+    this.flushTimer = setInterval(async () => {
+      try {
+        await this.flush();
+      } catch (error) {
+        console.error("[proposal-consumer] flush timer error:", error);
       }
     }, this.flushIntervalMs);
   }
@@ -226,7 +243,7 @@ export class ProposalActivityConsumer {
    */
   private stopFlushTimer(): void {
     if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
+      clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
   }

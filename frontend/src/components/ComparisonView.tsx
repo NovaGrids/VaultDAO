@@ -23,7 +23,7 @@ const COMPARISON_FIELDS: ComparisonField[] = [
 
 const DiffText: React.FC<{ segments: DiffSegment[] }> = ({ segments }) => {
   return (
-    <span className="inline">
+    <span className="inline break-words whitespace-pre-wrap">
       {segments.map((segment, idx) => {
         if (segment.type === 'equal') {
           return <span key={idx}>{segment.value}</span>;
@@ -118,18 +118,18 @@ const ComparisonView: React.FC<ComparisonViewProps> = ({ proposals, onClose, onE
 
         {/* Comparison Table */}
         <div className="flex-1 overflow-auto p-4">
-          <div id="comparison-content" className="min-w-max">
+          <div id="comparison-content" className="w-full min-w-0">
             <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
-              <table className="w-full">
+              <table className="w-full table-fixed">
                 <thead>
                   <tr className="bg-gray-800">
-                    <th className="sticky left-0 z-10 bg-gray-800 px-4 py-3 text-left text-sm font-semibold text-gray-300 border-r border-gray-700 min-w-[150px]">
+                    <th className="sticky left-0 z-10 bg-gray-800 px-4 py-3 text-left text-sm font-semibold text-gray-300 border-r border-gray-700 w-[120px] sm:w-[150px]">
                       Field
                     </th>
                     {proposals.map((proposal, index) => (
                       <th
                         key={proposal.id}
-                        className="px-4 py-3 text-left text-sm font-semibold text-white border-r border-gray-700 last:border-r-0 min-w-[250px]"
+                        className="px-4 py-3 text-left text-sm font-semibold text-white border-r border-gray-700 last:border-r-0"
                       >
                         <div className="space-y-1">
                           <div>Proposal #{proposal.id}</div>
@@ -160,7 +160,7 @@ const ComparisonView: React.FC<ComparisonViewProps> = ({ proposals, onClose, onE
                       {values.map((value, colIndex) => (
                         <td
                           key={colIndex}
-                          className="px-4 py-3 text-sm text-gray-200 border-r border-gray-700 last:border-r-0"
+                          className="px-4 py-3 text-sm text-gray-200 border-r border-gray-700 last:border-r-0 break-words overflow-hidden max-w-0"
                         >
                           {field.type === 'address' ? (
                             <span className="font-mono text-xs" title={value}>

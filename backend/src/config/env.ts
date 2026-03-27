@@ -9,6 +9,8 @@ export interface BackendEnv {
   readonly websocketUrl: string;
   readonly eventPollingIntervalMs: number;
   readonly eventPollingEnabled: boolean;
+  readonly corsOrigin: string[];
+  readonly requestBodyLimit: string;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -28,6 +30,12 @@ function readValue(name: string): string | undefined {
 
 function readString(name: string, fallback: string): string {
   return readValue(name) ?? fallback;
+}
+
+function readCommaSeparatedString(name: string, fallback: string[]): string[] {
+  const value = readValue(name);
+  if (!value) return fallback;
+  return value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
 function readPort(name: string, fallback: number, issues: string[]): number {
@@ -127,6 +135,8 @@ export function loadEnv(): BackendEnv {
   const websocketUrl = readString("VITE_WS_URL", "ws://localhost:8080");
   const eventPollingIntervalMs = readPort("EVENT_POLLING_INTERVAL_MS", 10000, issues);
   const eventPollingEnabled = readString("EVENT_POLLING_ENABLED", "true") === "true";
+  const corsOrigin = readCommaSeparatedString("CORS_ORIGIN", nodeEnv === "production" ? [] : ["*"]);
+  const requestBodyLimit = readString("REQUEST_BODY_LIMIT", "10kb");
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -141,6 +151,10 @@ export function loadEnv(): BackendEnv {
   validateUrl("VITE_WS_URL", websocketUrl, ["ws:", "wss:"], issues);
   validateContractId(contractId, nodeEnv, issues);
 
+  if (nodeEnv === "production" && corsOrigin.length === 0) {
+    issues.push("CORS_ORIGIN is required in production environment.");
+  }
+
   throwIfInvalid(issues);
 
   return {
@@ -154,5 +168,7 @@ export function loadEnv(): BackendEnv {
     websocketUrl,
     eventPollingIntervalMs,
     eventPollingEnabled,
+    corsOrigin,
+    requestBodyLimit,
   };
 }

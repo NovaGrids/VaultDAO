@@ -7,6 +7,7 @@
 
 import { EventNormalizer } from "../normalizers/index.js";
 import { FileCursorAdapter } from "../cursor/file-cursor.adapter.js";
+import { SorobanRpcClient } from "../../../shared/rpc/soroban-rpc.client.js";
 import type {
   ReplayOptions,
   EventProcessingResult,
@@ -27,6 +28,7 @@ import type { BackendEnv } from "../../../config/env.js";
  */
 export class EventReplayService {
   private readonly cursorAdapter: FileCursorAdapter;
+  private readonly rpc: SorobanRpcClient;
   private startTime: number = 0;
   private stats: ReplayStats;
 
@@ -35,6 +37,9 @@ export class EventReplayService {
     private readonly options: ReplayOptions,
   ) {
     this.cursorAdapter = new FileCursorAdapter(options.outputDir);
+    this.rpc = new SorobanRpcClient({
+      url: options.rpcUrl ?? env.sorobanRpcUrl,
+    });
     this.stats = this.initStats();
   }
 
@@ -179,58 +184,36 @@ export class EventReplayService {
   }
 
   /**
-   * Fetches a batch of events from the RPC.
-   * This is a placeholder implementation that should be replaced with actual RPC calls.
+   * Fetches a batch of events from the Soroban RPC.
    */
   private async fetchEventBatch(startLedger: number, endLedger: number): Promise<EventBatch> {
-    // In a real implementation, this would call the Soroban RPC:
-    // const response = await fetch(`${this.options.rpcUrl ?? this.env.sorobanRpcUrl}`, {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({
-    //     jsonrpc: '2.0',
-    //     id: 1,
-    //     method: 'getEvents',
-    //     params: {
-    //       startLedger,
-    //       endLedger,
-    //       filters: [{
-    //         type: 'contract',
-    //         contractIds: [this.options.contractId ?? this.env.contractId],
-    //       }],
-    //     },
-    //   }),
-    // });
+    const contractId = this.options.contractId ?? this.env.contractId;
 
-    // Mock implementation for demonstration
-    const mockEvents: ContractEvent[] = [];
-    
+    const events = await this.rpc.getContractEvents({
+      startLedger,
+      filters: [{ type: "contract", contractIds: [contractId] }],
+      pagination: { limit: this.options.batchSize },
+    });
+
+    // Filter to the requested ledger window (RPC returns from startLedger onwards)
+    const inRange = events.filter((e) => e.ledger <= endLedger);
+
     return {
-      events: mockEvents,
+      events: inRange,
       startLedger,
       endLedger,
       latestLedger: endLedger,
-      hasMore: false,
+      hasMore: events.length > inRange.length,
     };
   }
 
   /**
-   * Gets the latest ledger number from RPC.
+   * Gets the latest ledger number from the RPC.
    */
   private async getLatestLedger(): Promise<number> {
-    // In a real implementation, this would call:
-    // const response = await fetch(`${this.options.rpcUrl ?? this.env.sorobanRpcUrl}`, {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({
-    //     jsonrpc: '2.0',
-    //     id: 1,
-    //     method: 'getLatestLedger',
-    //   }),
-    // });
-
-    // Mock implementation - return current ledger estimate
-    return 1000;
+    // getLedgerEntries with an empty key list returns latestLedger in the response
+    const result = await this.rpc.getContractData({ keys: [] });
+    return result.latestLedger;
   }
 
   /**

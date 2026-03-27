@@ -1,6 +1,6 @@
 /**
  * Snapshot Service Tests
- * 
+ *
  * Tests for snapshot aggregation and state reconstruction.
  */
 
@@ -11,7 +11,13 @@ import { MemorySnapshotAdapter } from "./adapters/memory.adapter.js";
 import type { NormalizedEvent } from "../events/types.js";
 import { EventType } from "../events/types.js";
 import { Role } from "./types.js";
-import type { RoleAssignedData, SignerAddedData } from "./types.js";
+import type {
+  RoleAssignedData,
+  SignerAddedData,
+  SnapshotStorageAdapter,
+  SignerSnapshot,
+  RoleSnapshot,
+} from "./types.js";
 
 const CONTRACT_ID = "CDUMMYCONTRACT123456789";
 const ADMIN_ADDRESS = "GADMIN123456789";
@@ -507,4 +513,397 @@ test("SnapshotService - query methods - filter by role", async () => {
   });
   assert.equal(roles.length, 1);
   assert.equal(roles[0].address, TREASURER_ADDRESS);
+});
+
+/**
+ * Mock adapter that throws errors for testing error handling.
+ */
+class FailingSnapshotAdapter implements SnapshotStorageAdapter {
+  private getSnapshotFails: boolean;
+  private saveSnapshotFails: boolean;
+  private callCount: number = 0;
+
+  constructor(
+    getSnapshotFails: boolean = false,
+    saveSnapshotFails: boolean = false,
+  ) {
+    this.getSnapshotFails = getSnapshotFails;
+    this.saveSnapshotFails = saveSnapshotFails;
+  }
+
+  async getSnapshot(): Promise<null> {
+    this.callCount++;
+    if (this.getSnapshotFails) {
+      throw new Error("getSnapshot adapter failure");
+    }
+    return null;
+  }
+
+  async saveSnapshot(): Promise<void> {
+    this.callCount++;
+    if (this.saveSnapshotFails) {
+      throw new Error("saveSnapshot adapter failure");
+    }
+  }
+
+  async clearSnapshot(): Promise<void> {
+    throw new Error("clearSnapshot not implemented");
+  }
+
+  async getSigners(): Promise<SignerSnapshot[]> {
+    return [];
+  }
+
+  async getRoles(): Promise<RoleSnapshot[]> {
+    return [];
+  }
+
+  async getSigner(): Promise<null> {
+    return null;
+  }
+
+  async getRole(): Promise<null> {
+    return null;
+  }
+
+  async getStats(): Promise<null> {
+    return null;
+  }
+}
+
+test("SnapshotService - processEvent - error handling on getSnapshot failure", async () => {
+  const adapter = new FailingSnapshotAdapter(true, false);
+  const service = new SnapshotService(adapter);
+
+  const event: NormalizedEvent<SignerAddedData> = {
+    type: EventType.INITIALIZED,
+    data: {
+      address: ADMIN_ADDRESS,
+      role: Role.ADMIN,
+      ledger: 100,
+      timestamp: "2026-03-25T12:00:00Z",
+    },
+    metadata: {
+      id: "event-1",
+      contractId: CONTRACT_ID,
+      ledger: 100,
+      ledgerClosedAt: "2026-03-25T12:00:00Z",
+    },
+  };
+
+  const result = await service.processEvent(event);
+
+  assert.equal(result.success, false);
+  assert.equal(result.signersUpdated, 0);
+  assert.equal(result.rolesUpdated, 0);
+  assert.equal(result.eventsProcessed, 0);
+  assert.equal(result.lastProcessedLedger, 100);
+  assert.ok(result.error);
+  assert.match(result.error, /getSnapshot adapter failure/);
+});
+
+test("SnapshotService - processEvent - error handling on saveSnapshot failure", async () => {
+  const adapter = new FailingSnapshotAdapter(false, true);
+  const service = new SnapshotService(adapter);
+
+  const event: NormalizedEvent<SignerAddedData> = {
+    type: EventType.INITIALIZED,
+    data: {
+      address: ADMIN_ADDRESS,
+      role: Role.ADMIN,
+      ledger: 100,
+      timestamp: "2026-03-25T12:00:00Z",
+    },
+    metadata: {
+      id: "event-1",
+      contractId: CONTRACT_ID,
+      ledger: 100,
+      ledgerClosedAt: "2026-03-25T12:00:00Z",
+    },
+  };
+
+  const result = await service.processEvent(event);
+
+  assert.equal(result.success, false);
+  assert.equal(result.signersUpdated, 0);
+  assert.equal(result.rolesUpdated, 0);
+  assert.equal(result.eventsProcessed, 0);
+  assert.ok(result.error);
+  assert.match(result.error, /saveSnapshot adapter failure/);
+});
+
+test("SnapshotService - processEvents - error handling with multiple failures", async () => {
+  const adapter = new FailingSnapshotAdapter(false, true);
+  const service = new SnapshotService(adapter);
+
+  const events: NormalizedEvent[] = [
+    {
+      type: EventType.INITIALIZED,
+      data: {
+        address: ADMIN_ADDRESS,
+        role: Role.ADMIN,
+        ledger: 100,
+        timestamp: "2026-03-25T12:00:00Z",
+      },
+      metadata: {
+        id: "event-1",
+        contractId: CONTRACT_ID,
+        ledger: 100,
+        ledgerClosedAt: "2026-03-25T12:00:00Z",
+      },
+    },
+    {
+      type: EventType.ROLE_ASSIGNED,
+      data: {
+        address: TREASURER_ADDRESS,
+        role: Role.TREASURER,
+      },
+      metadata: {
+        id: "event-2",
+        contractId: CONTRACT_ID,
+        ledger: 200,
+        ledgerClosedAt: "2026-03-25T12:05:00Z",
+      },
+    },
+  ];
+
+  const result = await service.processEvents(events);
+
+  assert.equal(result.success, false);
+  assert.equal(result.signersUpdated, 0);
+  assert.equal(result.rolesUpdated, 0);
+  assert.equal(result.eventsProcessed, 0);
+  assert.ok(result.error);
+  // Should contain multiple error messages
+  assert.match(result.error, /saveSnapshot adapter failure/);
+});
+
+test("SnapshotService - rebuildSnapshot - error handling on adapter failure", async () => {
+  // Create a special adapter that only fails on clearSnapshot
+  class ClearFailingAdapter extends FailingSnapshotAdapter {
+    async clearSnapshot(): Promise<void> {
+      throw new Error("clearSnapshot adapter failure");
+    }
+  }
+
+  const adapter = new ClearFailingAdapter(false, false);
+  const service = new SnapshotService(adapter);
+
+  const events: NormalizedEvent[] = [
+    {
+      type: EventType.INITIALIZED,
+      data: {
+        address: ADMIN_ADDRESS,
+        role: Role.ADMIN,
+        ledger: 100,
+        timestamp: "2026-03-25T12:00:00Z",
+      },
+      metadata: {
+        id: "event-1",
+        contractId: CONTRACT_ID,
+        ledger: 100,
+        ledgerClosedAt: "2026-03-25T12:00:00Z",
+      },
+    },
+  ];
+
+  const result = await service.rebuildSnapshot(events, {
+    contractId: CONTRACT_ID,
+    clearExisting: true,
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.signersUpdated, 0);
+  assert.equal(result.rolesUpdated, 0);
+  assert.equal(result.eventsProcessed, 0);
+  assert.equal(result.lastProcessedLedger, 0);
+  assert.ok(result.error);
+  assert.match(result.error, /clearSnapshot adapter failure/);
+});
+
+test("SnapshotService - processEvent - non-snapshot event returns success with no updates", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  // Use an event type that SnapshotNormalizer won't recognize as a snapshot event
+  const event: NormalizedEvent = {
+    type: "UNKNOWN_EVENT" as EventType,
+    data: {},
+    metadata: {
+      id: "event-1",
+      contractId: CONTRACT_ID,
+      ledger: 100,
+      ledgerClosedAt: "2026-03-25T12:00:00Z",
+    },
+  };
+
+  const result = await service.processEvent(event);
+
+  assert.equal(result.success, true);
+  assert.equal(result.signersUpdated, 0);
+  assert.equal(result.rolesUpdated, 0);
+  assert.equal(result.eventsProcessed, 0);
+  assert.equal(result.lastProcessedLedger, 100);
+});
+
+test("SnapshotService - rebuildSnapshot - ledger filtering with start and end range", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  const events: NormalizedEvent[] = [
+    {
+      type: EventType.INITIALIZED,
+      data: {
+        address: ADMIN_ADDRESS,
+        role: Role.ADMIN,
+        ledger: 100,
+        timestamp: "2026-03-25T12:00:00Z",
+      },
+      metadata: {
+        id: "event-1",
+        contractId: CONTRACT_ID,
+        ledger: 50, // Before range
+        ledgerClosedAt: "2026-03-25T12:00:00Z",
+      },
+    },
+    {
+      type: EventType.ROLE_ASSIGNED,
+      data: {
+        address: TREASURER_ADDRESS,
+        role: Role.TREASURER,
+      },
+      metadata: {
+        id: "event-2",
+        contractId: CONTRACT_ID,
+        ledger: 150, // Within range
+        ledgerClosedAt: "2026-03-25T12:05:00Z",
+      },
+    },
+    {
+      type: EventType.ROLE_ASSIGNED,
+      data: {
+        address: MEMBER_ADDRESS,
+        role: Role.MEMBER,
+      },
+      metadata: {
+        id: "event-3",
+        contractId: CONTRACT_ID,
+        ledger: 250, // Within range
+        ledgerClosedAt: "2026-03-25T12:10:00Z",
+      },
+    },
+    {
+      type: EventType.ROLE_ASSIGNED,
+      data: {
+        address: "GADDITIONAL",
+        role: Role.MEMBER,
+      },
+      metadata: {
+        id: "event-4",
+        contractId: CONTRACT_ID,
+        ledger: 350, // After range
+        ledgerClosedAt: "2026-03-25T12:15:00Z",
+      },
+    },
+  ];
+
+  const result = await service.rebuildSnapshot(events, {
+    contractId: CONTRACT_ID,
+    startLedger: 100,
+    endLedger: 300,
+    clearExisting: true,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.eventsProcessed, 2); // Only events within range: 150, 250
+  assert.equal(result.lastProcessedLedger, 250);
+
+  const snapshot = await service.getSnapshot(CONTRACT_ID);
+  assert.equal(snapshot!.totalSigners, 2); // Only treasurer and member
+});
+
+test("SnapshotService - processEvent - updates last processed metadata", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  const event: NormalizedEvent<SignerAddedData> = {
+    type: EventType.INITIALIZED,
+    data: {
+      address: ADMIN_ADDRESS,
+      role: Role.ADMIN,
+      ledger: 100,
+      timestamp: "2026-03-25T12:00:00Z",
+    },
+    metadata: {
+      id: "event-id-123",
+      contractId: CONTRACT_ID,
+      ledger: 550,
+      ledgerClosedAt: "2026-03-25T12:00:00Z",
+    },
+  };
+
+  await service.processEvent(event);
+
+  const snapshot = await service.getSnapshot(CONTRACT_ID);
+  assert.notEqual(snapshot, null);
+  assert.equal(snapshot!.lastProcessedLedger, 550);
+  assert.equal(snapshot!.lastProcessedEventId, "event-id-123");
+  assert.ok(snapshot!.snapshotAt);
+});
+
+test("SnapshotService - rebuildSnapshot - clears existing snapshot when requested", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  // First, create an initial snapshot
+  const initialEvents: NormalizedEvent[] = [
+    {
+      type: EventType.INITIALIZED,
+      data: {
+        address: ADMIN_ADDRESS,
+        role: Role.ADMIN,
+        ledger: 100,
+        timestamp: "2026-03-25T12:00:00Z",
+      },
+      metadata: {
+        id: "event-1",
+        contractId: CONTRACT_ID,
+        ledger: 100,
+        ledgerClosedAt: "2026-03-25T12:00:00Z",
+      },
+    },
+  ];
+
+  await service.processEvents(initialEvents);
+  let snapshot = await service.getSnapshot(CONTRACT_ID);
+  assert.equal(snapshot!.totalSigners, 1);
+
+  // Now rebuild with different events and clearExisting = true
+  const rebuildEvents: NormalizedEvent[] = [
+    {
+      type: EventType.ROLE_ASSIGNED,
+      data: {
+        address: TREASURER_ADDRESS,
+        role: Role.TREASURER,
+      },
+      metadata: {
+        id: "event-2",
+        contractId: CONTRACT_ID,
+        ledger: 200,
+        ledgerClosedAt: "2026-03-25T12:05:00Z",
+      },
+    },
+  ];
+
+  await service.rebuildSnapshot(rebuildEvents, {
+    contractId: CONTRACT_ID,
+    clearExisting: true,
+  });
+
+  snapshot = await service.getSnapshot(CONTRACT_ID);
+  assert.equal(snapshot!.totalSigners, 1); // Only the treasurer from rebuild
+  assert.equal(snapshot!.signers.get(ADMIN_ADDRESS), undefined); // Admin should be cleared
+  const signer = await service.getSigner(CONTRACT_ID, TREASURER_ADDRESS);
+  assert.notEqual(signer, null);
+  assert.equal(signer!.role, Role.TREASURER);
 });

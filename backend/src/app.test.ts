@@ -13,6 +13,7 @@ const mockEnv = {
   websocketUrl: "ws://localhost:8080",
   eventPollingIntervalMs: 5000,
   eventPollingEnabled: false,
+  corsOrigin: ["*"],
 };
 
 const mockRuntime = {

@@ -84,7 +84,7 @@ export class InMemoryCacheAdapter<T> implements CacheAdapter<T> {
   private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor(
-    private cleanupIntervalMs: number = 5 * 60 * 1000 // 5 minutes
+    private cleanupIntervalMs: number = 5 * 60 * 1000, // 5 minutes
   ) {
     this.startCleanupInterval();
   }
@@ -179,8 +179,14 @@ export class InMemoryCacheAdapter<T> implements CacheAdapter<T> {
       }
 
       if (removed > 0) {
-        this.logger.info("cache cleanup", { removed, remaining: this.cache.size });
+        this.logger.info("cache cleanup", {
+          removed,
+          remaining: this.cache.size,
+        });
       }
     }, this.cleanupIntervalMs);
+
+    // Don't keep the process alive solely for cleanup
+    this.cleanupInterval.unref();
   }
 }

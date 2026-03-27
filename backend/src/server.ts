@@ -13,29 +13,55 @@ import {
   SnapshotService,
   MemorySnapshotAdapter,
 } from "./modules/snapshots/index.js";
+import {
+  ProposalActivityConsumer,
+  ProposalActivityAggregator,
+} from "./modules/proposals/index.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import { createLogger } from "./shared/logging/logger.js";
+import type { Server } from "node:http";
 
 export interface BackendRuntime {
   readonly startedAt: string;
   readonly eventPollingService: EventPollingService;
   readonly recurringIndexerService: RecurringIndexerService;
   readonly snapshotService: SnapshotService;
+  readonly proposalActivityAggregator: ProposalActivityAggregator;
   readonly jobManager: JobManager;
 }
 
-export function startServer(env: BackendEnv = loadEnv()) {
+export interface BackendServer {
+  readonly server: Server;
+  readonly runtime: BackendRuntime;
+}
+
+export function startServer(env: BackendEnv = loadEnv()): BackendServer {
   const jobManager = new JobManager();
+
+  // Initialize proposal activity components
+  const proposalActivityAggregator = new ProposalActivityAggregator();
+  const proposalActivityConsumer = new ProposalActivityConsumer();
+  proposalActivityConsumer.registerBatchConsumer((records) => {
+    proposalActivityAggregator.addRecords(records);
+  });
 
   const eventPollingService = new EventPollingService(
     env,
     new FileCursorAdapter(),
+    proposalActivityConsumer,
   );
   const recurringIndexerService = new RecurringIndexerService(
     env,
     new MemoryRecurringStorageAdapter(),
   );
   const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
+
+  jobManager.registerJob({
+    name: "proposal-consumer",
+    start: () => proposalActivityConsumer.start(),
+    stop: () => proposalActivityConsumer.stop(),
+    isRunning: () => proposalActivityConsumer.getIsRunning(),
+  });
 
   jobManager.registerJob({
     name: "event-polling",
@@ -56,6 +82,7 @@ export function startServer(env: BackendEnv = loadEnv()) {
     eventPollingService,
     recurringIndexerService,
     snapshotService,
+    proposalActivityAggregator,
     jobManager,
   };
 

@@ -135,7 +135,7 @@ const Proposals: React.FC = () => {
         setTokenBalances(balances.map((b: TokenBalance) => ({ ...b, isLoading: false })));
       } catch (error) {
         console.error('Failed to fetch token balances:', error);
-        // Set default tokens with zero balances
+        // Set default tokens with zero account balances
         setTokenBalances(DEFAULT_TOKENS.map(token => ({
           token,
           balance: '0',

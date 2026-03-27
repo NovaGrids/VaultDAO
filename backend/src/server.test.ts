@@ -17,12 +17,12 @@ const mockEnv = {
 
 test("Server Startup", async (t) => {
   await t.test("starts successfully with valid env", async () => {
-    const server = startServer(mockEnv as any);
+    const { server } = startServer(mockEnv as any);
 
     assert.ok(server, "Server should start");
     assert.ok(
       typeof server.close === "function",
-      "Server should be a valid HTTP server"
+      "Server should be a valid HTTP server",
     );
 
     // Clean up
@@ -32,10 +32,9 @@ test("Server Startup", async (t) => {
   });
 
   await t.test("returns BackendRuntime with required properties", async () => {
-    // Note: startServer actually returns the HTTP server, not the runtime
-    // But we can verify the server creation doesn't throw
+    // Note: startServer returns { server, runtime }
     assert.doesNotThrow(() => {
-      const server = startServer(mockEnv as any);
+      const { server } = startServer(mockEnv as any);
       server.close();
     });
   });

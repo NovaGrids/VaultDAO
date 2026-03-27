@@ -1002,3 +1002,72 @@ pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amoun
         (recipient.clone(), amount),
     );
 }
+
+pub fn emit_cross_vault_proposed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    action_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cv_proposed"), proposal_id),
+        (proposer.clone(), action_count),
+    );
+}
+
+pub fn emit_cross_vault_executed(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    success_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cv_executed"), proposal_id),
+        (executor.clone(), success_count),
+    );
+}
+
+pub fn emit_cross_vault_config_set(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "cv_config_set"),), admin.clone());
+}
+
+pub fn emit_permission_granted(env: &Env, admin: &Address, target: &Address, permission: u32) {
+    env.events().publish(
+        (Symbol::new(env, "permission_granted"),),
+        (admin.clone(), target.clone(), permission),
+    );
+}
+
+pub fn emit_permission_revoked(env: &Env, admin: &Address, target: &Address, permission: u32) {
+    env.events().publish(
+        (Symbol::new(env, "permission_revoked"),),
+        (admin.clone(), target.clone(), permission),
+    );
+}
+
+pub fn emit_permission_delegated(
+    env: &Env,
+    delegator: &Address,
+    delegatee: &Address,
+    permission: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "permission_delegated"),),
+        (delegator.clone(), delegatee.clone(), permission),
+    );
+}
+
+pub fn emit_dispute_raised(env: &Env, dispute_id: u64, proposal_id: u64, disputer: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_raised"), dispute_id),
+        (proposal_id, disputer.clone()),
+    );
+}
+
+pub fn emit_dispute_resolved(env: &Env, dispute_id: u64, admin: &Address, resolution: u32) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_resolved"), dispute_id),
+        (admin.clone(), resolution),
+    );
+}

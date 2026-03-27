@@ -25,6 +25,7 @@ fn setup_test_environment(env: &Env) -> (VaultDAOClient<'_>, Address, Address, A
         signers,
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,

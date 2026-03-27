@@ -1,5 +1,25 @@
 import React, { useState, useRef, useCallback, memo } from 'react';
-import { Edit3, Save, Download, Grid3x3, X, Package } from 'lucide-react';
+import { Edit3, Save, Download, Grid3x3, X, Package, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
+  UniqueIdentifier,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  arrayMove,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import WidgetLibrary from './WidgetLibrary';
 import WidgetSystem from './WidgetSystem';
 import LineChartWidget from './widgets/LineChartWidget';
@@ -22,54 +42,94 @@ interface WidgetItemProps {
   onDrillDown: (widget: string, data: unknown) => void;
 }
 
-const WidgetItem = memo(({ widget, editMode, onRemove, onDrillDown }: WidgetItemProps) => {
+function renderWidgetContent(widget: WidgetConfig, onDrillDown: (data: unknown) => void): React.ReactNode {
+  switch (widget.type) {
+    case 'line-chart':
+      return <LineChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case 'bar-chart':
+      return <BarChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case 'pie-chart':
+      return <PieChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case 'stat-card':
+      return <StatCardWidget title={widget.title} value="0" />;
+    case 'proposal-list':
+      return <ProposalListWidget title={widget.title} />;
+    case 'calendar':
+      return <CalendarWidget title={widget.title} />;
+    default:
+      return <div>Unknown widget</div>;
+  }
+}
+
+// Sortable wrapper used inside DndContext
+const SortableWidgetItem = memo(({ widget, editMode, onRemove, onDrillDown }: WidgetItemProps) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: widget.id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
   const handleDrillDown = useCallback(
     (data: unknown) => onDrillDown(widget.title, data),
     [widget.title, onDrillDown]
   );
 
-  let content: React.ReactNode;
-  switch (widget.type) {
-    case 'line-chart':
-      content = <LineChartWidget title={widget.title} onDrillDown={handleDrillDown} />;
-      break;
-    case 'bar-chart':
-      content = <BarChartWidget title={widget.title} onDrillDown={handleDrillDown} />;
-      break;
-    case 'pie-chart':
-      content = <PieChartWidget title={widget.title} onDrillDown={handleDrillDown} />;
-      break;
-    case 'stat-card':
-      content = <StatCardWidget title={widget.title} value="0" />;
-      break;
-    case 'proposal-list':
-      content = <ProposalListWidget title={widget.title} />;
-      break;
-    case 'calendar':
-      content = <CalendarWidget title={widget.title} />;
-      break;
-    default:
-      content = <div>Unknown widget</div>;
-  }
-
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 min-h-[300px]">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="bg-gray-800 rounded-lg border border-gray-700 p-3 min-h-[300px]"
+    >
       {editMode && (
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-gray-500">Widget</span>
+          {/* Drag handle — keyboard + pointer accessible */}
+          <button
+            ref={setActivatorNodeRef}
+            {...attributes}
+            {...listeners}
+            aria-label={`Drag handle for ${widget.title}. Use arrow keys to reorder.`}
+            className={[
+              'p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 cursor-grab active:cursor-grabbing',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800',
+            ].join(' ')}
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
           <button
             onClick={() => onRemove(widget.id)}
-            className="p-1 hover:bg-gray-700 rounded text-red-400"
+            aria-label={`Remove ${widget.title}`}
+            className="p-1 hover:bg-gray-700 rounded text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
       )}
-      {content}
+      {renderWidgetContent(widget, handleDrillDown)}
     </div>
   );
 });
-WidgetItem.displayName = 'WidgetItem';
+SortableWidgetItem.displayName = 'SortableWidgetItem';
+
+// Static (non-sortable) version used in DragOverlay
+const WidgetOverlay = memo(({ widget }: { widget: WidgetConfig }) => (
+  <div className="bg-gray-800 rounded-lg border border-purple-500 p-3 min-h-[300px] shadow-2xl opacity-90 cursor-grabbing">
+    <div className="flex items-center justify-between mb-2">
+      <GripVertical className="h-4 w-4 text-purple-400" />
+    </div>
+    {renderWidgetContent(widget, () => {})}
+  </div>
+));
+WidgetOverlay.displayName = 'WidgetOverlay';
 
 const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = [] }) => {
   const [editMode, setEditMode] = useState(false);
@@ -79,7 +139,42 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
   const [showWidgetSystem, setShowWidgetSystem] = useState(false);
   const [drillDownData, setDrillDownData] = useState<{ widget: string; data: unknown } | null>(null);
   const [exportingFormat, setExportingFormat] = useState<'png' | 'pdf' | null>(null);
+  const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
+  const [announcement, setAnnouncement] = useState('');
   const dashboardRef = useRef<HTMLDivElement>(null);
+
+  // Both pointer (mouse/touch) and keyboard sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragStart = useCallback(({ active }: DragStartEvent) => {
+    setActiveId(active.id);
+    const widget = widgets.find((w) => w.id === active.id);
+    if (widget) {
+      const pos = widgets.indexOf(widget) + 1;
+      setAnnouncement(`Picked up ${widget.title}, position ${pos} of ${widgets.length}.`);
+    }
+  }, [widgets]);
+
+  const handleDragEnd = useCallback(({ active, over }: DragEndEvent) => {
+    setActiveId(null);
+    if (!over || active.id === over.id) {
+      setAnnouncement('Drag cancelled.');
+      return;
+    }
+    setWidgets((prev) => {
+      const oldIndex = prev.findIndex((w) => w.id === active.id);
+      const newIndex = prev.findIndex((w) => w.id === over.id);
+      const reordered = arrayMove(prev, oldIndex, newIndex);
+      const widget = reordered[newIndex];
+      setAnnouncement(
+        `${widget.title} moved to position ${newIndex + 1} of ${reordered.length}.`
+      );
+      return reordered;
+    });
+  }, []);
 
   const handleDrillDown = useCallback((widget: string, data: unknown) => {
     setDrillDownData({ widget, data });
@@ -141,8 +236,20 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
     }
   }, [exportingFormat]);
 
+  const activeWidget = activeId ? widgets.find((w) => w.id === activeId) : null;
+
   return (
     <div className="space-y-4">
+      {/* Screen-reader live region for drag announcements */}
+      <div
+        role="status"
+        aria-live="assertive"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {announcement}
+      </div>
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-gray-800 rounded-lg border border-gray-700 p-3">
         <div className="flex items-center gap-2">
@@ -228,17 +335,50 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
 
       {/* Dashboard Grid */}
       <div ref={dashboardRef} className="bg-gray-900 rounded-lg border border-gray-700 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {widgets.map((widget) => (
-            <WidgetItem
-              key={widget.id}
-              widget={widget}
-              editMode={editMode}
-              onRemove={handleRemoveWidget}
-              onDrillDown={handleDrillDown}
-            />
-          ))}
-        </div>
+        {editMode ? (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={widgets.map((w) => w.id)} strategy={rectSortingStrategy}>
+              <div
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                role="list"
+                aria-label="Dashboard widgets — use drag handles to reorder"
+              >
+                {widgets.map((widget) => (
+                  <div key={widget.id} role="listitem">
+                    <SortableWidgetItem
+                      widget={widget}
+                      editMode={editMode}
+                      onRemove={handleRemoveWidget}
+                      onDrillDown={handleDrillDown}
+                    />
+                  </div>
+                ))}
+              </div>
+            </SortableContext>
+
+            {/* Floating drag preview */}
+            <DragOverlay>
+              {activeWidget ? <WidgetOverlay widget={activeWidget} /> : null}
+            </DragOverlay>
+          </DndContext>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {widgets.map((widget) => (
+              <SortableWidgetItem
+                key={widget.id}
+                widget={widget}
+                editMode={false}
+                onRemove={handleRemoveWidget}
+                onDrillDown={handleDrillDown}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Widget System Modal */}

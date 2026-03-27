@@ -4,6 +4,12 @@ export interface RateLimitConfig {
   windowMs: number; // Time window in milliseconds
   maxRequests: number; // Max requests per window
   skipSuccessfulRequests?: boolean; // Don't count successful responses
+  /**
+   * When true, trust the X-Forwarded-For header to identify the real client IP.
+   * Only enable this when the server sits behind a trusted reverse proxy.
+   * Defaults to false — uses socket.remoteAddress to prevent IP spoofing.
+   */
+  trustProxy?: boolean;
 }
 
 interface ClientState {
@@ -24,6 +30,7 @@ export class RateLimiter {
       windowMs: config.windowMs,
       maxRequests: config.maxRequests,
       skipSuccessfulRequests: config.skipSuccessfulRequests ?? false,
+      trustProxy: config.trustProxy ?? false,
     };
 
     // Cleanup expired entries periodically
@@ -31,15 +38,18 @@ export class RateLimiter {
   }
 
   /**
-   * Get the client identifier from request
-   * Uses IP address for client identification
+   * Get the client identifier from request.
+   * Uses socket.remoteAddress by default to prevent IP spoofing.
+   * Only reads X-Forwarded-For when trustProxy is explicitly enabled.
    */
   private getClientId(req: Request): string {
-    return (
-      (req.headers["x-forwarded-for"] as string)?.split(",")[0] ||
-      req.socket.remoteAddress ||
-      "unknown"
-    ).trim();
+    if (this.config.trustProxy) {
+      const forwarded = req.headers["x-forwarded-for"] as string | undefined;
+      if (forwarded) {
+        return forwarded.split(",")[0].trim();
+      }
+    }
+    return (req.socket.remoteAddress ?? "unknown").trim();
   }
 
   /**
@@ -130,7 +140,7 @@ export function createRateLimitMiddleware(config: RateLimitConfig) {
       const resetTime = new Date(limiter.getResetTime(req));
       res.set({
         "Retry-After": Math.ceil(
-          (limiter.getResetTime(req) - Date.now()) / 1000
+          (limiter.getResetTime(req) - Date.now()) / 1000,
         ).toString(),
         "X-RateLimit-Limit": limiter.getMaxRequests().toString(),
         "X-RateLimit-Remaining": "0",
