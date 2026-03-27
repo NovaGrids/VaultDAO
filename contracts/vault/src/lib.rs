@@ -2771,6 +2771,7 @@ impl VaultDAO {
     // ========================================================================
 
     /// Validate an attachment CID: must be within [MIN_ATTACHMENT_LEN, MAX_ATTACHMENT_LEN].
+    #[allow(clippy::ptr_arg)]
     fn validate_attachment_cid(attachment: &String) -> Result<(), VaultError> {
         let len = attachment.len();
         if !(MIN_ATTACHMENT_LEN..=MAX_ATTACHMENT_LEN).contains(&len) {
@@ -2780,6 +2781,7 @@ impl VaultDAO {
     }
 
     /// Validate a metadata value: must be non-empty and within MAX_METADATA_VALUE_LEN.
+    #[allow(clippy::ptr_arg)]
     fn validate_metadata_value(value: &String) -> Result<(), VaultError> {
         let len = value.len();
         if len == 0 || len > MAX_METADATA_VALUE_LEN {
