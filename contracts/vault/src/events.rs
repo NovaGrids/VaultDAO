@@ -1057,3 +1057,17 @@ pub fn emit_permission_delegated(
         (delegator.clone(), delegatee.clone(), permission),
     );
 }
+
+pub fn emit_dispute_raised(env: &Env, dispute_id: u64, proposal_id: u64, disputer: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_raised"), dispute_id),
+        (proposal_id, disputer.clone()),
+    );
+}
+
+pub fn emit_dispute_resolved(env: &Env, dispute_id: u64, admin: &Address, resolution: u32) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_resolved"), dispute_id),
+        (admin.clone(), resolution),
+    );
+}
