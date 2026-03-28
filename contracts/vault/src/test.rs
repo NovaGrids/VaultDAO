@@ -11032,6 +11032,54 @@ fn test_public_api_get_signers_not_initialized() {
 }
 
 // -----------------------------------------------------------------------------
+// remove_signer tests
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_remove_signer_below_threshold_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    // threshold = 2, signers = 2 → removing any signer leaves 1 < 2
+    client.initialize(&admin, &default_init_config(&env, signers, 2));
+
+    let res = client.try_remove_signer(&admin, &signer1);
+    assert_eq!(res, Err(Ok(VaultError::CannotRemoveSigner)));
+}
+
+#[test]
+fn test_remove_signer_above_threshold_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+    // threshold = 2, signers = 3 → removing one leaves 2 >= 2
+    client.initialize(&admin, &default_init_config(&env, signers, 2));
+
+    client.remove_signer(&admin, &signer2);
+    assert_eq!(client.get_signers().len(), 2);
+}
+
+// -----------------------------------------------------------------------------
 // Proposal Getter Tests
 // -----------------------------------------------------------------------------
 

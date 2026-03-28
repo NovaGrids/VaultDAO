@@ -2147,6 +2147,42 @@ impl VaultDAO {
         Ok(config.signers.contains(&addr))
     }
 
+    /// Remove a signer from the vault.
+    ///
+    /// Only Admin can call this. Rejects removal if it would leave fewer signers
+    /// than the current threshold, making the vault unable to reach quorum.
+    pub fn remove_signer(env: Env, admin: Address, signer: Address) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut config = storage::get_config(&env)?;
+
+        let mut found_idx: Option<u32> = None;
+        for i in 0..config.signers.len() {
+            if config.signers.get(i).unwrap() == signer {
+                found_idx = Some(i);
+                break;
+            }
+        }
+        found_idx.ok_or(VaultError::SignerNotFound)?;
+
+        // Removing this signer must leave at least `threshold` signers remaining.
+        if config.signers.len().saturating_sub(1) < config.threshold {
+            return Err(VaultError::CannotRemoveSigner);
+        }
+
+        config.signers.remove(found_idx.unwrap());
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
     /// Get currently configured voting strategy.
     pub fn get_voting_strategy(env: Env) -> VotingStrategy {
         storage::get_voting_strategy(&env)
