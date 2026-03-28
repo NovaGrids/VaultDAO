@@ -1,0 +1,8 @@
+﻿cargo.exe :     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
+At line:1 char:66
++ ... ts\vault" ; & "C:\Users\DELL USER\.cargo\bin\cargo.exe" build 2>&1 |  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Finished `d...get(s) in 0.67s:String) [], R 
+   emoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

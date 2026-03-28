@@ -54,7 +54,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
       const mode = await getListMode();
       setListMode(mode);
     } catch (error) {
-      console.error('Failed to load list mode:', error);
+      logger.error('Failed to load list mode', { error });
     }
   }, [getListMode]);
 
@@ -81,14 +81,14 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
         }
       }
     } catch (error) {
-      console.error('Failed to validate recipient:', error);
+      logger.error('Failed to validate recipient', { error });
     }
   }, [formData.recipient, listMode, isWhitelisted, isBlacklisted]);
 
   useEffect(() => {
     if (isOpen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      loadListMode().catch(console.error);
+      loadListMode().catch((error) => logger.error('loadListMode failed', { error }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, loadListMode]);
@@ -96,7 +96,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   useEffect(() => {
     if (formData.recipient && listMode !== 'Disabled') {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      validateRecipient().catch(console.error);
+      validateRecipient().catch((error) => logger.error('validateRecipient failed', { error }));
     } else {
       setRecipientError(null);
     }

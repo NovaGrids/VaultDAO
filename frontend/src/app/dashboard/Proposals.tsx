@@ -9,6 +9,7 @@ import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
 import ProposalComparison from '../../components/ProposalComparison';
 import { useToast } from '../../hooks/useToast';
+import { logger } from '@/lib/logger';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useProposals } from '../../hooks/useProposals';
 import { useWallet } from '../../hooks/useWallet';
@@ -104,7 +105,7 @@ const Proposals: React.FC = () => {
         const balances = await getTokenBalances();
         setTokenBalances(balances.map((b: TokenBalance) => ({ ...b, isLoading: false })));
       } catch (error) {
-        console.error('Failed to fetch token balances:', error);
+        logger.error('Failed to fetch token balances', { error });
         // Set default tokens with zero balances
         setTokenBalances(DEFAULT_TOKENS.map(token => ({
           token,

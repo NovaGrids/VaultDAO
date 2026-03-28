@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useToast } from './ToastContext';
+import { logger } from '../lib/logger';
 import { WalletContext } from './WalletContextProps';
 import { detectAvailableWallets, getAdapterById } from '../adapters';
 import type { WalletAdapter } from '../adapters';
@@ -64,7 +65,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           localStorage.removeItem(WALLET_CONNECTED_KEY);
         }
       } catch (e) {
-        console.error('Failed to update wallet state', e);
+        logger.error('Failed to update wallet state', { e });
       }
       return false;
     },
