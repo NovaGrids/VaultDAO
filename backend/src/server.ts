@@ -86,6 +86,7 @@ export function startServer(
     new FileCursorAdapter(),
     proposalActivityConsumer,
     wsServer,
+    snapshotService,
   );
   runtime.eventPollingService = eventPollingService;
 
