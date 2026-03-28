@@ -100,11 +100,10 @@ fn setup_vault_with_deadline_proposal(
 }
 
 // ---------------------------------------------------------------------------
-// Test 1 — approve_proposal after deadline returns VotingDeadlinePassed
+// Test 1 — approve_proposal after deadline rejects proposal and returns Ok(())
 //
-// Bug condition: current_ledger > voting_deadline AND voting_deadline > 0
-// Expected:      Err(VaultError::VotingDeadlinePassed)
-// On unfixed code: returns Ok(()) — TEST FAILS (proves bug)
+// Fix: current_ledger > voting_deadline AND voting_deadline > 0
+// Expected:      Ok(()) with proposal status set to Rejected
 // ---------------------------------------------------------------------------
 #[test]
 fn test_approve_after_deadline_returns_error() {
@@ -119,29 +118,25 @@ fn test_approve_after_deadline_returns_error() {
 
     let result = client.try_approve_proposal(&signer, &proposal_id);
 
-    // EXPECTED (correct behavior): Err(VotingDeadlinePassed)
-    // BUG behavior: Ok(()) — test fails here on unfixed code
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::VotingDeadlinePassed)),
-        "approve_proposal at ledger 1011 with voting_deadline=1010 must return VotingDeadlinePassed"
+    assert!(
+        result.is_ok(),
+        "approve_proposal at ledger 1011 with voting_deadline=1010 must return Ok(())"
     );
 
-    // Verify proposal.approvals was NOT mutated
+    // Verify proposal was marked Rejected
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(
-        proposal.approvals.len(),
-        0,
-        "approvals must remain empty when deadline has passed"
+        proposal.status,
+        ProposalStatus::Rejected,
+        "proposal must be Rejected when deadline has passed"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Test 2 — abstain_proposal after deadline returns VotingDeadlinePassed
+// Test 2 — abstain_proposal after deadline rejects proposal and returns Ok(())
 //
-// Bug condition: current_ledger > voting_deadline AND voting_deadline > 0
-// Expected:      Err(VaultError::VotingDeadlinePassed)
-// On unfixed code: returns Ok(()) — TEST FAILS (proves bug)
+// Fix: current_ledger > voting_deadline AND voting_deadline > 0
+// Expected:      Ok(()) with proposal status set to Rejected
 // ---------------------------------------------------------------------------
 #[test]
 fn test_abstain_after_deadline_returns_error() {
@@ -156,20 +151,17 @@ fn test_abstain_after_deadline_returns_error() {
 
     let result = client.try_abstain_proposal(&signer, &proposal_id);
 
-    // EXPECTED (correct behavior): Err(VotingDeadlinePassed)
-    // BUG behavior: Ok(()) — test fails here on unfixed code
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::VotingDeadlinePassed)),
-        "abstain_proposal at ledger 1200 with voting_deadline=1010 must return VotingDeadlinePassed"
+    assert!(
+        result.is_ok(),
+        "abstain_proposal at ledger 1200 with voting_deadline=1010 must return Ok(())"
     );
 
-    // Verify proposal.abstentions was NOT mutated
+    // Verify proposal was marked Rejected
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(
-        proposal.abstentions.len(),
-        0,
-        "abstentions must remain empty when deadline has passed"
+        proposal.status,
+        ProposalStatus::Rejected,
+        "proposal must be Rejected when deadline has passed"
     );
 }
 
@@ -201,9 +193,8 @@ fn test_approve_at_exact_deadline_succeeds() {
 // ---------------------------------------------------------------------------
 // Test 4 — One-past-deadline: current_ledger == voting_deadline + 1
 //
-// Bug condition: 1011 > 1010 AND 1010 > 0
-// Expected:      Err(VaultError::VotingDeadlinePassed)
-// On unfixed code: returns Ok(()) — TEST FAILS (proves bug)
+// Fix: 1011 > 1010 AND 1010 > 0
+// Expected:      Ok(()) with proposal status set to Rejected
 // ---------------------------------------------------------------------------
 #[test]
 fn test_approve_one_past_deadline_returns_error() {
@@ -218,19 +209,20 @@ fn test_approve_one_past_deadline_returns_error() {
 
     let result = client.try_approve_proposal(&signer, &proposal_id);
 
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::VotingDeadlinePassed)),
-        "approve_proposal at voting_deadline+1 must return VotingDeadlinePassed"
+    assert!(
+        result.is_ok(),
+        "approve_proposal at voting_deadline+1 must return Ok(())"
     );
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
 }
 
 // ---------------------------------------------------------------------------
 // Test 5 — One-past-deadline for abstain: current_ledger == voting_deadline + 1
 //
-// Bug condition: 1011 > 1010 AND 1010 > 0
-// Expected:      Err(VaultError::VotingDeadlinePassed)
-// On unfixed code: returns Ok(()) — TEST FAILS (proves bug)
+// Fix: 1011 > 1010 AND 1010 > 0
+// Expected:      Ok(()) with proposal status set to Rejected
 // ---------------------------------------------------------------------------
 #[test]
 fn test_abstain_one_past_deadline_returns_error() {
@@ -245,18 +237,13 @@ fn test_abstain_one_past_deadline_returns_error() {
 
     let result = client.try_abstain_proposal(&signer, &proposal_id);
 
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::VotingDeadlinePassed)),
-        "abstain_proposal at voting_deadline+1 must return VotingDeadlinePassed"
+    assert!(
+        result.is_ok(),
+        "abstain_proposal at voting_deadline+1 must return Ok(())"
     );
 
     let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(
-        proposal.abstentions.len(),
-        0,
-        "abstentions must remain empty when one past deadline"
-    );
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
 }
 
 // ===========================================================================

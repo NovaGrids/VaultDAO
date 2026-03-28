@@ -986,13 +986,10 @@ pub fn apply_reputation_decay(env: &Env, rep: &mut Reputation) {
     let current_ledger = env.ledger().sequence() as u64;
     // ~30 days in ledgers
     const DECAY_INTERVAL: u64 = 17_280 * 30;
-    if rep.last_decay_ledger == 0 {
-        rep.last_decay_ledger = current_ledger;
-        return;
-    }
     let elapsed = current_ledger.saturating_sub(rep.last_decay_ledger);
     let periods = elapsed / DECAY_INTERVAL;
     if periods == 0 {
+        rep.last_decay_ledger = current_ledger;
         return;
     }
     // Move score toward neutral (500) by 5% per period

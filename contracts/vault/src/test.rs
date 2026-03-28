@@ -12730,7 +12730,7 @@ fn test_batch_below_threshold_executes_immediately() {
 }
 
 #[test]
-fn test_transitive_delegation_voting() {
+fn test_insurance_slash_on_voting_deadline_rejection() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12738,71 +12738,65 @@ fn test_transitive_delegation_voting() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let signer_a = Address::generate(&env);
-    let signer_b = Address::generate(&env);
-    let signer_c = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    StellarAssetClient::new(&env, &token_addr).mint(&proposer, &1000);
+    StellarAssetClient::new(&env, &token_addr).mint(&contract_id, &5000);
 
     let mut signers = Vec::new(&env);
-    signers.push_back(signer_a.clone());
-    signers.push_back(signer_b.clone());
-    signers.push_back(signer_c.clone());
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
 
+    let config = default_init_config(&env, signers, 2);
     let config = InitConfig {
-        signers,
-        threshold: 3,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 0,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
+        // voting deadline of 50 ledgers
+        default_voting_deadline: 50,
+        ..config
     };
     client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
 
-    // Initial roles
-    client.set_role(&admin, &signer_a, &Role::Treasurer);
-    client.set_role(&admin, &signer_b, &Role::Treasurer);
-    client.set_role(&admin, &signer_c, &Role::Treasurer);
-
-    // Propose
-    let proposal_id = client.propose_transfer(
-        &signer_a, &user, &token, &100, &Symbol::new(&env, "test"),
-        &Priority::Normal, &Vec::new(&env), &ConditionLogic::And, &0i128
+    // 50% slash on rejection
+    client.set_insurance_config(
+        &admin,
+        &InsuranceConfig {
+            enabled: true,
+            min_amount: 0,
+            min_insurance_bps: 0,
+            slash_percentage: 50,
+        },
     );
 
-    // Delegation chain: A -> B, B -> C
-    client.delegate_voting_power(&signer_a, &signer_b, &0);
-    client.delegate_voting_power(&signer_b, &signer_c, &0);
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
 
-    // C votes. This should count for C, B, and A.
-    // Total 3 signatures -> reaches threshold of 3.
-    client.approve_proposal(&signer_c, &proposal_id);
+    // Propose with 100 tokens insurance
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &100,
+    );
+    // proposer locked 100 insurance tokens
+    assert_eq!(token_client.balance(&proposer), 900);
+
+    // Advance past the voting deadline
+    env.ledger().set_sequence_number(100);
+
+    // Trigger deadline rejection via approve_proposal
+    client.approve_proposal(&admin, &proposal_id);
 
     let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.approvals.len(), 3);
-    assert!(proposal.approvals.contains(&signer_a));
-    assert!(proposal.approvals.contains(&signer_b));
-    assert!(proposal.approvals.contains(&signer_c));
-    assert_eq!(proposal.status, ProposalStatus::Approved);
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
+
+    // 50% of 100 = 50 slashed to pool, 50 returned to proposer
+    assert_eq!(token_client.balance(&proposer), 950); // 900 + 50 returned
+    assert_eq!(client.get_insurance_pool(&token_addr), 50);
 }

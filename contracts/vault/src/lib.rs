@@ -364,8 +364,9 @@ impl VaultDAO {
 
         // 7. Check per-proposal spending limit with reputation boost
         // High reputation (800+) gets 2x limit, very high (900+) gets 3x
-        let rep = storage::get_reputation(&env, &proposer);
-        storage::apply_reputation_decay(&env, &mut rep.clone());
+        let mut rep = storage::get_reputation(&env, &proposer);
+        storage::apply_reputation_decay(&env, &mut rep);
+        storage::set_reputation(&env, &proposer, &rep);
         let adjusted_spending_limit = if rep.score >= 900 {
             config.spending_limit * 3
         } else if rep.score >= 800 {
@@ -860,8 +861,9 @@ impl VaultDAO {
             proposal.status = ProposalStatus::Rejected;
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_rejection(&env);
+            Self::slash_insurance_on_rejection(&env, &proposal);
             events::emit_proposal_deadline_rejected(&env, proposal_id, proposal.voting_deadline);
-            return Err(VaultError::VotingDeadlinePassed);
+            return Ok(());
         }
 
         // Add approval using effective voter
@@ -997,8 +999,9 @@ impl VaultDAO {
             proposal.status = ProposalStatus::Rejected;
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_rejection(&env);
+            Self::slash_insurance_on_rejection(&env, &proposal);
             events::emit_proposal_deadline_rejected(&env, proposal_id, proposal.voting_deadline);
-            return Err(VaultError::VotingDeadlinePassed);
+            return Ok(());
         }
 
         // Add abstention using effective voter
@@ -1381,25 +1384,7 @@ impl VaultDAO {
             Self::update_reputation_on_rejection(&env, &proposal.proposer);
 
             // ── Slash insurance ──────────────────────────────────────────────
-            let insurance_config = storage::get_insurance_config(&env);
-            if insurance_config.enabled && proposal.insurance_amount > 0 {
-                let slashed =
-                    proposal.insurance_amount * (insurance_config.slash_percentage as i128) / 100;
-                let kept = proposal.insurance_amount.saturating_sub(slashed);
-                if kept > 0 {
-                    token::transfer(&env, &proposal.token, &proposal.proposer, kept);
-                }
-                if slashed > 0 {
-                    storage::add_to_insurance_pool(&env, &proposal.token, slashed);
-                }
-                events::emit_insurance_slashed(
-                    &env,
-                    proposal_id,
-                    &proposal.proposer,
-                    slashed,
-                    kept,
-                );
-            }
+            Self::slash_insurance_on_rejection(&env, &proposal);
 
             // ── Slash stake ──────────────────────────────────────────────────
             let staking_config = storage::get_staking_config(&env);
@@ -3213,6 +3198,7 @@ impl VaultDAO {
     pub fn get_reputation(env: Env, addr: Address) -> Reputation {
         let mut rep = storage::get_reputation(&env, &addr);
         storage::apply_reputation_decay(&env, &mut rep);
+        storage::set_reputation(&env, &addr, &rep);
         rep
     }
 
@@ -3425,6 +3411,38 @@ impl VaultDAO {
         }
 
         Ok(false)
+    }
+
+    /// Slash (or fully return) insurance on proposal rejection.
+    /// Slashed portion goes to the insurance pool counter; remainder is returned to proposer.
+    fn slash_insurance_on_rejection(env: &Env, proposal: &Proposal) {
+        let insurance_config = storage::get_insurance_config(env);
+        if insurance_config.enabled && proposal.insurance_amount > 0 {
+            let slashed =
+                proposal.insurance_amount * (insurance_config.slash_percentage as i128) / 100;
+            let kept = proposal.insurance_amount.saturating_sub(slashed);
+            if kept > 0 {
+                token::transfer(env, &proposal.token, &proposal.proposer, kept);
+            }
+            if slashed > 0 {
+                storage::add_to_insurance_pool(env, &proposal.token, slashed);
+            }
+            events::emit_insurance_slashed(env, proposal.id, &proposal.proposer, slashed, kept);
+        } else if proposal.insurance_amount > 0 {
+            // Insurance disabled — return in full
+            token::transfer(
+                env,
+                &proposal.token,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+            events::emit_insurance_returned(
+                env,
+                proposal.id,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+        }
     }
 
     /// Calculate effective threshold based on the configured ThresholdStrategy.
