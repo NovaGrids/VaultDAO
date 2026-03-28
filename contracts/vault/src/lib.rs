@@ -898,6 +898,7 @@ impl VaultDAO {
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_rejection(&env);
             Self::slash_insurance_on_rejection(&env, &proposal);
+            Self::slash_stake_on_rejection(&env, &proposal);
             events::emit_proposal_deadline_rejected(&env, proposal_id, proposal.voting_deadline);
             return Ok(());
         }
@@ -1045,6 +1046,7 @@ impl VaultDAO {
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_rejection(&env);
             Self::slash_insurance_on_rejection(&env, &proposal);
+            Self::slash_stake_on_rejection(&env, &proposal);
             events::emit_proposal_deadline_rejected(&env, proposal_id, proposal.voting_deadline);
             return Ok(());
         }
@@ -1495,44 +1497,7 @@ impl VaultDAO {
             Self::slash_insurance_on_rejection(&env, &proposal);
 
             // ── Slash stake ──────────────────────────────────────────────────
-            let staking_config = storage::get_staking_config(&env);
-            if proposal.stake_amount > 0 {
-                if let Some(mut stake_record) = storage::get_stake_record(&env, proposal_id) {
-                    if !stake_record.refunded && !stake_record.slashed {
-                        let slashed_stake = if staking_config.enabled {
-                            proposal.stake_amount * staking_config.slash_percentage as i128 / 100
-                        } else {
-                            0
-                        };
-                        let returned_stake = proposal.stake_amount.saturating_sub(slashed_stake);
-
-                        if returned_stake > 0 {
-                            token::transfer(
-                                &env,
-                                &proposal.token,
-                                &proposal.proposer,
-                                returned_stake,
-                            );
-                        }
-                        if slashed_stake > 0 {
-                            storage::add_to_stake_pool(&env, &proposal.token, slashed_stake);
-                        }
-
-                        stake_record.slashed = slashed_stake > 0;
-                        stake_record.slashed_amount = slashed_stake;
-                        stake_record.released_at = env.ledger().sequence() as u64;
-                        storage::set_stake_record(&env, &stake_record);
-
-                        events::emit_stake_slashed(
-                            &env,
-                            proposal_id,
-                            &proposal.proposer,
-                            slashed_stake,
-                            returned_stake,
-                        );
-                    }
-                }
-            }
+            Self::slash_stake_on_rejection(&env, &proposal);
 
             storage::create_audit_entry(&env, AuditAction::RejectProposal, &canceller, proposal_id);
             events::emit_proposal_rejected(&env, proposal_id, &canceller, &proposal.proposer);
@@ -3571,6 +3536,41 @@ impl VaultDAO {
                 proposal.id,
                 &proposal.proposer,
                 proposal.insurance_amount,
+            );
+        }
+    }
+
+    fn slash_stake_on_rejection(env: &Env, proposal: &Proposal) {
+        if proposal.stake_amount == 0 {
+            return;
+        }
+        if let Some(mut stake_record) = storage::get_stake_record(env, proposal.id) {
+            if stake_record.refunded || stake_record.slashed {
+                return;
+            }
+            let staking_config = storage::get_staking_config(env);
+            let slash_amount = if staking_config.enabled {
+                proposal.stake_amount * staking_config.slash_percentage as i128 / 100
+            } else {
+                0
+            };
+            let remainder = proposal.stake_amount.saturating_sub(slash_amount);
+            if remainder > 0 {
+                token::transfer(env, &proposal.token, &proposal.proposer, remainder);
+            }
+            if slash_amount > 0 {
+                storage::add_to_stake_pool(env, &proposal.token, slash_amount);
+            }
+            stake_record.slashed = slash_amount > 0;
+            stake_record.slashed_amount = slash_amount;
+            stake_record.released_at = env.ledger().sequence() as u64;
+            storage::set_stake_record(env, &stake_record);
+            events::emit_stake_slashed(
+                env,
+                proposal.id,
+                &proposal.proposer,
+                slash_amount,
+                remainder,
             );
         }
     }
