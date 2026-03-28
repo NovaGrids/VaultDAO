@@ -12885,3 +12885,206 @@ fn test_stake_slash_on_voting_deadline_rejection() {
     assert!(stake_record.slashed);
     assert_eq!(stake_record.slashed_amount, expected_slash);
 }
+
+// ============================================================================
+// Oracle staleness tests
+// ============================================================================
+
+mod mock_oracle {
+    use soroban_sdk::{contract, contractimpl, Address, Env};
+
+    use crate::types::VaultPriceData;
+
+    #[contract]
+    pub struct MockOracle;
+
+    #[contractimpl]
+    impl MockOracle {
+        /// Returns a price with the given timestamp so tests can control staleness.
+        pub fn lastprice(_env: Env, _asset: Address) -> Option<VaultPriceData> {
+            // timestamp = 0 makes the price maximally stale
+            Some(VaultPriceData {
+                price: 1_000,
+                timestamp: 0,
+            })
+        }
+    }
+}
+
+#[test]
+fn test_stale_oracle_price_blocks_condition_evaluation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    token_sac.mint(&contract_id, &1000);
+
+    // Register mock oracle that always returns timestamp = 0 (stale)
+    let oracle_id = env.register(mock_oracle::MockOracle, ());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Configure oracle with max_staleness = 10 ledgers; current ledger >> 10
+    client.update_oracle_config(
+        &admin,
+        &crate::OptionalVaultOracleConfig::Some(crate::types::VaultOracleConfig {
+            address: oracle_id,
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 10,
+        }),
+    );
+
+    let asset = Address::generate(&env);
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::PriceAbove(asset, 500));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "stale"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Advance ledger well past max_staleness
+    env.ledger().with_mut(|l| l.sequence_number = 1000);
+
+    let res = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::ConditionsNotMet)));
+}
+
+#[test]
+fn test_fresh_oracle_price_allows_condition_evaluation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    token_sac.mint(&contract_id, &1000);
+
+    // Register mock oracle returning timestamp = 0
+    let oracle_id = env.register(mock_oracle::MockOracle, ());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // max_staleness = 10000 — current ledger (default ~100) is within range of timestamp 0
+    client.update_oracle_config(
+        &admin,
+        &crate::OptionalVaultOracleConfig::Some(crate::types::VaultOracleConfig {
+            address: oracle_id,
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 10000,
+        }),
+    );
+
+    let asset = Address::generate(&env);
+    let mut conditions = Vec::new(&env);
+    // price = 1000, threshold = 500 → PriceAbove satisfied
+    conditions.push_back(Condition::PriceAbove(asset, 500));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "fresh"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Should succeed — price is fresh and above threshold
+    client.execute_proposal(&admin, &proposal_id);
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        ProposalStatus::Executed
+    );
+}

@@ -3702,17 +3702,21 @@ impl VaultDAO {
                     Condition::DateAfter(after_ledger) => current_ledger > after_ledger,
                     Condition::DateBefore(before_ledger) => current_ledger < before_ledger,
                     Condition::PriceAbove(asset, threshold) => {
-                        if let Ok(price) = Self::get_asset_price(env, asset.clone()) {
-                            price >= threshold
-                        } else {
-                            false
+                        match Self::get_asset_price(env, asset.clone()) {
+                            Ok(price) => price >= threshold,
+                            Err(VaultError::ConditionsNotMet) => {
+                                return Err(VaultError::ConditionsNotMet)
+                            }
+                            Err(_) => false,
                         }
                     }
                     Condition::PriceBelow(asset, threshold) => {
-                        if let Ok(price) = Self::get_asset_price(env, asset.clone()) {
-                            price <= threshold
-                        } else {
-                            false
+                        match Self::get_asset_price(env, asset.clone()) {
+                            Ok(price) => price <= threshold,
+                            Err(VaultError::ConditionsNotMet) => {
+                                return Err(VaultError::ConditionsNotMet)
+                            }
+                            Err(_) => false,
                         }
                     }
                 };
@@ -3787,7 +3791,8 @@ impl VaultDAO {
             Some(data) => {
                 let current_ledger = env.ledger().sequence() as u64;
                 if current_ledger.saturating_sub(data.timestamp) > oracle_cfg.max_staleness as u64 {
-                    return Err(VaultError::RetryError); // Staleness error
+                    events::emit_oracle_price_stale(env, &asset, data.timestamp, current_ledger);
+                    return Err(VaultError::ConditionsNotMet);
                 }
                 Ok(data.price)
             }
