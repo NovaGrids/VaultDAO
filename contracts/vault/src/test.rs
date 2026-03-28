@@ -12968,11 +12968,11 @@ fn test_stale_oracle_price_blocks_condition_evaluation() {
     // Configure oracle with max_staleness = 10 ledgers; current ledger >> 10
     client.update_oracle_config(
         &admin,
-        &crate::OptionalVaultOracleConfig::Some(crate::types::VaultOracleConfig {
+        &crate::types::VaultOracleConfig {
             address: oracle_id,
             base_symbol: Symbol::new(&env, "USD"),
             max_staleness: 10,
-        }),
+        },
     );
 
     let asset = Address::generate(&env);
@@ -13056,11 +13056,11 @@ fn test_fresh_oracle_price_allows_condition_evaluation() {
     // max_staleness = 10000 — current ledger (default ~100) is within range of timestamp 0
     client.update_oracle_config(
         &admin,
-        &crate::OptionalVaultOracleConfig::Some(crate::types::VaultOracleConfig {
+        &crate::types::VaultOracleConfig {
             address: oracle_id,
             base_symbol: Symbol::new(&env, "USD"),
             max_staleness: 10000,
-        }),
+        },
     );
 
     let asset = Address::generate(&env);
