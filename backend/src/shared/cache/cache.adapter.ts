@@ -54,6 +54,11 @@ export interface CacheAdapter<T> {
    * Get cache statistics.
    */
   stats(): CacheStats;
+
+  /**
+   * Reset cache statistics without clearing entries.
+   */
+  resetStats?(): void;
 }
 
 export interface CacheStats {
@@ -134,11 +139,20 @@ export class InMemoryCacheAdapter<T> implements CacheAdapter<T> {
   }
 
   /**
+   * Reset cache statistics without clearing entries.
+   */
+  resetStats(): void {
+    this.hits = 0;
+    this.misses = 0;
+  }
+
+  /**
    * Clear all entries.
    */
   clear(): void {
     const size = this.cache.size;
     this.cache.clear();
+    this.resetStats();
     this.logger.info("cache cleared", { entries: size });
   }
 
