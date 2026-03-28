@@ -1,5 +1,21 @@
 import { useState } from 'react';
+import { CheckCircle2, Circle, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { saveCustomTemplate, exportTemplate, type VaultTemplate } from '../utils/vaultTemplates';
+
+interface CloneStep {
+    id: 'fetching' | 'validating' | 'deploying' | 'finalizing';
+    label: string;
+    description: string;
+}
+
+const CLONE_STEPS: CloneStep[] = [
+    { id: 'fetching', label: 'Fetching source vault', description: 'Retrieving current configuration' },
+    { id: 'validating', label: 'Validating configuration', description: 'Checking signers and threshold' },
+    { id: 'deploying', label: 'Deploying new vault', description: 'Creating contract on-chain' },
+    { id: 'finalizing', label: 'Finalizing settings', description: 'Completing vault setup' },
+];
+
+type StepStatus = 'pending' | 'loading' | 'completed' | 'error';
 
 interface VaultClonerProps {
     currentConfig: {
@@ -21,6 +37,14 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
     const [cloning, setCloning] = useState(false);
     const [clonedAddress, setClonedAddress] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [failedStepId, setFailedStepId] = useState<string | null>(null);
+    const [stepStatuses, setStepStatuses] = useState<Record<string, StepStatus>>({
+        fetching: 'pending',
+        validating: 'pending',
+        deploying: 'pending',
+        finalizing: 'pending',
+    });
+    const [activeStepIndex, setActiveStepIndex] = useState(0);
     const [showSaveTemplate, setShowSaveTemplate] = useState(false);
     const [templateName, setTemplateName] = useState('');
     const [templateDescription, setTemplateDescription] = useState('');
@@ -30,7 +54,7 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
     };
 
     const removeSigner = (index: number) => {
-        setSigners(signers.filter((_, i) => i !== index));
+        setSigners(signers.filter((_: string, i: number) => i !== index));
     };
 
     const updateSigner = (index: number, value: string) => {
@@ -41,28 +65,165 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
 
     const handleClone = async () => {
         setError(null);
+        setFailedStepId(null);
         setCloning(true);
+        setClonedAddress(null);
+        
+        // Reset statuses
+        const initialStatuses: Record<string, StepStatus> = {};
+        CLONE_STEPS.forEach(s => initialStatuses[s.id] = 'pending');
+        setStepStatuses(initialStatuses);
+
+        const runStep = async <T,>(index: number, action: () => Promise<T>): Promise<T> => {
+            const stepId = CLONE_STEPS[index].id;
+            setActiveStepIndex(index);
+            setStepStatuses((prev: Record<string, StepStatus>) => ({ ...prev, [stepId]: 'loading' }));
+            
+            try {
+                const result = await action();
+                setStepStatuses((prev: Record<string, StepStatus>) => ({ ...prev, [stepId]: 'completed' }));
+                return result;
+            } catch (err: unknown) {
+                setStepStatuses((prev: Record<string, StepStatus>) => ({ ...prev, [stepId]: 'error' }));
+                setFailedStepId(stepId);
+                throw err;
+            }
+        };
 
         try {
-            const validSigners = signers.filter((s) => s.trim().length > 0);
+            // 1. Fetching
+            await runStep(0, async () => {
+                await new Promise(resolve => setTimeout(resolve, 800));
+            });
 
-            if (validSigners.length === 0) {
-                throw new Error('At least one signer is required');
-            }
+            // 2. Validating
+            await runStep(1, async () => {
+                await new Promise(resolve => setTimeout(resolve, 600));
+                const validSigners = signers.filter((s: string) => s.trim().length > 0);
+                if (validSigners.length === 0) throw new Error('At least one signer is required');
+                if (config.threshold > validSigners.length) throw new Error('Threshold cannot exceed number of signers');
+            });
 
-            if (config.threshold > validSigners.length) {
-                throw new Error('Threshold cannot exceed number of signers');
-            }
+            // 3. Deploying
+            const address = await runStep(2, async () => {
+                const validSigners = signers.filter((s: string) => s.trim().length > 0);
+                return await onClone(config, validSigners);
+            });
 
-            const address = await onClone(config, validSigners);
-            setClonedAddress(address);
+            // 4. Finalizing
+            await runStep(3, async () => {
+                await new Promise(resolve => setTimeout(resolve, 800));
+                if (typeof address === 'string') {
+                    setClonedAddress(address);
+                }
+            });
+
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Cloning failed';
             setError(errorMessage);
-        } finally {
-            setCloning(false);
         }
     };
+
+    const handleCancelCloning = () => {
+        setCloning(false);
+        setError(null);
+        setFailedStepId(null);
+    };
+
+    const CloneStepper = () => (
+        <div className="space-y-6 py-8 px-4 max-w-md mx-auto">
+            <div className="text-center mb-8">
+                <div className="inline-flex items-center justify-center p-3 bg-purple-600/10 rounded-2xl mb-4">
+                    <Loader2 className={`h-8 w-8 text-purple-500 ${!failedStepId ? 'animate-spin' : ''}`} />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">Cloning Vault</h3>
+                <p className="text-sm text-gray-400">Please wait while we create your cloned vault</p>
+            </div>
+            
+            <div className="space-y-8">
+                {CLONE_STEPS.map((step, index) => {
+                    const status = stepStatuses[step.id];
+                    const isActive = index === activeStepIndex;
+                    const isCompleted = status === 'completed';
+                    const isError = status === 'error';
+                    const isLoading = status === 'loading';
+
+                    return (
+                        <div key={step.id} className="relative flex gap-4">
+                            {/* Connector Line */}
+                            {index < CLONE_STEPS.length - 1 && (
+                                <div className={`absolute left-4 top-10 w-0.5 h-10 -translate-x-1/2 ${
+                                    index < activeStepIndex || (index === activeStepIndex && isCompleted) ? 'bg-purple-500' : 'bg-gray-700'
+                                }`} />
+                            )}
+
+                            {/* Icon */}
+                            <div className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center">
+                                {isCompleted ? (
+                                    <div className="rounded-full bg-green-500/20 p-1">
+                                        <CheckCircle2 className="h-6 w-6 text-green-500" />
+                                    </div>
+                                ) : isError ? (
+                                    <div className="rounded-full bg-red-500/20 p-1">
+                                        <AlertCircle className="h-6 w-6 text-red-500" />
+                                    </div>
+                                ) : isLoading ? (
+                                    <div className="rounded-full bg-purple-500/20 p-1">
+                                        <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
+                                    </div>
+                                ) : (
+                                    <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center ${
+                                        isActive ? 'border-purple-500' : 'border-gray-700'
+                                    }`}>
+                                        <span className={`text-[10px] font-bold ${isActive ? 'text-purple-500' : 'text-gray-600'}`}>
+                                            {index + 1}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Text */}
+                            <div className="flex flex-col flex-1">
+                                <div className="flex items-center justify-between">
+                                    <h4 className={`text-sm font-bold transition-colors ${
+                                        isActive || isCompleted ? 'text-white' : 'text-gray-500'
+                                    }`}>
+                                        {step.label}
+                                    </h4>
+                                    {isError && (
+                                        <button 
+                                            onClick={handleClone}
+                                            className="text-xs text-purple-400 hover:text-purple-300 underline font-semibold flex items-center gap-1"
+                                        >
+                                            <ArrowLeft className="h-3 w-3 rotate-180" />
+                                            Retry
+                                        </button>
+                                    )}
+                                </div>
+                                <p className={`text-xs mt-1 transition-colors ${
+                                    isActive ? 'text-gray-300' : 'text-gray-500'
+                                }`}>
+                                    {step.description}
+                                </p>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {error && (
+                <div className="mt-8 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                    <div className="flex items-start gap-3">
+                        <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                        <div>
+                            <p className="text-sm font-bold text-red-400">Action Required</p>
+                            <p className="text-xs text-red-400/80 mt-1">{error}</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
 
     const handleSaveAsTemplate = () => {
         if (!templateName.trim()) {
@@ -78,7 +239,7 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
             icon: '⚙️',
             config: {
                 ...config,
-                signers: signers.filter((s) => s.trim().length > 0),
+                signers: signers.filter((s: string) => s.trim().length > 0),
             },
             features: [
                 `${config.threshold} signatures required`,
@@ -103,7 +264,7 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
             icon: '📤',
             config: {
                 ...config,
-                signers: signers.filter((s) => s.trim().length > 0),
+                signers: signers.filter((s: string) => s.trim().length > 0),
             },
             features: [],
             recommended: false,
@@ -177,7 +338,7 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
                             <input
                                 type="text"
                                 value={templateName}
-                                onChange={(e) => setTemplateName(e.target.value)}
+                                onChange={(e: any) => setTemplateName(e.target.value)}
                                 placeholder="My Custom Template"
                                 className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
                             />
@@ -189,7 +350,7 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
                             </label>
                             <textarea
                                 value={templateDescription}
-                                onChange={(e) => setTemplateDescription(e.target.value)}
+                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setTemplateDescription(e.target.value)}
                                 placeholder="Describe this template..."
                                 rows={3}
                                 className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
@@ -242,136 +403,160 @@ export default function VaultCloner({ currentConfig, onClone, onClose }: VaultCl
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {error && (
-                        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
-                            {error}
-                        </div>
-                    )}
-
-                    {/* Current Configuration Preview */}
-                    <div className="bg-gray-800/50 rounded-lg p-4">
-                        <h3 className="text-lg font-semibold text-white mb-3">Current Configuration</h3>
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
-                                <p className="text-gray-400">Threshold</p>
-                                <p className="text-white font-semibold">{currentConfig.threshold} signatures</p>
-                            </div>
-                            <div>
-                                <p className="text-gray-400">Signers</p>
-                                <p className="text-white font-semibold">{currentConfig.signers.length}</p>
-                            </div>
-                            <div>
-                                <p className="text-gray-400">Spending Limit</p>
-                                <p className="text-white font-semibold">{stroopsToXLM(currentConfig.spendingLimit)} XLM</p>
-                            </div>
-                            <div>
-                                <p className="text-gray-400">Daily Limit</p>
-                                <p className="text-white font-semibold">{stroopsToXLM(currentConfig.dailyLimit)} XLM</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Modify Signers */}
-                    <div>
-                        <h3 className="text-lg font-semibold text-white mb-3">Signers</h3>
-                        <div className="space-y-3">
-                            {signers.map((signer, index) => (
-                                <div key={index} className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        value={signer}
-                                        onChange={(e) => updateSigner(index, e.target.value)}
-                                        placeholder={`Signer ${index + 1} address (G...)`}
-                                        className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
-                                    />
-                                    {signers.length > 1 && (
-                                        <button
-                                            onClick={() => removeSigner(index)}
-                                            className="px-4 py-2 bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/30 transition-colors"
-                                        >
-                                            Remove
-                                        </button>
-                                    )}
+                    {cloning ? (
+                        <CloneStepper />
+                    ) : (
+                        <>
+                            {error && (
+                                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
+                                    {error}
                                 </div>
-                            ))}
-                        </div>
-                        <button
-                            onClick={addSigner}
-                            className="mt-3 w-full min-h-[44px] px-4 py-2 border-2 border-dashed border-gray-700 text-gray-400 rounded-lg hover:border-purple-500 hover:text-purple-400 transition-colors"
-                        >
-                            + Add Signer
-                        </button>
-                    </div>
+                            )}
 
-                    {/* Modify Configuration */}
-                    <div className="space-y-4">
-                        <h3 className="text-lg font-semibold text-white">Configuration</h3>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-2">
-                                Approval Threshold
-                            </label>
-                            <input
-                                type="number"
-                                value={config.threshold}
-                                onChange={(e) => setConfig({ ...config, threshold: parseInt(e.target.value) || 1 })}
-                                min="1"
-                                max={signers.filter((s) => s.trim()).length}
-                                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                            />
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-2">
-                                    Spending Limit (stroops)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={config.spendingLimit}
-                                    onChange={(e) => setConfig({ ...config, spendingLimit: e.target.value })}
-                                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                                />
-                                <p className="mt-1 text-xs text-gray-500">{stroopsToXLM(config.spendingLimit)} XLM</p>
+                            {/* Current Configuration Preview */}
+                            <div className="bg-gray-800/50 rounded-lg p-4">
+                                <h3 className="text-lg font-semibold text-white mb-3">Current Configuration</h3>
+                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                    <div>
+                                        <p className="text-gray-400">Threshold</p>
+                                        <p className="text-white font-semibold">{currentConfig.threshold} signatures</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400">Signers</p>
+                                        <p className="text-white font-semibold">{currentConfig.signers.length}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400">Spending Limit</p>
+                                        <p className="text-white font-semibold">{stroopsToXLM(currentConfig.spendingLimit)} XLM</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400">Daily Limit</p>
+                                        <p className="text-white font-semibold">{stroopsToXLM(currentConfig.dailyLimit)} XLM</p>
+                                    </div>
+                                </div>
                             </div>
 
+                            {/* Modify Signers */}
                             <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-2">
-                                    Daily Limit (stroops)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={config.dailyLimit}
-                                    onChange={(e) => setConfig({ ...config, dailyLimit: e.target.value })}
-                                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                                />
-                                <p className="mt-1 text-xs text-gray-500">{stroopsToXLM(config.dailyLimit)} XLM</p>
+                                <h3 className="text-lg font-semibold text-white mb-3">Signers</h3>
+                                <div className="space-y-3">
+                                    {signers.map((signer, index) => (
+                                        <div key={index} className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={signer}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSigner(index, e.target.value)}
+                                                placeholder={`Signer ${index + 1} address (G...)`}
+                                                className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                                            />
+                                            {signers.length > 1 && (
+                                                <button
+                                                    onClick={() => removeSigner(index)}
+                                                    className="px-4 py-2 bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/30 transition-colors"
+                                                >
+                                                    Remove
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                <button
+                                    onClick={addSigner}
+                                    className="mt-3 w-full min-h-[44px] px-4 py-2 border-2 border-dashed border-gray-700 text-gray-400 rounded-lg hover:border-purple-500 hover:text-purple-400 transition-colors"
+                                >
+                                    + Add Signer
+                                </button>
                             </div>
-                        </div>
-                    </div>
+
+                            {/* Modify Configuration */}
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold text-white">Configuration</h3>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-400 mb-2">
+                                        Approval Threshold
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={config.threshold}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig({ ...config, threshold: parseInt(e.target.value) || 1 })}
+                                        min="1"
+                                        max={signers.filter((s: string) => s.trim()).length}
+                                        className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                                            Spending Limit (stroops)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={config.spendingLimit}
+                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig({ ...config, spendingLimit: e.target.value })}
+                                            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                                        />
+                                        <p className="mt-1 text-xs text-gray-500">{stroopsToXLM(config.spendingLimit)} XLM</p>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                                            Daily Limit (stroops)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={config.dailyLimit}
+                                            onChange={(e: any) => setConfig({ ...config, dailyLimit: e.target.value })}
+                                            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                                        />
+                                        <p className="mt-1 text-xs text-gray-500">{stroopsToXLM(config.dailyLimit)} XLM</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Footer */}
                 <div className="p-6 border-t border-gray-700 flex flex-col sm:flex-row gap-3">
-                    <button
-                        onClick={handleExportTemplate}
-                        className="flex-1 min-h-[44px] px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
-                    >
-                        Export as JSON
-                    </button>
-                    <button
-                        onClick={() => setShowSaveTemplate(true)}
-                        className="flex-1 min-h-[44px] px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
-                    >
-                        Save as Template
-                    </button>
-                    <button
-                        onClick={handleClone}
-                        disabled={cloning}
-                        className="flex-1 min-h-[44px] px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {cloning ? 'Cloning...' : 'Clone Vault'}
-                    </button>
+                    {!cloning && (
+                        <>
+                            <button
+                                onClick={handleExportTemplate}
+                                className="flex-1 min-h-[44px] px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                            >
+                                Export as JSON
+                            </button>
+                            <button
+                                onClick={() => setShowSaveTemplate(true)}
+                                className="flex-1 min-h-[44px] px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                            >
+                                Save as Template
+                            </button>
+                        </>
+                    )}
+                    
+                    {cloning ? (
+                        <button
+                            onClick={handleCancelCloning}
+                            disabled={!failedStepId}
+                            className={`flex-1 min-h-[44px] px-4 py-2 rounded-lg transition-colors ${
+                                failedStepId 
+                                ? 'bg-gray-700 text-white hover:bg-gray-600' 
+                                : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                            }`}
+                        >
+                            Cancel
+                        </button>
+                    ) : (
+                        <button
+                            onClick={handleClone}
+                            className="flex-1 min-h-[44px] px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-lg shadow-purple-500/20"
+                        >
+                            Clone Vault
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

@@ -27,6 +27,8 @@ import SpendingLimitsPanel from '../../components/SpendingLimitsPanel';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
 import { formatTokenAmount, truncateAddress } from '../../utils/formatters';
+import { useOnboarding } from '../../context/OnboardingProvider';
+import { Play } from 'lucide-react';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -78,6 +80,7 @@ function reDownloadItem(item: ExportItemWithContent): void {
 const Settings: React.FC = () => {
   const { getVaultConfig } = useVaultContract();
   const { address } = useWallet();
+  const onboarding = useOnboarding();
   const [history, setHistory] = useState<ExportHistoryItem[]>(() => getExportHistory());
   const [showRecipientLists, setShowRecipientLists] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -384,6 +387,25 @@ const Settings: React.FC = () => {
       </div>
 
       <SpendingLimitsPanel isAdmin={isAdmin} />
+
+      {/* Onboarding Section */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Play className="text-purple-400" size={24} aria-hidden="true" />
+            <h3 className="text-lg font-semibold">Onboarding</h3>
+          </div>
+          <button
+            onClick={() => onboarding.restartOnboarding()}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 min-h-[44px]"
+          >
+            Restart Tour
+          </button>
+        </div>
+        <p className="text-gray-400 text-sm">
+          Need a refresher? Restart the onboarding tour to walk through the platform features again.
+        </p>
+      </div>
     </div>
   );
 };

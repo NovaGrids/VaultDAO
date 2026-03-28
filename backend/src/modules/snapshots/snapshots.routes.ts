@@ -6,10 +6,10 @@ export function createSnapshotRouter(service: SnapshotService) {
   const router = Router();
   const ctrl = createSnapshotControllers(service);
 
-  router.get("/api/v1/snapshots/:contractId", ctrl.getSnapshot);
-  router.get("/api/v1/snapshots/:contractId/signers", ctrl.getSigners);
-  router.get("/api/v1/snapshots/:contractId/roles", ctrl.getRoles);
-  router.get("/api/v1/snapshots/:contractId/stats", ctrl.getStats);
+  router.get("/:contractId", ctrl.getSnapshot);
+  router.get("/:contractId/signers", ctrl.getSigners);
+  router.get("/:contractId/roles", ctrl.getRoles);
+  router.get("/:contractId/stats", ctrl.getStats);
 
   return router;
 }

@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import type { BackendEnv } from "./config/env.js";
 import type { BackendRuntime } from "./server.js";
-import { createHealthRouter } from "./modules/health/health.routes.js";
+import { createHealthRouter, createStatusRouter } from "./modules/health/health.routes.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
@@ -88,17 +88,30 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const authMiddleware = createAuthMiddleware(env.apiKey);
 
   app.use(createHealthRouter(env, runtime));
-  app.use(authMiddleware, createSnapshotRouter(runtime.snapshotService));
-  app.use(
-    "/api/v1/proposals",
+  
+  const v1Router = express.Router();
+  
+  v1Router.use("/status", createStatusRouter(env, runtime));
+  
+  v1Router.use(
+    "/snapshots",
     authMiddleware,
-    createProposalsRouter(runtime.proposalActivityAggregator),
+    createSnapshotRouter(runtime.snapshotService)
   );
-  app.use(
-    "/api/v1/recurring",
+  
+  v1Router.use(
+    "/proposals",
     authMiddleware,
-    createRecurringRouter(runtime.recurringIndexerService),
+    createProposalsRouter(runtime.proposalActivityAggregator)
   );
+  
+  v1Router.use(
+    "/recurring",
+    authMiddleware,
+    createRecurringRouter(runtime.recurringIndexerService)
+  );
+
+  app.use("/api/v1", v1Router);
 
   app.use((_request, response) => {
     error(response, { message: "Not Found", status: 404, code: ErrorCode.NOT_FOUND });

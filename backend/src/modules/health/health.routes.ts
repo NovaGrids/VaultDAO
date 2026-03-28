@@ -13,7 +13,12 @@ export function createHealthRouter(env: BackendEnv, runtime: BackendRuntime) {
 
   router.get("/health", getHealthController(env, runtime));
   router.get("/ready", getReadinessController(env, runtime));
-  router.get("/api/v1/status", getStatusController(env, runtime));
 
+  return router;
+}
+
+export function createStatusRouter(env: BackendEnv, runtime: BackendRuntime) {
+  const router = Router();
+  router.get("/status", getStatusController(env, runtime));
   return router;
 }

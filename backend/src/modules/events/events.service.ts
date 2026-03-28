@@ -4,6 +4,8 @@ import type { CursorStorage } from "./cursor/index.js";
 import { EventNormalizer } from "./normalizers/index.js";
 import type { ProposalActivityConsumer } from "../proposals/consumer.js";
 import type { EventWebSocketServer } from "../websocket/websocket.server.js";
+import type { SnapshotService } from "../snapshots/snapshot.service.js";
+import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
@@ -46,6 +48,7 @@ export class EventPollingService {
     private readonly storage: CursorStorage,
     private readonly proposalConsumer?: ProposalActivityConsumer,
     private readonly wsServer?: EventWebSocketServer,
+    private readonly snapshotService?: SnapshotService,
   ) {}
 
   /**
@@ -189,6 +192,16 @@ export class EventPollingService {
       // Proposal events → proposalConsumer
       if (this.proposalConsumer && PROPOSAL_TOPICS.has(topic)) {
         await this.proposalConsumer.process(normalized);
+        return;
+      }
+
+      // Snapshot events → snapshotService
+      if (this.snapshotService && SnapshotNormalizer.isSnapshotEvent(normalized.type as any)) {
+        try {
+          await this.snapshotService.processEvent(normalized as any);
+        } catch (error) {
+          console.error(`[events-service] error processing snapshot event "${topic}":`, error);
+        }
         return;
       }
 

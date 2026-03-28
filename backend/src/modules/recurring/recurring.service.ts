@@ -215,11 +215,16 @@ export class RecurringIndexerService {
     console.log("[recurring-indexer] stopped indexer loop");
   }
 
-  /**
-   * Schedules the next sync execution.
-   */
   private scheduleNextSync(): void {
     if (!this.isRunning) return;
+
+    let delayMs = this.env.eventPollingIntervalMs;
+    if (this.consecutiveErrors > 0) {
+      const MAX_BACKOFF_MS = 5 * 60 * 1000;
+      const backoff = delayMs * Math.pow(2, this.consecutiveErrors);
+      delayMs = Math.min(backoff, MAX_BACKOFF_MS);
+      console.log(`[recurring-indexer] backing off for ${delayMs}ms`);
+    }
 
     this.timer = setTimeout(async () => {
       if (!this.isRunning) return;
@@ -236,7 +241,7 @@ export class RecurringIndexerService {
       } finally {
         this.scheduleNextSync();
       }
-    }, this.env.eventPollingIntervalMs);
+    }, delayMs);
   }
 
   /**

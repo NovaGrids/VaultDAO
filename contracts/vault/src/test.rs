@@ -12800,3 +12800,88 @@ fn test_insurance_slash_on_voting_deadline_rejection() {
     assert_eq!(token_client.balance(&proposer), 950); // 900 + 50 returned
     assert_eq!(client.get_insurance_pool(&token_addr), 50);
 }
+
+#[test]
+fn test_stake_slash_on_voting_deadline_rejection() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    StellarAssetClient::new(&env, &token_addr).mint(&proposer, &2000);
+    StellarAssetClient::new(&env, &token_addr).mint(&contract_id, &5000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    let config = InitConfig {
+        default_voting_deadline: 50,
+        ..config
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Enable staking with 50% slash on rejection
+    client.update_staking_config(
+        &admin,
+        &types::StakingConfig {
+            enabled: true,
+            min_amount: 0,
+            base_stake_bps: 1000, // 10% stake
+            max_stake_amount: i128::MAX,
+            reputation_discount_threshold: 900,
+            reputation_discount_percentage: 0,
+            slash_percentage: 50,
+        },
+    );
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+
+    // Propose — 10% of 100 = 10 tokens staked
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+    let balance_after_propose = token_client.balance(&proposer);
+
+    // Advance past the voting deadline
+    env.ledger().set_sequence_number(100);
+
+    // Trigger deadline rejection via approve_proposal
+    client.approve_proposal(&admin, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
+
+    // 50% of stake slashed to pool, 50% returned to proposer
+    let stake_amount = proposal.stake_amount;
+    let expected_slash = stake_amount / 2;
+    let expected_return = stake_amount - expected_slash;
+
+    assert_eq!(
+        token_client.balance(&proposer),
+        balance_after_propose + expected_return
+    );
+    assert_eq!(client.get_stake_pool_balance(&token_addr), expected_slash);
+
+    // Verify stake record persisted correctly
+    let stake_record = client.get_stake_record(&proposal_id).unwrap();
+    assert!(stake_record.slashed);
+    assert_eq!(stake_record.slashed_amount, expected_slash);
+}

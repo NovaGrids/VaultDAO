@@ -43,11 +43,11 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
       if (stored) {
         const parsed = JSON.parse(stored) as OnboardingState;
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setState(prev => ({
+        setState((prev: OnboardingState) => ({
           ...prev,
           ...parsed,
-          achievements: ACHIEVEMENTS.map(a => {
-            const existing = parsed.achievements.find(e => e.id === a.id);
+          achievements: ACHIEVEMENTS.map((a: Achievement) => {
+            const existing = (parsed.achievements as Achievement[]).find((e: Achievement) => e.id === a.id);
             return existing ? { ...a, ...existing } : { ...a };
           }),
         }));
@@ -55,7 +55,7 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
 
       if (completed === 'true') {
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setState(prev => ({ ...prev, completedOnboarding: true }));
+      setState((prev: OnboardingState) => ({ ...prev, completedOnboarding: true }));
       }
     } catch (error) {
       console.error('Failed to load onboarding state:', error);
@@ -75,7 +75,7 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
   }, []);
 
   const startOnboarding = useCallback(() => {
-    setState(prev => {
+    setState((prev: OnboardingState) => {
       const newState = { ...prev, isActive: true, currentStep: 0, lastUpdated: Date.now() };
       persistState(newState);
       return newState;
@@ -83,11 +83,11 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [persistState]);
 
   const skipOnboarding = useCallback(() => {
-    setState(prev => {
+    setState((prev: OnboardingState) => {
       const newState = {
         ...prev,
         isActive: false,
-        completedOnboarding: true,
+        completedOnboarding: false, // Ensure it's not marked as complete
         lastUpdated: Date.now(),
       };
       persistState(newState);
@@ -96,18 +96,28 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [persistState]);
 
   const nextStep = useCallback(() => {
-    setState(prev => {
+    setState((prev: OnboardingState) => {
       if (prev.currentStep < ONBOARDING_STEPS.length - 1) {
         const newState = { ...prev, currentStep: prev.currentStep + 1, lastUpdated: Date.now() };
         persistState(newState);
         return newState;
+      } else {
+        // We've completed the last step
+        const newState = {
+          ...prev,
+          isActive: false,
+          completedOnboarding: true,
+          currentStep: 0, // Reset to start for next tour
+          lastUpdated: Date.now(),
+        };
+        persistState(newState);
+        return newState;
       }
-      return prev;
     });
   }, [persistState]);
 
   const previousStep = useCallback(() => {
-    setState(prev => {
+    setState((prev: OnboardingState) => {
       if (prev.currentStep > 0) {
         const newState = { ...prev, currentStep: prev.currentStep - 1, lastUpdated: Date.now() };
         persistState(newState);
@@ -118,7 +128,7 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [persistState]);
 
   const completeStep = useCallback((stepId: string) => {
-    setState(prev => {
+    setState((prev: OnboardingState) => {
       if (!prev.completedSteps.includes(stepId)) {
         const newState = {
           ...prev,
@@ -133,22 +143,24 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [persistState]);
 
   const restartOnboarding = useCallback(() => {
-    setState(prev => {
+    setState((prev: OnboardingState) => {
       const newState = {
         ...prev,
         currentStep: 0,
         isActive: true,
         completedSteps: [],
+        completedOnboarding: false, // Clear completion flag
         lastUpdated: Date.now(),
       };
+      localStorage.removeItem(STORAGE_KEYS.COMPLETED_ONBOARDING);
       persistState(newState);
       return newState;
     });
   }, [persistState]);
 
   const unlockAchievement = useCallback((achievementId: string) => {
-    setState(prev => {
-      const achievements = prev.achievements.map(a => {
+    setState((prev: OnboardingState) => {
+      const achievements = prev.achievements.map((a: Achievement) => {
         if (a.id === achievementId && !a.unlockedAt) {
           return { ...a, unlockedAt: Date.now() };
         }

@@ -190,8 +190,13 @@ pnpm test
 # Pick a Foundation task from ROADMAP.md
 ```
 
+## API Versioning
+
+All business logic routes are strictly versioned under the `/api/v1/` prefix (e.g., `/api/v1/status`). 
+The `/health` and `/ready` validation endpoints are kept at the root level (`/health`, `/ready`) to maintain compatibility with standard Kubernetes probe paths.
+
 ## Current Endpoints
 
-- `GET /health`
-- `GET /ready` 
+- `GET /health` (root)
+- `GET /ready` (root)
 - `GET /api/v1/status`
