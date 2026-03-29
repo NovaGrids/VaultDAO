@@ -60,6 +60,34 @@ The frontend is a modern SPA built with Vite, React, and Tailwind CSS.
 - **Components**: Modular UI components for proposal creation, list views, and status tracking.
 - **Styling**: Responsive design using Tailwind CSS with glassmorphism aesthetics.
 
+## 🟢 STABLE Features (Production-Ready)
+
+| Feature | Status | Description | Functions |
+|---------|--------|-------------|-----------|
+| Core Multisig | 🟢 STABLE | M-of-N approvals with execution | `initialize`, `proposeTransfer`, `approveProposal`, `executeProposal` |
+| RBAC | 🟢 STABLE | Role management | `setRole`, `getRole` |
+| Spending Limits | 🟢 STABLE | Per-proposal + time-based limits | `updateLimits` |
+| Timelocks | 🟢 STABLE | Delay on large transfers | Automatic in `executeProposal` |
+
+## 🟡 EXPERIMENTAL Features (Maturing)
+
+| Feature | Status | Description | Functions |
+|---------|--------|-------------|-----------|
+| Batch Operations | 🟡 EXPERIMENTAL | Multiple transfers atomically | `batchProposeTransfers`, `batchExecuteProposals` |
+| Recurring Payments | 🟡 EXPERIMENTAL | Automated scheduled payments | `schedulePayment`, `executeRecurringPayment` |
+| Escrow System | 🟡 EXPERIMENTAL | Milestone-based releases | `createEscrow`, `completeMilestone` |
+| DEX Swaps | 🟡 EXPERIMENTAL | Token swaps via AMMs | `proposeSwap` |
+| Reputation | 🟡 EXPERIMENTAL | Voting power based on history | Automatic |
+
+## 🔴 UNSTABLE / Development
+
+| Feature | Status | Description | Functions |
+|---------|--------|-------------|-----------|
+| Bridge Module | 🔴 UNSTABLE | Cross-chain (feature-gated) | `#[cfg(feature = "bridge")]` |
+| Wallet Recovery | 🔴 UNSTABLE | Emergency signer replacement | `initiateRecovery` |
+| Proposal Templates | 🔴 UNSTABLE | Pre-configured proposals | `createTemplate` |
+| Time-Weighted Voting | 🔴 UNSTABLE | Lock tokens for voting power | `lockTokens` |
+
 ## Security Model
 
 Security is central to VaultDAO's design:

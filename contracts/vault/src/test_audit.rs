@@ -1,12 +1,9 @@
 use super::*;
 use crate::types::{
-    AuditAction, Condition, ConditionLogic, ListMode, Priority, ThresholdStrategy, VelocityConfig,
+    AuditAction, ConditionLogic, ListMode, Priority, ThresholdStrategy, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Env, Map, Symbol, Vec,
-};
+use soroban_sdk::{testutils::Address as _, Env, Symbol, Vec};
 
 // ============================================================================
 // Helper Functions
@@ -28,6 +25,7 @@ fn setup_test_environment(env: &Env) -> (VaultDAOClient<'_>, Address, Address, A
         signers,
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -101,13 +99,13 @@ fn test_audit_trail_hash_chain() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, signer1, user) = setup_test_environment(&env);
+    let (client, _admin, signer1, _user) = setup_test_environment(&env);
 
     let token = Address::generate(&env);
 
     let proposal_id = client.propose_transfer(
         &signer1,
-        &user,
+        &_user,
         &token,
         &100i128,
         &Symbol::new(&env, "test"),
@@ -134,7 +132,7 @@ fn test_audit_trail_verification() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, signer1, user) = setup_test_environment(&env);
+    let (client, _admin, _signer1, _user) = setup_test_environment(&env);
 
     // Verify entire audit trail
     let is_valid = client.verify_audit_trail(&1, &2);
@@ -302,7 +300,7 @@ fn test_audit_schedule_payment() {
     // Schedule recurring payment
     let interval = 1000u64;
     let amount = 100i128;
-    let payment_id = client.schedule_payment(
+    let _payment_id = client.schedule_payment(
         &admin,
         &recipient,
         &token,
@@ -370,7 +368,7 @@ fn test_audit_chain_integrity_stress_test() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, signer1, _) = setup_test_environment(&env);
+    let (client, _admin, signer1, _) = setup_test_environment(&env);
 
     // Create token
     let token_admin = Address::generate(&env);
@@ -379,7 +377,7 @@ fn test_audit_chain_integrity_stress_test() {
 
     // Create many proposals (each creates an audit entry)
     let mut proposal_ids = Vec::new(&env);
-    for i in 0..5 {
+    for _i in 0..5 {
         let recipient = Address::generate(&env);
         let proposal_id = client.propose_transfer(
             &signer1,
@@ -419,7 +417,7 @@ fn test_audit_trail_empty_range() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, _, _) = setup_test_environment(&env);
+    let (client, _admin, _, _) = setup_test_environment(&env);
 
     // Verify audit trail with single entry
     let is_valid = client.verify_audit_trail(&1, &1);
@@ -431,7 +429,7 @@ fn test_audit_trail_timestamp_ordering() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, signer1, user) = setup_test_environment(&env);
+    let (client, _admin, signer1, _user) = setup_test_environment(&env);
 
     // Create token
     let token_admin = Address::generate(&env);
@@ -439,9 +437,9 @@ fn test_audit_trail_timestamp_ordering() {
     let token = token_contract.address();
 
     // Create multiple proposals (each creates an audit entry)
-    for i in 0..3 {
+    for _i in 0..3 {
         let recipient = Address::generate(&env);
-        let proposal_id = client.propose_transfer(
+        let _proposal_id = client.propose_transfer(
             &signer1,
             &recipient,
             &token,

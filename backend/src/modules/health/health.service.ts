@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import type { BackendEnv } from "../../config/env.js";
 import type { BackendRuntime } from "../../server.js";
+import { publicContractIdForApi } from "../../shared/utils/mask.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = join(__filename, "..");
@@ -56,7 +57,7 @@ export function buildHealthPayload(env: BackendEnv, runtime: BackendRuntime) {
     build: packageMetadata.build,
     environment: env.nodeEnv,
     network: env.stellarNetwork,
-    contractId: env.contractId,
+    contractId: publicContractIdForApi(env.contractId, env.nodeEnv),
     timestamp: new Date().toISOString(),
     eventPolling: runtime.eventPollingService.getStatus(),
   };
@@ -68,6 +69,7 @@ export function buildStatusPayload(env: BackendEnv, runtime: BackendRuntime) {
     version: VERSION,
     build: packageMetadata.build,
     environment: env.nodeEnv,
+    contractId: publicContractIdForApi(env.contractId, env.nodeEnv),
     rpcUrl: env.sorobanRpcUrl,
     horizonUrl: env.horizonUrl,
     websocketUrl: env.websocketUrl,

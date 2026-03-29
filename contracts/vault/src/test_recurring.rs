@@ -1,6 +1,4 @@
-use crate::types::{
-    Condition, ConditionLogic, Priority, RetryConfig, ThresholdStrategy, VelocityConfig,
-};
+use crate::types::{ConditionLogic, Priority, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, Role, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -16,6 +14,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         signers,
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -463,7 +462,7 @@ fn test_recurring_payment_execute_daily_limit_documentation() {
     // Schedule recurring payment for 200 (would exceed daily limit: 400 + 200 = 600 > 500)
     let interval = 1000u64;
     let amount = 200i128;
-    let payment_id = client.schedule_payment(
+    let _payment_id = client.schedule_payment(
         &admin,
         &recipient,
         &token,
@@ -526,7 +525,7 @@ fn test_recurring_payment_execute_weekly_limit_documentation() {
     // Use 250 to exceed: 400 + 250 = 650 > 600
     let interval = 1000u64;
     let amount = 250i128;
-    let payment_id = client.schedule_payment(
+    let _payment_id = client.schedule_payment(
         &admin,
         &recipient,
         &token,

@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3, Users } from 'lucide-react';
+import { FileText, CheckCircle, Wallet, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3, Users } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
-import TokenBalanceCard from '../../components/TokenBalanceCard';
+import TokenBalanceCard, { TokenBalanceCardSkeleton } from '../../components/TokenBalanceCard';
 import DashboardBuilder from '../../components/DashboardBuilder';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
@@ -155,11 +155,7 @@ const Overview: React.FC = () => {
     };
 
     if (loading && !stats && statsLoading) {
-        return (
-            <div className="h-96 flex items-center justify-center">
-                <Loader2 className="h-10 w-10 animate-spin text-purple-500" />
-            </div>
-        );
+        return null; // render skeletons inline instead
     }
 
     return (
@@ -201,7 +197,21 @@ const Overview: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                         {/* Featured Balance Card */}
                         <div className="md:col-span-2 lg:col-span-1">
-                            <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-2xl border border-purple-500 p-6 h-full shadow-xl shadow-purple-500/20">
+                            {balanceLoading && !balance ? (
+                                <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-2xl border border-purple-500 p-6 h-full shadow-xl shadow-purple-500/20 animate-pulse">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-3 bg-white/20 rounded-xl w-12 h-12" />
+                                            <div className="space-y-2">
+                                                <div className="h-3 w-20 rounded bg-white/20" />
+                                                <div className="h-2 w-28 rounded bg-white/20" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="h-10 w-32 rounded bg-white/20 mt-2" />
+                                </div>
+                            ) : (
+                            <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-2xl border border-purple-500 p-6 h-full shadow-xl shadow-purple-500/20 animate-fadeIn">
                                 <div className="flex items-start justify-between mb-4">
                                     <div className="flex items-center gap-3">
                                         <div className="p-3 bg-white/20 rounded-xl backdrop-blur-md">
@@ -230,37 +240,53 @@ const Overview: React.FC = () => {
                                     </div>
                                 ) : (
                                     <div className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-                                        {balanceLoading ? (
-                                            <Loader2 className="h-8 w-8 animate-spin" />
-                                        ) : (
-                                            formatTokenAmount(balance)
-                                        )}
+                                        {formatTokenAmount(balance)}
                                     </div>
                                 )}
                             </div>
+                            )}
                         </div>
-                        
-                        <StatCard
-                            title={t('dashboard.activeProposals')}
-                            value={statsLoading ? '—' : (stats?.totalProposals ?? 0)}
-                            subtitle={statsLoading ? '' : `${stats?.pendingApprovals ?? 0} ${t('dashboard.pendingVote')}`}
-                            icon={FileText}
-                            variant="warning"
-                        />
-                        <StatCard
-                            title={t('dashboard.readyToExecute')}
-                            value={statsLoading ? '—' : (stats?.readyToExecute ?? 0)}
-                            subtitle={statsError ? t('common.retry') : t('dashboard.passedTimelock')}
-                            icon={CheckCircle}
-                            variant="success"
-                        />
-                        <StatCard
-                            title={t('dashboard.signers')}
-                            value={statsLoading ? '—' : (stats?.threshold ?? '0/0')}
-                            subtitle={statsLoading ? '' : `${stats?.activeSigners ?? 0} active`}
-                            icon={Users}
-                            variant="primary"
-                        />
+
+                        {statsLoading ? (
+                            <>
+                                {[0, 1, 2].map((i) => (
+                                    <div key={i} className="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 animate-pulse">
+                                        <div className="flex items-start justify-between mb-4">
+                                            <div className="space-y-2">
+                                                <div className="h-3 w-24 rounded bg-gray-200 dark:bg-gray-700" />
+                                                <div className="h-7 w-12 rounded bg-gray-200 dark:bg-gray-700" />
+                                            </div>
+                                            <div className="w-10 h-10 rounded-xl bg-gray-200 dark:bg-gray-700" />
+                                        </div>
+                                        <div className="h-3 w-32 rounded bg-gray-200 dark:bg-gray-700" />
+                                    </div>
+                                ))}
+                            </>
+                        ) : (
+                            <>
+                                <StatCard
+                                    title={t('dashboard.activeProposals')}
+                                    value={stats?.totalProposals ?? 0}
+                                    subtitle={`${stats?.pendingApprovals ?? 0} ${t('dashboard.pendingVote')}`}
+                                    icon={FileText}
+                                    variant="warning"
+                                />
+                                <StatCard
+                                    title={t('dashboard.readyToExecute')}
+                                    value={stats?.readyToExecute ?? 0}
+                                    subtitle={statsError ? t('common.retry') : t('dashboard.passedTimelock')}
+                                    icon={CheckCircle}
+                                    variant="success"
+                                />
+                                <StatCard
+                                    title={t('dashboard.signers')}
+                                    value={stats?.threshold ?? '0/0'}
+                                    subtitle={`${stats?.activeSigners ?? 0} active`}
+                                    icon={Users}
+                                    variant="primary"
+                                />
+                            </>
+                        )}
                     </div>
 
                     {/* Token Balances Section */}
@@ -289,8 +315,10 @@ const Overview: React.FC = () => {
                         </div>
 
                         {isLoadingBalances ? (
-                            <div className="flex items-center justify-center py-12">
-                                <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                {Array.from({ length: 4 }).map((_, i) => (
+                                    <TokenBalanceCardSkeleton key={i} />
+                                ))}
                             </div>
                         ) : tokenBalances.length > 0 ? (
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

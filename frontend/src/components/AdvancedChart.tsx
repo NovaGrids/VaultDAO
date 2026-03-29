@@ -3,7 +3,7 @@
  * Mobile responsive with touch gestures.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Area,
   Bar,
@@ -18,8 +18,7 @@ import {
   CartesianGrid,
   Brush,
 } from 'recharts';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+
 import { Image, FileText, Save } from 'lucide-react';
 import { computeMA, computeEMA, computeRSI, computeMACD, type DataPoint } from './ChartIndicators';
 import ChartTools, { type Drawing, type DrawingTool } from './ChartTools';
@@ -95,30 +94,34 @@ export function AdvancedChart({
   }, [config, configKey]);
 
   const primaryKey = series[0]?.dataKey ?? valueKey;
-  const dataWithTime: DataPoint[] = data.map((d) => ({
-    ...d,
-    time: String(d[xKey] ?? ''),
-    value: Number(d[primaryKey]) || 0,
-  })) as DataPoint[];
 
-  const maData = config.indicators.ma
-    ? computeMA(dataWithTime, config.indicators.ma, primaryKey)
-    : dataWithTime;
-  const emaData = config.indicators.ema
-    ? computeEMA(config.indicators.ma ? maData : dataWithTime, config.indicators.ema, primaryKey)
-    : config.indicators.ma ? maData : dataWithTime;
-  const rsiData = config.indicators.rsi
-    ? computeRSI(dataWithTime, 14, primaryKey)
-    : emaData;
-  const macdData = config.indicators.macd
-    ? computeMACD(dataWithTime, 12, 26, 9, primaryKey)
-    : rsiData;
+  const chartData = useMemo(() => {
+    const dataWithTime: DataPoint[] = data.map((d) => ({
+      ...d,
+      time: String(d[xKey] ?? ''),
+      value: Number(d[primaryKey]) || 0,
+    })) as DataPoint[];
 
-  const chartData = macdData;
+    const maData = config.indicators.ma
+      ? computeMA(dataWithTime, config.indicators.ma, primaryKey)
+      : dataWithTime;
+    const emaData = config.indicators.ema
+      ? computeEMA(config.indicators.ma ? maData : dataWithTime, config.indicators.ema, primaryKey)
+      : config.indicators.ma ? maData : dataWithTime;
+    const rsiData = config.indicators.rsi
+      ? computeRSI(emaData, 14, primaryKey)
+      : emaData;
+    return config.indicators.macd
+      ? computeMACD(rsiData, 12, 26, 9, primaryKey)
+      : rsiData;
+  }, [data, xKey, primaryKey, config.indicators]);
 
   const handleExportImage = useCallback(() => {
     if (!containerRef.current) return;
-    html2canvas(containerRef.current, { useCORS: true, scale: 2 }).then((canvas) => {
+    const el = containerRef.current;
+    import('html2canvas').then(({ default: html2canvas }) =>
+      html2canvas(el, { useCORS: true, scale: 2 })
+    ).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url;
@@ -129,9 +132,13 @@ export function AdvancedChart({
 
   const handleExportPDF = useCallback(() => {
     if (!containerRef.current) return;
-    html2canvas(containerRef.current, { useCORS: true, scale: 2 }).then((canvas) => {
+    const el = containerRef.current;
+    Promise.all([
+      import('html2canvas').then(({ default: h }) => h(el, { useCORS: true, scale: 2 })),
+      import('jspdf').then((m) => m.jsPDF),
+    ]).then(([canvas, JsPDF]) => {
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm' });
+      const pdf = new JsPDF({ orientation: 'landscape', unit: 'mm' });
       const w = pdf.internal.pageSize.getWidth();
       const h = (canvas.height * w) / canvas.width;
       pdf.addImage(imgData, 'PNG', 0, 0, w, Math.min(h, 200));

@@ -40,6 +40,32 @@ test("loads defaults for local development", () => {
   assert.equal(env.host, "0.0.0.0");
   assert.equal(env.nodeEnv, "development");
   assert.equal(env.stellarNetwork, "testnet");
+  assert.deepEqual(env.corsOrigin, ["*"]);
+});
+
+test("loads CORS_ORIGIN for development", () => {
+  resetEnv({
+    CORS_ORIGIN: "http://localhost:5173, http://localhost:3000",
+  });
+
+  const env = loadEnv();
+
+  assert.deepEqual(env.corsOrigin, [
+    "http://localhost:5173",
+    "http://localhost:3000",
+  ]);
+});
+
+test("requires CORS_ORIGIN in production", () => {
+  resetEnv({
+    NODE_ENV: "production",
+    CORS_ORIGIN: undefined,
+  });
+
+  assert.throws(
+    () => loadEnv(),
+    /CORS_ORIGIN is required in production environment/i,
+  );
 });
 
 test("throws a clear error for an invalid port", () => {

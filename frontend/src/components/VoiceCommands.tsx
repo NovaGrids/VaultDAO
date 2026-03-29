@@ -14,6 +14,7 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
   const [transcript, setTranscript] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [wakeWord, setWakeWord] = useState('vault');
+  const [timedOut, setTimedOut] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -89,15 +90,22 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
         return;
       }
 
+      setTimedOut(false);
       voiceService.start(
         (text) => setTranscript(text),
-        (error) => console.error('Voice error:', error)
+        (error) => console.error('Voice error:', error),
+        () => {
+          setIsListening(false);
+          setTranscript('');
+          setTimedOut(true);
+        }
       );
       setIsListening(true);
     } else {
       voiceService.stop();
       setIsListening(false);
       setTranscript('');
+      setTimedOut(false);
     }
   };
 
@@ -107,6 +115,13 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
+      {timedOut && !isListening && (
+        <div className="bg-yellow-600 text-white px-4 py-2 rounded-lg shadow-lg max-w-xs">
+          <p className="text-sm font-medium">Listening timed out due to silence.</p>
+          <p className="text-xs mt-1 opacity-80">Press the mic button to restart.</p>
+        </div>
+      )}
+
       {transcript && isListening && (
         <div className="bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg max-w-xs">
           <p className="text-sm">{transcript}</p>

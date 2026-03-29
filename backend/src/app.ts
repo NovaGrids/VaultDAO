@@ -1,17 +1,100 @@
-import express from "express";
-
+import express, { Request, Response, NextFunction } from "express";
 import type { BackendEnv } from "./config/env.js";
 import type { BackendRuntime } from "./server.js";
 import { createHealthRouter } from "./modules/health/health.routes.js";
+import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
+import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
+import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
+import { error } from "./shared/http/response.js";
+import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
+import {
+  REQUEST_ID_HEADER,
+  generateRequestId,
+} from "./shared/http/requestId.js";
 
 export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
 
-  app.use(express.json());
+  // Remove X-Powered-By header
+  app.disable("x-powered-by");
+
+  // Security headers middleware
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.set("X-Content-Type-Options", "nosniff");
+    res.set("X-Frame-Options", "DENY");
+
+    if (env.nodeEnv === "production") {
+      res.set(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains; preload",
+      );
+    }
+    next();
+  });
+
+  // CORS middleware
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = req.get("Origin");
+
+    const isAllowed =
+      env.corsOrigin.includes("*") || (origin && env.corsOrigin.includes(origin));
+
+    if (isAllowed && origin) {
+      res.set("Access-Control-Allow-Origin", origin);
+    } else if (env.corsOrigin.includes("*")) {
+      res.set("Access-Control-Allow-Origin", "*");
+    }
+
+    res.set(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+    );
+    res.set(
+      "Access-Control-Allow-Headers",
+      `Content-Type, Authorization, ${REQUEST_ID_HEADER}`,
+    );
+
+    if (req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+
+    next();
+  });
+
+  // Request ID middleware
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (!req.get(REQUEST_ID_HEADER)) {
+      const id = generateRequestId();
+      res.set(REQUEST_ID_HEADER, id);
+      (req as any).requestId = id;
+    } else {
+      (req as any).requestId = req.get(REQUEST_ID_HEADER)!;
+    }
+    next();
+  });
+
+  // Rate limiting middleware
+  const rateLimiter = createRateLimitMiddleware({
+    windowMs: 60 * 1000, // 1 minute
+    maxRequests: 100, // 100 requests per minute
+  });
+  app.use(rateLimiter);
+
+  app.use(express.json({ limit: env.requestBodyLimit }));
   app.use(createHealthRouter(env, runtime));
+  app.use(createSnapshotRouter(runtime.snapshotService));
+  app.use(
+    "/api/v1/proposals",
+    createProposalsRouter(runtime.proposalActivityAggregator),
+  );
+  app.use(
+    "/api/v1/recurring",
+    createRecurringRouter(runtime.recurringIndexerService),
+  );
 
   app.use((_request, response) => {
-    response.status(404).json({ ok: false, error: "Not Found" });
+    error(response, { message: "Not Found", status: 404 });
   });
 
   return app;

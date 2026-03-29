@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { AuditEntry } from './auditVerification';
+import { stripHtml } from './pdfExport';
 
 export type ReportType = 'SOC2' | 'ISO27001' | 'Custom';
 
@@ -62,9 +63,9 @@ function generateSOC2ReportPDF(config: ReportConfig, data: ReportData): jsPDF {
     
     const tableData = data.entries.slice(0, 50).map(entry => [
       new Date(entry.timestamp).toLocaleDateString(),
-      entry.user.slice(0, 12) + '...',
-      entry.action,
-      entry.transactionHash.slice(0, 12) + '...',
+      stripHtml(entry.user).slice(0, 12) + '...',
+      stripHtml(entry.action),
+      stripHtml(entry.transactionHash).slice(0, 12) + '...',
     ]);
     
     autoTable(doc as unknown as import('jspdf').jsPDF, {
@@ -165,7 +166,7 @@ function generateISO27001ReportPDF(config: ReportConfig, data: ReportData): jsPD
   autoTable(doc as unknown as import('jspdf').jsPDF, {
     startY: yPos,
     head: [['Action Type', 'Count']],
-    body: actionTypes.map(([type, count]) => [type, count.toString()]),
+    body: actionTypes.map(([type, count]) => [stripHtml(type), count.toString()]),
     theme: 'grid',
     styles: { fontSize: 9 },
     headStyles: { fillColor: [88, 28, 135] },

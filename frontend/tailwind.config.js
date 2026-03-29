@@ -11,7 +11,16 @@ export default {
             primary: "#1e1e24",
             secondary: "#2a2a35", 
             accent: "#4f46e5",
-        }
+        },
+        keyframes: {
+            fadeIn: {
+                '0%': { opacity: '0', transform: 'translateY(4px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+            },
+        },
+        animation: {
+            fadeIn: 'fadeIn 0.3s ease-out both',
+        },
       },
     },
     plugins: [],
