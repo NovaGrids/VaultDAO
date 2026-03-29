@@ -31,6 +31,7 @@ export interface BackendRuntime {
   readonly recurringIndexerService: RecurringIndexerService;
   readonly snapshotService: SnapshotService;
   readonly proposalActivityAggregator: ProposalActivityAggregator;
+  readonly proposalActivityConsumer: ProposalActivityConsumer;
   readonly transactionsService: TransactionsService;
   readonly jobManager: JobManager;
   readonly wsServer?: EventWebSocketServer;
@@ -68,6 +69,7 @@ export function startServer(
     recurringIndexerService,
     snapshotService,
     proposalActivityAggregator,
+    proposalActivityConsumer,
     transactionsService,
     jobManager,
   };

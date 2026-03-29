@@ -72,6 +72,11 @@ export class TransactionsService {
     return result;
   }
 
+  /** Returns cache hit/miss statistics. */
+  cacheStats() {
+    return this.cache.stats();
+  }
+
   /** Invalidate all cached transaction pages (e.g. after a known new tx). */
   invalidateCache(): void {
     this.cache.clear();

@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import type { BackendEnv } from "./config/env.js";
 import type { BackendRuntime } from "./server.js";
-import { createHealthRouter, createStatusRouter } from "./modules/health/health.routes.js";
+import { createHealthRouter, createStatusRouter, createMetricsRouter } from "./modules/health/health.routes.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
@@ -93,6 +93,7 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const v1Router = express.Router();
   
   v1Router.use("/status", createStatusRouter(env, runtime));
+  v1Router.use("/metrics", createMetricsRouter(runtime));
   
   v1Router.use(
     "/snapshots",
