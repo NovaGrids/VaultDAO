@@ -2,7 +2,11 @@
  * Structured logger utility for backend.
  * In production (NODE_ENV=production): emits JSON lines only.
  * In development (default): emits human-readable lines only.
+ *
+ * Automatically includes requestId from AsyncLocalStorage when available.
  */
+
+import { requestIdStorage } from "../http/requestId.js";
 
 interface LogMeta {
   [key: string]: any;
@@ -32,18 +36,18 @@ export function createLogger(
     msg: string,
     meta?: LogMeta,
   ): void {
-    // Suppress debug output in production
-    if (level === "debug" && isProduction) {
-      return;
-    }
+    if (level === "debug" && isProduction) return;
+
+    const requestId = requestIdStorage.getStore();
+    const enriched = requestId ? { requestId, ...meta } : meta;
 
     if (isProduction) {
       consoleFn(
-        JSON.stringify({ level, prefix, ts: timestamp(), msg, ...meta }),
+        JSON.stringify({ level, prefix, ts: timestamp(), msg, ...enriched }),
       );
     } else {
       consoleFn(
-        `[${level.toUpperCase()}] [${prefix}] ${timestamp()} ${msg}${formatMeta(meta)}`,
+        `[${level.toUpperCase()}] [${prefix}] ${timestamp()} ${msg}${formatMeta(enriched)}`,
       );
     }
   }

@@ -1,7 +1,11 @@
 import express, { Request, Response, NextFunction } from "express";
 import type { BackendEnv } from "./config/env.js";
 import type { BackendRuntime } from "./server.js";
-import { createHealthRouter, createStatusRouter, createMetricsRouter } from "./modules/health/health.routes.js";
+import {
+  createHealthRouter,
+  createStatusRouter,
+  createMetricsRouter,
+} from "./modules/health/health.routes.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
@@ -13,6 +17,7 @@ import { ErrorCode } from "./shared/http/errorCodes.js";
 import {
   REQUEST_ID_HEADER,
   generateRequestId,
+  requestIdStorage,
 } from "./shared/http/requestId.js";
 import { createRequestLogger } from "./shared/http/requestLogger.js";
 
@@ -41,7 +46,8 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
     const origin = req.get("Origin");
 
     const isAllowed =
-      env.corsOrigin.includes("*") || (origin && env.corsOrigin.includes(origin));
+      env.corsOrigin.includes("*") ||
+      (origin && env.corsOrigin.includes(origin));
 
     // In production, actively reject disallowed origins with a 403.
     // Requests with no Origin header (server-to-server, curl) are allowed.
@@ -79,14 +85,10 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   // Request ID middleware
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (!req.get(REQUEST_ID_HEADER)) {
-      const id = generateRequestId();
-      res.set(REQUEST_ID_HEADER, id);
-      (req as any).requestId = id;
-    } else {
-      (req as any).requestId = req.get(REQUEST_ID_HEADER)!;
-    }
-    next();
+    const id = req.get(REQUEST_ID_HEADER) ?? generateRequestId();
+    res.set(REQUEST_ID_HEADER, id);
+    (req as any).requestId = id;
+    requestIdStorage.run(id, next);
   });
 
   // Rate limiting middleware
@@ -104,40 +106,44 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const authMiddleware = createAuthMiddleware(env.apiKey);
 
   app.use(createHealthRouter(env, runtime));
-  
+
   const v1Router = express.Router();
-  
+
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime));
-  
+
   v1Router.use(
     "/snapshots",
     authMiddleware,
-    createSnapshotRouter(runtime.snapshotService)
+    createSnapshotRouter(runtime.snapshotService),
   );
-  
+
   v1Router.use(
     "/proposals",
     authMiddleware,
-    createProposalsRouter(runtime.proposalActivityAggregator)
+    createProposalsRouter(runtime.proposalActivityAggregator),
   );
-  
+
   v1Router.use(
     "/recurring",
     authMiddleware,
-    createRecurringRouter(runtime.recurringIndexerService)
+    createRecurringRouter(runtime.recurringIndexerService),
   );
 
   v1Router.use(
     "/transactions",
     authMiddleware,
-    createTransactionsRouter(runtime.transactionsService, env.contractId)
+    createTransactionsRouter(runtime.transactionsService, env.contractId),
   );
 
   app.use("/api/v1", v1Router);
 
   app.use((_request, response) => {
-    error(response, { message: "Not Found", status: 404, code: ErrorCode.NOT_FOUND });
+    error(response, {
+      message: "Not Found",
+      status: 404,
+      code: ErrorCode.NOT_FOUND,
+    });
   });
 
   return app;

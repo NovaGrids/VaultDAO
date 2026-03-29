@@ -5,7 +5,7 @@ import type { RecurringIndexerService } from "./recurring.service.js";
 import type { RecurringStatus } from "./types.js";
 
 /**
- * Get all recurring payments with optional status filter
+ * Get all recurring payments with optional status filter and pagination
  */
 export function getAllRecurringController(
   service: RecurringIndexerService,
@@ -13,14 +13,17 @@ export function getAllRecurringController(
   return async (request, response) => {
     try {
       const status = request.query.status as string | undefined;
+      const offset = Math.max(
+        0,
+        parseInt(String(request.query.offset ?? "0"), 10) || 0,
+      );
+      const rawLimit = parseInt(String(request.query.limit ?? "50"), 10) || 50;
+      const limit = Math.min(Math.max(1, rawLimit), 200);
 
       const filter = status ? { status: status as RecurringStatus } : undefined;
-      const payments = await service.getPayments(filter);
+      const result = await service.getPayments(filter, { offset, limit });
 
-      success(response, {
-        items: payments,
-        total: payments.length,
-      });
+      success(response, result);
     } catch (err) {
       error(response, {
         message: "Failed to fetch recurring payments",
@@ -44,7 +47,11 @@ export function getRecurringByIdController(
 
       const payment = await service.getPayment(id);
       if (!payment) {
-        error(response, { message: "Payment not found", status: 404, code: ErrorCode.NOT_FOUND });
+        error(response, {
+          message: "Payment not found",
+          status: 404,
+          code: ErrorCode.NOT_FOUND,
+        });
         return;
       }
 

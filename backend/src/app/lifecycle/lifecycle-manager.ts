@@ -118,14 +118,13 @@ export class LifecycleManager {
     }, this.shutdownTimeoutMs);
 
     try {
-      // 1. Execute shutdown hooks first (e.g. background services)
-      // Per requirement: Stop all background services before closing the HTTP server
-      await this.executeShutdownHooks();
-
-      // 2. Close HTTP server (stop accepting connections)
+      // 1. Stop accepting new connections first (drain in-flight requests)
       if (this.server) {
         await this.closeServer();
       }
+
+      // 2. Execute shutdown hooks (background jobs, queues, etc.) after HTTP is drained
+      await this.executeShutdownHooks();
 
       const totalDuration = Date.now() - startTime;
       this.logger.info("graceful shutdown completed", {
