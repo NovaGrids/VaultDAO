@@ -31,6 +31,7 @@ export interface BackendRuntime {
   readonly recurringIndexerService: RecurringIndexerService;
   readonly snapshotService: SnapshotService;
   readonly proposalActivityAggregator: ProposalActivityAggregator;
+  readonly transactionsService: TransactionsService;
   readonly jobManager: JobManager;
   readonly wsServer?: EventWebSocketServer;
 }
@@ -59,11 +60,15 @@ export function startServer(
   );
   const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
 
+  const horizonClient = new HorizonClient({ url: env.horizonUrl });
+  const transactionsService = new TransactionsService(horizonClient);
+
   const runtime: any = {
     startedAt: new Date().toISOString(),
     recurringIndexerService,
     snapshotService,
     proposalActivityAggregator,
+    transactionsService,
     jobManager,
   };
 

@@ -5,6 +5,7 @@ import { createHealthRouter, createStatusRouter } from "./modules/health/health.
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
+import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
 import { error } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createAuthMiddleware } from "./shared/http/auth.js";
@@ -109,6 +110,12 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
     "/recurring",
     authMiddleware,
     createRecurringRouter(runtime.recurringIndexerService)
+  );
+
+  v1Router.use(
+    "/transactions",
+    authMiddleware,
+    createTransactionsRouter(runtime.transactionsService, env.contractId)
   );
 
   app.use("/api/v1", v1Router);
