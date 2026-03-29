@@ -107,17 +107,53 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, []);
 
   // Poll wallet state while connected to catch external disconnects
+  // Pause polling when tab is hidden to save resources
   useEffect(() => {
     if (!selectedWalletId || !connected) return;
     const adapter = getAdapterById(selectedWalletId);
-    if (adapter && adapter.isAvailable) {
-      const interval = setInterval(async () => {
+    if (!adapter || !adapter.isAvailable) return;
+
+    let interval: NodeJS.Timeout | null = null;
+
+    const startPolling = () => {
+      if (interval) return; // Already polling
+      interval = setInterval(async () => {
         if (await adapter.isAvailable()) {
           await updateWalletState(adapter);
         }
       }, 3000);
-      return () => clearInterval(interval);
+    };
+
+    const stopPolling = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'hidden') {
+        stopPolling();
+      } else {
+        // Tab became visible - check state once immediately, then resume polling
+        if (await adapter.isAvailable()) {
+          await updateWalletState(adapter);
+        }
+        startPolling();
+      }
+    };
+
+    // Start polling if tab is visible
+    if (document.visibilityState === 'visible') {
+      startPolling();
     }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWalletId, connected, updateWalletState]);
 
