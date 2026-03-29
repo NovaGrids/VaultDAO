@@ -6600,13 +6600,16 @@ impl VaultDAO {
 
         let milestone = &round.milestones.get(milestone_index).unwrap();
 
-        if milestone.status != FundingMilestoneStatus::Pending {
+        if milestone.status != FundingMilestoneStatus::Pending
+            && milestone.status != FundingMilestoneStatus::Rejected
+        {
             return Err(VaultError::FundingRoundError);
         }
 
         let mut updated_milestone = milestone.clone();
         updated_milestone.status = FundingMilestoneStatus::Submitted;
         updated_milestone.submitted_at = env.ledger().timestamp();
+        updated_milestone.rejection_reason = None;
 
         round.milestones.set(milestone_index, updated_milestone);
         storage::set_funding_round(&env, &round);
@@ -6656,6 +6659,49 @@ impl VaultDAO {
         storage::set_funding_round(&env, &round);
 
         events::emit_milestone_verified(&env, round_id, milestone_index, &verifier, amount);
+
+        Ok(())
+    }
+
+    /// Reject a submitted milestone (requires signer)
+    pub fn reject_milestone(
+        env: Env,
+        verifier: Address,
+        round_id: u64,
+        milestone_index: u32,
+        reason: String,
+    ) -> Result<(), VaultError> {
+        verifier.require_auth();
+
+        let vault_config = storage::get_config(&env)?;
+        if !vault_config.signers.contains(&verifier) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let mut round = storage::get_funding_round(&env, round_id)?;
+
+        if round.status != FundingRoundStatus::Active {
+            return Err(VaultError::FundingRoundError);
+        }
+
+        if milestone_index >= round.milestones.len() {
+            return Err(VaultError::FundingRoundError);
+        }
+
+        let milestone = round.milestones.get(milestone_index).unwrap();
+
+        if milestone.status != FundingMilestoneStatus::Submitted {
+            return Err(VaultError::FundingRoundError);
+        }
+
+        let mut updated_milestone = milestone.clone();
+        updated_milestone.status = FundingMilestoneStatus::Rejected;
+        updated_milestone.rejection_reason = Some(reason);
+
+        round.milestones.set(milestone_index, updated_milestone);
+        storage::set_funding_round(&env, &round);
+
+        events::emit_milestone_rejected(&env, round_id, milestone_index, &verifier);
 
         Ok(())
     }
