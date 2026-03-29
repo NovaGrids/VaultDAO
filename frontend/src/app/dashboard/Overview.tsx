@@ -5,6 +5,7 @@ import { FileText, CheckCircle, Wallet, Plus, TrendingUp, TrendingDown, X, Refre
 import StatCard from '../../components/Layout/StatCard';
 import TokenBalanceCard, { TokenBalanceCardSkeleton } from '../../components/TokenBalanceCard';
 import DashboardBuilder from '../../components/DashboardBuilder';
+import DashboardErrorBoundary from '../../components/DashboardErrorBoundary';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
 import { loadDashboardLayout } from '../../utils/dashboardTemplates';
@@ -185,9 +186,11 @@ const Overview: React.FC = () => {
             </div>
 
             {showAdvancedDashboard && (
-                <DashboardBuilder
-                    initialWidgets={(savedLayout?.widgets as WidgetConfig[] | undefined) || []}
-                />
+                <DashboardErrorBoundary>
+                    <DashboardBuilder
+                        initialWidgets={(savedLayout?.widgets as WidgetConfig[] | undefined) || []}
+                    />
+                </DashboardErrorBoundary>
             )}
 
             {!showAdvancedDashboard && (

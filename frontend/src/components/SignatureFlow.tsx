@@ -11,9 +11,16 @@ interface SignatureFlowProps {
   steps: FlowStep[];
 }
 
+/**
+ * SignatureFlow component displays a vertical flow of steps with connector lines.
+ * 
+ * Visual constraint: The connector lines use absolute positioning with overflow-hidden
+ * on the parent to prevent 1-2px overflow artifacts at the bottom. This ensures
+ * clean alignment between step icons without bleeding over component boundaries.
+ */
 const SignatureFlow: React.FC<SignatureFlowProps> = ({ steps }) => {
   return (
-    <div className="relative px-2 sm:px-0">
+    <div className="relative px-2 sm:px-0 overflow-hidden">
       {steps.map((step, idx) => (
         <div key={idx} className="flex items-start gap-2 sm:gap-3 pb-4 sm:pb-6 last:pb-0 relative">
           {/* Connector Line */}

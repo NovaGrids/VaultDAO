@@ -289,8 +289,14 @@ export const useVaultContract = () => {
     }, [recipientListMode, whitelistAddresses, blacklistAddresses, recipientStorageKey]);
 
     const readContractValue = useCallback(async (functionName: string, args: xdr.ScVal[] = []): Promise<unknown> => {
-        const source = address ?? env.contractId;
-        const account = await server.getAccount(source);
+        const source = address ?? env.feesAccount;
+        let account;
+        try {
+            account = await server.getAccount(source);
+        } catch (error) {
+            console.warn(`Failed to load account for read operation (${source}):`, error);
+            throw new Error(`Unable to perform read operation: invalid source account (${source})`);
+        }
         const tx = new TransactionBuilder(account, { fee: "100" })
             .setNetworkPassphrase(env.networkPassphrase)
             .setTimeout(30)
