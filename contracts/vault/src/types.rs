@@ -1373,6 +1373,8 @@ pub struct FundingMilestone {
     pub verified_at: u64,
     /// Address that verified the milestone
     pub verified_by: Option<Address>,
+    /// Rejection reason, if rejected
+    pub rejection_reason: Option<String>,
 }
 
 /// Status of a funding round
