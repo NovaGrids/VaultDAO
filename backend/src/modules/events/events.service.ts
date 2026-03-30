@@ -7,6 +7,7 @@ import type { ProposalActivityConsumer } from "../proposals/consumer.js";
 import type { EventWebSocketServer } from "../websocket/websocket.server.js";
 import type { SnapshotService } from "../snapshots/snapshot.service.js";
 import { SnapshotNormalizer } from "../snapshots/normalizer.js";
+import { TimeoutError } from "../../shared/http/fetchWithTimeout.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
@@ -37,6 +38,7 @@ const PROPOSAL_TOPICS = new Set([
  *
  * A background service that polls the Soroban RPC for contract events.
  * Now supports cursor persistence to resume safely across restarts.
+ * Includes event deduplication to handle overlapping poll windows.
  */
 export class EventPollingService {
   private readonly logger = createLogger("events-service");
@@ -44,6 +46,8 @@ export class EventPollingService {
   private timer: NodeJS.Timeout | null = null;
   private lastLedgerPolled: number = 0;
   private consecutiveErrors: number = 0;
+  private processedEventIds: Set<string> = new Set();
+  private readonly MAX_PROCESSED_IDS = 1000;
 
   constructor(
     private readonly env: BackendEnv,
@@ -62,6 +66,9 @@ export class EventPollingService {
       this.logger.info("event polling is disabled in config");
       return;
     }
+
+    // Clear processed event IDs on startup for fresh session
+    this.processedEventIds.clear();
 
     // Load last cursor from storage
     const lastCursor = await this.storage.getCursor();
@@ -128,10 +135,21 @@ export class EventPollingService {
         this.consecutiveErrors = 0;
       } catch (error) {
         this.consecutiveErrors++;
-        this.logger.error("poll error", {
-          attempt: this.consecutiveErrors,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        
+        // Handle timeout errors with additional context
+        if (error instanceof TimeoutError) {
+          this.logger.error("RPC timeout during poll", {
+            attempt: this.consecutiveErrors,
+            error: error.message,
+            rpc: this.env.sorobanRpcUrl,
+            timeoutMs: 10000,
+          });
+        } else {
+          this.logger.error("poll error", {
+            attempt: this.consecutiveErrors,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       } finally {
         this.scheduleNextPoll();
       }
@@ -169,14 +187,54 @@ export class EventPollingService {
 
   /**
    * Processes a batch of events discovered during polling.
+   * Deduplicates events based on event ID to handle overlapping poll windows.
    */
   private async handleBatch(events: ContractEvent[]): Promise<void> {
     this.logger.info(`processing batch of ${events.length} events`);
+    
+    let duplicateCount = 0;
+    
     for (const event of events) {
+      // Check if event has already been processed
+      if (event.id && this.processedEventIds.has(event.id)) {
+        duplicateCount++;
+        this.logger.debug("skipping duplicate event", {
+          eventId: event.id,
+          topic: event.topic[0] ?? "unknown",
+          ledger: (event as any).ledger ?? "unknown",
+        });
+        continue;
+      }
+
+      // Add event ID to processed set
+      if (event.id) {
+        this.processedEventIds.add(event.id);
+
+        // Maintain bounded set size (FIFO eviction)
+        if (this.processedEventIds.size > this.MAX_PROCESSED_IDS) {
+          const firstId = this.processedEventIds.values().next().value;
+          this.processedEventIds.delete(firstId);
+          this.logger.debug("processedEventIds at capacity, removing oldest entry", {
+            removedId: firstId,
+            currentSize: this.processedEventIds.size,
+          });
+        }
+      }
+
+      // Process the event normally
       if (this.wsServer) {
         this.wsServer.broadcastEvent(event);
       }
       await this.processEvent(event);
+    }
+
+    // Log summary if duplicates were found
+    if (duplicateCount > 0) {
+      this.logger.debug("batch processing summary", {
+        total: events.length,
+        duplicates: duplicateCount,
+        processed: events.length - duplicateCount,
+      });
     }
   }
 

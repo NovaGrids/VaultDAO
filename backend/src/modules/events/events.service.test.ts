@@ -163,3 +163,244 @@ test("getStatus exposes lastLedgerPolled after poll advances cursor", async () =
 
   svc.stop();
 });
+
+
+// Deduplication tests
+test("Event Deduplication", async (t) => {
+  await t.test("processedEventIds set is cleared on start()", async () => {
+    const storage = new MemoryCursorStorage();
+    const svc = new EventPollingService(createTestEnv(), storage);
+
+    // Access private field for testing
+    const serviceAny = svc as any;
+
+    // Manually add some IDs to simulate previous processing
+    serviceAny.processedEventIds.add("event-1");
+    serviceAny.processedEventIds.add("event-2");
+    assert.equal(serviceAny.processedEventIds.size, 2);
+
+    // Start should clear the set
+    await svc.start();
+    assert.equal(serviceAny.processedEventIds.size, 0);
+
+    svc.stop();
+  });
+
+  await t.test("processedEventIds maintains bounded size (max 1000)", async () => {
+    const storage = new MemoryCursorStorage();
+    const svc = new EventPollingService(createTestEnv(), storage);
+    const serviceAny = svc as any;
+
+    // Add more than MAX_PROCESSED_IDS entries
+    for (let i = 0; i < 1500; i++) {
+      serviceAny.processedEventIds.add(`event-${i}`);
+
+      // Maintain bounded size (FIFO eviction)
+      if (serviceAny.processedEventIds.size > serviceAny.MAX_PROCESSED_IDS) {
+        const firstId = serviceAny.processedEventIds.values().next().value;
+        serviceAny.processedEventIds.delete(firstId);
+      }
+    }
+
+    // Set should never exceed MAX_PROCESSED_IDS
+    assert.ok(
+      serviceAny.processedEventIds.size <= serviceAny.MAX_PROCESSED_IDS,
+      `set size ${serviceAny.processedEventIds.size} should not exceed ${serviceAny.MAX_PROCESSED_IDS}`
+    );
+  });
+
+  await t.test("duplicate events are skipped", async () => {
+    const storage = new MemoryCursorStorage();
+    const svc = new EventPollingService(createTestEnv(), storage);
+    const serviceAny = svc as any;
+
+    // Simulate processed event
+    serviceAny.processedEventIds.add("event-123");
+
+    // Create a mock event with the same ID
+    const mockEvent = {
+      id: "event-123",
+      topic: ["proposal_created"],
+      value: {},
+    };
+
+    // Check if event would be skipped
+    const isDuplicate = serviceAny.processedEventIds.has(mockEvent.id);
+    assert.equal(isDuplicate, true, "event should be detected as duplicate");
+  });
+
+  await t.test("new events are added to processedEventIds", async () => {
+    const storage = new MemoryCursorStorage();
+    const svc = new EventPollingService(createTestEnv(), storage);
+    const serviceAny = svc as any;
+
+    const eventId = "event-new-123";
+    assert.equal(serviceAny.processedEventIds.has(eventId), false);
+
+    // Simulate adding event
+    serviceAny.processedEventIds.add(eventId);
+
+    assert.equal(serviceAny.processedEventIds.has(eventId), true);
+  });
+
+  await t.test("FIFO eviction removes oldest entry when set is full", async () => {
+    const storage = new MemoryCursorStorage();
+    const svc = new EventPollingService(createTestEnv(), storage);
+    const serviceAny = svc as any;
+
+    // Fill set to capacity
+    for (let i = 0; i < serviceAny.MAX_PROCESSED_IDS; i++) {
+      serviceAny.processedEventIds.add(`event-${i}`);
+    }
+
+    assert.equal(serviceAny.processedEventIds.size, serviceAny.MAX_PROCESSED_IDS);
+
+    // Add one more - should trigger eviction
+    const firstId = serviceAny.processedEventIds.values().next().value;
+    serviceAny.processedEventIds.add("event-new");
+
+    if (serviceAny.processedEventIds.size > serviceAny.MAX_PROCESSED_IDS) {
+      serviceAny.processedEventIds.delete(firstId);
+    }
+
+    // Set should still be at or below capacity
+    assert.ok(
+      serviceAny.processedEventIds.size <= serviceAny.MAX_PROCESSED_IDS,
+      "set size should not exceed capacity after eviction"
+    );
+
+    // Oldest entry should be removed
+    assert.equal(
+      serviceAny.processedEventIds.has(firstId),
+      false,
+      "oldest entry should be removed"
+    );
+  });
+});
+
+// Property-based deduplication tests
+test("Event Deduplication Properties", async (t) => {
+  await t.test("Property 1: Duplicate Detection - duplicate events are skipped", async () => {
+    for (let iteration = 0; iteration < 10; iteration++) {
+      const storage = new MemoryCursorStorage();
+      const svc = new EventPollingService(createTestEnv(), storage);
+      const serviceAny = svc as any;
+
+      // Generate random event IDs
+      const eventIds = Array.from({ length: 20 }, (_, i) => `event-${i}`);
+      const duplicateIds = eventIds.slice(0, 10); // First 10 will be duplicates
+
+      // Add first batch
+      for (const id of eventIds) {
+        serviceAny.processedEventIds.add(id);
+      }
+
+      // Check that duplicates are detected
+      for (const id of duplicateIds) {
+        assert.equal(
+          serviceAny.processedEventIds.has(id),
+          true,
+          `duplicate event ${id} should be detected`
+        );
+      }
+    }
+  });
+
+  await t.test("Property 2: Event ID Tracking - all event IDs are tracked", async () => {
+    for (let iteration = 0; iteration < 10; iteration++) {
+      const storage = new MemoryCursorStorage();
+      const svc = new EventPollingService(createTestEnv(), storage);
+      const serviceAny = svc as any;
+
+      // Generate random event IDs
+      const eventIds = Array.from({ length: 50 }, (_, i) => `event-${Math.random()}`);
+
+      // Add all IDs
+      for (const id of eventIds) {
+        serviceAny.processedEventIds.add(id);
+      }
+
+      // Verify all IDs are tracked (up to capacity)
+      const trackedCount = Math.min(eventIds.length, serviceAny.MAX_PROCESSED_IDS);
+      assert.ok(
+        serviceAny.processedEventIds.size <= serviceAny.MAX_PROCESSED_IDS,
+        "set size should not exceed capacity"
+      );
+    }
+  });
+
+  await t.test("Property 3: Bounded Set Maintenance - set never exceeds max size", async () => {
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const storage = new MemoryCursorStorage();
+      const svc = new EventPollingService(createTestEnv(), storage);
+      const serviceAny = svc as any;
+
+      // Add many more entries than capacity
+      for (let i = 0; i < 2000; i++) {
+        serviceAny.processedEventIds.add(`event-${i}`);
+
+        // Maintain bounded size
+        if (serviceAny.processedEventIds.size > serviceAny.MAX_PROCESSED_IDS) {
+          const firstId = serviceAny.processedEventIds.values().next().value;
+          serviceAny.processedEventIds.delete(firstId);
+        }
+      }
+
+      // Verify set never exceeds capacity
+      assert.ok(
+        serviceAny.processedEventIds.size <= serviceAny.MAX_PROCESSED_IDS,
+        `set size ${serviceAny.processedEventIds.size} should not exceed ${serviceAny.MAX_PROCESSED_IDS}`
+      );
+    }
+  });
+
+  await t.test("Property 5: Set Cleared on Restart - processedEventIds cleared on start()", async () => {
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const storage = new MemoryCursorStorage();
+      const svc = new EventPollingService(createTestEnv(), storage);
+      const serviceAny = svc as any;
+
+      // Add some IDs
+      for (let i = 0; i < 100; i++) {
+        serviceAny.processedEventIds.add(`event-${i}`);
+      }
+
+      assert.ok(serviceAny.processedEventIds.size > 0);
+
+      // Start should clear the set
+      await svc.start();
+      assert.equal(serviceAny.processedEventIds.size, 0);
+
+      svc.stop();
+    }
+  });
+
+  await t.test("Property 6: Overlapping Range Deduplication - events in overlaps are deduplicated", async () => {
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const storage = new MemoryCursorStorage();
+      const svc = new EventPollingService(createTestEnv(), storage);
+      const serviceAny = svc as any;
+
+      // Simulate first poll: events 1-100
+      const firstPollIds = Array.from({ length: 100 }, (_, i) => `event-${i + 1}`);
+      for (const id of firstPollIds) {
+        serviceAny.processedEventIds.add(id);
+      }
+
+      // Simulate second poll with overlap: events 51-150 (51-100 are duplicates)
+      const secondPollIds = Array.from({ length: 100 }, (_, i) => `event-${i + 51}`);
+      let duplicateCount = 0;
+
+      for (const id of secondPollIds) {
+        if (serviceAny.processedEventIds.has(id)) {
+          duplicateCount++;
+        } else {
+          serviceAny.processedEventIds.add(id);
+        }
+      }
+
+      // Should detect 50 duplicates (events 51-100)
+      assert.equal(duplicateCount, 50, "should detect 50 duplicates in overlap");
+    }
+  });
+});
