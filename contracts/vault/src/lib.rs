@@ -1,26 +1,72 @@
 //! VaultDAO - Multi-Signature Treasury Contract with Audit Trail
 //!
-//! # 🟢 STABLE FEATURES (Production-ready, public API)
-//! - Core multisig: initialize(), propose_transfer(), approve_proposal(), execute_proposal()
-//! - RBAC: set_role(), get_role()
-//! - Spending limits & velocity checks
-//! - Core reads: get_proposal(), get_config()
-//!
-//! # 🟡 EXPERIMENTAL FEATURES (Maturing - use with caution)
-//! - Batch operations: batch_propose_transfers()
-//! - Recurring payments: schedule_payment()
-//! - Escrow system
-//! - DEX swaps: propose_swap()
-//! - Reputation system
-//!
-//! # 🔴 UNSTABLE / DEVELOPMENT (Avoid in production)
-//! - Bridge module (EXPLICITLY EXCLUDED via #[cfg(feature = "bridge")])
-//! - Wallet recovery proposals
-//! - Proposal templates
-//! 
 //! A Soroban smart contract implementing M-of-N multisig with RBAC,
-
 //! proposal workflows, spending limits, reputation, insurance, and batch execution.
+//!
+//! # Feature Stability Classification
+//!
+//! Functions in this contract are classified into three tiers:
+//!
+//! ## 🟢 STABLE — Production-ready. Public API is frozen; breaking changes require a major version.
+//! - **Core multisig**: `initialize`, `propose_transfer`, `approve_proposal`,
+//!   `abstain_proposal`, `execute_proposal`, `cancel_proposal`
+//! - **RBAC**: `set_role`, `get_role`, `get_role_assignments`
+//! - **Config management**: `update_threshold`, `update_limits`, `update_quorum`
+//! - **Spending limits & velocity**: enforced automatically on every proposal
+//! - **Timelocks**: enforced automatically on `execute_proposal`
+//! - **Recipient lists**: `set_list_mode`, `add_to_whitelist`, `remove_from_whitelist`,
+//!   `add_to_blacklist`, `remove_from_blacklist`
+//! - **Core reads**: `get_proposal`, `get_config`, `get_signers`, `is_signer`,
+//!   `get_today_spent`, `list_proposal_ids`, `list_proposals`
+//! - **Audit trail**: `get_audit_entry`, `verify_audit_trail`
+//! - **Attachments & metadata**: `add_attachment`, `remove_attachment`,
+//!   `set_proposal_metadata`, `add_tag`, `remove_tag`
+//!
+//! ## 🟡 EXPERIMENTAL — Maturing. Behaviour is stable but the API may change in minor versions.
+//! - **Batch operations**: `batch_propose_transfers`, `batch_execute_proposals`
+//! - **Recurring payments**: `schedule_payment`, `execute_recurring_payment`,
+//!   `get_recurring_payment`, `list_recurring_payment_ids`, `list_recurring_payments`
+//! - **Hooks**: `register_pre_hook`, `register_post_hook`,
+//!   `remove_pre_hook`, `remove_post_hook`, `get_pre_hooks`, `get_post_hooks`
+//! - **Veto**: `veto_proposal`
+//! - **Amendments**: `amend_proposal`, `get_proposal_amendments`
+//! - **Cancellation history**: `get_cancellation_record`, `get_cancellation_history`
+//! - **Voting strategy**: `update_voting_strategy`, `get_voting_strategy`
+//! - **Quorum**: `get_quorum_status`
+//! - **Priority queue**: `change_priority`, `get_proposals_by_priority`
+//! - **Reputation**: automatic; `get_reputation` (read-only)
+//! - **Insurance & staking**: `withdraw_insurance_pool`, `withdraw_stake_pool`,
+//!   `update_staking_config`, `get_insurance_pool`
+//! - **Streaming payments**: `create_stream`
+//! - **Escrow**: `create_escrow`, `complete_milestone`, `release_escrow_funds`,
+//!   `dispute_escrow`, `resolve_escrow_dispute`, `get_escrow_info`
+//! - **DEX / AMM**: `set_dex_config`, `propose_swap`
+//! - **Funding rounds**: `create_funding_round`, `approve_funding_round`,
+//!   `submit_milestone`, `verify_milestone`, `release_round_funds`,
+//!   `cancel_funding_round`, `get_funding_round`
+//! - **Scheduled proposals**: `propose_scheduled_transfer`, `execute_scheduled_proposal`,
+//!   `cancel_scheduled_proposal`, `get_scheduled_proposals`
+//! - **Dependency proposals**: `propose_transfer_with_deps`
+//! - **Gas config**: `set_gas_config`, `get_gas_config`, `estimate_execution_fee`
+//! - **Metrics**: `get_metrics`
+//! - **Oracle**: `update_oracle_config`, `get_asset_price`
+//! - **Delegation**: `delegate_voting_power`, `revoke_delegation`
+//! - **Advanced permissions**: `grant_permission`, `revoke_permission`,
+//!   `delegate_permission`, `has_permission`
+//! - **Time-weighted voting**: `lock_tokens`, `extend_lock`, `unlock_tokens`, `unlock_early`
+//! - **Dynamic fees**: `set_fee_structure` (internal)
+//! - **Notifications**: `set_notification_preferences`
+//! - **Comments**: `add_comment`, `edit_comment`, `get_proposal_comments`
+//! - **Templates**: `create_template`, `get_template`
+//!
+//! ## 🔴 UNSTABLE — Development only. May be removed or redesigned without notice.
+//! - **Bridge module**: cross-chain operations, explicitly excluded via
+//!   `#[cfg(feature = "bridge")]` and not compiled by default
+//! - **Wallet recovery**: `initiate_recovery`, `approve_recovery`,
+//!   `execute_recovery`, `cancel_recovery` — guardian set is not yet audited
+//! - **Retry logic**: `get_retry_state` — backoff strategy subject to change
+//! - **Batch transactions**: `create_batch`, `execute_batch`, `get_batch`,
+//!   `get_batch_result` — rollback semantics not finalized
 
 #![no_std]
 #![allow(clippy::too_many_arguments)]
@@ -205,7 +251,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Proposal Management
+    // Proposal Management — 🟢 STABLE
     // ========================================================================
 
     /// Propose a new transfer of tokens from the vault.
@@ -1592,7 +1638,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Admin Functions
+    // Admin Functions — 🟢 STABLE
     // ========================================================================
     /// Update threshold
     ///
@@ -1859,7 +1905,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // View Functions
+    // View Functions — 🟢 STABLE
     // ========================================================================
 
     /// Get proposal by ID
@@ -2239,9 +2285,8 @@ impl VaultDAO {
         storage::get_recurring_payments_paginated(&env, offset, limit)
     }
 
-    //
     // ========================================================================
-    // Streaming Payments (feature/streaming-payments)
+    // Streaming Payments — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Create a new token stream.
@@ -2301,7 +2346,7 @@ impl VaultDAO {
         Ok(id)
     }
     // ========================================================================
-    // Recipient List Management
+    // Recipient List Management — 🟢 STABLE
     // ========================================================================
 
     /// Set the recipient list mode (Disabled, Whitelist, or Blacklist)
@@ -2452,7 +2497,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Comments
+    // Comments — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Add a comment to a proposal
@@ -2545,7 +2590,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Audit Trail
+    // Audit Trail — 🟢 STABLE
     // ========================================================================
 
     /// Get audit entry by ID
@@ -2596,7 +2641,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Batch Execution
+    // Batch Execution — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Execute multiple approved proposals in a single transaction.
@@ -2754,7 +2799,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Priority Management
+    // Priority Management — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Change the priority of a pending proposal.
@@ -2818,7 +2863,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Attachment Management
+    // Attachment Management — 🟢 STABLE
     // ========================================================================
 
     /// Add an IPFS attachment hash to a proposal.
@@ -2882,7 +2927,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Metadata Management
+    // Metadata Management — 🟢 STABLE
     // ========================================================================
 
     /// Set or update a metadata key for a proposal.
@@ -2964,7 +3009,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Tag Management
+    // Tag Management — 🟢 STABLE
     // ========================================================================
 
     /// Add a tag to a proposal.
@@ -3060,7 +3105,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Insurance Configuration (Issue: feature/proposal-insurance)
+    // Insurance Configuration — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Update the vault's insurance configuration.
@@ -3092,7 +3137,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Dynamic Fee System (Issue: feature/dynamic-fees)
+    // Dynamic Fee System — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Configure the dynamic fee structure.
@@ -3177,7 +3222,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Reputation System (Issue: feature/reputation-system)
+    // Reputation System — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Get the reputation record for an address.
@@ -3200,7 +3245,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Notification Preferences (Issue: feature/execution-notifications)
+    // Notification Preferences — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Set notification preferences for the caller.
@@ -3225,7 +3270,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Gas Limit Configuration (Issue: feature/gas-limits)
+    // Gas Limit Configuration — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Set the vault's gas execution limit configuration.
@@ -3267,7 +3312,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Performance Metrics (Issue: feature/performance-metrics)
+    // Performance Metrics — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Get vault-wide performance metrics.
@@ -3689,7 +3734,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Dynamic Fee System (Issue: feature/dynamic-fees)
+    // Dynamic Fee System — 🟡 EXPERIMENTAL (internal helpers)
     // ========================================================================
 
     /// Calculate fee for a transaction based on volume tiers and reputation.
@@ -3807,7 +3852,7 @@ impl VaultDAO {
     }
 
     // ============================================================================
-    // DEX/AMM Integration (Issue: feature/amm-integration)
+    // DEX/AMM Integration — 🟡 EXPERIMENTAL
     // ============================================================================
 
     pub fn set_dex_config(
@@ -4032,7 +4077,7 @@ impl VaultDAO {
         storage::get_swap_result(&env, proposal_id)
     }
     // ========================================================================
-    // Retry Helpers (private)
+    // Retry Helpers — 🔴 UNSTABLE (private)
     // ========================================================================
 
     /// Attempt the actual transfer for a proposal. Separated from execute_proposal
@@ -4604,7 +4649,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Escrow System (Issue: feature/escrow-system)
+    // Escrow System — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Create a new escrow agreement with milestone-based fund release
@@ -4919,7 +4964,7 @@ impl VaultDAO {
     }
 
     // ============================================================================
-    // Batch Transactions
+    // Batch Transactions — 🔴 UNSTABLE
     // ============================================================================
 
     /// Create a batch transaction with multiple operations
@@ -5122,7 +5167,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Time-Weighted Voting
+    // Time-Weighted Voting — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Lock tokens to gain increased voting power
@@ -5247,7 +5292,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Wallet Recovery (Issue: feature/wallet-recovery)
+    // Wallet Recovery — 🔴 UNSTABLE
     // ========================================================================
 
     /// Update recovery configuration
@@ -5550,7 +5595,7 @@ impl VaultDAO {
     }
 
     // ========================================================================
-    // Advanced Permissions (Issue: feature/advanced-permissions)
+    // Advanced Permissions — 🟡 EXPERIMENTAL
     // ========================================================================
 
     /// Grant a specific permission to an address

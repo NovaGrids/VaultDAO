@@ -60,33 +60,78 @@ The frontend is a modern SPA built with Vite, React, and Tailwind CSS.
 - **Components**: Modular UI components for proposal creation, list views, and status tracking.
 - **Styling**: Responsive design using Tailwind CSS with glassmorphism aesthetics.
 
-## 🟢 STABLE Features (Production-Ready)
+## Feature Stability Classification
 
-| Feature | Status | Description | Functions |
-|---------|--------|-------------|-----------|
-| Core Multisig | 🟢 STABLE | M-of-N approvals with execution | `initialize`, `proposeTransfer`, `approveProposal`, `executeProposal` |
-| RBAC | 🟢 STABLE | Role management | `setRole`, `getRole` |
-| Spending Limits | 🟢 STABLE | Per-proposal + time-based limits | `updateLimits` |
-| Timelocks | 🟢 STABLE | Delay on large transfers | Automatic in `executeProposal` |
+### Definitions
 
-## 🟡 EXPERIMENTAL Features (Maturing)
+| Tier | Meaning |
+|------|---------|
+| 🟢 **STABLE** | Production-ready. Public API is frozen; breaking changes require a major version bump. Safe to integrate and depend on. |
+| 🟡 **EXPERIMENTAL** | Maturing. Core behaviour is stable but the API (function signatures, error codes, storage layout) may change in minor versions. Use with awareness of potential migration work. |
+| 🔴 **UNSTABLE** | Development only. May be removed, redesigned, or renamed without notice. Do not use in production. |
 
-| Feature | Status | Description | Functions |
-|---------|--------|-------------|-----------|
-| Batch Operations | 🟡 EXPERIMENTAL | Multiple transfers atomically | `batchProposeTransfers`, `batchExecuteProposals` |
-| Recurring Payments | 🟡 EXPERIMENTAL | Automated scheduled payments | `schedulePayment`, `executeRecurringPayment` |
-| Escrow System | 🟡 EXPERIMENTAL | Milestone-based releases | `createEscrow`, `completeMilestone` |
-| DEX Swaps | 🟡 EXPERIMENTAL | Token swaps via AMMs | `proposeSwap` |
-| Reputation | 🟡 EXPERIMENTAL | Voting power based on history | Automatic |
+---
 
-## 🔴 UNSTABLE / Development
+### 🟢 STABLE — Production-Ready
 
-| Feature | Status | Description | Functions |
-|---------|--------|-------------|-----------|
-| Bridge Module | 🔴 UNSTABLE | Cross-chain (feature-gated) | `#[cfg(feature = "bridge")]` |
-| Wallet Recovery | 🔴 UNSTABLE | Emergency signer replacement | `initiateRecovery` |
-| Proposal Templates | 🔴 UNSTABLE | Pre-configured proposals | `createTemplate` |
-| Time-Weighted Voting | 🔴 UNSTABLE | Lock tokens for voting power | `lockTokens` |
+| Feature | Functions | Notes |
+|---------|-----------|-------|
+| Core Multisig | `initialize`, `proposeTransfer`, `approveProposal`, `abstainProposal`, `executeProposal`, `cancelProposal` | M-of-N approval with full lifecycle |
+| RBAC | `setRole`, `getRole`, `getRoleAssignments` | Admin / Treasurer / Member roles |
+| Spending Limits | `updateLimits`, `updateThreshold`, `updateQuorum` | Per-proposal, daily, weekly caps |
+| Timelocks | Automatic in `executeProposal` | Configurable delay on large transfers |
+| Velocity Checks | Automatic in `proposeTransfer` | Sliding-window proposal rate limiting |
+| Recipient Lists | `setListMode`, `addToWhitelist`, `removeFromWhitelist`, `addToBlacklist`, `removeFromBlacklist` | Whitelist / blacklist enforcement |
+| Core Reads | `getProposal`, `listProposalIds`, `listProposals`, `getConfig`, `getSigners`, `isSigner`, `getTodaySpent` | Read-only, no auth required |
+| Audit Trail | `getAuditEntry`, `getAuditEntryCount`, `verifyAuditTrail` | Tamper-evident hash chain |
+| Attachments & Metadata | `addAttachment`, `removeAttachment`, `setProposalMetadata`, `addTag`, `removeTag` | IPFS CID attachments and key-value metadata |
+
+---
+
+### 🟡 EXPERIMENTAL — Maturing
+
+| Feature | Functions | Notes |
+|---------|-----------|-------|
+| Batch Proposals | `batchProposeTransfers`, `batchExecuteProposals` | Multi-token batch; gas-optimized |
+| Recurring Payments | `schedulePayment`, `executeRecurringPayment`, `getRecurringPayment`, `listRecurringPaymentIds`, `listRecurringPayments` | Keeper-bot compatible; min interval 720 ledgers |
+| Hooks | `registerPreHook`, `registerPostHook`, `removePreHook`, `removePostHook`, `getPreHooks`, `getPostHooks` | Pre/post-execution callbacks |
+| Veto | `vetoProposal` | Configured veto addresses only |
+| Amendments | `amendProposal`, `getProposalAmendments` | Resets approvals; full audit trail |
+| Cancellation History | `getCancellationRecord`, `getCancellationHistory` | Audit of cancelled proposals |
+| Voting Strategy | `updateVotingStrategy`, `getVotingStrategy` | Simple / Weighted / Quadratic / Conviction |
+| Quorum | `getQuorumStatus` | Minimum participation enforcement |
+| Priority Queue | `changePriority`, `getProposalsByPriority` | Low / Normal / High / Critical |
+| Reputation | `getReputation` (read-only); automatic scoring | Score affects spending limits and insurance |
+| Insurance & Staking | `withdrawInsurancePool`, `withdrawStakePool`, `updateStakingConfig`, `getInsurancePool` | Proposer-staked collateral |
+| Streaming Payments | `createStream` | Linear token streaming; early-stage |
+| Escrow | `createEscrow`, `completeMilestone`, `releaseEscrowFunds`, `disputeEscrow`, `resolveEscrowDispute`, `getEscrowInfo` | Milestone-based fund release |
+| DEX / AMM | `setDexConfig`, `proposeSwap` | Token swaps via whitelisted DEXes |
+| Funding Rounds | `createFundingRound`, `approveFundingRound`, `submitMilestone`, `verifyMilestone`, `releaseRoundFunds`, `cancelFundingRound`, `getFundingRound` | Milestone-gated grant disbursement |
+| Scheduled Proposals | `proposeScheduledTransfer`, `executeScheduledProposal`, `cancelScheduledProposal`, `getScheduledProposals` | Time-locked future execution |
+| Dependency Proposals | `proposeTransferWithDeps` | DAG-based execution ordering |
+| Gas Config | `setGasConfig`, `getGasConfig`, `estimateExecutionFee` | Per-proposal gas budgeting |
+| Metrics | `getMetrics` | Vault-wide performance counters |
+| Oracle | `updateOracleConfig`, `getAssetPrice` | Price-condition evaluation |
+| Delegation | `delegateVotingPower`, `revokeDelegation` | Temporary vote delegation |
+| Advanced Permissions | `grantPermission`, `revokePermission`, `delegatePermission`, `hasPermission` | Fine-grained capability grants |
+| Time-Weighted Voting | `lockTokens`, `extendLock`, `unlockTokens`, `unlockEarly` | Lock tokens for voting multiplier |
+| Dynamic Fees | Internal fee collection on execution | Volume-tier + reputation discounts |
+| Notifications | `setNotificationPreferences` | Per-user event preferences |
+| Comments | `addComment`, `editComment`, `getProposalComments` | On-chain proposal discussion |
+| Templates | `createTemplate`, `getTemplate` | Reusable proposal configurations |
+
+---
+
+### 🔴 UNSTABLE — Development Only
+
+> ⚠️ Do not use these features in production. They may be removed, renamed, or fundamentally redesigned.
+
+| Feature | Functions | Reason for Instability |
+|---------|-----------|------------------------|
+| Bridge Module | `#[cfg(feature = "bridge")]` — not compiled by default | Cross-chain design not finalized; types incomplete |
+| Wallet Recovery | `initiateRecovery`, `approveRecovery`, `executeRecovery`, `cancelRecovery` | Guardian set not audited; recovery delay semantics may change |
+| Retry Logic | `getRetryState` | Exponential backoff strategy subject to redesign |
+| Batch Transactions | `createBatch`, `executeBatch`, `getBatch`, `getBatchResult` | Rollback semantics not finalized; distinct from `batchExecuteProposals` |
 
 ## Security Model
 
