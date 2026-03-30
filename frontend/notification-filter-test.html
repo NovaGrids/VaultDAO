@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notification Filter Sync Test</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #fff;
+    }
+    .test-section {
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .test-section h2 {
+      margin-top: 0;
+      color: #a78bfa;
+    }
+    button {
+      background: #7c3aed;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 5px;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #6d28d9;
+    }
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+      background: #374151;
+    }
+    .success {
+      background: #065f46;
+      color: #d1fae5;
+    }
+    .error {
+      background: #7f1d1d;
+      color: #fecaca;
+    }
+    .info {
+      background: #1e3a8a;
+      color: #bfdbfe;
+    }
+    code {
+      background: #1a1a1a;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+    .instructions {
+      background: #1e293b;
+      padding: 15px;
+      border-left: 4px solid #a78bfa;
+      margin: 10px 0;
+    }
+    .instructions ol {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .instructions li {
+      margin: 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧪 Notification Filter Sync Test Suite</h1>
+  
+  <div class="test-section">
+    <h2>Test 1: Filter Sync on Panel Open</h2>
+    <div class="instructions">
+      <strong>Objective:</strong> Verify that opening the panel shows current filter state
+      <ol>
+        <li>Start your development server: <code>npm run dev</code></li>
+        <li>Open the application in your browser</li>
+        <li>Open the NotificationCenter panel (click the bell icon)</li>
+        <li>Click "Filter" to open the filter panel</li>
+        <li>Verify all default filters are selected</li>
+      </ol>
+    </div>
+    <div class="status info">
+      <strong>Expected:</strong> All categories (Proposals, Approvals, System) and all priorities should be selected by default
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 2: External Filter Reset Sync</h2>
+    <div class="instructions">
+      <strong>Objective:</strong> Verify external filter resets are reflected when panel reopens
+      <ol>
+        <li>Open NotificationCenter and deselect "Proposals" category</li>
+        <li>Click "Apply Filters"</li>
+        <li>Close the NotificationCenter panel</li>
+        <li>Click the "Reset" button in the filter panel (or trigger reset externally)</li>
+        <li>Reopen the NotificationCenter panel</li>
+        <li>Open the filter panel again</li>
+        <li>Verify "Proposals" is now selected again</li>
+      </ol>
+    </div>
+    <div class="status info">
+      <strong>Expected:</strong> The filter should reflect the reset state, with "Proposals" selected again
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 3: No Sync When Panel Already Open</h2>
+    <div class="instructions">
+      <strong>Objective:</strong> Verify selections aren't interrupted while panel is open
+      <ol>
+        <li>Open NotificationCenter panel</li>
+        <li>Open filter panel</li>
+        <li>Deselect "Proposals" (don't apply yet)</li>
+        <li>Keep panel open and interact with other UI elements</li>
+        <li>Return to filter panel</li>
+        <li>Verify "Proposals" is still deselected</li>
+      </ol>
+    </div>
+    <div class="status info">
+      <strong>Expected:</strong> User's selection should be preserved (no unwanted sync)
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 4: Browser Console Test</h2>
+    <div class="instructions">
+      <strong>Quick programmatic test using browser console:</strong>
+      <ol>
+        <li>Open your app and open browser DevTools (F12)</li>
+        <li>Paste this code in the console:</li>
+      </ol>
+      <pre style="background: #1a1a1a; padding: 15px; border-radius: 4px; overflow-x: auto;"><code>// Test filter sync
+// 1. Close notification panel if open
+// 2. Run this in console:
+console.log('Testing filter sync...');
+
+// Simulate external filter change
+// (This assumes you have access to the context - adjust based on your setup)
+// You may need to use React DevTools to access the context
+
+// 3. Open notification panel
+// 4. Open filter panel
+// 5. Verify filters match what was set
+
+console.log('✅ If filters match the context state, test passed!');</code></pre>
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 5: Rapid Interaction Test</h2>
+    <div class="instructions">
+      <strong>Objective:</strong> Verify no input lag or interruption
+      <ol>
+        <li>Open NotificationCenter panel</li>
+        <li>Open filter panel</li>
+        <li>Rapidly click different filter options (toggle 5-10 times quickly)</li>
+        <li>Observe if all clicks register immediately</li>
+      </ol>
+    </div>
+    <div class="status info">
+      <strong>Expected:</strong> All clicks should register without delay or unexpected resets
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>✅ Automated Tests</h2>
+    <div class="instructions">
+      <strong>Run the automated test suite:</strong>
+      <pre style="background: #1a1a1a; padding: 15px; border-radius: 4px;"><code>cd frontend
+npm test -- NotificationCenter.test.tsx</code></pre>
+      <p>Or run all tests:</p>
+      <pre style="background: #1a1a1a; padding: 15px; border-radius: 4px;"><code>cd frontend
+npm test</code></pre>
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>📝 Implementation Summary</h2>
+    <div class="status success">
+      <strong>Fix Applied:</strong> Added useEffect hook that syncs local filter state when panel transitions from closed to open
+    </div>
+    <div style="margin-top: 15px;">
+      <strong>Key Changes:</strong>
+      <ul>
+        <li>Added <code>prevIsOpenRef</code> to track previous open state</li>
+        <li>Sync only occurs on <code>false → true</code> transition</li>
+        <li>All filter types (categories, priorities, status) are synced</li>
+        <li>No sync when panel is already open (prevents input jank)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>🎯 Acceptance Criteria</h2>
+    <ul style="list-style: none; padding: 0;">
+      <li>✅ Reopening panel shows current active filter state</li>
+      <li>✅ Typing in filter inputs is not interrupted</li>
+      <li>✅ External filter resets reflected on next open</li>
+      <li>✅ No unnecessary re-renders when panel already open</li>
+    </ul>
+  </div>
+
+  <script>
+    console.log('%c🧪 Notification Filter Sync Test Suite Loaded', 'color: #a78bfa; font-size: 16px; font-weight: bold;');
+    console.log('%cFollow the test instructions above to verify the fix', 'color: #bfdbfe;');
+  </script>
+</body>
+</html>

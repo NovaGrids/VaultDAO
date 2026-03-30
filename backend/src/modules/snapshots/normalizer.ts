@@ -146,6 +146,10 @@ export class SnapshotNormalizer {
    * Check if an event is relevant for snapshot building.
    */
   public static isSnapshotEvent(eventType: EventType): boolean {
-    return eventType === EventType.ROLE_ASSIGNED || eventType === EventType.INITIALIZED;
+    return (
+      eventType === EventType.ROLE_ASSIGNED ||
+      eventType === EventType.INITIALIZED ||
+      eventType === EventType.SIGNER_REMOVED
+    );
   }
 }

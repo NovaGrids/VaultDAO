@@ -1,8 +1,12 @@
+import { createLogger } from "../../shared/logging/logger.js";
 import type { BackendEnv } from "../../config/env.js";
 import type { ContractEvent, PollingState } from "./events.types.js";
 import type { CursorStorage } from "./cursor/index.js";
 import { EventNormalizer } from "./normalizers/index.js";
 import type { ProposalActivityConsumer } from "../proposals/consumer.js";
+import type { EventWebSocketServer } from "../websocket/websocket.server.js";
+import type { SnapshotService } from "../snapshots/snapshot.service.js";
+import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
@@ -35,6 +39,7 @@ const PROPOSAL_TOPICS = new Set([
  * Now supports cursor persistence to resume safely across restarts.
  */
 export class EventPollingService {
+  private readonly logger = createLogger("events-service");
   private isRunning: boolean = false;
   private timer: NodeJS.Timeout | null = null;
   private lastLedgerPolled: number = 0;
@@ -44,6 +49,8 @@ export class EventPollingService {
     private readonly env: BackendEnv,
     private readonly storage: CursorStorage,
     private readonly proposalConsumer?: ProposalActivityConsumer,
+    private readonly wsServer?: EventWebSocketServer,
+    private readonly snapshotService?: SnapshotService,
   ) {}
 
   /**
@@ -52,7 +59,7 @@ export class EventPollingService {
   public async start(): Promise<void> {
     if (this.isRunning) return;
     if (!this.env.eventPollingEnabled) {
-      console.log("[events-service] event polling is disabled in config");
+      this.logger.info("event polling is disabled in config");
       return;
     }
 
@@ -60,22 +67,19 @@ export class EventPollingService {
     const lastCursor = await this.storage.getCursor();
     if (lastCursor) {
       this.lastLedgerPolled = lastCursor.lastLedger;
-      console.log(
-        `[events-service] resuming from cursor: ledger ${this.lastLedgerPolled}`,
-      );
+      this.logger.info(`resuming from cursor: ledger ${this.lastLedgerPolled}`);
     } else {
       // Default to 0 or a safe starter ledger from env
       this.lastLedgerPolled = 0;
-      console.log(
-        "[events-service] no cursor found, starting from default ledger 0",
-      );
+      this.logger.info("no cursor found, starting from default ledger 0");
     }
 
     this.isRunning = true;
-    console.log("[events-service] starting event polling loop");
-    console.log(`- rpc: ${this.env.sorobanRpcUrl}`);
-    console.log(`- contract: ${this.env.contractId}`);
-    console.log(`- interval: ${this.env.eventPollingIntervalMs}ms`);
+    this.logger.info("starting event polling loop", {
+      rpc: this.env.sorobanRpcUrl,
+      contract: this.env.contractId,
+      interval: `${this.env.eventPollingIntervalMs}ms`,
+    });
 
     this.scheduleNextPoll();
   }
@@ -91,7 +95,7 @@ export class EventPollingService {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    console.log("[events-service] stopped event polling loop");
+    this.logger.info("stopped event polling loop");
   }
 
   /**
@@ -109,9 +113,10 @@ export class EventPollingService {
 
     // Log backoff activation
     if (this.consecutiveErrors > 0) {
-      console.log(
-        `[events-service] scheduling next poll with backoff in ${delay}ms (attempt ${this.consecutiveErrors}, multiplier: 2^${this.consecutiveErrors})`,
-      );
+      this.logger.info("scheduling next poll with backoff", {
+        delayMs: delay,
+        attempt: this.consecutiveErrors,
+      });
     }
 
     this.timer = setTimeout(async () => {
@@ -123,10 +128,10 @@ export class EventPollingService {
         this.consecutiveErrors = 0;
       } catch (error) {
         this.consecutiveErrors++;
-        console.error(
-          `[events-service] poll error (attempt ${this.consecutiveErrors}):`,
-          error,
-        );
+        this.logger.error("poll error", {
+          attempt: this.consecutiveErrors,
+          error: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         this.scheduleNextPoll();
       }
@@ -166,8 +171,11 @@ export class EventPollingService {
    * Processes a batch of events discovered during polling.
    */
   private async handleBatch(events: ContractEvent[]): Promise<void> {
-    console.log(`[events-service] processing batch of ${events.length} events`);
+    this.logger.info(`processing batch of ${events.length} events`);
     for (const event of events) {
+      if (this.wsServer) {
+        this.wsServer.broadcastEvent(event);
+      }
       await this.processEvent(event);
     }
   }
@@ -187,11 +195,25 @@ export class EventPollingService {
         return;
       }
 
+      // Snapshot events → snapshotService
+      if (this.snapshotService && SnapshotNormalizer.isSnapshotEvent(normalized.type as any)) {
+        try {
+          await this.snapshotService.processEvent(normalized as any);
+        } catch (error) {
+          this.logger.error(`error processing snapshot event "${topic}"`, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
+
       // All other known topics are normalized and available for future consumers.
       // Unknown topics are already warned inside EventNormalizer.normalize().
-      console.debug(`[events-service] processed event: ${topic} (id: ${event.id})`);
+      this.logger.debug("processed event", { topic, id: event.id });
     } catch (error) {
-      console.error(`[events-service] error processing event "${topic}":`, error);
+      this.logger.error(`error processing event "${topic}"`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

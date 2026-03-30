@@ -1,172 +1,232 @@
+import { describe, it, before, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import test from "node:test";
-import { createRateLimitMiddleware } from "./rateLimit.js";
-import express, { Request, Response } from "express";
+import * as fc from "fast-check";
+import type { Request } from "express";
+import { RateLimiter } from "./rateLimit.js";
 
-test("Rate Limiter", async (t) => {
-  await t.test("allows requests within limit", () => {
-    const middleware = createRateLimitMiddleware({
-      windowMs: 1000,
-      maxRequests: 3,
-    });
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
-    const app = express();
-    let callCount = 0;
-    app.use(middleware);
-    app.get("/", (_req, res) => {
-      callCount++;
-      res.json({ ok: true });
-    });
+const BASE_TIME = 1_000_000;
+const WINDOW_MS = 1000;
+const MAX_REQUESTS = 3;
 
-    // Simulate 3 requests within limit
-    const mockReq = {
-      headers: {},
-      socket: { remoteAddress: "127.0.0.1" },
-      get: () => undefined,
-    } as unknown as Request;
-    const mockRes = {
-      set: () => mockRes,
-      json: () => {},
-      status: () => mockRes,
-    } as unknown as Response;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-    let nextCalled = 0;
-    const next = () => {
-      nextCalled++;
-    };
+const originalDateNow = Date.now;
 
-    middleware(mockReq, mockRes, next);
-    middleware(mockReq, mockRes, next);
-    middleware(mockReq, mockRes, next);
+function mockDate(ts: number): void {
+  Date.now = () => ts;
+}
 
-    assert.equal(nextCalled, 3, "First 3 requests should be allowed");
-  });
+function restoreDate(): void {
+  Date.now = originalDateNow;
+}
 
-  await t.test("blocks requests exceeding limit", () => {
-    const middleware = createRateLimitMiddleware({
-      windowMs: 1000,
-      maxRequests: 2,
-    });
+function makeReq(ip = "127.0.0.1"): Request {
+  return { socket: { remoteAddress: ip } } as unknown as Request;
+}
 
-    const mockReq = {
-      headers: {},
-      socket: { remoteAddress: "127.0.0.1" },
-      get: () => undefined,
-    } as unknown as Request;
+// ---------------------------------------------------------------------------
+// Shared limiter
+// ---------------------------------------------------------------------------
 
-    const mockRes = {
-      status: function (code: number): any {
-        this.statusCode = code;
-        return this;
-      },
-      set: (): any => mockRes,
-      json: function (data: any): any {
-        this.jsonData = data;
-        return this;
-      },
-      statusCode: 0,
-      jsonData: null,
-    } as any;
+const limiter = new RateLimiter({
+  windowMs: WINDOW_MS,
+  maxRequests: MAX_REQUESTS,
+});
 
-    let nextCalled = 0;
-    const next = () => {
-      nextCalled++;
-    };
+beforeEach(() => {
+  limiter.reset();
+  mockDate(BASE_TIME);
+});
 
-    // First two requests allowed
-    middleware(mockReq, mockRes, next);
-    middleware(mockReq, mockRes, next);
+afterEach(() => {
+  restoreDate();
+});
 
-    // Third request blocked
-    middleware(mockReq, mockRes, next);
+// ---------------------------------------------------------------------------
+// Requirement 1 – within-limit requests allowed
+// ---------------------------------------------------------------------------
 
-    assert.equal(
-      (mockRes as any).statusCode,
-      429,
-      "Should return 429 for exceeded limit"
+describe("Requirement 1 – within-limit requests allowed", () => {
+  it("P1: within-limit calls are never blocked", () => {
+    // Feature: rate-limiter-coverage, Property 1: Within-limit calls are never blocked
+    // Validates: Requirements 1.1, 1.2
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 20 }),
+        fc.string(),
+        (maxRequests, ip) => {
+          const localLimiter = new RateLimiter({
+            windowMs: WINDOW_MS,
+            maxRequests,
+          });
+          const req = makeReq(ip);
+          for (let i = 0; i < maxRequests; i++) {
+            assert.equal(localLimiter.isLimited(req), false);
+          }
+        },
+      ),
+      { numRuns: 100 },
     );
-    assert.equal(
-      (mockRes as any).jsonData?.error?.code,
-      "RATE_LIMIT_EXCEEDED"
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 2 – over-limit requests blocked
+// ---------------------------------------------------------------------------
+
+describe("Requirement 2 – over-limit requests blocked", () => {
+  it("P2: over-limit calls are always blocked", () => {
+    // Feature: rate-limiter-coverage, Property 2: Over-limit calls are always blocked
+    // Validates: Requirements 2.1, 2.2
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 20 }),
+        fc.string(),
+        fc.integer({ min: 1, max: 5 }),
+        (maxRequests, ip, k) => {
+          const localLimiter = new RateLimiter({
+            windowMs: 1000,
+            maxRequests,
+          });
+          const req = makeReq(ip);
+          // Exhaust the limit
+          for (let i = 0; i < maxRequests; i++) {
+            localLimiter.isLimited(req);
+          }
+          // Calls at positions maxRequests+1 … maxRequests+k must all return true
+          for (let i = 0; i < k; i++) {
+            assert.equal(localLimiter.isLimited(req), true);
+          }
+        },
+      ),
+      { numRuns: 100 },
     );
-    assert.equal(nextCalled, 2, "Only first 2 requests should call next");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 3 – window reset
+// ---------------------------------------------------------------------------
+
+describe("Requirement 3 – window reset", () => {
+  it("P3: window reset restores access and resets count", () => {
+    // Feature: rate-limiter-coverage, Property 3: Window reset restores access and resets count
+    // Validates: Requirements 3.1, 3.2
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 20 }),
+        fc.string(),
+        fc.integer({ min: 100, max: 1000 }),
+        fc.integer({ min: 0, max: 500 }),
+        (maxRequests, ip, windowMs, extra) => {
+          const localLimiter = new RateLimiter({ windowMs, maxRequests });
+          const req = makeReq(ip);
+
+          // Start at BASE_TIME and exhaust the limit
+          mockDate(BASE_TIME);
+          for (let i = 0; i < maxRequests; i++) {
+            localLimiter.isLimited(req);
+          }
+          // Confirm the client is now blocked
+          assert.equal(localLimiter.isLimited(req), true);
+
+          // Advance time past the window
+          mockDate(BASE_TIME + windowMs + extra);
+
+          // Next call should open a new window → not limited
+          assert.equal(localLimiter.isLimited(req), false);
+
+          // The reset request counts as 1, so remaining = maxRequests - 1
+          assert.equal(localLimiter.getRemaining(req), maxRequests - 1);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 4 – getRemaining()
+// ---------------------------------------------------------------------------
+
+describe("Requirement 4 – getRemaining()", () => {
+  it("P4: getRemaining decrements with each request", () => {
+    // Feature: rate-limiter-coverage, Property 4: getRemaining decrements with each request
+    // Validates: Requirements 4.1, 4.2
+    fc.assert(
+      fc.property(
+        fc
+          .integer({ min: 1, max: 20 })
+          .chain((max) =>
+            fc.tuple(fc.constant(max), fc.integer({ min: 0, max: max })),
+          ),
+        ([maxRequests, n]) => {
+          const localLimiter = new RateLimiter({
+            windowMs: 1000,
+            maxRequests,
+          });
+          const req = makeReq("127.0.0.1");
+          for (let i = 0; i < n; i++) {
+            localLimiter.isLimited(req);
+          }
+          assert.equal(localLimiter.getRemaining(req), maxRequests - n);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
 
-  await t.test("resets limit after window expires", async () => {
-    const middleware = createRateLimitMiddleware({
-      windowMs: 100, // 100ms window
-      maxRequests: 1,
-    });
-
-    const mockReq = {
-      headers: {},
-      socket: { remoteAddress: "127.0.0.1" },
-      get: () => undefined,
-    } as unknown as Request;
-
-    let nextCalled = 0;
-    const next = () => {
-      nextCalled++;
-    };
-
-    const mockRes = {
-      status: function () {
-        return this;
-      },
-      set: () => mockRes,
-      json: () => {},
-    } as unknown as Response;
-
-    // First request allowed
-    middleware(mockReq, mockRes, next);
-
-    // Wait for window to expire
-    await new Promise((resolve) => setTimeout(resolve, 150));
-
-    // Should be allowed again
-    middleware(mockReq, mockRes, next);
-
-    assert.equal(nextCalled, 2, "Should allow requests after window expires");
+  it("P5: getRemaining floors at zero", () => {
+    // Feature: rate-limiter-coverage, Property 5: getRemaining floors at zero
+    // Validates: Requirements 4.3
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 20 }),
+        fc.integer({ min: 1, max: 5 }),
+        (maxRequests, k) => {
+          const localLimiter = new RateLimiter({
+            windowMs: 1000,
+            maxRequests,
+          });
+          const req = makeReq("127.0.0.1");
+          for (let i = 0; i < maxRequests + k; i++) {
+            localLimiter.isLimited(req);
+          }
+          assert.equal(localLimiter.getRemaining(req), 0);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
+});
 
-  await t.test("identifies clients by IP address", () => {
-    const middleware = createRateLimitMiddleware({
-      windowMs: 1000,
-      maxRequests: 1,
-    });
+// ---------------------------------------------------------------------------
+// Requirement 5 – getResetTime()
+// ---------------------------------------------------------------------------
 
-    const createMockReq = (ip: string) => ({
-      headers: {},
-      socket: { remoteAddress: ip },
-      get: () => undefined,
-    }) as unknown as Request;
-
-    let nextCalled = 0;
-    const next = () => {
-      nextCalled++;
-    };
-
-    const mockRes = {
-      status: function () {
-        return this;
-      },
-      set: () => mockRes,
-      json: () => {},
-    } as unknown as Response;
-
-    const req1 = createMockReq("192.168.1.1");
-    const req2 = createMockReq("192.168.1.2");
-
-    // First client hits limit
-    middleware(req1, mockRes, next);
-
-    // Second client should not be limited
-    middleware(req2, mockRes, next);
-
-    assert.equal(
-      nextCalled,
-      2,
-      "Different IPs should have separate rate limits"
+describe("Requirement 5 – getResetTime()", () => {
+  it("P6: getResetTime equals window-start plus windowMs", () => {
+    // Feature: rate-limiter-coverage, Property 6: getResetTime equals window-start plus windowMs
+    // Validates: Requirements 5.1
+    fc.assert(
+      fc.property(
+        fc.integer(),
+        fc.integer({ min: 100, max: 10000 }),
+        (T, windowMs) => {
+          const localLimiter = new RateLimiter({ windowMs, maxRequests: 10 });
+          const req = makeReq("127.0.0.1");
+          mockDate(T);
+          localLimiter.isLimited(req);
+          assert.equal(localLimiter.getResetTime(req), T + windowMs);
+        },
+      ),
+      { numRuns: 100 },
     );
   });
 });

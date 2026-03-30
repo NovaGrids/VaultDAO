@@ -1,16 +1,25 @@
 import express, { Request, Response, NextFunction } from "express";
 import type { BackendEnv } from "./config/env.js";
 import type { BackendRuntime } from "./server.js";
-import { createHealthRouter } from "./modules/health/health.routes.js";
+import {
+  createHealthRouter,
+  createStatusRouter,
+  createMetricsRouter,
+} from "./modules/health/health.routes.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
+import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
 import { error } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
+import { createAuthMiddleware } from "./shared/http/auth.js";
+import { ErrorCode } from "./shared/http/errorCodes.js";
 import {
   REQUEST_ID_HEADER,
   generateRequestId,
+  requestIdStorage,
 } from "./shared/http/requestId.js";
+import { createRequestLogger } from "./shared/http/requestLogger.js";
 
 export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
@@ -37,7 +46,19 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
     const origin = req.get("Origin");
 
     const isAllowed =
-      env.corsOrigin.includes("*") || (origin && env.corsOrigin.includes(origin));
+      env.corsOrigin.includes("*") ||
+      (origin && env.corsOrigin.includes(origin));
+
+    // In production, actively reject disallowed origins with a 403.
+    // Requests with no Origin header (server-to-server, curl) are allowed.
+    if (env.nodeEnv === "production" && origin && !isAllowed) {
+      error(res, {
+        message: "Forbidden: Origin not allowed",
+        status: 403,
+        code: ErrorCode.FORBIDDEN,
+      });
+      return;
+    }
 
     if (isAllowed && origin) {
       res.set("Access-Control-Allow-Origin", origin);
@@ -64,14 +85,10 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   // Request ID middleware
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (!req.get(REQUEST_ID_HEADER)) {
-      const id = generateRequestId();
-      res.set(REQUEST_ID_HEADER, id);
-      (req as any).requestId = id;
-    } else {
-      (req as any).requestId = req.get(REQUEST_ID_HEADER)!;
-    }
-    next();
+    const id = req.get(REQUEST_ID_HEADER) ?? generateRequestId();
+    res.set(REQUEST_ID_HEADER, id);
+    (req as any).requestId = id;
+    requestIdStorage.run(id, next);
   });
 
   // Rate limiting middleware
@@ -81,20 +98,52 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   });
   app.use(rateLimiter);
 
+  // Request logging middleware (after request ID so requestId is available)
+  app.use(createRequestLogger());
+
   app.use(express.json({ limit: env.requestBodyLimit }));
+
+  const authMiddleware = createAuthMiddleware(env.apiKey);
+
   app.use(createHealthRouter(env, runtime));
-  app.use(createSnapshotRouter(runtime.snapshotService));
-  app.use(
-    "/api/v1/proposals",
+
+  const v1Router = express.Router();
+
+  v1Router.use("/status", createStatusRouter(env, runtime));
+  v1Router.use("/metrics", createMetricsRouter(runtime));
+
+  v1Router.use(
+    "/snapshots",
+    authMiddleware,
+    createSnapshotRouter(runtime.snapshotService),
+  );
+
+  v1Router.use(
+    "/proposals",
+    authMiddleware,
     createProposalsRouter(runtime.proposalActivityAggregator),
   );
-  app.use(
-    "/api/v1/recurring",
+
+  v1Router.use(
+    "/recurring",
+    authMiddleware,
     createRecurringRouter(runtime.recurringIndexerService),
   );
 
+  v1Router.use(
+    "/transactions",
+    authMiddleware,
+    createTransactionsRouter(runtime.transactionsService, env.contractId),
+  );
+
+  app.use("/api/v1", v1Router);
+
   app.use((_request, response) => {
-    error(response, { message: "Not Found", status: 404 });
+    error(response, {
+      message: "Not Found",
+      status: 404,
+      code: ErrorCode.NOT_FOUND,
+    });
   });
 
   return app;

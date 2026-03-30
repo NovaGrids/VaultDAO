@@ -61,9 +61,29 @@ export class LifecycleManager {
 
     // Handle uncaught exceptions
     process.on("uncaughtException", (err) => {
-      this.logger.error("uncaught exception", { error: err.message });
+      this.logger.error("uncaught exception", {
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
       this.shutdown().catch((shutdownErr) => {
         this.logger.error("shutdown failed after exception", {
+          error:
+            shutdownErr instanceof Error
+              ? shutdownErr.message
+              : String(shutdownErr),
+        });
+        process.exit(1);
+      });
+    });
+
+    // Handle unhandled promise rejections
+    process.on("unhandledRejection", (reason) => {
+      this.logger.error("unhandled promise rejection", {
+        reason: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      this.shutdown().catch((shutdownErr) => {
+        this.logger.error("shutdown failed after rejection", {
           error:
             shutdownErr instanceof Error
               ? shutdownErr.message
@@ -98,14 +118,13 @@ export class LifecycleManager {
     }, this.shutdownTimeoutMs);
 
     try {
-      // 1. Execute shutdown hooks first (e.g. background services)
-      // Per requirement: Stop all background services before closing the HTTP server
-      await this.executeShutdownHooks();
-
-      // 2. Close HTTP server (stop accepting connections)
+      // 1. Stop accepting new connections first (drain in-flight requests)
       if (this.server) {
         await this.closeServer();
       }
+
+      // 2. Execute shutdown hooks (background jobs, queues, etc.) after HTTP is drained
+      await this.executeShutdownHooks();
 
       const totalDuration = Date.now() - startTime;
       this.logger.info("graceful shutdown completed", {

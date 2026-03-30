@@ -2,7 +2,7 @@ use super::*;
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Env, Vec};
 
-fn init_vault<'a>(env: &Env, client: &VaultDAOClient<'a>, admin: &Address, threshold: u32) {
+fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold: u32) {
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
 

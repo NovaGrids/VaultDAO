@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import TransactionSimulator from './TransactionSimulator';
 import type { SimulationResult } from '../utils/simulation';
+import ConfirmActionModal from './modals/ConfirmActionModal';
 
 interface ProposalActionWithSimulationProps {
     actionType: 'approve' | 'execute' | 'reject';
@@ -20,6 +21,7 @@ export default function ProposalActionWithSimulation({
     disabled = false,
 }: ProposalActionWithSimulationProps) {
     const [showSimulation, setShowSimulation] = useState(false);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
 
     const getActionLabel = () => {
         switch (actionType) {
@@ -44,6 +46,17 @@ export default function ProposalActionWithSimulation({
     };
 
     const handleProceed = () => {
+        // Gates 'execute' and 'reject' with a confirmation modal
+        if (actionType === 'execute' || actionType === 'reject') {
+            setShowConfirmModal(true);
+        } else {
+            setShowSimulation(false);
+            onConfirm();
+        }
+    };
+
+    const handleConfirmFinal = () => {
+        setShowConfirmModal(false);
         setShowSimulation(false);
         onConfirm();
     };
@@ -77,6 +90,14 @@ export default function ProposalActionWithSimulation({
                 onCancel={() => setShowSimulation(false)}
                 actionLabel={loading ? 'Processing...' : getActionLabel()}
                 disabled={loading}
+            />
+
+            <ConfirmActionModal
+                isOpen={showConfirmModal}
+                onClose={() => setShowConfirmModal(false)}
+                onConfirm={handleConfirmFinal}
+                actionType={actionType}
+                proposalId={proposalId}
             />
         </div>
     );

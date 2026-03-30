@@ -18,6 +18,13 @@ const mockEnv = {
   websocketUrl: "ws://localhost:8080",
   eventPollingIntervalMs: 5000,
   eventPollingEnabled: false,
+  duePaymentsJobEnabled: false,
+  duePaymentsJobIntervalMs: 60000,
+  cursorCleanupJobEnabled: false,
+  cursorCleanupJobIntervalMs: 86400000,
+  cursorRetentionDays: 30,
+  corsOrigin: ["*"],
+  requestBodyLimit: "1mb",
 };
 
 const mockRuntime = {
@@ -25,16 +32,54 @@ const mockRuntime = {
   eventPollingService: {
     getStatus: () => ({ running: false, lastCheck: null }),
   },
+  jobManager: {
+    getAllJobs: () => [
+      { name: "event-polling", isRunning: () => true },
+      { name: "recurring-indexer", isRunning: () => true },
+    ],
+  },
 };
 
-test("builds a healthy service payload", () => {
+test("builds a minimal liveness payload", () => {
   const payload = buildHealthPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.ok, true);
-  assert.equal(payload.service, "vaultdao-backend");
-  assert.equal(payload.network, "testnet");
-  assert.equal(payload.contractId, "CDTEST");
-  assert.match(payload.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(payload.jobs, [
+    { name: "event-polling", running: true },
+    { name: "recurring-indexer", running: true },
+  ]);
+});
+
+test("buildHealthPayload returns ok: false when any job is not running", () => {
+  const runtime = {
+    ...mockRuntime,
+    jobManager: {
+      getAllJobs: () => [
+        { name: "event-polling", isRunning: () => true },
+        { name: "recurring-indexer", isRunning: () => false },
+      ],
+    },
+  };
+
+  const payload = buildHealthPayload(mockEnv, runtime as any);
+
+  assert.equal(payload.ok, false);
+  assert.deepEqual(payload.jobs, [
+    { name: "event-polling", running: true },
+    { name: "recurring-indexer", running: false },
+  ]);
+});
+
+test("buildHealthPayload returns ok: true when no jobs are registered", () => {
+  const runtime = {
+    ...mockRuntime,
+    jobManager: { getAllJobs: () => [] },
+  };
+
+  const payload = buildHealthPayload(mockEnv, runtime as any);
+
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.jobs, []);
 });
 
 test("builds a status payload", () => {
@@ -53,11 +98,11 @@ test("health and status mask contractId in production", () => {
   const health = buildHealthPayload(prodEnv, mockRuntime as any);
   const status = buildStatusPayload(prodEnv, mockRuntime as any);
 
+  assert.equal(health.ok, true);
   assert.equal(
-    health.contractId,
+    status.contractId,
     `${longId.slice(0, 6)}...${longId.slice(-6)}`,
   );
-  assert.equal(status.contractId, health.contractId);
 });
 
 test("builds a readiness payload with dependency checks", () => {
@@ -207,8 +252,8 @@ test("buildReadinessPayload dependency checks include all required fields", () =
   });
 });
 
-test("buildHealthPayload includes version and build info", () => {
-  const payload = buildHealthPayload(mockEnv, mockRuntime as any);
+test("buildStatusPayload includes version and build info", () => {
+  const payload = buildStatusPayload(mockEnv, mockRuntime as any);
 
   assert.ok(payload.version, "Should include version");
   assert.match(payload.version, /\d+\.\d+\.\d+/, "Version should be semantic");

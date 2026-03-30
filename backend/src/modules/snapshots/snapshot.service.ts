@@ -16,11 +16,16 @@ import type {
   SnapshotUpdateResult,
   RoleAssignedData,
   SignerAddedData,
+  SignerRemovedData,
   SnapshotStats,
   SnapshotFilter,
 } from "./types.js";
 import { Role } from "./types.js";
 import { SnapshotNormalizer } from "./normalizer.js";
+import { EventNormalizer } from "../events/normalizers/index.js";
+import type { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
+
+const REBUILD_BATCH_SIZE = 200;
 
 /**
  * SnapshotService
@@ -29,7 +34,10 @@ import { SnapshotNormalizer } from "./normalizer.js";
  * Maintains current-state snapshots for fast queries.
  */
 export class SnapshotService {
-  constructor(private readonly adapter: SnapshotStorageAdapter) {}
+  constructor(
+    private readonly adapter: SnapshotStorageAdapter,
+    private readonly rpc?: SorobanRpcClient,
+  ) {}
 
   /**
    * Process a single normalized event and update snapshot.
@@ -71,7 +79,17 @@ export class SnapshotService {
           signersUpdated = initResult.signersUpdated;
           rolesUpdated = initResult.rolesUpdated;
           break;
+
+        case EventType.SIGNER_REMOVED:
+          const removeResult = await this.processSignerRemoved(snapshot, event);
+          signersUpdated = removeResult.signersUpdated;
+          rolesUpdated = removeResult.rolesUpdated;
+          break;
       }
+
+      const activeSignerCount = Array.from(snapshot.signers.values()).filter(
+        (signer) => signer.isActive
+      ).length;
 
       // Update snapshot metadata
       snapshot = {
@@ -79,7 +97,7 @@ export class SnapshotService {
         lastProcessedLedger: event.metadata.ledger,
         lastProcessedEventId: event.metadata.id,
         snapshotAt: new Date().toISOString(),
-        totalSigners: snapshot.signers.size,
+        totalSigners: activeSignerCount,
         totalRoleAssignments: snapshot.roles.size,
       };
 
@@ -109,22 +127,49 @@ export class SnapshotService {
   /**
    * Process multiple events in batch.
    */
-  async processEvents(events: NormalizedEvent[]): Promise<SnapshotUpdateResult> {
+  async processEvents(
+    events: NormalizedEvent[],
+    options: { maxConsecutiveErrors?: number } = {},
+  ): Promise<SnapshotUpdateResult> {
+    const { maxConsecutiveErrors = 3 } = options;
     let totalSignersUpdated = 0;
     let totalRolesUpdated = 0;
     let totalEventsProcessed = 0;
+    let consecutiveErrors = 0;
     let lastLedger = 0;
     const errors: string[] = [];
 
-    for (const event of events) {
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
       const result = await this.processEvent(event);
-      totalSignersUpdated += result.signersUpdated;
-      totalRolesUpdated += result.rolesUpdated;
-      totalEventsProcessed += result.eventsProcessed;
-      lastLedger = Math.max(lastLedger, result.lastProcessedLedger);
 
-      if (!result.success && result.error) {
-        errors.push(result.error);
+      if (result.success) {
+        totalSignersUpdated += result.signersUpdated;
+        totalRolesUpdated += result.rolesUpdated;
+        totalEventsProcessed += result.eventsProcessed;
+        lastLedger = Math.max(lastLedger, result.lastProcessedLedger);
+        consecutiveErrors = 0; // Reset counter on success
+      } else {
+        consecutiveErrors++;
+        if (result.error) {
+          errors.push(result.error);
+        }
+
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          const skipped = events.length - (i + 1);
+          console.warn(
+            `[snapshot-service] max consecutive errors (${maxConsecutiveErrors}) reached — skipping remaining ${skipped} events in batch`,
+          );
+          return {
+            success: false,
+            signersUpdated: totalSignersUpdated,
+            rolesUpdated: totalRolesUpdated,
+            eventsProcessed: totalEventsProcessed,
+            skippedEvents: skipped,
+            lastProcessedLedger: lastLedger,
+            error: errors.join("; "),
+          };
+        }
       }
     }
 
@@ -133,6 +178,7 @@ export class SnapshotService {
       signersUpdated: totalSignersUpdated,
       rolesUpdated: totalRolesUpdated,
       eventsProcessed: totalEventsProcessed,
+      skippedEvents: 0,
       lastProcessedLedger: lastLedger,
       error: errors.length > 0 ? errors.join("; ") : undefined,
     };
@@ -186,6 +232,83 @@ export class SnapshotService {
         error: String(error),
       };
     }
+  }
+
+  /**
+   * Rebuild snapshot by fetching events directly from the Soroban RPC.
+   * Processes events in batches of 200 to avoid memory spikes.
+   * No-op if no RPC client was injected.
+   */
+  async rebuildFromRpc(
+    contractId: string,
+    startLedger: number,
+    endLedger: number,
+  ): Promise<SnapshotUpdateResult> {
+    if (!this.rpc) {
+      console.warn("[snapshot-service] rebuildFromRpc called but no RPC client is configured — skipping");
+      return {
+        success: true,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+      };
+    }
+
+    await this.adapter.clearSnapshot(contractId);
+
+    let totalSignersUpdated = 0;
+    let totalRolesUpdated = 0;
+    let totalEventsProcessed = 0;
+    let lastProcessedLedger = 0;
+    const errors: string[] = [];
+
+    let currentLedger = startLedger;
+
+    while (currentLedger <= endLedger) {
+      const batchEnd = Math.min(currentLedger + REBUILD_BATCH_SIZE - 1, endLedger);
+
+      try {
+        const rawEvents = await this.rpc.getContractEvents({
+          startLedger: currentLedger,
+          filters: [{ type: "contract", contractIds: [contractId] }],
+          pagination: { limit: REBUILD_BATCH_SIZE },
+        });
+
+        const inRange = rawEvents.filter((e) => e.ledger <= batchEnd);
+        const normalized = inRange.map((e) => EventNormalizer.normalize(e));
+
+        console.log(
+          `[snapshot-service] rebuildFromRpc batch ledgers ${currentLedger}-${batchEnd}: ${normalized.length} events`,
+        );
+
+        if (normalized.length > 0) {
+          const result = await this.processEvents(normalized);
+          totalSignersUpdated += result.signersUpdated;
+          totalRolesUpdated += result.rolesUpdated;
+          totalEventsProcessed += result.eventsProcessed;
+          lastProcessedLedger = Math.max(lastProcessedLedger, result.lastProcessedLedger);
+          if (!result.success && result.error) {
+            errors.push(result.error);
+          }
+        }
+      } catch (error) {
+        const msg = String(error);
+        console.error(`[snapshot-service] rebuildFromRpc error at ledger ${currentLedger}:`, error);
+        errors.push(msg);
+      }
+
+      currentLedger = batchEnd + 1;
+    }
+
+    return {
+      success: errors.length === 0,
+      signersUpdated: totalSignersUpdated,
+      rolesUpdated: totalRolesUpdated,
+      eventsProcessed: totalEventsProcessed,
+      lastProcessedLedger,
+      error: errors.length > 0 ? errors.join("; ") : undefined,
+    };
   }
 
   /**
@@ -276,6 +399,7 @@ export class SnapshotService {
       const updatedSigner: SignerSnapshot = {
         ...existingSigner,
         role: role as Role,
+        isActive: true,
         lastActivityAt: ledgerClosedAt,
         lastActivityLedger: ledger,
       };
@@ -284,6 +408,32 @@ export class SnapshotService {
     }
 
     return { signersUpdated, rolesUpdated };
+  }
+
+  /**
+   * Process a SIGNER_REMOVED event.
+   */
+  private async processSignerRemoved(
+    snapshot: ContractSnapshot,
+    event: NormalizedEvent<SignerRemovedData>
+  ): Promise<{ signersUpdated: number; rolesUpdated: number }> {
+    const address = event.data.signer;
+    const { ledger, ledgerClosedAt } = event.metadata;
+
+    const existingSigner = snapshot.signers.get(address);
+    if (!existingSigner) {
+      return { signersUpdated: 0, rolesUpdated: 0 };
+    }
+
+    const updatedSigner: SignerSnapshot = {
+      ...existingSigner,
+      isActive: false,
+      lastActivityAt: ledgerClosedAt,
+      lastActivityLedger: ledger,
+    };
+    snapshot.signers.set(address, updatedSigner);
+
+    return { signersUpdated: 1, rolesUpdated: 0 };
   }
 
   /**

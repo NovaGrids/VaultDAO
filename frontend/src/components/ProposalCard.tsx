@@ -11,6 +11,7 @@ const ProposalCard: React.FC<ProposalCardProps> = ({ proposal }) => {
   return (
     <article
       tabIndex={0}
+      aria-label={`Proposal #${proposal.id}, status: ${proposal.status}`}
       className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/80 p-4 transition-colors hover:border-gray-400 dark:hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
     >
       <div className="mb-3 flex items-center justify-between">

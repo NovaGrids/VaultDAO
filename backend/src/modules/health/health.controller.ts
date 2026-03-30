@@ -7,14 +7,15 @@ import {
   buildReadinessPayload,
   buildStatusPayload,
 } from "./health.service.js";
-import { success, error } from "../../shared/http/response.js";
+import { success } from "../../shared/http/response.js";
 
 export function getHealthController(
   env: BackendEnv,
   runtime: BackendRuntime,
 ): RequestHandler {
   return (_request, response) => {
-    success(response, buildHealthPayload(env, runtime));
+    const payload = buildHealthPayload(env, runtime);
+    success(response, payload, { status: payload.ok ? 200 : 503 });
   };
 }
 
@@ -33,14 +34,7 @@ export function getReadinessController(
 ): RequestHandler {
   return (_request, response) => {
     const payload = buildReadinessPayload(env, runtime);
-    if (payload.ready) {
-      success(response, payload);
-    } else {
-      error(response, { 
-        message: "Service not ready", 
-        status: 503 
-      });
-    }
+    success(response, payload, { status: payload.ready ? 200 : 503 });
   };
 }
 

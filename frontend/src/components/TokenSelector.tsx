@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { ChevronDown, Search, Plus, X, Loader2, AlertCircle, Check } from 'lucide-react';
+import { ChevronDown, Search, Plus, X, Loader2, AlertCircle, Check, Coins } from 'lucide-react';
 import type { TokenInfo, TokenBalance } from '../types';
-import { getTokenIcon, isValidStellarAddress, formatTokenBalance } from '../constants/tokens';
+import { getTokenIcon, isValidStellarAddress, formatTokenBalance, fetchMultipleTokenMetadata, formatUsdPrice } from '../constants/tokens';
 
 interface TokenSelectorProps {
   tokens: TokenBalance[];
@@ -30,6 +30,8 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   const [customTokenAddress, setCustomTokenAddress] = useState('');
   const [isAddingToken, setIsAddingToken] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [tokenMetadata, setTokenMetadata] = useState<Map<string, { logoUrl?: string; usdPrice?: number }>>(new Map());
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -48,6 +50,25 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Fetch token metadata on mount
+  useEffect(() => {
+    const loadMetadata = async () => {
+      if (tokens.length === 0) return;
+      
+      setIsLoadingMetadata(true);
+      try {
+        const metadata = await fetchMultipleTokenMetadata(tokens.map(tb => tb.token));
+        setTokenMetadata(metadata);
+      } catch (error) {
+        console.error('Failed to load token metadata:', error);
+      } finally {
+        setIsLoadingMetadata(false);
+      }
+    };
+
+    loadMetadata();
+  }, [tokens]);
 
   // Focus search input when dropdown opens
   useEffect(() => {
@@ -183,6 +204,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                     const { token, balance, isLoading } = tokenBalance;
                     const icon = token.icon || getTokenIcon(token.symbol);
                     const isSelected = selectedToken?.address === token.address;
+                    const metadata = tokenMetadata.get(token.address);
 
                     return (
                       <button
@@ -198,7 +220,23 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                           }
                         `}
                       >
-                        <span className="text-lg sm:text-xl flex-shrink-0">{icon}</span>
+                        {/* Token Logo/Icon */}
+                        {metadata?.logoUrl ? (
+                          <img 
+                            src={metadata.logoUrl} 
+                            alt={token.symbol}
+                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex-shrink-0 object-cover"
+                            onError={(e) => {
+                              // Fallback to emoji icon if image fails to load
+                              e.currentTarget.style.display = 'none';
+                              e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                            }}
+                          />
+                        ) : null}
+                        <span className={`text-lg sm:text-xl flex-shrink-0 ${metadata?.logoUrl ? 'hidden' : ''}`}>
+                          {icon}
+                        </span>
+
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-white">{token.symbol}</span>
@@ -208,7 +246,15 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-gray-400 truncate">{token.name}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs text-gray-400 truncate">{token.name}</p>
+                            {metadata?.usdPrice !== undefined && (
+                              <span className="text-xs text-green-400 flex items-center gap-1">
+                                <Coins size={10} />
+                                {formatUsdPrice(metadata.usdPrice)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         {showBalance && (
                           <div className="text-right flex-shrink-0">

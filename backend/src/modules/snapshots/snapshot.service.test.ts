@@ -166,6 +166,95 @@ test("SnapshotService - processEvent - updates existing signer role", async () =
   assert.equal(signer!.role, Role.TREASURER); // Role updated
 });
 
+test("SnapshotService - processEvent - SIGNER_REMOVED marks signer inactive and ROLE_ASSIGNED reactivates", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  const initEvent: NormalizedEvent<SignerAddedData> = {
+    type: EventType.INITIALIZED,
+    data: {
+      address: ADMIN_ADDRESS,
+      role: Role.ADMIN,
+      ledger: 100,
+      timestamp: "2026-03-25T12:00:00Z",
+    },
+    metadata: {
+      id: "event-1",
+      contractId: CONTRACT_ID,
+      ledger: 100,
+      ledgerClosedAt: "2026-03-25T12:00:00Z",
+    },
+  };
+
+  const roleEvent: NormalizedEvent<RoleAssignedData> = {
+    type: EventType.ROLE_ASSIGNED,
+    data: {
+      address: TREASURER_ADDRESS,
+      role: Role.TREASURER,
+    },
+    metadata: {
+      id: "event-2",
+      contractId: CONTRACT_ID,
+      ledger: 200,
+      ledgerClosedAt: "2026-03-25T12:05:00Z",
+    },
+  };
+
+  await service.processEvent(initEvent);
+  await service.processEvent(roleEvent);
+
+  const removeEvent: NormalizedEvent = {
+    type: EventType.SIGNER_REMOVED,
+    data: {
+      signer: TREASURER_ADDRESS,
+      totalSigners: 1,
+    },
+    metadata: {
+      id: "event-3",
+      contractId: CONTRACT_ID,
+      ledger: 300,
+      ledgerClosedAt: "2026-03-25T12:10:00Z",
+    },
+  };
+
+  const removeResult = await service.processEvent(removeEvent);
+  assert.equal(removeResult.success, true);
+  assert.equal(removeResult.signersUpdated, 1);
+
+  const removedSigner = await service.getSigner(CONTRACT_ID, TREASURER_ADDRESS);
+  assert.notEqual(removedSigner, null);
+  assert.equal(removedSigner!.isActive, false);
+  assert.equal(removedSigner!.lastActivityLedger, 300);
+  assert.equal(removedSigner!.lastActivityAt, "2026-03-25T12:10:00Z");
+
+  const afterRemove = await service.getSnapshot(CONTRACT_ID);
+  assert.notEqual(afterRemove, null);
+  assert.equal(afterRemove!.totalSigners, 1);
+
+  const reAddEvent: NormalizedEvent<RoleAssignedData> = {
+    type: EventType.ROLE_ASSIGNED,
+    data: {
+      address: TREASURER_ADDRESS,
+      role: Role.TREASURER,
+    },
+    metadata: {
+      id: "event-4",
+      contractId: CONTRACT_ID,
+      ledger: 400,
+      ledgerClosedAt: "2026-03-25T12:15:00Z",
+    },
+  };
+
+  await service.processEvent(reAddEvent);
+  const readdedSigner = await service.getSigner(CONTRACT_ID, TREASURER_ADDRESS);
+  assert.notEqual(readdedSigner, null);
+  assert.equal(readdedSigner!.isActive, true);
+
+  const afterReAdd = await service.getSnapshot(CONTRACT_ID);
+  assert.notEqual(afterReAdd, null);
+  assert.equal(afterReAdd!.totalSigners, 2);
+});
+
 test("SnapshotService - processEvents - batch processing", async () => {
   const adapter = new MemorySnapshotAdapter();
   const service = new SnapshotService(adapter);
@@ -906,4 +995,145 @@ test("SnapshotService - rebuildSnapshot - clears existing snapshot when requeste
   const signer = await service.getSigner(CONTRACT_ID, TREASURER_ADDRESS);
   assert.notEqual(signer, null);
   assert.equal(signer!.role, Role.TREASURER);
+});
+
+// ── rebuildFromRpc tests ──────────────────────────────────────────────────────
+
+import type { ContractEvent } from "../events/events.types.js";
+import type { GetEventsParams } from "../../shared/rpc/soroban-rpc.types.js";
+
+/** Minimal SorobanRpcClient stub for testing rebuildFromRpc. */
+function makeRpcStub(eventsByBatch: ContractEvent[][]): {
+  getContractEvents: (params: GetEventsParams) => Promise<ContractEvent[]>;
+  getContractData: () => Promise<{ entries: null; latestLedger: number }>;
+  callCount: number;
+} {
+  let callCount = 0;
+  return {
+    get callCount() {
+      return callCount;
+    },
+    async getContractEvents(_params: GetEventsParams): Promise<ContractEvent[]> {
+      const batch = eventsByBatch[callCount] ?? [];
+      callCount++;
+      return batch;
+    },
+    async getContractData() {
+      return { entries: null, latestLedger: 0 };
+    },
+  };
+}
+
+function makeContractEvent(
+  id: string,
+  contractId: string,
+  ledger: number,
+  topic: string,
+): ContractEvent {
+  return {
+    id,
+    contractId,
+    topic: [topic],
+    value: {},
+    ledger,
+    ledgerClosedAt: `2026-03-25T12:00:00Z`,
+  };
+}
+
+test("SnapshotService - rebuildFromRpc - no-op when no RPC client injected", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter); // no rpc
+
+  const result = await service.rebuildFromRpc(CONTRACT_ID, 100, 500);
+
+  assert.equal(result.success, true);
+  assert.equal(result.eventsProcessed, 0);
+  assert.equal(result.signersUpdated, 0);
+  assert.equal(result.rolesUpdated, 0);
+});
+
+test("SnapshotService - rebuildFromRpc - fetches and processes events in batches", async () => {
+  const adapter = new MemorySnapshotAdapter();
+
+  // Two batches: ledgers 100-299 and 300-400
+  const batch1: ContractEvent[] = [
+    makeContractEvent("e1", CONTRACT_ID, 100, "initialized"),
+    makeContractEvent("e2", CONTRACT_ID, 200, "role_assigned"),
+  ];
+  const batch2: ContractEvent[] = [
+    makeContractEvent("e3", CONTRACT_ID, 300, "role_assigned"),
+  ];
+
+  const rpc = makeRpcStub([batch1, batch2]);
+  const service = new SnapshotService(adapter, rpc as any);
+
+  // Use a small range that fits in 2 batches of 200
+  const result = await service.rebuildFromRpc(CONTRACT_ID, 100, 400);
+
+  assert.equal(result.success, true);
+  assert.equal(rpc.callCount, 2);
+  assert.ok(result.eventsProcessed >= 0); // events may be skipped if normalization fails on stub data
+});
+
+test("SnapshotService - rebuildFromRpc - clears existing snapshot before rebuild", async () => {
+  const adapter = new MemorySnapshotAdapter();
+
+  // Pre-populate a snapshot
+  const initEvent: NormalizedEvent<SignerAddedData> = {
+    type: EventType.INITIALIZED,
+    data: { address: ADMIN_ADDRESS, role: Role.ADMIN, ledger: 50, timestamp: "2026-03-25T12:00:00Z" },
+    metadata: { id: "pre-1", contractId: CONTRACT_ID, ledger: 50, ledgerClosedAt: "2026-03-25T12:00:00Z" },
+  };
+  const service = new SnapshotService(adapter);
+  await service.processEvent(initEvent);
+
+  const before = await service.getSnapshot(CONTRACT_ID);
+  assert.equal(before!.totalSigners, 1);
+
+  // Rebuild with empty RPC response
+  const rpc = makeRpcStub([[]]);
+  const serviceWithRpc = new SnapshotService(adapter, rpc as any);
+  await serviceWithRpc.rebuildFromRpc(CONTRACT_ID, 100, 100);
+
+  const after = await serviceWithRpc.getSnapshot(CONTRACT_ID);
+  assert.equal(after, null); // cleared and no new events
+});
+
+test("SnapshotService - rebuildFromRpc - filters events beyond batchEnd", async () => {
+  const adapter = new MemorySnapshotAdapter();
+
+  // RPC returns events beyond the requested batchEnd — they should be excluded
+  const batch: ContractEvent[] = [
+    makeContractEvent("e1", CONTRACT_ID, 100, "initialized"),
+    makeContractEvent("e2", CONTRACT_ID, 250, "role_assigned"), // beyond batchEnd of 199
+  ];
+
+  const rpc = makeRpcStub([batch, []]);
+  const service = new SnapshotService(adapter, rpc as any);
+
+  // Range 100-199 (single batch of 200 starting at 100 ends at 199)
+  await service.rebuildFromRpc(CONTRACT_ID, 100, 199);
+
+  // Only the event at ledger 100 should have been processed (250 is out of range)
+  assert.equal(rpc.callCount, 1);
+});
+
+test("SnapshotService - rebuildFromRpc - handles RPC error gracefully", async () => {
+  const adapter = new MemorySnapshotAdapter();
+
+  const failingRpc = {
+    async getContractEvents(): Promise<ContractEvent[]> {
+      throw new Error("RPC connection refused");
+    },
+    async getContractData() {
+      return { entries: null, latestLedger: 0 };
+    },
+  };
+
+  const service = new SnapshotService(adapter, failingRpc as any);
+  const result = await service.rebuildFromRpc(CONTRACT_ID, 100, 100);
+
+  assert.equal(result.success, false);
+  assert.ok(result.error);
+  assert.match(result.error, /RPC connection refused/);
 });

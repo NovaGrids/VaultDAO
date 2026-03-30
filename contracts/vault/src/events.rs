@@ -217,6 +217,14 @@ pub fn emit_oracle_config_updated(env: &Env, admin: &Address, oracle: &Address) 
     );
 }
 
+/// Emit when a stale oracle price blocks condition evaluation
+pub fn emit_oracle_price_stale(env: &Env, asset: &Address, price_ledger: u64, current_ledger: u64) {
+    env.events().publish(
+        (Symbol::new(env, "oracle_price_stale"),),
+        (asset.clone(), price_ledger, current_ledger),
+    );
+}
+
 /// Emit when quorum configuration is updated by admin
 pub fn emit_quorum_updated(env: &Env, admin: &Address, old_quorum: u32, new_quorum: u32) {
     env.events().publish(

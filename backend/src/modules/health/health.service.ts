@@ -49,18 +49,25 @@ export interface ReadinessPayload {
   };
 }
 
-export function buildHealthPayload(env: BackendEnv, runtime: BackendRuntime) {
-  return {
-    ok: true,
-    service: "vaultdao-backend",
-    version: VERSION,
-    build: packageMetadata.build,
-    environment: env.nodeEnv,
-    network: env.stellarNetwork,
-    contractId: publicContractIdForApi(env.contractId, env.nodeEnv),
-    timestamp: new Date().toISOString(),
-    eventPolling: runtime.eventPollingService.getStatus(),
-  };
+export interface JobStatus {
+  readonly name: string;
+  readonly running: boolean;
+}
+
+export interface HealthPayload {
+  readonly ok: boolean;
+  readonly jobs: JobStatus[];
+}
+
+export function buildHealthPayload(_env: BackendEnv, runtime: BackendRuntime): HealthPayload {
+  const jobs: JobStatus[] = runtime.jobManager.getAllJobs().map((job) => ({
+    name: job.name,
+    running: job.isRunning(),
+  }));
+
+  const ok = jobs.every((job) => job.running);
+
+  return { ok, jobs };
 }
 
 export function buildStatusPayload(env: BackendEnv, runtime: BackendRuntime) {

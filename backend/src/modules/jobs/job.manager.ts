@@ -18,6 +18,10 @@ export class JobManager {
   private readonly logger = createLogger("job-manager");
   private jobs = new Map<string, Job>();
 
+  private toErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   /**
    * Register a job for management.
    */
@@ -34,44 +38,71 @@ export class JobManager {
    * Start all registered jobs.
    */
   public async startAll(): Promise<void> {
+    const jobs = Array.from(this.jobs.values());
     const results = await Promise.allSettled(
-      Array.from(this.jobs.values()).map((job) =>
-        Promise.resolve(job.start()).then(
+      jobs.map((job) =>
+        Promise.resolve()
+          .then(() => job.start())
+          .then(
           () => {
             this.logger.info("job started", { job: job.name });
           },
           (err: unknown) => {
             this.logger.error("job start failed", {
               job: job.name,
-              error: err instanceof Error ? err.message : String(err),
+              error: this.toErrorMessage(err),
             });
             throw err;
           }
-        )
+          )
       )
     );
 
-    const rejected = results.filter((r) => r.status === "rejected");
-    if (rejected.length > 0) {
-      throw new Error(`${rejected.length} jobs failed to start`);
+    const failures = results.flatMap((result, index) => {
+      if (result.status !== "rejected") {
+        return [];
+      }
+
+      return [{
+        name: jobs[index].name,
+        error: this.toErrorMessage(result.reason),
+      }];
+    });
+
+    if (failures.length > 0) {
+      const details = failures
+        .map((failure) => `- ${failure.name}: ${failure.error}`)
+        .join("\n");
+      throw new Error(`${failures.length} jobs failed to start:\n${details}`);
     }
   }
 
   /**
    * Stop all registered jobs gracefully.
    * Jobs are stopped in reverse registration order (LIFO).
+   * @param timeoutMs timeout for each job stop in milliseconds (default 5s)
    */
-  public async stopAll(): Promise<void> {
+  public async stopAll(timeoutMs: number = 5000): Promise<void> {
     const jobs = Array.from(this.jobs.values()).reverse();
     const errors: Array<{ job: string; error: string }> = [];
 
     for (const job of jobs) {
       try {
-        await Promise.resolve(job.stop());
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`Stop timeout after ${timeoutMs}ms`));
+          }, timeoutMs).unref();
+        });
+
+        await Promise.race([
+          Promise.resolve(job.stop()),
+          timeoutPromise
+        ]);
+        
         this.logger.info("job stopped", { job: job.name });
       } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        this.logger.warn("job stop error", {
+        const errorMessage = this.toErrorMessage(err);
+        this.logger.warn("job stop error or timeout", {
           job: job.name,
           error: errorMessage,
         });

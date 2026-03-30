@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { ErrorCode } from "./errorCodes.js";
 
 export interface ApiSuccessResponse<T = any> {
   success: true;
@@ -9,7 +10,7 @@ export interface ApiErrorResponse {
   success: false;
   error: {
     message: string;
-    code?: string;
+    code: ErrorCode;
     details?: any;
   };
 }
@@ -29,16 +30,18 @@ export function success<T = any>(
 }
 
 export function error(
-  res: Response, 
-  err: { message: string; code?: string; status?: number; details?: any },
-  options: { exposeDetails?: boolean } = {}
+  res: Response,
+  err: { message: string; code?: ErrorCode; status?: number; details?: any },
+  options: { exposeDetails?: boolean } = {},
 ): void {
   const status = err.status ?? 500;
+  const code = err.code ?? (status === 404 ? ErrorCode.NOT_FOUND : ErrorCode.INTERNAL_ERROR);
+
   const safeError: ApiErrorResponse["error"] = {
     message: err.message,
-    code: err.code,
+    code,
   };
-  
+
   if (options.exposeDetails && err.details) {
     safeError.details = err.details;
   }

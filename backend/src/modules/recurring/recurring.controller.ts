@@ -1,10 +1,11 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
+import { ErrorCode } from "../../shared/http/errorCodes.js";
 import type { RecurringIndexerService } from "./recurring.service.js";
 import type { RecurringStatus } from "./types.js";
 
 /**
- * Get all recurring payments with optional status filter
+ * Get all recurring payments with optional status filter and pagination
  */
 export function getAllRecurringController(
   service: RecurringIndexerService,
@@ -12,18 +13,22 @@ export function getAllRecurringController(
   return async (request, response) => {
     try {
       const status = request.query.status as string | undefined;
+      const offset = Math.max(
+        0,
+        parseInt(String(request.query.offset ?? "0"), 10) || 0,
+      );
+      const rawLimit = parseInt(String(request.query.limit ?? "50"), 10) || 50;
+      const limit = Math.min(Math.max(1, rawLimit), 200);
 
       const filter = status ? { status: status as RecurringStatus } : undefined;
-      const payments = await service.getPayments(filter);
+      const result = await service.getPayments(filter, { offset, limit });
 
-      success(response, {
-        items: payments,
-        total: payments.length,
-      });
+      success(response, result);
     } catch (err) {
       error(response, {
         message: "Failed to fetch recurring payments",
         status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
         details: err instanceof Error ? err.message : undefined,
       });
     }
@@ -42,7 +47,11 @@ export function getRecurringByIdController(
 
       const payment = await service.getPayment(id);
       if (!payment) {
-        error(response, { message: "Payment not found", status: 404 });
+        error(response, {
+          message: "Payment not found",
+          status: 404,
+          code: ErrorCode.NOT_FOUND,
+        });
         return;
       }
 
@@ -51,6 +60,7 @@ export function getRecurringByIdController(
       error(response, {
         message: "Failed to fetch recurring payment",
         status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
         details: err instanceof Error ? err.message : undefined,
       });
     }
@@ -75,6 +85,7 @@ export function getDueRecurringController(
       error(response, {
         message: "Failed to fetch due payments",
         status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
         details: err instanceof Error ? err.message : undefined,
       });
     }

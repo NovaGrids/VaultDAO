@@ -8,6 +8,7 @@
 import type { ReplayOptions } from "./replay.types.js";
 import { EventReplayService } from "./replay.service.js";
 import { loadEnv } from "../../../config/env.js";
+import { fileURLToPath } from "node:url";
 
 /**
  * Parses command line arguments into ReplayOptions.
@@ -243,5 +244,15 @@ export async function executeReplay(args: string[]): Promise<void> {
 }
 
 // Main entry point for CLI execution
-const cliArgs = process.argv.slice(2);
-executeReplay(cliArgs);
+const currentFilePath = fileURLToPath(import.meta.url);
+const isDirectExecution = process.argv[1] === currentFilePath;
+
+if (isDirectExecution) {
+  const cliArgs = process.argv.slice(2);
+  void executeReplay(cliArgs);
+}
+
+if (process.env.NODE_ENV !== "test") {
+  const cliArgs = process.argv.slice(2);
+  executeReplay(cliArgs);
+}

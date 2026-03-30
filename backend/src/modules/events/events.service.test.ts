@@ -20,6 +20,14 @@ function createTestEnv(
     websocketUrl: "ws://localhost:8080",
     eventPollingIntervalMs: 10,
     eventPollingEnabled: true,
+    duePaymentsJobEnabled: false,
+    duePaymentsJobIntervalMs: 60000,
+    cursorCleanupJobEnabled: false,
+    cursorCleanupJobIntervalMs: 86400000,
+    cursorRetentionDays: 30,
+    corsOrigin: ["*"],
+    requestBodyLimit: "1mb",
+    apiKey: "test-api-key",
     ...overrides,
   };
 }

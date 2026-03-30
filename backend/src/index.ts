@@ -68,7 +68,7 @@ realtimeServer.start();
 jobRunner.start();
 
 // Start server and integrate with lifecycle management
-const { server, runtime } = startServer(env);
+const { server, runtime } = startServer(env, notificationQueue);
 const lifecycle = new LifecycleManager(server, 10_000); // 10s shutdown timeout
 
 lifecycle.onShutdown({

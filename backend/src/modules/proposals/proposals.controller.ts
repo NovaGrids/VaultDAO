@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
+import { ErrorCode } from "../../shared/http/errorCodes.js";
 import type { ProposalActivityAggregator } from "./aggregator.js";
 
 /**
@@ -23,6 +24,7 @@ export function getAllProposalsController(
       error(response, {
         message: "Failed to fetch proposals",
         status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
         details: err instanceof Error ? err.message : undefined,
       });
     }
@@ -41,7 +43,7 @@ export function getProposalByIdController(
 
       const summary = aggregator.getSummary(id);
       if (!summary) {
-        error(response, { message: "Proposal not found", status: 404 });
+        error(response, { message: "Proposal not found", status: 404, code: ErrorCode.NOT_FOUND });
         return;
       }
 
@@ -50,6 +52,7 @@ export function getProposalByIdController(
       error(response, {
         message: "Failed to fetch proposal",
         status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
         details: err instanceof Error ? err.message : undefined,
       });
     }
