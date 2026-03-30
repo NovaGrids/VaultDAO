@@ -18,6 +18,37 @@ pnpm test
 pnpm build
 ```
 
+## Docker
+
+Run the backend in a container for consistent local development across different environments.
+
+### Build Image
+
+```bash
+docker build -t vaultdao-backend .
+```
+
+### Run Container
+
+```bash
+# Copy environment file
+cp .env.example .env
+
+# Run with default port
+docker run --env-file .env -p 8787:8787 vaultdao-backend
+
+# Run with custom port mapping
+docker run --env-file .env -p 3000:8787 vaultdao-backend
+```
+
+### Development with Volume Mount
+
+For live development with hot reload, mount your source code:
+
+```bash
+docker run --env-file .env -p 8787:8787 -v "$(pwd)/src:/app/src" --entrypoint "npm" vaultdao-backend run dev
+```
+
 ## Environment
 
 Copy the example file and adjust the values for your local environment:
@@ -28,56 +59,49 @@ cp backend/.env.example backend/.env
 
 The backend validates its environment at startup and fails fast with clear messages when configuration is invalid.
 
-### Variables
+### Environment Variables
 
-`PORT`
+The backend uses environment variables for configuration. You can find a complete list of these variables in [.env.example](.env.example). 
 
-- Purpose: HTTP port for the backend server
-- Default: `8787`
-- Expected value: integer from `1` to `65535`
+#### 1. Server Configuration
 
-`HOST`
+| Variable | Description | Default | Expected Value | Required? |
+| :--- | :--- | :--- | :--- | :--- |
+| `PORT` | HTTP port for the backend server | `8787` | Integer (1-65535) | No |
+| `HOST` | Network interface the backend binds to | `0.0.0.0` | Non-empty string | **Yes** |
+| `NODE_ENV` | Runtime mode for validation | `development` | `development`, `test`, `production` | No |
+| `CORS_ORIGIN` | Allowed CORS origins (comma-separated) | `*` (dev), `[]` (prod) | Comma-separated list | **Yes (prod)** |
+| `REQUEST_BODY_LIMIT` | Max size for incoming request bodies | `10kb` | Size string (e.g., `1mb`, `10kb`) | No |
+| `API_KEY` | Secret key for authenticated routes | - | Non-empty string | **Yes (prod)** |
 
-- Purpose: network interface the backend binds to
-- Default: `0.0.0.0`
-- Expected value: non-empty host string
+#### 2. Stellar Network & Contract
 
-`NODE_ENV`
+| Variable | Description | Default | Expected Value | Required? |
+| :--- | :--- | :--- | :--- | :--- |
+| `STELLAR_NETWORK` | Target Stellar network | `testnet` | `testnet`, `mainnet`, `futurenet`, `standalone` | No |
+| `SOROBAN_RPC_URL` | Soroban RPC base URL | `https://soroban-testnet.stellar.org` | Valid `http` or `https` URL | No |
+| `HORIZON_URL` | Horizon API base URL | `https://horizon-testnet.stellar.org` | Valid `http` or `https` URL | No |
+| `CONTRACT_ID` | VaultDAO contract identifier | - | Valid Contract ID (starting with `C`) | **Yes** |
+| `VITE_WS_URL` | Websocket endpoint for real-time features | `ws://localhost:8080` | Valid `ws` or `wss` URL | No |
 
-- Purpose: runtime mode used for validation and environment behavior
-- Default: `development`
-- Expected value: `development`, `test`, or `production`
+#### 3. Polling & Background Jobs
 
-`STELLAR_NETWORK`
+| Variable | Description | Default | Expected Value | Required? |
+| :--- | :--- | :--- | :--- | :--- |
+| `EVENT_POLLING_ENABLED` | Toggle for event polling service | `true` | `true` or `false` | No |
+| `EVENT_POLLING_INTERVAL_MS` | Delay between polling cycles | `10000` | Integer (milliseconds) | No |
+| `DUE_PAYMENTS_JOB_ENABLED`| Toggle for due payments job | `true` | `true` or `false` | No |
+| `DUE_PAYMENTS_JOB_INTERVAL_MS`| Delay between payment checks | `60000` | Integer (milliseconds) | No |
+| `CURSOR_CLEANUP_JOB_ENABLED`| Toggle for cursor cleanup job | `true` | `true` or `false` | No |
+| `CURSOR_CLEANUP_JOB_INTERVAL_MS`| Frequency of cleanup | `86400000` | Integer (milliseconds) | No |
+| `CURSOR_RETENTION_DAYS` | Days to keep cursors before cleanup | `30` | Integer (days) | No |
 
-- Purpose: identifies which Stellar network the backend is targeting
-- Default: `testnet`
-- Expected value: `testnet`, `mainnet`, `futurenet`, or `standalone`
+#### 4. Storage Configuration
 
-`SOROBAN_RPC_URL`
-
-- Purpose: Soroban RPC base URL used for contract and network integrations
-- Default: `https://soroban-testnet.stellar.org`
-- Expected value: valid `http` or `https` URL
-
-`HORIZON_URL`
-
-- Purpose: Horizon API base URL for Stellar account and ledger access
-- Default: `https://horizon-testnet.stellar.org`
-- Expected value: valid `http` or `https` URL
-
-`CONTRACT_ID`
-
-- Purpose: target VaultDAO contract identifier used by backend integrations
-- Default: example placeholder in local development
-- Expected value: non-empty contract ID string
-- Production note: the example placeholder is rejected when `NODE_ENV=production`
-
-`VITE_WS_URL`
-
-- Purpose: websocket endpoint used for current or future realtime features
-- Default: `ws://localhost:8080`
-- Expected value: valid `ws` or `wss` URL
+| Variable | Description | Default | Expected Value | Required? |
+| :--- | :--- | :--- | :--- | :--- |
+| `CURSOR_STORAGE_TYPE` | Storage adapter for event cursors | `file` | `file` or `database` | No |
+| `DATABASE_PATH` | Path to SQLite DB if using `database` | `./vaultdao.sqlite`| Valid file path | No |
 
 ## Startup Summary
 
@@ -117,8 +141,65 @@ src/
       health.service.test.ts
 ```
 
+## Architecture
+
+The backend is a **lightweight support layer** for VaultDAO, not a replacement for the Soroban contract.
+
+### Purpose
+
+- Index and query blockchain events asynchronously
+- Provide webhooks and notifications (future work)
+- Support keepers and alert systems (future work)
+- Keep contract logic on-chain; backend handles visibility and notifications
+
+### Responsibilities
+
+| On-Chain (Soroban Contract) | Off-Chain (Backend) |
+|---|---|
+| Vault creation and updates | Indexing vault events |
+| Proposal logic | Storing historical snapshots |
+| Cryptographic verification | Real-time status queries |
+| Token transfers | Notification delivery |
+| State mutations | Analytics and reporting |
+
+### Module Structure
+
+- **config**: Environment validation and bootstrap configuration
+- **modules**: Feature-specific logic organized by domain (health, events, etc.)
+- **shared**: HTTP utilities, logging, and cross-module helpers
+
+### Rate Limiting
+
+All public endpoints are rate-limited to 100 requests per minute per IP. Return code `429 Too Many Requests` when exceeded.
+
+### CORS (Cross-Origin Resource Sharing)
+
+The backend implements CORS protection to control which origins can access the API.
+
+- **Development/Test**: CORS is permissive or follows the `CORS_ORIGIN` environment variable.
+- **Production**:
+  - Requests with an `Origin` header MUST match the allowed origins specified in `CORS_ORIGIN`.
+  - Disallowed origins receive a `403 Forbidden` response.
+  - Requests without an `Origin` header (e.g., server-to-server calls, `curl`) are allowed.
+
+## 🚀 Get Started
+
+See the [detailed roadmap](docs/ROADMAP.md) for prioritized tasks.
+
+```
+# Quickstart for new contributors
+pnpm install
+pnpm test
+# Pick a Foundation task from ROADMAP.md
+```
+
+## API Versioning
+
+All business logic routes are strictly versioned under the `/api/v1/` prefix (e.g., `/api/v1/status`). 
+The `/health` and `/ready` validation endpoints are kept at the root level (`/health`, `/ready`) to maintain compatibility with standard Kubernetes probe paths.
+
 ## Current Endpoints
 
-- `GET /health`
-- `GET /ready`
+- `GET /health` (root)
+- `GET /ready` (root)
 - `GET /api/v1/status`

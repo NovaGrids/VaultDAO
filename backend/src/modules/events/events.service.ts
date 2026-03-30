@@ -1,14 +1,45 @@
+import { createLogger } from "../../shared/logging/logger.js";
 import type { BackendEnv } from "../../config/env.js";
 import type { ContractEvent, PollingState } from "./events.types.js";
 import type { CursorStorage } from "./cursor/index.js";
+import { EventNormalizer } from "./normalizers/index.js";
+import type { ProposalActivityConsumer } from "../proposals/consumer.js";
+import type { EventWebSocketServer } from "../websocket/websocket.server.js";
+import type { SnapshotService } from "../snapshots/snapshot.service.js";
+import { SnapshotNormalizer } from "../snapshots/normalizer.js";
+
+/** Maximum backoff delay: 5 minutes */
+const MAX_BACKOFF_MS = 5 * 60 * 1000;
+
+/** Contract topics that should be forwarded to the proposal consumer. */
+const PROPOSAL_TOPICS = new Set([
+  "proposal_created",
+  "proposal_approved",
+  "proposal_abstained",
+  "proposal_ready",
+  "proposal_scheduled",
+  "proposal_executed",
+  "proposal_expired",
+  "proposal_cancelled",
+  "proposal_rejected",
+  "proposal_deadline_rejected",
+  "proposal_vetoed",
+  "proposal_amended",
+  "proposal_from_template",
+  "scheduled_proposal_cancelled",
+  "delegated_vote",
+  "voting_deadline_ext",
+  "quorum_reached",
+]);
 
 /**
  * EventPollingService
- * 
+ *
  * A background service that polls the Soroban RPC for contract events.
  * Now supports cursor persistence to resume safely across restarts.
  */
 export class EventPollingService {
+  private readonly logger = createLogger("events-service");
   private isRunning: boolean = false;
   private timer: NodeJS.Timeout | null = null;
   private lastLedgerPolled: number = 0;
@@ -17,6 +48,9 @@ export class EventPollingService {
   constructor(
     private readonly env: BackendEnv,
     private readonly storage: CursorStorage,
+    private readonly proposalConsumer?: ProposalActivityConsumer,
+    private readonly wsServer?: EventWebSocketServer,
+    private readonly snapshotService?: SnapshotService,
   ) {}
 
   /**
@@ -25,7 +59,7 @@ export class EventPollingService {
   public async start(): Promise<void> {
     if (this.isRunning) return;
     if (!this.env.eventPollingEnabled) {
-      console.log("[events-service] event polling is disabled in config");
+      this.logger.info("event polling is disabled in config");
       return;
     }
 
@@ -33,18 +67,19 @@ export class EventPollingService {
     const lastCursor = await this.storage.getCursor();
     if (lastCursor) {
       this.lastLedgerPolled = lastCursor.lastLedger;
-      console.log(`[events-service] resuming from cursor: ledger ${this.lastLedgerPolled}`);
+      this.logger.info(`resuming from cursor: ledger ${this.lastLedgerPolled}`);
     } else {
       // Default to 0 or a safe starter ledger from env
       this.lastLedgerPolled = 0;
-      console.log("[events-service] no cursor found, starting from default ledger 0");
+      this.logger.info("no cursor found, starting from default ledger 0");
     }
 
     this.isRunning = true;
-    console.log("[events-service] starting event polling loop");
-    console.log(`- rpc: ${this.env.sorobanRpcUrl}`);
-    console.log(`- contract: ${this.env.contractId}`);
-    console.log(`- interval: ${this.env.eventPollingIntervalMs}ms`);
+    this.logger.info("starting event polling loop", {
+      rpc: this.env.sorobanRpcUrl,
+      contract: this.env.contractId,
+      interval: `${this.env.eventPollingIntervalMs}ms`,
+    });
 
     this.scheduleNextPoll();
   }
@@ -60,14 +95,29 @@ export class EventPollingService {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    console.log("[events-service] stopped event polling loop");
+    this.logger.info("stopped event polling loop");
   }
 
   /**
    * Schedules the next execution of the poll loop.
+   * Implements exponential backoff on consecutive errors.
    */
   private scheduleNextPoll(): void {
     if (!this.isRunning) return;
+
+    // Calculate delay with exponential backoff
+    const baseInterval = this.env.eventPollingIntervalMs;
+    const multiplier = Math.pow(2, this.consecutiveErrors);
+    const delayWithoutCap = baseInterval * multiplier;
+    const delay = Math.min(delayWithoutCap, MAX_BACKOFF_MS);
+
+    // Log backoff activation
+    if (this.consecutiveErrors > 0) {
+      this.logger.info("scheduling next poll with backoff", {
+        delayMs: delay,
+        attempt: this.consecutiveErrors,
+      });
+    }
 
     this.timer = setTimeout(async () => {
       // Re-check running state in case stop() was called during timer wait
@@ -78,13 +128,14 @@ export class EventPollingService {
         this.consecutiveErrors = 0;
       } catch (error) {
         this.consecutiveErrors++;
-        console.error(`[events-service] poll error (attempt ${this.consecutiveErrors}):`, error);
-        
-        // Potential backoff strategy could be implemented here
+        this.logger.error("poll error", {
+          attempt: this.consecutiveErrors,
+          error: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         this.scheduleNextPoll();
       }
-    }, this.env.eventPollingIntervalMs);
+    }, delay);
   }
 
   /**
@@ -97,12 +148,12 @@ export class EventPollingService {
     //   startLedger: this.lastLedgerPolled + 1,
     //   contractIds: [this.env.contractId],
     // });
-    
+
     // For now, we mock the polling activity
-    const mockEvents: ContractEvent[] = []; 
-    
+    const mockEvents: ContractEvent[] = [];
+
     if (mockEvents.length > 0) {
-      this.handleBatch(mockEvents);
+      await this.handleBatch(mockEvents);
     }
 
     // Advance the "last polled" pointer (simulation)
@@ -119,44 +170,51 @@ export class EventPollingService {
   /**
    * Processes a batch of events discovered during polling.
    */
-  private handleBatch(events: ContractEvent[]): void {
-    console.log(`[events-service] processing batch of ${events.length} events`);
+  private async handleBatch(events: ContractEvent[]): Promise<void> {
+    this.logger.info(`processing batch of ${events.length} events`);
     for (const event of events) {
-      this.processEvent(event);
+      if (this.wsServer) {
+        this.wsServer.broadcastEvent(event);
+      }
+      await this.processEvent(event);
     }
   }
 
   /**
-   * Specialized event processor/router.
-   * Reference: contracts/vault/src/events.rs for event topic structure.
+   * Normalizes and routes a single contract event to the appropriate consumer.
+   * All event types from events.rs are handled; unknown topics are warned.
    */
-  private processEvent(event: ContractEvent): void {
-    const mainTopic = event.topic[0];
-    
-    console.log(`[events-service] routing event: ${mainTopic} (id: ${event.id})`);
+  private async processEvent(event: ContractEvent): Promise<void> {
+    const topic = event.topic[0] ?? "";
+    try {
+      const normalized = EventNormalizer.normalize(event);
 
-    // Placeholder routing logic
-    switch (mainTopic) {
-      case "proposal_created":
-        this.handleProposalCreated(event);
-        break;
-      case "proposal_executed":
-        this.handleProposalExecuted(event);
-        break;
-      // Add more cases as needed based on events.rs
-      default:
-        console.debug(`[events-service] ignoring unhandled event type: ${mainTopic}`);
+      // Proposal events → proposalConsumer
+      if (this.proposalConsumer && PROPOSAL_TOPICS.has(topic)) {
+        await this.proposalConsumer.process(normalized);
+        return;
+      }
+
+      // Snapshot events → snapshotService
+      if (this.snapshotService && SnapshotNormalizer.isSnapshotEvent(normalized.type as any)) {
+        try {
+          await this.snapshotService.processEvent(normalized as any);
+        } catch (error) {
+          this.logger.error(`error processing snapshot event "${topic}"`, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
+
+      // All other known topics are normalized and available for future consumers.
+      // Unknown topics are already warned inside EventNormalizer.normalize().
+      this.logger.debug("processed event", { topic, id: event.id });
+    } catch (error) {
+      this.logger.error(`error processing event "${topic}"`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-  }
-
-  // --- Specialized Event Handlers (Scaffold) ---
-
-  private handleProposalCreated(event: ContractEvent): void {
-    console.log("[events-service] TODO: persistent indexing for proposal_created", event.value);
-  }
-
-  private handleProposalExecuted(event: ContractEvent): void {
-    console.log("[events-service] TODO: persistent indexing for proposal_executed", event.value);
   }
 
   /**

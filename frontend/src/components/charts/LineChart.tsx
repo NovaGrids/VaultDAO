@@ -58,7 +58,7 @@ const LineChart: React.FC<LineChartProps> = ({
               borderRadius: '8px',
             }}
             labelStyle={{ color: '#e5e7eb' }}
-            formatter={(value: number | undefined) => [value ?? 0, undefined]}
+            formatter={((value: number | undefined) => [value ?? 0, undefined]) as any}
           />
           <Legend
             wrapperStyle={{ fontSize: 12 }}

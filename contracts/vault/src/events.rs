@@ -217,6 +217,14 @@ pub fn emit_oracle_config_updated(env: &Env, admin: &Address, oracle: &Address) 
     );
 }
 
+/// Emit when a stale oracle price blocks condition evaluation
+pub fn emit_oracle_price_stale(env: &Env, asset: &Address, price_ledger: u64, current_ledger: u64) {
+    env.events().publish(
+        (Symbol::new(env, "oracle_price_stale"),),
+        (asset.clone(), price_ledger, current_ledger),
+    );
+}
+
 /// Emit when quorum configuration is updated by admin
 pub fn emit_quorum_updated(env: &Env, admin: &Address, old_quorum: u32, new_quorum: u32) {
     env.events().publish(
@@ -234,6 +242,7 @@ pub fn emit_quorum_reached(env: &Env, proposal_id: u64, quorum_votes: u32, requi
 }
 
 /// Emit when a signer is added
+#[allow(dead_code)]
 pub fn emit_signer_added(env: &Env, signer: &Address, total_signers: u32) {
     env.events().publish(
         (Symbol::new(env, "signer_added"),),
@@ -242,6 +251,7 @@ pub fn emit_signer_added(env: &Env, signer: &Address, total_signers: u32) {
 }
 
 /// Emit when a signer is removed
+#[allow(dead_code)]
 pub fn emit_signer_removed(env: &Env, signer: &Address, total_signers: u32) {
     env.events().publish(
         (Symbol::new(env, "signer_removed"),),
@@ -413,6 +423,7 @@ pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: b
 }
 
 /// Emit when liquidity is removed
+#[allow(dead_code)]
 pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
     env.events().publish(
         (Symbol::new(env, "liquidity_removed"), proposal_id),
@@ -421,6 +432,7 @@ pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tok
 }
 
 /// Emit when LP tokens are staked
+#[allow(dead_code)]
 pub fn emit_lp_staked(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
     env.events().publish(
         (Symbol::new(env, "lp_staked"), proposal_id),
@@ -429,6 +441,7 @@ pub fn emit_lp_staked(env: &Env, proposal_id: u64, farm: &Address, amount: i128)
 }
 
 /// Emit when rewards are claimed
+#[allow(dead_code)]
 pub fn emit_rewards_claimed(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
     env.events().publish(
         (Symbol::new(env, "rewards_claimed"), proposal_id),
@@ -591,6 +604,7 @@ pub fn emit_retry_scheduled(
 }
 
 /// Emit when a retry execution attempt is made
+#[allow(dead_code)]
 pub fn emit_retry_attempted(env: &Env, proposal_id: u64, retry_count: u32, executor: &Address) {
     env.events().publish(
         (Symbol::new(env, "retry_attempted"), proposal_id),
@@ -994,5 +1008,74 @@ pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amoun
     env.events().publish(
         (Symbol::new(env, "stream_claimed"), stream_id),
         (recipient.clone(), amount),
+    );
+}
+
+pub fn emit_cross_vault_proposed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    action_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cv_proposed"), proposal_id),
+        (proposer.clone(), action_count),
+    );
+}
+
+pub fn emit_cross_vault_executed(
+    env: &Env,
+    proposal_id: u64,
+    executor: &Address,
+    success_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cv_executed"), proposal_id),
+        (executor.clone(), success_count),
+    );
+}
+
+pub fn emit_cross_vault_config_set(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "cv_config_set"),), admin.clone());
+}
+
+pub fn emit_permission_granted(env: &Env, admin: &Address, target: &Address, permission: u32) {
+    env.events().publish(
+        (Symbol::new(env, "permission_granted"),),
+        (admin.clone(), target.clone(), permission),
+    );
+}
+
+pub fn emit_permission_revoked(env: &Env, admin: &Address, target: &Address, permission: u32) {
+    env.events().publish(
+        (Symbol::new(env, "permission_revoked"),),
+        (admin.clone(), target.clone(), permission),
+    );
+}
+
+pub fn emit_permission_delegated(
+    env: &Env,
+    delegator: &Address,
+    delegatee: &Address,
+    permission: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "permission_delegated"),),
+        (delegator.clone(), delegatee.clone(), permission),
+    );
+}
+
+pub fn emit_dispute_raised(env: &Env, dispute_id: u64, proposal_id: u64, disputer: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_raised"), dispute_id),
+        (proposal_id, disputer.clone()),
+    );
+}
+
+pub fn emit_dispute_resolved(env: &Env, dispute_id: u64, admin: &Address, resolution: u32) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_resolved"), dispute_id),
+        (admin.clone(), resolution),
     );
 }

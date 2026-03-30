@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { ArrowDownUp, Download, RefreshCw } from 'lucide-react';
 import type { GetVaultEventsResult, VaultActivity, VaultEventType } from '../types/activity';
@@ -297,8 +297,10 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [groupBy, setGroupBy] = useState<TransactionGroupBy>('none');
   const [filters, setFilters] = useState<TransactionFilterState>(DEFAULT_TRANSACTION_FILTERS);
+  const isFetchingRef = useRef(false);
   const [mobilePullToRefresh, setMobilePullToRefresh] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<VaultActivity | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const deferredTransactions = useDeferredValue(transactions);
 
   const loadInitialTransactions = useCallback(async () => {
@@ -325,8 +327,9 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
   }, [getVaultEvents]);
 
   const loadMoreTransactions = useCallback(async () => {
-    if (loadingInitial || loadingMore || !hasMore || !cursor) return;
+    if (isFetchingRef.current || loadingInitial || !hasMore || !cursor) return;
 
+    isFetchingRef.current = true;
     setLoadingMore(true);
 
     try {
@@ -340,9 +343,10 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
       setError('Failed to load more transactions.');
       setHasMore(false);
     } finally {
+      isFetchingRef.current = false;
       setLoadingMore(false);
     }
-  }, [cursor, getVaultEvents, hasMore, loadingInitial, loadingMore]);
+  }, [cursor, getVaultEvents, hasMore, loadingInitial]);
 
   useEffect(() => {
     void loadInitialTransactions();
@@ -450,18 +454,36 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
   }, [groupBy, sortedTransactions]);
 
   const handleExportCsv = useCallback(() => {
-    const rows = buildExportRows(sortedTransactions);
-    if (rows.length === 0) return;
-    const filename = `transaction-history-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
-    downloadTextFile(toCsv(rows), filename, 'text/csv;charset=utf-8');
-  }, [sortedTransactions]);
+    if (isExporting || sortedTransactions.length === 0) return;
+    
+    setIsExporting(true);
+    
+    setTimeout(() => {
+      try {
+        const rows = buildExportRows(sortedTransactions);
+        const filename = `transaction-history-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+        downloadTextFile(toCsv(rows), filename, 'text/csv;charset=utf-8');
+      } finally {
+        setIsExporting(false);
+      }
+    }, 0);
+  }, [sortedTransactions, isExporting]);
 
   const handleExportJson = useCallback(() => {
-    const rows = buildExportRows(sortedTransactions);
-    if (rows.length === 0) return;
-    const filename = `transaction-history-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    downloadTextFile(JSON.stringify(rows, null, 2), filename, 'application/json;charset=utf-8');
-  }, [sortedTransactions]);
+    if (isExporting || sortedTransactions.length === 0) return;
+    
+    setIsExporting(true);
+    
+    setTimeout(() => {
+      try {
+        const rows = buildExportRows(sortedTransactions);
+        const filename = `transaction-history-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        downloadTextFile(JSON.stringify(rows, null, 2), filename, 'application/json;charset=utf-8');
+      } finally {
+        setIsExporting(false);
+      }
+    }, 0);
+  }, [sortedTransactions, isExporting]);
 
   const handleOpenTransactionDetail = useCallback((transaction: VaultActivity) => {
     setSelectedTransaction(transaction);
@@ -484,20 +506,20 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ onTransactionsL
           <button
             type="button"
             onClick={handleExportCsv}
-            disabled={sortedTransactions.length === 0}
+            disabled={sortedTransactions.length === 0 || isExporting}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium min-h-[44px] sm:min-h-0 w-full sm:w-auto"
           >
-            <Download size={16} />
-            Export CSV
+            <Download size={16} className={isExporting ? 'animate-pulse' : ''} />
+            {isExporting ? 'Exporting...' : 'Export CSV'}
           </button>
           <button
             type="button"
             onClick={handleExportJson}
-            disabled={sortedTransactions.length === 0}
+            disabled={sortedTransactions.length === 0 || isExporting}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium min-h-[44px] sm:min-h-0 w-full sm:w-auto"
           >
-            <Download size={16} />
-            Export JSON
+            <Download size={16} className={isExporting ? 'animate-pulse' : ''} />
+            {isExporting ? 'Exporting...' : 'Export JSON'}
           </button>
           <button
             type="button"

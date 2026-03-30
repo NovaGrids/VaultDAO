@@ -12,6 +12,8 @@ export interface VoiceRecognitionOptions {
   wakeWord?: string;
 }
 
+const SILENCE_TIMEOUT_MS = 5000;
+
 class VoiceRecognitionService {
   private recognition: SpeechRecognition | null = null;
   private synthesis: SpeechSynthesis | null = null;
@@ -19,6 +21,7 @@ class VoiceRecognitionService {
   private isListening = false;
   private wakeWord: string | null = null;
   private awake = false;
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     const globalWindow = globalThis as Record<string, unknown>;
@@ -54,8 +57,16 @@ class VoiceRecognitionService {
     this.commands.delete(name.toLowerCase());
   }
 
-  start(onResult?: (transcript: string) => void, onError?: (error: string) => void) {
+  start(onResult?: (transcript: string) => void, onError?: (error: string) => void, onTimeout?: () => void) {
     if (!this.recognition || this.isListening) return;
+
+    const resetSilenceTimer = () => {
+      if (this.silenceTimer) clearTimeout(this.silenceTimer);
+      this.silenceTimer = setTimeout(() => {
+        this.stop();
+        onTimeout?.();
+      }, SILENCE_TIMEOUT_MS);
+    };
 
     this.recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = Array.from(event.results)
@@ -63,6 +74,8 @@ class VoiceRecognitionService {
         .join('')
         .toLowerCase()
         .trim();
+
+      resetSilenceTimer();
 
       if (this.wakeWord && !this.awake) {
         if (transcript.includes(this.wakeWord)) {
@@ -88,10 +101,15 @@ class VoiceRecognitionService {
 
     this.recognition.start();
     this.isListening = true;
+    resetSilenceTimer();
   }
 
   stop() {
     if (!this.recognition) return;
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
     this.isListening = false;
     this.awake = !this.wakeWord;
     this.recognition.stop();

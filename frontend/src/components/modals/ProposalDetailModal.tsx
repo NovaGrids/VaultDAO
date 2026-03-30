@@ -123,17 +123,17 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
             <div className="bg-secondary w-full max-w-2xl h-fit max-h-[90vh] flex flex-col rounded-2xl border border-gray-800 shadow-2xl overflow-hidden">
 
                 {/* Header */}
-                <div className="px-6 py-5 border-b border-gray-800 flex justify-between items-center shrink-0">
-                    <div className="flex items-center gap-3">
-                        <h2 className="text-xl font-bold text-white">Proposal #{proposal.id}</h2>
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-800 flex justify-between items-center shrink-0">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                        <h2 className="text-lg sm:text-xl font-bold text-white truncate">Proposal #{proposal.id}</h2>
+                        <span className={`px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold uppercase border whitespace-nowrap ${
                             proposal.status === 'Executed' ? 'bg-green-500/10 text-green-500 border-green-500/20'
                             : proposal.status === 'Rejected' ? 'bg-red-500/10 text-red-500 border-red-500/20'
                             : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
                         }`}>{proposal.status}</span>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg text-gray-500 hover:text-white">
-                        <X size={20} />
+                    <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg text-gray-500 hover:text-white touch-manipulation shrink-0">
+                        <X size={18} className="sm:w-5 sm:h-5" />
                     </button>
                 </div>
 
@@ -143,13 +143,13 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
-                            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                            className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm font-medium transition-colors flex items-center justify-center gap-1.5 sm:gap-2 touch-manipulation ${
                                 activeTab === tab
                                     ? 'text-purple-400 border-b-2 border-purple-400 bg-purple-500/5'
                                     : 'text-gray-400 hover:text-gray-300'
                             }`}
                         >
-                            {tab === 'comments' && <MessageSquare size={16} />}
+                            {tab === 'comments' && <MessageSquare size={14} className="sm:w-4 sm:h-4" />}
                             {tab.charAt(0).toUpperCase() + tab.slice(1)}
                         </button>
                     ))}
@@ -193,7 +193,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Mobile Signing</h3>
                         <button
                             onClick={() => setShowQR(!showQR)}
-                            className="w-full bg-accent/10 border border-accent/20 text-accent py-3 rounded-xl font-bold text-sm hover:bg-accent/20 transition-colors"
+                            className="w-full bg-accent/10 border border-accent/20 text-accent py-3 sm:py-3.5 rounded-xl font-bold text-sm hover:bg-accent/20 transition-colors touch-manipulation min-h-[44px]"
                         >
                             {showQR ? 'Hide QR Code' : 'Show QR Code'}
                         </button>
@@ -212,8 +212,8 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
 
                     {/* Timeline */}
                     <div>
-                        <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-8">Proposal Lifecycle</h3>
-                        <div className="flex justify-between items-start relative px-2">
+                        <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4 sm:mb-8">Proposal Lifecycle</h3>
+                        <div className="flex justify-between items-start relative px-1 sm:px-2">
                             {[
                                 { label: 'Created', icon: PlayCircle, active: true },
                                 { label: 'Approvals', icon: UserCheck, active: proposal.approvals >= 1 },
@@ -221,12 +221,12 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                                 { label: 'Executed', icon: CheckCircle2, active: proposal.status === 'Executed' },
                             ].map((step, idx, arr) => (
                                 <div key={idx} className="flex flex-col items-center flex-1 relative z-10">
-                                    <div className={`p-2.5 rounded-full border-2 transition-all duration-500 ${step.active ? 'bg-accent border-accent text-white' : 'bg-primary border-gray-800 text-gray-600'}`}>
-                                        <step.icon size={16} />
+                                    <div className={`p-2 sm:p-2.5 rounded-full border-2 transition-all duration-500 touch-manipulation ${step.active ? 'bg-accent border-accent text-white' : 'bg-primary border-gray-800 text-gray-600'}`}>
+                                        <step.icon size={14} className="sm:w-4 sm:h-4" />
                                     </div>
-                                    <span className={`mt-3 text-[10px] font-bold ${step.active ? 'text-white' : 'text-gray-600'}`}>{step.label}</span>
+                                    <span className={`mt-2 sm:mt-3 text-[9px] sm:text-[10px] font-bold text-center ${step.active ? 'text-white' : 'text-gray-600'}`}>{step.label}</span>
                                     {idx !== arr.length - 1 && (
-                                        <div className="absolute top-[1.1rem] left-1/2 w-full h-[2px] -z-10 overflow-hidden">
+                                        <div className="absolute top-[0.9rem] sm:top-[1.1rem] left-1/2 w-full h-[2px] -z-10 overflow-hidden">
                                             <div className={`h-full w-full ${arr[idx + 1].active ? 'bg-accent' : 'bg-gray-800'}`} />
                                         </div>
                                     )}
@@ -294,7 +294,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                             <button
                                 onClick={handleApprove}
                                 disabled={actionLoading !== null}
-                                className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 text-sm"
+                                className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 text-sm touch-manipulation min-h-[44px]"
                             >
                                 {actionLoading === 'approve' ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
                                 {actionLoading === 'approve' ? 'Approving...' : 'Approve Proposal'}
@@ -302,7 +302,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                             <button
                                 onClick={handleReject}
                                 disabled={actionLoading !== null}
-                                className="flex-1 bg-secondary border border-red-500/20 text-red-500 hover:bg-red-500/10 disabled:opacity-50 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 text-sm"
+                                className="flex-1 bg-secondary border border-red-500/20 text-red-500 hover:bg-red-500/10 disabled:opacity-50 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 text-sm touch-manipulation min-h-[44px]"
                             >
                                 {actionLoading === 'reject' ? <Loader2 size={18} className="animate-spin" /> : <Ban size={18} />}
                                 {actionLoading === 'reject' ? 'Rejecting...' : 'Reject'}

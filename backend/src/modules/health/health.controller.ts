@@ -1,4 +1,4 @@
-import type { Request, Response, RequestHandler } from "express";
+import type { RequestHandler } from "express";
 
 import type { BackendEnv } from "../../config/env.js";
 import type { BackendRuntime } from "../../server.js";
@@ -7,13 +7,15 @@ import {
   buildReadinessPayload,
   buildStatusPayload,
 } from "./health.service.js";
+import { success } from "../../shared/http/response.js";
 
 export function getHealthController(
   env: BackendEnv,
   runtime: BackendRuntime,
 ): RequestHandler {
-  return (_request: Request, response: Response) => {
-    response.status(200).json(buildHealthPayload(env, runtime));
+  return (_request, response) => {
+    const payload = buildHealthPayload(env, runtime);
+    success(response, payload, { status: payload.ok ? 200 : 503 });
   };
 }
 
@@ -21,8 +23,8 @@ export function getStatusController(
   env: BackendEnv,
   runtime: BackendRuntime,
 ): RequestHandler {
-  return (_request: Request, response: Response) => {
-    response.status(200).json(buildStatusPayload(env, runtime));
+  return (_request, response) => {
+    success(response, buildStatusPayload(env, runtime));
   };
 }
 
@@ -30,8 +32,9 @@ export function getReadinessController(
   env: BackendEnv,
   runtime: BackendRuntime,
 ): RequestHandler {
-  return (_request: Request, response: Response) => {
+  return (_request, response) => {
     const payload = buildReadinessPayload(env, runtime);
-    response.status(payload.ready ? 200 : 503).json(payload);
+    success(response, payload, { status: payload.ready ? 200 : 503 });
   };
 }
+

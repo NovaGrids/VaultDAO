@@ -338,13 +338,6 @@ const RecurringPayments: React.FC = () => {
   const [paymentHistory, setPaymentHistory] = useState<RecurringPaymentHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [executingPaymentId, setExecutingPaymentId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<CreateRecurringPaymentFormData>({
-    recipient: '',
-    token: 'native',
-    amount: '',
-    memo: '',
-    interval: 86400, // Default to daily
-  });
 
   // Fetch payments on mount
   const fetchPayments = useCallback(async () => {
@@ -364,30 +357,18 @@ const RecurringPayments: React.FC = () => {
     fetchPayments();
   }, [fetchPayments]);
 
-  // Handle form field change
-  const handleFieldChange = (field: keyof CreateRecurringPaymentFormData, value: string | number) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
 
   // Handle create payment
-  const handleCreatePayment = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreatePayment = async (data: CreateRecurringPaymentFormData) => {
     const { ready, message } = checkReady();
     if (!ready) {
       notify('config_updated', message ?? 'Not ready', 'error');
       return;
     }
     try {
-      const txHash = await schedulePayment?.(formData);
+      const txHash = await schedulePayment?.(data);
       notify('new_proposal', 'Recurring payment created successfully!', 'success');
       setIsCreateModalOpen(false);
-      setFormData({
-        recipient: '',
-        token: 'native',
-        amount: '',
-        memo: '',
-        interval: 86400,
-      });
       await fetchPayments();
       console.log('Transaction hash:', txHash);
     } catch (error) {
@@ -573,10 +554,8 @@ const RecurringPayments: React.FC = () => {
       <CreateRecurringPaymentModal
         isOpen={isCreateModalOpen}
         loading={loading}
-        formData={formData}
         onClose={() => setIsCreateModalOpen(false)}
         onSubmit={handleCreatePayment}
-        onFieldChange={handleFieldChange}
       />
 
       {/* History Modal */}

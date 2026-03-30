@@ -45,4 +45,5 @@
 ///
 /// Kept here (not in `lib.rs`) so it does not pollute the production binary.
 /// This value is not enforced anywhere yet — it is a design placeholder.
+#[allow(dead_code)]
 pub const MAX_CROSS_VAULT_ACTIONS: u32 = 5;
