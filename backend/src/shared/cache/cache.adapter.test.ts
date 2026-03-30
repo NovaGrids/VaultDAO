@@ -18,4 +18,27 @@ test("InMemoryCacheAdapter", async (t) => {
       "second destroy() should not throw",
     );
   });
+
+  await t.test("countByPrefix returns correct count", () => {
+    const cache = new InMemoryCacheAdapter<string>(1000);
+    cache.set("proposal:1", "a");
+    cache.set("proposal:2", "b");
+    cache.set("vote:1", "c");
+    assert.equal(cache.countByPrefix("proposal:"), 2);
+    assert.equal(cache.countByPrefix("vote:"), 1);
+    assert.equal(cache.countByPrefix("other:"), 0);
+    cache.destroy();
+  });
+
+  await t.test("deleteByPrefix removes matching entries and returns count", () => {
+    const cache = new InMemoryCacheAdapter<string>(1000);
+    cache.set("proposal:1", "a");
+    cache.set("proposal:2", "b");
+    cache.set("vote:1", "c");
+    const deleted = cache.deleteByPrefix("proposal:");
+    assert.equal(deleted, 2);
+    assert.equal(cache.countByPrefix("proposal:"), 0);
+    assert.equal(cache.countByPrefix("vote:"), 1);
+    cache.destroy();
+  });
 });

@@ -56,6 +56,17 @@ export interface CacheAdapter<T> {
   stats(): CacheStats;
 
   /**
+   * Count entries whose key starts with the given prefix.
+   */
+  countByPrefix(prefix: string): number;
+
+  /**
+   * Delete all entries whose key starts with the given prefix.
+   * Returns the number of entries deleted.
+   */
+  deleteByPrefix(prefix: string): number;
+
+  /**
    * Reset cache statistics without clearing entries.
    */
   resetStats?(): void;
@@ -165,6 +176,32 @@ export class InMemoryCacheAdapter<T> implements CacheAdapter<T> {
       hits: this.hits,
       misses: this.misses,
     };
+  }
+
+  /**
+   * Count entries whose key starts with the given prefix.
+   */
+  countByPrefix(prefix: string): number {
+    let count = 0;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) count++;
+    }
+    return count;
+  }
+
+  /**
+   * Delete all entries whose key starts with the given prefix.
+   * Returns the number of entries deleted.
+   */
+  deleteByPrefix(prefix: string): number {
+    let deleted = 0;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cache.delete(key);
+        deleted++;
+      }
+    }
+    return deleted;
   }
 
   /**
