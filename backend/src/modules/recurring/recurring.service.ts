@@ -1,4 +1,5 @@
 import type { BackendEnv } from "../../config/env.js";
+import { createLogger } from "../../shared/logging/logger.js";
 import {
   NormalizedRecurringPayment,
   RawRecurringPayment,
@@ -8,6 +9,8 @@ import {
   RecurringIndexerState,
   RecurringStatus,
 } from "./types.js";
+
+const logger = createLogger("recurring-indexer");
 
 /**
  * Storage adapter interface for recurring payments.
@@ -165,11 +168,27 @@ export class RecurringIndexerService {
   private lastLedgerProcessed: number = 0;
   private consecutiveErrors: number = 0;
   private totalPaymentsIndexed: number = 0;
+  /** Tracks payment IDs already alerted to avoid duplicate warn logs/callbacks. */
+  private readonly alertedIds = new Set<string>();
 
   constructor(
     private readonly env: BackendEnv,
     private readonly storage: RecurringStorageAdapter,
+    private readonly onPaymentDue?: (
+      payment: NormalizedRecurringPayment,
+    ) => void,
   ) {}
+
+  /**
+   * Seeds alertedIds with payments already in DUE status so they don't
+   * re-trigger alerts when the service starts.
+   */
+  private async seedAlertedIds(): Promise<void> {
+    const existing = await this.storage.getAll({ status: RecurringStatus.DUE });
+    for (const p of existing) {
+      this.alertedIds.add(p.paymentId);
+    }
+  }
 
   /**
    * Starts the indexing loop if enabled in config.
@@ -199,6 +218,9 @@ export class RecurringIndexerService {
     console.log(`- rpc: ${this.env.sorobanRpcUrl}`);
     console.log(`- contract: ${this.env.contractId}`);
     console.log(`- interval: ${this.env.eventPollingIntervalMs}ms`);
+
+    // Seed alerted IDs so pre-existing DUE payments don't re-trigger alerts.
+    await this.seedAlertedIds();
 
     this.scheduleNextSync();
   }
@@ -289,6 +311,21 @@ export class RecurringIndexerService {
       );
       await this.storage.save(normalized);
       this.totalPaymentsIndexed++;
+
+      // Emit alert on first transition to DUE — not on every sync.
+      if (
+        normalized.status === RecurringStatus.DUE &&
+        !this.alertedIds.has(normalized.paymentId)
+      ) {
+        this.alertedIds.add(normalized.paymentId);
+        logger.warn("recurring payment is due", {
+          paymentId: normalized.paymentId,
+          recipient: normalized.recipient,
+          amount: normalized.amount,
+          token: normalized.token,
+        });
+        this.onPaymentDue?.(normalized);
+      }
     }
   }
 
