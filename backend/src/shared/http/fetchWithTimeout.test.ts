@@ -22,7 +22,7 @@ function mockFetch(
         }, delayMs);
 
         // Listen for abort signal
-        init?.signal?.addEventListener("abort", () => {
+        init.signal!.addEventListener("abort", () => {
           clearTimeout(timeoutId);
           reject(new DOMException("The operation was aborted", "AbortError"));
         });

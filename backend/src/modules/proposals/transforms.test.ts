@@ -248,11 +248,10 @@ test("ProposalEventTransformer", async (t) => {
     const result = ProposalEventTransformer.transform(event);
 
     assert.ok(result !== null);
-    const data = result.data as any;
-    assert.equal(data.proposer, event.data.proposer);
-    assert.equal(data.recipient, event.data.recipient);
-    assert.equal(data.token, event.data.token);
-    assert.equal(data.amount, event.data.amount);
+    assert.equal((result.data as any).proposer, event.data.proposer);
+    assert.equal((result.data as any).recipient, event.data.recipient);
+    assert.equal((result.data as any).token, event.data.token);
+    assert.equal((result.data as any).amount, event.data.amount);
   });
 });
 

@@ -26,7 +26,7 @@ function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     corsOrigin: ["*"],
     requestBodyLimit: "1mb",
     apiKey: "test-api-key",
-    cursorStorageType: "file",
+    cursorStorageType: "file" as const,
     databasePath: "./test.sqlite",
     ...overrides,
   };

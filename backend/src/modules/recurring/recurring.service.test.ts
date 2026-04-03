@@ -128,7 +128,7 @@ function makeTestEnv(): import("../../config/env.js").BackendEnv {
     corsOrigin: ["*"],
     requestBodyLimit: "1mb",
     apiKey: "test-api-key",
-    cursorStorageType: "file",
+    cursorStorageType: "file" as const,
     databasePath: "./test.sqlite",
   };
 }

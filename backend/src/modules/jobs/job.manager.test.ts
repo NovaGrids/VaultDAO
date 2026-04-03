@@ -46,7 +46,7 @@ test("JobManager.startAll includes failed job names and errors", async () => {
   assert.deepEqual(started, ["metrics"]);
 });
 
-test("JobManager.stopAll with timeout", async (_t) => {
+test("JobManager.stopAll with timeout", async () => {
   const manager = new JobManager();
   const stopped: string[] = [];
 

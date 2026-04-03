@@ -215,14 +215,14 @@ export class EventPollingService {
           const firstId = this.processedEventIds.values().next().value;
           if (firstId !== undefined) {
             this.processedEventIds.delete(firstId);
+            this.logger.debug(
+              "processedEventIds at capacity, removing oldest entry",
+              {
+                removedId: firstId,
+                currentSize: this.processedEventIds.size,
+              },
+            );
           }
-          this.logger.debug(
-            "processedEventIds at capacity, removing oldest entry",
-            {
-              removedId: firstId,
-              currentSize: this.processedEventIds.size,
-            },
-          );
         }
       }
 

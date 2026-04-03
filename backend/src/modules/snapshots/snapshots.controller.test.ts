@@ -57,7 +57,7 @@ test("SnapshotController - rebuildSnapshot - success", async () => {
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res, (() => {}) as any);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.data.success, true);
@@ -73,7 +73,7 @@ test("SnapshotController - rebuildSnapshot - invalid range", async () => {
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res, (() => {}) as any);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 400);
   assert.equal(res.data.success, false);
@@ -81,11 +81,8 @@ test("SnapshotController - rebuildSnapshot - invalid range", async () => {
 });
 
 test("SnapshotController - rebuildSnapshot - async for large range", async () => {
-  let _rebuildCalled = false;
-  void _rebuildCalled; // suppress unused warning — variable tracks side-effect
   const service = mockService({
     rebuildFromRpc: async () => {
-      _rebuildCalled = true;
       return { success: true };
     },
   });
@@ -96,7 +93,7 @@ test("SnapshotController - rebuildSnapshot - async for large range", async () =>
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res, (() => {}) as any);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 202);
   assert.equal(res.data.success, true);
@@ -124,7 +121,7 @@ test("SnapshotController - rebuildSnapshot - default endLedger from stats", asyn
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res, (() => {}) as any);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 200);
   assert.equal(capturedEndLedger, 1000); // from mock stats
