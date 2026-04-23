@@ -7361,3 +7361,613 @@ fn test_conviction_voting_strategy() {
 }
 
 
+
+// ============================================================================
+// Escrow System Tests (feature/escrow-system)
+// ============================================================================
+
+/// Helper: set up a minimal vault with one admin signer and a funded token.
+fn setup_escrow_env(
+    env: &Env,
+) -> (
+    VaultDAOClient,
+    Address, // contract_id
+    Address, // admin
+    Address, // funder
+    Address, // recipient
+    Address, // token
+) {
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+
+    let admin = Address::generate(env);
+    let funder = Address::generate(env);
+    let recipient = Address::generate(env);
+
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(env, &token);
+    // Mint tokens to funder so they can fund the escrow
+    token_client.mint(&funder, &10_000);
+
+    let mut signers = Vec::new(env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 100_000,
+        daily_limit: 500_000,
+        weekly_limit: 1_000_000,
+        timelock_threshold: 50_000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        pre_execution_hooks: Vec::new(env),
+        post_execution_hooks: Vec::new(env),
+        default_voting_deadline: 0,
+        veto_addresses: Vec::new(env),
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(env),
+    };
+    client.initialize(&admin, &config);
+
+    (client, contract_id, admin, funder, recipient, token)
+}
+
+/// Build a Vec<Milestone> with a single 100% milestone
+fn single_milestone(env: &Env) -> Vec<Milestone> {
+    let mut milestones = Vec::new(env);
+    milestones.push_back(Milestone {
+        id: 1,
+        percentage: 100,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    milestones
+}
+
+/// Build a Vec<Milestone> with two milestones: 50% each
+fn two_milestones(env: &Env) -> Vec<Milestone> {
+    let mut milestones = Vec::new(env);
+    milestones.push_back(Milestone {
+        id: 1,
+        percentage: 50,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    milestones.push_back(Milestone {
+        id: 2,
+        percentage: 50,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    milestones
+}
+
+#[test]
+fn test_escrow_creation_locks_funds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+
+    let amount = 1_000i128;
+    let funder_balance_before = token_client.balance(&funder);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &amount,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Funds should be locked in the vault
+    let vault_balance = token_client.balance(&contract_id);
+    assert_eq!(vault_balance, amount);
+
+    // Funder balance should decrease
+    let funder_balance_after = token_client.balance(&funder);
+    assert_eq!(funder_balance_before - funder_balance_after, amount);
+
+    // Escrow should be Active
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Active);
+    assert_eq!(escrow.total_amount, amount);
+    assert_eq!(escrow.released_amount, 0);
+    assert_eq!(escrow.funder, funder);
+    assert_eq!(escrow.recipient, recipient);
+}
+
+#[test]
+fn test_escrow_indexes_by_funder_and_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &500i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    let funder_escrows = client.get_funder_escrows(&funder);
+    assert!(funder_escrows.contains(escrow_id));
+
+    let recipient_escrows = client.get_recipient_escrows(&recipient);
+    assert!(recipient_escrows.contains(escrow_id));
+}
+
+#[test]
+fn test_escrow_milestone_completion_flow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+
+    let amount = 1_000i128;
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &amount,
+        &two_milestones(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Complete first milestone
+    client.complete_milestone(&funder, &escrow_id, &1u64);
+    let escrow = client.get_escrow_info(&escrow_id);
+    // Still Active — second milestone pending
+    assert_eq!(escrow.status, EscrowStatus::Active);
+    assert!(escrow.milestones.get(0).unwrap().is_completed);
+    assert!(!escrow.milestones.get(1).unwrap().is_completed);
+
+    // Complete second milestone
+    client.complete_milestone(&funder, &escrow_id, &2u64);
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::MilestonesComplete);
+}
+
+#[test]
+fn test_escrow_release_after_all_milestones() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+
+    let amount = 1_000i128;
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &amount,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Complete the only milestone
+    client.complete_milestone(&funder, &escrow_id, &1u64);
+
+    let recipient_balance_before = token_client.balance(&recipient);
+
+    // Release funds
+    let released = client.release_escrow(&recipient, &escrow_id);
+    assert_eq!(released, amount);
+
+    // Recipient should have received funds
+    let recipient_balance_after = token_client.balance(&recipient);
+    assert_eq!(recipient_balance_after - recipient_balance_before, amount);
+
+    // Escrow should be Released
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Released);
+    assert_eq!(escrow.released_amount, amount);
+}
+
+#[test]
+fn test_escrow_release_fails_before_milestones_complete() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &two_milestones(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Only complete one of two milestones
+    client.complete_milestone(&funder, &escrow_id, &1u64);
+
+    // Attempt release — should fail (conditions not met)
+    let res = client.try_release_escrow(&recipient, &escrow_id);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_dispute_by_funder() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Funder can dispute
+    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "bad_work"));
+
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Disputed);
+}
+
+#[test]
+fn test_escrow_dispute_by_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Admin can also dispute
+    client.dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "admin_flag"));
+
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Disputed);
+}
+
+#[test]
+fn test_escrow_dispute_unauthorized_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Recipient is NOT allowed to dispute per spec
+    let res = client.try_dispute_escrow(&recipient, &escrow_id, &Symbol::new(&env, "dispute"));
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_dispute_unauthorized_third_party() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+    let stranger = Address::generate(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    let res = client.try_dispute_escrow(&stranger, &escrow_id, &Symbol::new(&env, "dispute"));
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_release_blocked_when_disputed() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Complete milestone then dispute
+    client.complete_milestone(&funder, &escrow_id, &1u64);
+    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
+
+    // Release should be blocked
+    let res = client.try_release_escrow(&recipient, &escrow_id);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_dispute_resolution_release_to_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+
+    let amount = 1_000i128;
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &amount,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
+
+    let recipient_balance_before = token_client.balance(&recipient);
+
+    // Admin resolves in favor of recipient
+    client.resolve_dispute(&admin, &escrow_id, &true);
+
+    let recipient_balance_after = token_client.balance(&recipient);
+    assert_eq!(recipient_balance_after - recipient_balance_before, amount);
+
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Released);
+}
+
+#[test]
+fn test_escrow_dispute_resolution_refund_to_funder() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+
+    let amount = 1_000i128;
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &amount,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
+
+    let funder_balance_before = token_client.balance(&funder);
+
+    // Admin resolves in favor of funder (refund)
+    client.resolve_dispute(&admin, &escrow_id, &false);
+
+    let funder_balance_after = token_client.balance(&funder);
+    assert_eq!(funder_balance_after - funder_balance_before, amount);
+
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Refunded);
+}
+
+#[test]
+fn test_escrow_resolve_dispute_non_admin_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+    let stranger = Address::generate(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
+
+    // Non-admin cannot resolve
+    let res = client.try_resolve_dispute(&stranger, &escrow_id, &true);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_double_milestone_completion_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Complete milestone once
+    client.complete_milestone(&funder, &escrow_id, &1u64);
+
+    // Attempt to complete again — should fail
+    let res = client.try_complete_milestone(&funder, &escrow_id, &1u64);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_invalid_milestone_id_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Milestone ID 99 doesn't exist
+    let res = client.try_complete_milestone(&funder, &escrow_id, &99u64);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_invalid_escrow_id_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    // No escrow created — ID 999 doesn't exist
+    let res = client.try_get_escrow_info(&999u64);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_creation_invalid_amount_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let res = client.try_create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &0i128, // zero amount
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_creation_empty_milestones_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let res = client.try_create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &Vec::new(&env), // empty milestones
+        &1000u64,
+        &admin,
+    );
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_creation_milestone_percentages_not_100_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    // Milestones sum to 80, not 100
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(Milestone {
+        id: 1,
+        percentage: 80,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+
+    let res = client.try_create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &milestones,
+        &1000u64,
+        &admin,
+    );
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_escrow_resolve_non_disputed_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
+
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &1_000i128,
+        &single_milestone(&env),
+        &1000u64,
+        &admin,
+    );
+
+    // Escrow is Active, not Disputed — resolve should fail
+    let res = client.try_resolve_dispute(&admin, &escrow_id, &true);
+    assert!(res.is_err());
+}

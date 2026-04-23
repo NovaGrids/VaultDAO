@@ -4013,6 +4013,7 @@ impl VaultDAO {
         let escrow_id = storage::increment_escrow_id(&env);
         let current_ledger = env.ledger().sequence() as u64;
 
+        // Funds are locked on creation — status is immediately Active
         let escrow = Escrow {
             id: escrow_id,
             funder: funder.clone(),
@@ -4021,7 +4022,7 @@ impl VaultDAO {
             total_amount: amount,
             released_amount: 0,
             milestones,
-            status: EscrowStatus::Pending,
+            status: EscrowStatus::Active,
             arbitrator,
             dispute_reason: Symbol::new(&env, ""),
             created_at: current_ledger,
@@ -4058,8 +4059,8 @@ impl VaultDAO {
         let mut escrow = storage::get_escrow(&env, escrow_id)?;
         let current_ledger = env.ledger().sequence() as u64;
 
-        // Validate escrow is active
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Active {
+        // Validate escrow is active (not disputed, released, or refunded)
+        if escrow.status != EscrowStatus::Active {
             return Err(VaultError::ProposalNotPending);
         }
 
@@ -4123,10 +4124,24 @@ impl VaultDAO {
         Ok(())
     }
 
-    /// Release escrowed funds based on completed milestones
-    pub fn release_escrow_funds(env: Env, escrow_id: u64) -> Result<i128, VaultError> {
+    /// Release escrowed funds to recipient after all milestones are completed.
+    /// Caller must be the funder, recipient, or admin.
+    pub fn release_escrow(env: Env, caller: Address, escrow_id: u64) -> Result<i128, VaultError> {
+        caller.require_auth();
+
         let mut escrow = storage::get_escrow(&env, escrow_id)?;
         let current_ledger = env.ledger().sequence() as u64;
+
+        // Ensure caller is authorized
+        let role = storage::get_role(&env, &caller);
+        if caller != escrow.funder && caller != escrow.recipient && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Cannot release a disputed escrow
+        if escrow.status == EscrowStatus::Disputed {
+            return Err(VaultError::ConditionsNotMet);
+        }
 
         // Only release if all milestones complete or expired
         let can_release = escrow.status == EscrowStatus::MilestonesComplete;
@@ -4177,6 +4192,13 @@ impl VaultDAO {
         Ok(amount_to_release)
     }
 
+    /// Keep backward-compatible alias
+    pub fn release_escrow_funds(env: Env, escrow_id: u64) -> Result<i128, VaultError> {
+        let escrow = storage::get_escrow(&env, escrow_id)?;
+        let caller = escrow.recipient.clone();
+        Self::release_escrow(env, caller, escrow_id)
+    }
+
     /// File a dispute on an escrow agreement
     pub fn dispute_escrow(
         env: Env,
@@ -4188,14 +4210,14 @@ impl VaultDAO {
 
         let mut escrow = storage::get_escrow(&env, escrow_id)?;
 
-        // Only funder or recipient can dispute
-        if disputer != escrow.funder && disputer != escrow.recipient {
+        // Only funder or admin can dispute
+        let role = storage::get_role(&env, &disputer);
+        if disputer != escrow.funder && role != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
 
-        // Can only dispute active/pending escrows
-        if escrow.status != EscrowStatus::Pending
-            && escrow.status != EscrowStatus::Active
+        // Can only dispute active escrows
+        if escrow.status != EscrowStatus::Active
             && escrow.status != EscrowStatus::MilestonesComplete
         {
             return Err(VaultError::ProposalNotPending);
@@ -4211,8 +4233,9 @@ impl VaultDAO {
         Ok(())
     }
 
-    /// Resolve an escrow dispute (arbitrator only)
-    pub fn resolve_escrow_dispute(
+    /// Resolve an escrow dispute — admin only.
+    /// If `release_to_recipient` is true, funds go to recipient; otherwise refunded to funder.
+    pub fn resolve_dispute(
         env: Env,
         arbitrator: Address,
         escrow_id: u64,
@@ -4220,14 +4243,16 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         arbitrator.require_auth();
 
+        // Admin-only: only the vault admin can resolve disputes
+        let role = storage::get_role(&env, &arbitrator);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
         let mut escrow = storage::get_escrow(&env, escrow_id)?;
 
         if escrow.status != EscrowStatus::Disputed {
             return Err(VaultError::ProposalNotPending);
-        }
-
-        if arbitrator != escrow.arbitrator {
-            return Err(VaultError::Unauthorized);
         }
 
         // Release all remaining funds based on arbitrator decision
@@ -4255,6 +4280,16 @@ impl VaultDAO {
         events::emit_escrow_dispute_resolved(&env, escrow_id, &arbitrator, release_to_recipient);
 
         Ok(())
+    }
+
+    /// Backward-compatible alias for resolve_dispute
+    pub fn resolve_escrow_dispute(
+        env: Env,
+        arbitrator: Address,
+        escrow_id: u64,
+        release_to_recipient: bool,
+    ) -> Result<(), VaultError> {
+        Self::resolve_dispute(env, arbitrator, escrow_id, release_to_recipient)
     }
 
     /// Query escrow details
