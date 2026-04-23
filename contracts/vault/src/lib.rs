@@ -5645,7 +5645,7 @@ impl VaultDAO {
 
     /// Resolve an escrow dispute — admin only.
     /// If `release_to_recipient` is true, funds go to recipient; otherwise refunded to funder.
-    pub fn resolve_dispute(
+    pub fn resolve_escrow_dispute(
         env: Env,
         arbitrator: Address,
         escrow_id: u64,
@@ -5690,16 +5690,6 @@ impl VaultDAO {
         events::emit_escrow_dispute_resolved(&env, escrow_id, &arbitrator, release_to_recipient);
 
         Ok(())
-    }
-
-    /// Backward-compatible alias for resolve_dispute
-    pub fn resolve_escrow_dispute(
-        env: Env,
-        arbitrator: Address,
-        escrow_id: u64,
-        release_to_recipient: bool,
-    ) -> Result<(), VaultError> {
-        Self::resolve_dispute(env, arbitrator, escrow_id, release_to_recipient)
     }
 
     /// Query escrow details
