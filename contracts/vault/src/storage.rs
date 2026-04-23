@@ -212,6 +212,8 @@ pub enum FeatureKey {
     Subscription(u64),
     /// Next subscription ID counter -> u64
     NextSubscriptionId,
+    /// Subscription IDs indexed by subscriber address -> Vec<u64>
+    SubscriberIndex(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -598,42 +600,39 @@ pub fn get_recurring_payments_paginated(
 // Streaming Payments
 // ============================================================================
 
-// pub fn get_next_stream_id(env: &Env) -> u64 {
-//     env.storage()
-//         .instance()
-//         .get::<DataKey, u64>(&DataKey::Stream(StreamKey::Counter))
-//         .unwrap_or(1)
-// }
+pub fn get_next_stream_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextStreamId)
+        .unwrap_or(1u64)
+}
 
-// pub fn increment_stream_id(env: &Env) -> u64 {
-//     let id = get_next_stream_id(env);
-//     env.storage()
-//         .instance()
-//         .set(&DataKey::Stream(StreamKey::Counter), &(id + 1));
-//     extend_instance_ttl(env);
-//     id
-// }
+pub fn increment_stream_id(env: &Env) -> u64 {
+    let id = get_next_stream_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextStreamId, &(id + 1));
+    extend_instance_ttl(env);
+    id
+}
 
-// pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
-//     let key = DataKey::Stream(StreamKey::Payment(stream.id));
-//     env.storage().persistent().set(&key, stream);
-//     env.storage()
-//         .persistent()
-//         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-// }
+pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
+    let key = DataKey::Stream(stream.id);
+    env.storage().persistent().set(&key, stream);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
 
-// #[allow(dead_code)]
-// pub fn get_streaming_payment(
-//     env: &Env,
-//     id: u64,
-// ) -> Result<crate::types::StreamingPayment, VaultError> {
-//     let key = DataKey::Stream(StreamKey::Payment(id));
-//     env.storage()
-//         .persistent()
-//         .get(&key)
-//         .flatten()
-//         .ok_or(VaultError::ProposalNotFound)
-// }
+pub fn get_streaming_payment(
+    env: &Env,
+    id: u64,
+) -> Result<crate::types::StreamingPayment, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Stream(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
 
 // ============================================================================
 // TTL Management
@@ -1452,44 +1451,6 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 }
 
 // ============================================================================
-// Streaming Payments
-// ============================================================================
-
-pub fn get_next_stream_id(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get(&DataKey::NextStreamId)
-        .unwrap_or(1)
-}
-
-pub fn increment_stream_id(env: &Env) -> u64 {
-    let id = get_next_stream_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextStreamId, &(id + 1));
-    id
-}
-
-pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
-    let key = DataKey::Stream(stream.id);
-    env.storage().persistent().set(&key, stream);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-}
-
-#[allow(dead_code)]
-pub fn get_streaming_payment(
-    env: &Env,
-    id: u64,
-) -> Result<crate::types::StreamingPayment, VaultError> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Stream(id))
-        .ok_or(VaultError::ProposalNotFound)
-}
-
-// ============================================================================
 // Escrow
 // ============================================================================
 
@@ -2037,5 +1998,26 @@ pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> 
     env.storage()
         .persistent()
         .get(&FeatureKey::Subscription(id))
-        .ok_or(VaultError::ProposalNotFound)
+        .ok_or(VaultError::SubscriptionNotFound)
+}
+
+// ============================================================================
+// Subscriber Index
+// ============================================================================
+
+pub fn get_subscriber_index(env: &Env, subscriber: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::SubscriberIndex(subscriber.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_to_subscriber_index(env: &Env, subscriber: &Address, subscription_id: u64) {
+    let mut ids = get_subscriber_index(env, subscriber);
+    ids.push_back(subscription_id);
+    let key = FeatureKey::SubscriberIndex(subscriber.clone());
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }

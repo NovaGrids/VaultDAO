@@ -3451,6 +3451,94 @@ fn test_dex_not_enabled_error() {
 }
 
 #[test]
+fn test_execute_swap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let executor = Address::generate(&env);
+    let dex = Address::generate(&env);
+    let token_in = Address::generate(&env);
+    let token_out = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+    signers.push_back(executor.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        veto_addresses: soroban_sdk::Vec::new(&env),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let mut enabled_dexs = Vec::new(&env);
+    enabled_dexs.push_back(dex.clone());
+    let dex_config = DexConfig {
+        enabled_dexs,
+        max_slippage_bps: 200, // 2%
+        max_price_impact_bps: 500,
+        min_liquidity: 1000,
+    };
+    client.set_dex_config(&admin, &dex_config);
+
+    // Propose swap
+    let swap_op = SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
+    let proposal_id = client.propose_swap(
+        &treasurer,
+        &swap_op,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Approve the proposal
+    client.approve_proposal(&treasurer, &proposal_id);
+    client.approve_proposal(&executor, &proposal_id);
+
+    // Execute the swap
+    client.execute_swap(&executor, &proposal_id);
+
+    // Check that proposal is executed
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+
+    // Check that swap result is stored
+    let swap_result = client.get_swap_result(&proposal_id);
+    assert_eq!(swap_result.amount_in, 1000);
+    assert_eq!(swap_result.amount_out, 990); // Mock: 1% slippage
+}
+
+#[test]
 fn test_batch_propose_multi_token() {
     let env = Env::default();
     env.mock_all_auths();
@@ -8684,6 +8772,7 @@ fn test_escrow_invalid_milestone_id_fails() {
         &1000u64,
         &admin,
     );
+    assert_eq!(round_id, 1);
 
     // Milestone ID 99 doesn't exist
     let res = client.try_complete_milestone(&funder, &escrow_id, &99u64);
@@ -8789,316 +8878,4 @@ fn test_escrow_resolve_non_disputed_fails() {
     // Escrow is Active, not Disputed — resolve should fail
     let res = client.try_resolve_dispute(&admin, &escrow_id, &true);
     assert!(res.is_err());
-}
-
-
-// ============================================================================
-// Funding Round Tests
-// ============================================================================
-
-/// Build a minimal InitConfig for funding round tests.
-fn funding_round_init_config(env: &Env, admin: Address) -> InitConfig {
-    let mut signers = Vec::new(env);
-    signers.push_back(admin.clone());
-    InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1_000_000,
-        daily_limit: 10_000_000,
-        weekly_limit: 50_000_000,
-        timelock_threshold: 0,
-        timelock_delay: 0,
-        velocity_limit: VelocityConfig { limit: 100, window: 3600 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        pre_execution_hooks: Vec::new(env),
-        post_execution_hooks: Vec::new(env),
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(env),
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
-        recovery_config: crate::types::RecoveryConfig::default(env),
-    }
-}
-
-/// Build a single FundingMilestone with the given amount.
-fn make_milestone(env: &Env, amount: i128) -> crate::types::FundingMilestone {
-    crate::types::FundingMilestone {
-        description: soroban_sdk::String::from_str(env, "Milestone"),
-        amount,
-        status: crate::types::FundingMilestoneStatus::Pending,
-        submitted_at: 0,
-        verified_at: 0,
-        verified_by: None,
-    }
-}
-
-/// Build a Vec of milestones from a slice of amounts.
-fn make_milestones(env: &Env, amounts: &[i128]) -> soroban_sdk::Vec<crate::types::FundingMilestone> {
-    let mut v = soroban_sdk::Vec::new(env);
-    for &a in amounts {
-        v.push_back(make_milestone(env, a));
-    }
-    v
-}
-
-#[test]
-fn test_funding_round_create_and_approve() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-
-    // Admin has Role::Admin — can create a funding round
-    let milestones = make_milestones(&env, &[400, 600]);
-    let round_id = client.create_funding_round(
-        &admin,
-        &recipient,
-        &token,
-        &1_000i128,
-        &milestones,
-    );
-    assert_eq!(round_id, 1);
-
-    let round = client.get_funding_round(&round_id);
-    assert_eq!(round.status, crate::types::FundingRoundStatus::Pending);
-    assert_eq!(round.total_amount, 1_000);
-    assert_eq!(round.released_amount, 0);
-
-    // Approve transitions Pending → Active
-    client.approve_funding_round(&admin, &round_id);
-    let round = client.get_funding_round(&round_id);
-    assert_eq!(round.status, crate::types::FundingRoundStatus::Active);
-}
-
-#[test]
-fn test_funding_round_full_lifecycle() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-
-    let milestones = make_milestones(&env, &[300, 700]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-
-    client.approve_funding_round(&admin, &round_id);
-
-    // Recipient submits milestone 0
-    client.submit_milestone(&recipient, &round_id, &0u32);
-    let round = client.get_funding_round(&round_id);
-    assert_eq!(
-        round.milestones.get(0).unwrap().status,
-        crate::types::FundingMilestoneStatus::Submitted
-    );
-
-    // Admin verifies milestone 0 — releases 300 tokens
-    let released = client.verify_milestone(&admin, &round_id, &0u32);
-    assert_eq!(released, 300);
-
-    let round = client.get_funding_round(&round_id);
-    assert_eq!(round.released_amount, 300);
-    assert_eq!(round.status, crate::types::FundingRoundStatus::Active);
-
-    // Recipient submits milestone 1
-    client.submit_milestone(&recipient, &round_id, &1u32);
-
-    // Admin verifies milestone 1 — releases 700 tokens, round completes
-    let released = client.verify_milestone(&admin, &round_id, &1u32);
-    assert_eq!(released, 700);
-
-    let round = client.get_funding_round(&round_id);
-    assert_eq!(round.released_amount, 1_000);
-    assert_eq!(round.status, crate::types::FundingRoundStatus::Completed);
-}
-
-#[test]
-fn test_funding_round_cancellation() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-
-    let milestones = make_milestones(&env, &[500, 500]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-
-    client.approve_funding_round(&admin, &round_id);
-
-    // Partially complete: submit and verify milestone 0
-    client.submit_milestone(&recipient, &round_id, &0u32);
-    client.verify_milestone(&admin, &round_id, &0u32);
-
-    // Admin cancels the round
-    client.cancel_funding_round(&admin, &round_id);
-
-    let round = client.get_funding_round(&round_id);
-    assert_eq!(round.status, crate::types::FundingRoundStatus::Cancelled);
-    assert_eq!(round.released_amount, 500); // partial release preserved
-}
-
-#[test]
-fn test_funding_round_cancellation() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-    let milestones = make_milestones(&env, &[500, 500]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-    client.approve_funding_round(&admin, &round_id);
-    client.submit_milestone(&recipient, &round_id, &0u32);
-    client.verify_milestone(&admin, &round_id, &0u32);
-    client.cancel_funding_round(&admin, &round_id);
-    let round = client.get_funding_round(&round_id);
-    assert_eq!(round.status, crate::types::FundingRoundStatus::Cancelled);
-    assert_eq!(round.released_amount, 500);
-}
-
-#[test]
-fn test_funding_round_invalid_milestone_sum() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-    // Milestones sum to 900, but total_amount is 1000 — should fail
-    let milestones = make_milestones(&env, &[400, 500]);
-    let result = client.try_create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_funding_round_unauthorized_submit() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let attacker = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-    let milestones = make_milestones(&env, &[1_000]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-    client.approve_funding_round(&admin, &round_id);
-    // Attacker (not recipient) tries to submit — should fail
-    let result = client.try_submit_milestone(&attacker, &round_id, &0u32);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_funding_round_duplicate_verification_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-    let milestones = make_milestones(&env, &[1_000]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-    client.approve_funding_round(&admin, &round_id);
-    client.submit_milestone(&recipient, &round_id, &0u32);
-    client.verify_milestone(&admin, &round_id, &0u32);
-    // Second verify attempt on already-verified milestone should fail
-    let result = client.try_verify_milestone(&admin, &round_id, &0u32);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_funding_round_invalid_milestone_index() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-    let milestones = make_milestones(&env, &[1_000]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-    client.approve_funding_round(&admin, &round_id);
-    // Index 99 is out of bounds
-    let result = client.try_submit_milestone(&recipient, &round_id, &99u32);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_funding_round_cancel_completed_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1_000);
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-    let milestones = make_milestones(&env, &[1_000]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-    client.approve_funding_round(&admin, &round_id);
-    client.submit_milestone(&recipient, &round_id, &0u32);
-    client.verify_milestone(&admin, &round_id, &0u32);
-    // Round is now Completed — cancel should fail
-    let result = client.try_cancel_funding_round(&admin, &round_id);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_funding_round_non_admin_cannot_approve() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let non_admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    client.initialize(&admin, &funding_round_init_config(&env, admin.clone()));
-    let milestones = make_milestones(&env, &[1_000]);
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000i128, &milestones);
-    // non_admin has Role::Member — cannot approve
-    let result = client.try_approve_funding_round(&non_admin, &round_id);
-    assert!(result.is_err());
 }

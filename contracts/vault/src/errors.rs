@@ -60,6 +60,19 @@ pub enum VaultError {
     TooManyTags = 232,
     /// Metadata value is empty or exceeds the maximum allowed length
     MetadataValueInvalid = 233,
+    // -----------------------------------------------------------------------
+    // Subscription errors (feature/subscription-system)
+    // -----------------------------------------------------------------------
+    /// Subscription ID does not exist
+    SubscriptionNotFound = 240,
+    /// Subscription has already been cancelled
+    SubscriptionAlreadyCancelled = 241,
+    /// Renewal attempted before next_renewal_ledger has been reached
+    RenewalNotDue = 242,
+    /// Caller is neither the subscriber nor an Admin
+    NotSubscriberOrAdmin = 243,
+    /// Subscription is not in Active status (e.g. Cancelled / Suspended)
+    SubscriptionNotActive = 244,
 }
 
 // Compatibility markers for CI source checks:
