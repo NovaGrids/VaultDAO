@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare } from 'lucide-react';
+import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare, FileText, Plus } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
 import NewProposalModal from '../../components/modals/NewProposalModal';
 import ProposalDetailModal from '../../components/modals/ProposalDetailModal';
@@ -12,17 +13,21 @@ import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useProposals } from '../../hooks/useProposals';
 import { useWallet } from '../../hooks/useWallet';
+import { filtersToSearchParams, searchParamsToFilters } from '../../utils/search';
+import { useActionReadiness } from '../../hooks/useActionReadiness';
 import { useRealtime } from '../../contexts/RealtimeContext';
 import type { TokenInfo, TokenBalance } from '../../types';
 import { DEFAULT_TOKENS } from '../../constants/tokens';
 import VoiceCommands from '../../components/VoiceCommands';
+import ReadinessWarning from '../../components/ReadinessWarning';
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
-    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); }}
+    onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(text); }}
     className="p-1 hover:bg-gray-700 rounded text-gray-400"
+    title="Copy address"
   >
-    <Clock size={14} />
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
   </button>
 );
 
@@ -59,7 +64,8 @@ const Proposals: React.FC = () => {
   const { notify } = useToast();
   const { rejectProposal, approveProposal, getTokenBalances } = useVaultContract();
   const { address } = useWallet();
-  const { subscribe, updatePresence } = useRealtime();
+  const { isReady, checkReady } = useActionReadiness();
+  const { subscribe, updatePresence, connectionStatus, trackEvent } = useRealtime();
 
   const {
     proposals,
@@ -78,13 +84,41 @@ const Proposals: React.FC = () => {
   const [showComparison, setShowComparison] = useState(false);
   const [selectedForComparison, setSelectedForComparison] = useState<Set<string>>(new Set());
 
-  const [activeFilters, setActiveFilters] = useState<FilterState>({
-    search: '',
-    statuses: [],
-    dateRange: { from: '', to: '' },
-    amountRange: { min: '', max: '' },
-    sortBy: 'newest'
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [activeFilters, setActiveFilters] = useState<FilterState>(() => {
+    const defaults: FilterState = {
+      search: '',
+      statuses: [],
+      dateRange: { from: '', to: '' },
+      amountRange: { min: '', max: '' },
+      sortBy: 'newest'
+    };
+    return searchParamsToFilters(searchParams, defaults);
   });
+
+  // Sync state to URL
+  useEffect(() => {
+    const params = filtersToSearchParams(activeFilters);
+    if (params.toString() !== searchParams.toString()) {
+      setSearchParams(params, { replace: true });
+    }
+  }, [activeFilters, searchParams, setSearchParams]);
+
+  // Sync URL to state (for back/forward navigation)
+  useEffect(() => {
+    const defaults: FilterState = {
+      search: '',
+      statuses: [],
+      dateRange: { from: '', to: '' },
+      amountRange: { min: '', max: '' },
+      sortBy: 'newest'
+    };
+    const newFilters = searchParamsToFilters(searchParams, defaults);
+    if (JSON.stringify(newFilters) !== JSON.stringify(activeFilters)) {
+      setActiveFilters(newFilters);
+    }
+  }, [searchParams]);
 
   const [newProposalForm, setNewProposalForm] = useState<NewProposalFormData>({
     recipient: '',
@@ -102,7 +136,7 @@ const Proposals: React.FC = () => {
         setTokenBalances(balances.map((b: TokenBalance) => ({ ...b, isLoading: false })));
       } catch (error) {
         console.error('Failed to fetch token balances:', error);
-        // Set default tokens with zero balances
+        // Set default tokens with zero account balances
         setTokenBalances(DEFAULT_TOKENS.map(token => ({
           token,
           balance: '0',
@@ -124,6 +158,8 @@ const Proposals: React.FC = () => {
 
     const unsubscribers = [
       subscribe('proposal_created', (data: Proposal) => {
+        const eventId = `created-${data.id}`;
+        if (!trackEvent(eventId)) return;
         setLocalProposals((prev) => [data, ...prev]);
         notify('new_proposal', `New proposal #${data.id} created`, 'info');
       }),
@@ -132,10 +168,13 @@ const Proposals: React.FC = () => {
           prev.map((p) => (p.id === data.id ? { ...p, ...data.updates } : p))
         );
       }),
-      subscribe('proposal_approved', (data: { id: string; approver: string }) => {
+      subscribe('proposal_approved', (data: { id: string; approver: string; eventId?: string }) => {
+        const eventId = data.eventId ?? `approved-${data.id}-${data.approver}`;
+        if (!trackEvent(eventId)) return;
         setLocalProposals((prev) =>
           prev.map((p) => {
             if (p.id === data.id) {
+              if (p.approvedBy.includes(data.approver)) return p;
               const newApprovals = p.approvals + 1;
               const newApprovedBy = [...p.approvedBy, data.approver];
               return {
@@ -150,7 +189,9 @@ const Proposals: React.FC = () => {
         );
         notify('proposal_approved', `Proposal #${data.id} approved`, 'success');
       }),
-      subscribe('proposal_rejected', (data: { id: string }) => {
+      subscribe('proposal_rejected', (data: { id: string; eventId?: string }) => {
+        const eventId = data.eventId ?? `rejected-${data.id}`;
+        if (!trackEvent(eventId)) return;
         setLocalProposals((prev) =>
           prev.map((p) => (p.id === data.id ? { ...p, status: 'Rejected' } : p))
         );
@@ -210,6 +251,13 @@ const Proposals: React.FC = () => {
 
   const handleRejectConfirm = async () => {
     if (!rejectingId) return;
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('proposal_rejected', message ?? 'Not ready', 'error');
+      setShowRejectModal(false);
+      setRejectingId(null);
+      return;
+    }
     try {
       await rejectProposal(Number(rejectingId));
       setLocalProposals(prev => prev.map(p => p.id === rejectingId ? { ...p, status: 'Rejected' } : p));
@@ -225,8 +273,9 @@ const Proposals: React.FC = () => {
 
   const handleApprove = async (proposalId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!address) {
-      notify('proposal_rejected', 'Wallet not connected', 'error');
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('proposal_rejected', message ?? 'Not ready', 'error');
       return;
     }
 
@@ -236,7 +285,7 @@ const Proposals: React.FC = () => {
       setLocalProposals(prev => prev.map(p => {
         if (p.id === proposalId) {
           const newApprovals = p.approvals + 1;
-          const newApprovedBy = [...p.approvedBy, address];
+          const newApprovedBy = [...p.approvedBy, address!];
           return {
             ...p,
             approvals: newApprovals,
@@ -272,8 +321,20 @@ const Proposals: React.FC = () => {
   }, [selectedToken, tokenBalances]);
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6 text-white">
+    <div className="space-y-6 pb-10">
       <div className="max-w-7xl mx-auto">
+        <ReadinessWarning />
+        {connectionStatus === 'connecting' && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 px-4 py-2 text-sm text-yellow-400">
+            <Loader2 size={14} className="animate-spin" />
+            Reconnecting to realtime updates…
+          </div>
+        )}
+        {connectionStatus === 'error' && (
+          <div className="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2 text-sm text-red-400">
+            Realtime updates unavailable. Data may be stale.
+          </div>
+        )}
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold">Proposals</h1>
           <div className="flex items-center gap-3">
@@ -286,7 +347,15 @@ const Proposals: React.FC = () => {
                 <span>Compare ({selectedForComparison.size})</span>
               </button>
             )}
-            <button onClick={() => setShowNewProposalModal(true)} className="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition">
+            <button
+              onClick={() => {
+                const { ready, message } = checkReady();
+                if (!ready) { notify('proposal_rejected', message ?? 'Not ready', 'error'); return; }
+                setShowNewProposalModal(true);
+              }}
+              disabled={!isReady}
+              className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-2 rounded-lg transition"
+            >
               New Proposal
             </button>
           </div>
@@ -455,12 +524,35 @@ const Proposals: React.FC = () => {
                 </div>
               );
             })
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 px-4 bg-gray-800/20 rounded-3xl border border-dashed border-gray-700">
-              <SearchX size={48} className="text-gray-600 mb-4" />
-              <p className="text-gray-400 text-lg font-medium">
-                {localProposals.length === 0 ? 'No proposals found on-chain yet' : 'No proposals match your filters'}
+          ) : localProposals.length === 0 ? (
+            // True empty state — no proposals exist at all
+            <div className="flex flex-col items-center justify-center py-20 px-4 bg-gray-800/20 rounded-3xl border border-dashed border-gray-700">
+              <div className="p-5 bg-gray-800/60 rounded-2xl mb-6">
+                <FileText size={48} className="text-purple-400" />
+              </div>
+              <h3 className="text-white text-xl font-semibold mb-2">No proposals yet</h3>
+              <p className="text-gray-400 text-sm text-center max-w-sm mb-8">
+                This vault has no proposals. Create the first one to start the approval process.
               </p>
+              <button
+                onClick={() => {
+                  const { ready, message } = checkReady();
+                  if (!ready) { notify('proposal_rejected', message ?? 'Not ready', 'error'); return; }
+                  setShowNewProposalModal(true);
+                }}
+                disabled={!isReady}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 rounded-lg font-medium transition min-h-[44px]"
+              >
+                <Plus size={18} />
+                Create First Proposal
+              </button>
+            </div>
+          ) : (
+            // Filtered empty state — proposals exist but none match current filters
+            <div className="flex flex-col items-center justify-center py-16 px-4 bg-gray-800/20 rounded-3xl border border-dashed border-gray-700">
+              <SearchX size={48} className="text-gray-600 mb-4" />
+              <p className="text-gray-400 text-lg font-medium">No proposals match your filters</p>
+              <p className="text-gray-500 text-sm mt-1">Try adjusting or clearing your filters</p>
             </div>
           )}
         </div>

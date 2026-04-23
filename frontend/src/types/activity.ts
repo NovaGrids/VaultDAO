@@ -25,6 +25,14 @@ export interface VaultActivity {
   txHash?: string;
   eventId: string;
   pagingToken?: string;
+  /** Emitting contract (defaults to configured vault id when omitted) */
+  contractId?: string;
+  /** Soroban event topics joined with \\0 for stable fingerprinting */
+  topicFingerprint?: string;
+  /** Digest of event value XDR from RPC (when present) */
+  payloadDigest?: string;
+  /** From getEvents when available */
+  callSucceeded?: boolean;
 }
 
 export interface VaultEventsFilters {

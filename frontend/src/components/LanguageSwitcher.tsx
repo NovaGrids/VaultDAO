@@ -24,24 +24,16 @@ export const LanguageSwitcher: React.FC = () => {
   const handleLanguageChange = (langCode: string) => {
     const selectedLang = languages.find((lang) => lang.code === langCode);
     if (selectedLang) {
-      i18n.changeLanguage(langCode);
-      // Update document direction for RTL languages
-      document.documentElement.dir = selectedLang.direction;
-      document.documentElement.lang = langCode;
-      // Persist language preference
-      localStorage.setItem('i18nextLng', langCode);
-      // Update HTML lang and dir attributes
-      document.documentElement.setAttribute('dir', selectedLang.direction);
+      i18n.changeLanguage(langCode); // detector caches to localStorage automatically
       setIsOpen(false);
     }
   };
 
-  // Update document on mount and when language changes
+  // Apply dir/lang attributes on mount and whenever the active language changes
   React.useEffect(() => {
-    const savedLang = localStorage.getItem('i18nextLng') || 'en';
-    const selectedLang = languages.find((lang) => lang.code === savedLang) || languages[0];
-    document.documentElement.dir = selectedLang.direction;
-    document.documentElement.lang = savedLang;
+    const lang = languages.find((l) => l.code === i18n.language) || languages[0];
+    document.documentElement.dir = lang.direction;
+    document.documentElement.lang = lang.code;
   }, [i18n.language]);
 
   return (

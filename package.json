@@ -5,7 +5,9 @@
     "backend:build": "npm --prefix backend run build",
     "backend:typecheck": "npm --prefix backend run typecheck",
     "backend:test": "npm --prefix backend run test",
-    "backend:lint": "npm --prefix backend run lint"
+    "backend:lint": "npm --prefix backend run lint",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "build:frontend": "npm --prefix frontend run build"
   },
   "dependencies": {
     "html2canvas": "^1.4.1",

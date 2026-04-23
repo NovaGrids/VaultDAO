@@ -89,16 +89,16 @@ const PieChart: React.FC<PieChartProps> = ({
               border: '1px solid #374151',
               borderRadius: '8px',
             }}
-            formatter={(value: number | undefined, name?: string, props?: { payload?: { count?: number; percent?: string } }) => [
+            formatter={((value: number | undefined, name?: string, props?: { payload?: { count?: number; percent?: string } }) => [
               showCount && props?.payload?.count != null
                 ? `${value ?? 0} (${props.payload.count} tx)`
                 : value ?? 0,
               name ?? '',
-            ]}
+            ]) as any}
           />
           <Legend
             wrapperStyle={{ fontSize: 12 }}
-            formatter={(value: string | undefined, entry: LegendEntry) => {
+            formatter={((value: string | undefined, entry: LegendEntry) => {
               const displayValue = value ?? entry.value ?? '';
               // Safely cast the specific payload part we need
               const payload = entry?.payload as { percent?: string | number } | undefined;
@@ -108,7 +108,7 @@ const PieChart: React.FC<PieChartProps> = ({
                   {payload?.percent != null && ` (${payload.percent}%)`}
                 </span>
               );
-            }}
+            }) as any}
           />
         </RechartsPieChart>
       </ResponsiveContainer>

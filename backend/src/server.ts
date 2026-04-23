@@ -1,32 +1,140 @@
-import { createServer } from "node:http";
-
 import type { BackendEnv } from "./config/env.js";
-import { buildHealthResponse, buildStatusResponse } from "./routes/health.js";
+import { loadEnv } from "./config/env.js";
+import { createApp } from "./app.js";
+import {
+  EventPollingService,
+  FileCursorAdapter,
+  DatabaseCursorAdapter,
+} from "./modules/events/index.js";
+import {
+  RecurringIndexerService,
+  MemoryRecurringStorageAdapter,
+} from "./modules/recurring/index.js";
+import {
+  SnapshotService,
+  MemorySnapshotAdapter,
+} from "./modules/snapshots/index.js";
+import {
+  ProposalActivityConsumer,
+  ProposalActivityAggregator,
+} from "./modules/proposals/index.js";
+import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
+import { JobManager } from "./modules/jobs/job.manager.js";
+import type { NotificationQueue } from "./modules/notifications/notification.types.js";
+import { createLogger } from "./shared/logging/logger.js";
+import { SqliteStorageAdapter } from "./shared/storage/index.js";
+import { HorizonClient } from "./shared/rpc/horizon.client.js";
+import { TransactionsService } from "./modules/transactions/transactions.service.js";
+import type { Server } from "node:http";
 
-export function createAppServer(env: BackendEnv) {
-  return createServer((request, response) => {
-    const url = new URL(
-      request.url || "/",
-      `http://${request.headers.host || "localhost"}`,
-    );
+export interface BackendRuntime {
+  readonly startedAt: string;
+  readonly eventPollingService: EventPollingService;
+  readonly recurringIndexerService: RecurringIndexerService;
+  readonly snapshotService: SnapshotService;
+  readonly proposalActivityAggregator: ProposalActivityAggregator;
+  readonly proposalActivityConsumer: ProposalActivityConsumer;
+  readonly transactionsService: TransactionsService;
+  readonly jobManager: JobManager;
+  readonly wsServer?: EventWebSocketServer;
+}
 
-    response.setHeader("Content-Type", "application/json; charset=utf-8");
+export interface BackendServer {
+  readonly server: Server;
+  readonly runtime: BackendRuntime;
+}
 
-    if (request.method === "GET" && url.pathname === "/health") {
-      const payload = buildHealthResponse(env);
-      response.writeHead(payload.statusCode);
-      response.end(payload.body);
-      return;
-    }
+export function startServer(
+  env: BackendEnv = loadEnv(),
+  _notificationQueue?: NotificationQueue,
+): BackendServer {
+  const jobManager = new JobManager();
 
-    if (request.method === "GET" && url.pathname === "/api/v1/status") {
-      const payload = buildStatusResponse(env);
-      response.writeHead(payload.statusCode);
-      response.end(payload.body);
-      return;
-    }
-
-    response.writeHead(404);
-    response.end(JSON.stringify({ ok: false, error: "Not Found" }));
+  // Initialize proposal activity components
+  const proposalActivityAggregator = new ProposalActivityAggregator();
+  const proposalActivityConsumer = new ProposalActivityConsumer();
+  proposalActivityConsumer.registerBatchConsumer((records) => {
+    proposalActivityAggregator.addRecords(records);
   });
+
+  const recurringIndexerService = new RecurringIndexerService(
+    env,
+    new MemoryRecurringStorageAdapter(),
+  );
+  const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
+
+  const horizonClient = new HorizonClient({ url: env.horizonUrl });
+  const transactionsService = new TransactionsService(horizonClient);
+
+  const runtime: any = {
+    startedAt: new Date().toISOString(),
+    recurringIndexerService,
+    snapshotService,
+    proposalActivityAggregator,
+    proposalActivityConsumer,
+    transactionsService,
+    jobManager,
+  };
+
+  const app = createApp(env, runtime);
+
+  const server = app.listen(env.port, env.host, () => {
+    const logger = createLogger("vaultdao-backend");
+    logger.info(
+      `listening on http://${env.host}:${env.port} for ${env.stellarNetwork}`,
+    );
+  });
+
+  const wsServer = new EventWebSocketServer(server);
+  runtime.wsServer = wsServer;
+
+  const cursorStorage =
+    env.cursorStorageType === "database"
+      ? new DatabaseCursorAdapter(
+          new SqliteStorageAdapter(env.databasePath, "event_cursors"),
+        )
+      : new FileCursorAdapter();
+
+  const eventPollingService = new EventPollingService(
+    env,
+    cursorStorage,
+    proposalActivityConsumer,
+    wsServer,
+    snapshotService,
+  );
+  runtime.eventPollingService = eventPollingService;
+
+  jobManager.registerJob(
+    {
+      name: "proposal-consumer",
+      start: () => proposalActivityConsumer.start(),
+      stop: () => proposalActivityConsumer.stop(),
+      isRunning: () => proposalActivityConsumer.getIsRunning(),
+    },
+    { replace: true },
+  );
+
+  jobManager.registerJob(
+    {
+      name: "event-polling",
+      start: () => eventPollingService.start(),
+      stop: () => eventPollingService.stop(),
+      isRunning: () => eventPollingService.getStatus().isPolling,
+    },
+    { replace: true },
+  );
+
+  jobManager.registerJob(
+    {
+      name: "recurring-indexer",
+      start: () => recurringIndexerService.start(),
+      stop: () => recurringIndexerService.stop(),
+      isRunning: () => recurringIndexerService.getStatus().isIndexing,
+    },
+    { replace: true },
+  );
+
+  void jobManager.startAll();
+
+  return { server, runtime: runtime as BackendRuntime };
 }

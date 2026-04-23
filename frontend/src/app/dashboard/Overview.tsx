@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FileText, CheckCircle, Wallet, Loader2, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3 } from 'lucide-react';
+import { FileText, CheckCircle, Wallet, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3, Users } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
-import TokenBalanceCard from '../../components/TokenBalanceCard';
+import TokenBalanceCard, { TokenBalanceCardSkeleton } from '../../components/TokenBalanceCard';
 import DashboardBuilder from '../../components/DashboardBuilder';
+import DashboardErrorBoundary from '../../components/DashboardErrorBoundary';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { getAllTemplates, getMostUsedTemplates } from '../../utils/templates';
 import { loadDashboardLayout } from '../../utils/dashboardTemplates';
@@ -27,6 +28,7 @@ const Overview: React.FC = () => {
     const { t } = useTranslation();
     const { getDashboardStats, getTokenBalances, getPortfolioValue, addCustomToken, getVaultBalance, loading } = useVaultContract();
     const [stats, setStats] = useState<DashboardStats | null>(null);
+    const [statsError, setStatsError] = useState<string | null>(null);
     const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
     const [portfolioValue, setPortfolioValue] = useState<{ total: number; change24h: number } | null>(null);
     const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
@@ -36,11 +38,11 @@ const Overview: React.FC = () => {
     const [addError, setAddError] = useState<string | null>(null);
     const [isLoadingBalances, setIsLoadingBalances] = useState(true);
     const [balance, setBalance] = useState<string>('0');
-    const [balanceLoading, setBalanceLoading] = useState(false);
     const [balanceError, setBalanceError] = useState<string | null>(null);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [showAdvancedDashboard, setShowAdvancedDashboard] = useState(false);
     const [savedLayout, setSavedLayout] = useState<{ widgets?: unknown[] } | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
     const quickActionTemplates = (() => {
         const mostUsed = getMostUsedTemplates(3);
@@ -50,35 +52,39 @@ const Overview: React.FC = () => {
         return getAllTemplates().slice(0, 3);
     })();
 
-    const fetchBalance = async () => {
-        setBalanceLoading(true);
+    const fetchAll = useCallback(async () => {
+        setIsLoading(true);
+        setStatsError(null);
         setBalanceError(null);
-        try {
-            const balanceInStroops = await getVaultBalance?.() || '0';
-            setBalance(balanceInStroops);
-            setLastUpdated(new Date());
-        } catch (error) {
-            console.error('Failed to fetch balance:', error);
-            setBalanceError('Failed to load balance');
-        } finally {
-            setBalanceLoading(false);
+
+        const results = await Promise.allSettled([
+            getDashboardStats(),
+            getVaultBalance?.() || Promise.resolve('0')
+        ]);
+
+        // Handle stats result
+        if (results[0].status === 'fulfilled') {
+            setStats(results[0].value as DashboardStats);
+        } else {
+            console.error('Failed to fetch dashboard stats:', results[0].reason);
+            setStatsError('Failed to load stats');
         }
-    };
+
+        // Handle balance result
+        if (results[1].status === 'fulfilled') {
+            setBalance(results[1].value);
+            setLastUpdated(new Date());
+        } else {
+            console.error('Failed to fetch balance:', results[1].reason);
+            setBalanceError('Failed to load balance');
+        }
+
+        setIsLoading(false);
+    }, [getDashboardStats, getVaultBalance]);
 
     useEffect(() => {
         let isMounted = true;
-        const fetchData = async () => {
-            try {
-                const result = await getDashboardStats();
-                if (isMounted) {
-                    setStats(result as DashboardStats);
-                }
-            } catch (error) {
-                console.error('Failed to fetch dashboard data', error);
-            }
-        };
-        fetchData();
-        fetchBalance();
+        fetchAll().then(() => { if (!isMounted) return; });
 
         const layout = loadDashboardLayout();
         if (layout) {
@@ -88,7 +94,7 @@ const Overview: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [getDashboardStats, fetchBalance]);
+    }, [fetchAll]);
 
     const fetchTokenBalances = useCallback(async () => {
         setIsLoadingBalances(true);
@@ -129,13 +135,10 @@ const Overview: React.FC = () => {
         setAddError(null);
 
         try {
-            const tokenInfo = await addCustomToken?.();
+            const tokenInfo = await addCustomToken?.(newTokenAddress.trim());
             if (tokenInfo) {
-                setTokenBalances(prev => [...prev, {
-                    token: tokenInfo,
-                    balance: '0',
-                    isLoading: false,
-                }]);
+                // Refresh all balances to include the new token
+                await fetchTokenBalances();
                 setShowAddTokenModal(false);
                 setNewTokenAddress('');
             }
@@ -150,20 +153,8 @@ const Overview: React.FC = () => {
         setSelectedToken(selectedToken?.address === token.address ? null : token);
     };
 
-    const formatPortfolioValue = (value: number): string => {
-        if (value < 0.01) return '<$0.01';
-        return `$${value.toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        })}`;
-    };
-
-    if (loading && !stats) {
-        return (
-            <div className="h-96 flex items-center justify-center">
-                <Loader2 className="h-10 w-10 animate-spin text-purple-500" />
-            </div>
-        );
+    if (loading && !stats && isLoading) {
+        return null; // render skeletons inline instead
     }
 
     return (
@@ -172,6 +163,14 @@ const Overview: React.FC = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">{t('dashboard.treasuryOverview')}</h2>
                 <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => { void fetchAll(); }}
+                        disabled={isLoading}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700 text-slate-600 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700 text-sm transition-colors disabled:opacity-50 shadow-sm"
+                        title="Refresh stats"
+                    >
+                        <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                    </button>
                     <button
                         onClick={() => setShowAdvancedDashboard(!showAdvancedDashboard)}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
@@ -187,9 +186,11 @@ const Overview: React.FC = () => {
             </div>
 
             {showAdvancedDashboard && (
-                <DashboardBuilder
-                    initialWidgets={(savedLayout?.widgets as WidgetConfig[] | undefined) || []}
-                />
+                <DashboardErrorBoundary>
+                    <DashboardBuilder
+                        initialWidgets={(savedLayout?.widgets as WidgetConfig[] | undefined) || []}
+                    />
+                </DashboardErrorBoundary>
             )}
 
             {!showAdvancedDashboard && (
@@ -197,7 +198,21 @@ const Overview: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                         {/* Featured Balance Card */}
                         <div className="md:col-span-2 lg:col-span-1">
-                            <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-2xl border border-purple-500 p-6 h-full shadow-xl shadow-purple-500/20">
+                            {isLoading ? (
+                                <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-2xl border border-purple-500 p-6 h-full shadow-xl shadow-purple-500/20 animate-pulse">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-3 bg-white/20 rounded-xl w-12 h-12" />
+                                            <div className="space-y-2">
+                                                <div className="h-3 w-20 rounded bg-white/20" />
+                                                <div className="h-2 w-28 rounded bg-white/20" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="h-10 w-32 rounded bg-white/20 mt-2" />
+                                </div>
+                            ) : (
+                            <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-2xl border border-purple-500 p-6 h-full shadow-xl shadow-purple-500/20 animate-fadeIn">
                                 <div className="flex items-start justify-between mb-4">
                                     <div className="flex items-center gap-3">
                                         <div className="p-3 bg-white/20 rounded-xl backdrop-blur-md">
@@ -211,51 +226,68 @@ const Overview: React.FC = () => {
                                         </div>
                                     </div>
                                     <button
-                                        onClick={fetchBalance}
-                                        disabled={balanceLoading}
+                                        onClick={() => { void fetchAll(); }}
+                                        disabled={isLoading}
                                         className="p-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center"
                                         title={t('dashboard.refreshBalance')}
                                     >
-                                        <RefreshCw className={`h-5 w-5 text-white ${balanceLoading ? 'animate-spin' : ''}`} />
+                                        <RefreshCw className={`h-5 w-5 text-white ${isLoading ? 'animate-spin' : ''}`} />
                                     </button>
                                 </div>
                                 {balanceError ? (
                                     <div className="text-center py-4">
                                         <p className="text-red-200 text-sm mb-2">{balanceError}</p>
-                                        <button onClick={fetchBalance} className="text-xs text-white underline">{t('common.retry')}</button>
+                                        <button onClick={() => { void fetchAll(); }} className="text-xs text-white underline">{t('common.retry')}</button>
                                     </div>
                                 ) : (
                                     <div className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-                                        {balanceLoading ? (
-                                            <Loader2 className="h-8 w-8 animate-spin" />
-                                        ) : (
-                                            formatTokenAmount(balance)
-                                        )}
+                                        {formatTokenAmount(balance)}
                                     </div>
                                 )}
                             </div>
+                            )}
                         </div>
-                        
-                        <StatCard
-                            title={t('dashboard.totalStaked')}
-                            value={`${stats?.totalBalance || '0'} XLM`}
-                            icon={Wallet}
-                            variant="primary"
-                        />
-                        <StatCard
-                            title={t('dashboard.activeProposals')}
-                            value={stats?.totalProposals || 0}
-                            subtitle={`${stats?.pendingApprovals || 0} ${t('dashboard.pendingVote')}`}
-                            icon={FileText}
-                            variant="warning"
-                        />
-                        <StatCard
-                            title={t('dashboard.readyToExecute')}
-                            value={stats?.readyToExecute || 0}
-                            subtitle={t('dashboard.passedTimelock')}
-                            icon={CheckCircle}
-                            variant="success"
-                        />
+
+                        {isLoading ? (
+                            <>
+                                {[0, 1, 2].map((i) => (
+                                    <div key={i} className="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 animate-pulse">
+                                        <div className="flex items-start justify-between mb-4">
+                                            <div className="space-y-2">
+                                                <div className="h-3 w-24 rounded bg-gray-200 dark:bg-gray-700" />
+                                                <div className="h-7 w-12 rounded bg-gray-200 dark:bg-gray-700" />
+                                            </div>
+                                            <div className="w-10 h-10 rounded-xl bg-gray-200 dark:bg-gray-700" />
+                                        </div>
+                                        <div className="h-3 w-32 rounded bg-gray-200 dark:bg-gray-700" />
+                                    </div>
+                                ))}
+                            </>
+                        ) : (
+                            <>
+                                <StatCard
+                                    title={t('dashboard.activeProposals')}
+                                    value={stats?.totalProposals ?? 0}
+                                    subtitle={`${stats?.pendingApprovals ?? 0} ${t('dashboard.pendingVote')}`}
+                                    icon={FileText}
+                                    variant="warning"
+                                />
+                                <StatCard
+                                    title={t('dashboard.readyToExecute')}
+                                    value={stats?.readyToExecute ?? 0}
+                                    subtitle={statsError ? t('common.retry') : t('dashboard.passedTimelock')}
+                                    icon={CheckCircle}
+                                    variant="success"
+                                />
+                                <StatCard
+                                    title={t('dashboard.signers')}
+                                    value={stats?.threshold ?? '0/0'}
+                                    subtitle={`${stats?.activeSigners ?? 0} active`}
+                                    icon={Users}
+                                    variant="primary"
+                                />
+                            </>
+                        )}
                     </div>
 
                     {/* Token Balances Section */}
@@ -284,8 +316,10 @@ const Overview: React.FC = () => {
                         </div>
 
                         {isLoadingBalances ? (
-                            <div className="flex items-center justify-center py-12">
-                                <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                {Array.from({ length: 4 }).map((_, i) => (
+                                    <TokenBalanceCardSkeleton key={i} />
+                                ))}
                             </div>
                         ) : tokenBalances.length > 0 ? (
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

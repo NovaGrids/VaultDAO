@@ -10,6 +10,8 @@ export interface TokenInfo {
   decimals: number;
   icon?: string;
   isNative: boolean;
+  logoUrl?: string;
+  usdPrice?: number;
 }
 
 // Native XLM token
@@ -175,4 +177,113 @@ export function removeCustomToken(address: string): TokenInfo[] {
   saveCustomTokens(updatedCustomTokens);
   
   return [...DEFAULT_TOKENS, ...updatedCustomTokens];
+}
+
+/**
+ * Token metadata cache
+ */
+interface TokenMetadata {
+  logoUrl?: string;
+  usdPrice?: number;
+  lastUpdated: number;
+}
+
+const metadataCache = new Map<string, TokenMetadata>();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Fetch token metadata (logo and USD price) from Stellar APIs
+ */
+export async function fetchTokenMetadata(token: TokenInfo): Promise<TokenMetadata> {
+  // Check cache first
+  const cached = metadataCache.get(token.address);
+  if (cached && Date.now() - cached.lastUpdated < CACHE_DURATION) {
+    return cached;
+  }
+
+  const metadata: TokenMetadata = {
+    lastUpdated: Date.now(),
+  };
+
+  try {
+    // For native XLM, use known data
+    if (token.isNative) {
+      metadata.logoUrl = 'https://assets.coingecko.com/coins/images/100/small/Stellar_symbol_black_RGB.png';
+      
+      // Fetch XLM price from CoinGecko
+      try {
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd');
+        const data = await response.json();
+        if (data.stellar?.usd) {
+          metadata.usdPrice = data.stellar.usd;
+        }
+      } catch (error) {
+        console.warn('Failed to fetch XLM price:', error);
+      }
+    } else {
+      // For other tokens, try to fetch from Stellar Expert API
+      try {
+        const response = await fetch(
+          `https://api.stellar.expert/explorer/testnet/asset/${token.symbol}-${token.address.substring(0, 8)}`
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.image) {
+            metadata.logoUrl = data.image;
+          }
+          if (data.price?.usd) {
+            metadata.usdPrice = data.price.usd;
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch metadata for ${token.symbol}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching token metadata:', error);
+  }
+
+  // Cache the result
+  metadataCache.set(token.address, metadata);
+  return metadata;
+}
+
+/**
+ * Fetch metadata for multiple tokens in parallel
+ */
+export async function fetchMultipleTokenMetadata(tokens: TokenInfo[]): Promise<Map<string, TokenMetadata>> {
+  const results = await Promise.allSettled(
+    tokens.map(async (token) => ({
+      address: token.address,
+      metadata: await fetchTokenMetadata(token),
+    }))
+  );
+
+  const metadataMap = new Map<string, TokenMetadata>();
+  results.forEach((result) => {
+    if (result.status === 'fulfilled') {
+      metadataMap.set(result.value.address, result.value.metadata);
+    }
+  });
+
+  return metadataMap;
+}
+
+/**
+ * Format USD price for display
+ */
+export function formatUsdPrice(price: number | undefined): string {
+  if (price === undefined || price === null) return '';
+  
+  if (price < 0.01) {
+    return `$${price.toFixed(6)}`;
+  } else if (price < 1) {
+    return `$${price.toFixed(4)}`;
+  } else {
+    return `$${price.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
 }

@@ -18,6 +18,20 @@ function toDateKey(iso: string): string {
   return iso.slice(0, 10);
 }
 
+export function filterTransactionsByDateRange<T extends { timestamp: string }>(
+  transactions: T[],
+  from?: string,
+  to?: string
+): T[] {
+  const fromTime = from ? new Date(from).getTime() : 0;
+  const toTime = to ? new Date(to).setHours(23, 59, 59, 999) : Infinity;
+  
+  return transactions.filter((t) => {
+    const time = new Date(t.timestamp).getTime();
+    return time >= fromTime && time <= toTime;
+  });
+}
+
 function getRangeDates(range: AnalyticsTimeRange): { start: Date; end: Date } {
   const end = new Date();
   const start = new Date();

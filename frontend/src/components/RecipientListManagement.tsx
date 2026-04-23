@@ -9,7 +9,7 @@ interface RecipientListManagementProps {
 
 export default function RecipientListManagement({ onClose }: RecipientListManagementProps) {
     const { getListMode, setListMode, addToWhitelist, removeFromWhitelist,
-        addToBlacklist, removeFromBlacklist } = useVaultContract();
+        addToBlacklist, removeFromBlacklist, getWhitelistAddresses, getBlacklistAddresses } = useVaultContract();
     const { notify } = useToast();
 
     const [mode, setModeState] = useState<ListMode>('Disabled');
@@ -22,16 +22,22 @@ export default function RecipientListManagement({ onClose }: RecipientListManage
     const [showImportModal, setShowImportModal] = useState(false);
 
     useEffect(() => {
-        loadListMode();
+        loadRecipientLists();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const loadListMode = async () => {
+    const loadRecipientLists = async () => {
         try {
-            const currentMode = await getListMode();
+            const [currentMode, whitelist, blacklist] = await Promise.all([
+                getListMode(),
+                getWhitelistAddresses(),
+                getBlacklistAddresses(),
+            ]);
             setModeState(currentMode as ListMode);
+            setWhitelistAddresses(whitelist);
+            setBlacklistAddresses(blacklist);
         } catch (error) {
-            console.error('Failed to load list mode:', error);
+            console.error('Failed to load recipient lists:', error);
         }
     };
 
@@ -57,12 +63,22 @@ export default function RecipientListManagement({ onClose }: RecipientListManage
         setIsLoading(true);
         try {
             if (mode === 'Whitelist') {
-                await addToWhitelist(newAddress);
-                setWhitelistAddresses([...whitelistAddresses, newAddress]);
+                const nextAddress = newAddress.trim();
+                if (!nextAddress) {
+                    notify('config_updated', 'Please enter a valid address', 'error');
+                    return;
+                }
+                await addToWhitelist(nextAddress);
+                setWhitelistAddresses((prev) => (prev.includes(nextAddress) ? prev : [...prev, nextAddress]));
                 notify('config_updated', 'Address added to whitelist', 'success');
             } else if (mode === 'Blacklist') {
-                await addToBlacklist(newAddress);
-                setBlacklistAddresses([...blacklistAddresses, newAddress]);
+                const nextAddress = newAddress.trim();
+                if (!nextAddress) {
+                    notify('config_updated', 'Please enter a valid address', 'error');
+                    return;
+                }
+                await addToBlacklist(nextAddress);
+                setBlacklistAddresses((prev) => (prev.includes(nextAddress) ? prev : [...prev, nextAddress]));
                 notify('config_updated', 'Address added to blacklist', 'success');
             }
             setNewAddress('');
@@ -101,23 +117,25 @@ export default function RecipientListManagement({ onClose }: RecipientListManage
             return;
         }
 
-        addresses.forEach(async (addr) => {
-            try {
+        Promise.allSettled(
+            addresses.map(async (addr) => {
                 if (mode === 'Whitelist') {
                     await addToWhitelist(addr);
-                    setWhitelistAddresses(prev => [...prev, addr]);
                 } else if (mode === 'Blacklist') {
                     await addToBlacklist(addr);
-                    setBlacklistAddresses(prev => [...prev, addr]);
                 }
-            } catch (error) {
-                console.error(`Failed to add ${addr}:`, error);
-            }
+            }),
+        ).then(async () => {
+            const [whitelist, blacklist] = await Promise.all([
+                getWhitelistAddresses(),
+                getBlacklistAddresses(),
+            ]);
+            setWhitelistAddresses(whitelist);
+            setBlacklistAddresses(blacklist);
+            notify('config_updated', `Imported ${addresses.length} addresses`, 'success');
+            setCsvImportText('');
+            setShowImportModal(false);
         });
-
-        notify('config_updated', `Imported ${addresses.length} addresses`, 'success');
-        setCsvImportText('');
-        setShowImportModal(false);
     };
 
     const handleExportCSV = () => {

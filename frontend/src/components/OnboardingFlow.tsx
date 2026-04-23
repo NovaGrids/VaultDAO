@@ -151,7 +151,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
               onClick={handleSkip}
               className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors text-white font-medium"
             >
-              Skip Tour
+              Skip for now
             </button>
 
             <button

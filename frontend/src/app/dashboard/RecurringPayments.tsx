@@ -16,9 +16,11 @@ import {
 } from 'lucide-react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import type { RecurringPayment, RecurringPaymentHistory } from '../../hooks/useVaultContract';
+import { useActionReadiness } from '../../hooks/useActionReadiness';
 import CreateRecurringPaymentModal from '../../components/modals/CreateRecurringPaymentModal';
 import type { CreateRecurringPaymentFormData } from '../../components/modals/CreateRecurringPaymentModal';
 import ConfirmationModal from '../../components/modals/ConfirmationModal';
+import ReadinessWarning from '../../components/ReadinessWarning';
 import { useToast } from '../../context/ToastContext';
 
 // Payment status type
@@ -325,6 +327,7 @@ const RecurringPayments: React.FC = () => {
     cancelRecurringPayment,
     loading,
   } = useVaultContract();
+  const { checkReady, isReady } = useActionReadiness();
 
   const [payments, setPayments] = useState<RecurringPayment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -335,13 +338,6 @@ const RecurringPayments: React.FC = () => {
   const [paymentHistory, setPaymentHistory] = useState<RecurringPaymentHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [executingPaymentId, setExecutingPaymentId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<CreateRecurringPaymentFormData>({
-    recipient: '',
-    token: 'native',
-    amount: '',
-    memo: '',
-    interval: 86400, // Default to daily
-  });
 
   // Fetch payments on mount
   const fetchPayments = useCallback(async () => {
@@ -361,25 +357,18 @@ const RecurringPayments: React.FC = () => {
     fetchPayments();
   }, [fetchPayments]);
 
-  // Handle form field change
-  const handleFieldChange = (field: keyof CreateRecurringPaymentFormData, value: string | number) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
 
   // Handle create payment
-  const handleCreatePayment = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreatePayment = async (data: CreateRecurringPaymentFormData) => {
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('config_updated', message ?? 'Not ready', 'error');
+      return;
+    }
     try {
-      const txHash = await schedulePayment?.();
+      const txHash = await schedulePayment?.(data);
       notify('new_proposal', 'Recurring payment created successfully!', 'success');
       setIsCreateModalOpen(false);
-      setFormData({
-        recipient: '',
-        token: 'native',
-        amount: '',
-        memo: '',
-        interval: 86400,
-      });
       await fetchPayments();
       console.log('Transaction hash:', txHash);
     } catch (error) {
@@ -390,12 +379,16 @@ const RecurringPayments: React.FC = () => {
 
   // Handle execute payment
   const handleExecutePayment = async (payment: RecurringPayment) => {
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('config_updated', message ?? 'Not ready', 'error');
+      return;
+    }
     setExecutingPaymentId(payment.id);
     try {
-      const txHash = await executeRecurringPayment?.();
+      await executeRecurringPayment?.(payment.id);
       notify('proposal_executed', 'Payment executed successfully!', 'success');
       await fetchPayments();
-      console.log('Transaction hash:', txHash);
     } catch (error) {
       console.error('Failed to execute payment:', error);
       notify('config_updated', error instanceof Error ? error.message : 'Failed to execute payment', 'error');
@@ -407,13 +400,18 @@ const RecurringPayments: React.FC = () => {
   // Handle cancel payment
   const handleCancelPayment = async () => {
     if (!selectedPayment) return;
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('config_updated', message ?? 'Not ready', 'error');
+      setIsCancelModalOpen(false);
+      return;
+    }
     try {
-      const txHash = await cancelRecurringPayment?.();
+      await cancelRecurringPayment?.(selectedPayment.id);
       notify('proposal_rejected', 'Recurring payment cancelled successfully', 'success');
       setIsCancelModalOpen(false);
       setSelectedPayment(null);
       await fetchPayments();
-      console.log('Transaction hash:', txHash);
     } catch (error) {
       console.error('Failed to cancel payment:', error);
       notify('config_updated', error instanceof Error ? error.message : 'Failed to cancel payment', 'error');
@@ -426,7 +424,7 @@ const RecurringPayments: React.FC = () => {
     setIsHistoryModalOpen(true);
     setHistoryLoading(true);
     try {
-      const history = await getRecurringPaymentHistory?.() ?? [];
+      const history = await getRecurringPaymentHistory?.(payment.id) ?? [];
       setPaymentHistory(history);
     } catch (error) {
       console.error('Failed to fetch payment history:', error);
@@ -443,6 +441,7 @@ const RecurringPayments: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <ReadinessWarning />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -458,8 +457,13 @@ const RecurringPayments: React.FC = () => {
             <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
           <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors min-h-[44px]"
+            onClick={() => {
+              const { ready, message } = checkReady();
+              if (!ready) { notify('config_updated', message ?? 'Not ready', 'error'); return; }
+              setIsCreateModalOpen(true);
+            }}
+            disabled={!isReady}
+            className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors min-h-[44px]"
           >
             <Plus className="w-5 h-5" />
             <span className="hidden sm:inline">Create Payment</span>
@@ -550,10 +554,8 @@ const RecurringPayments: React.FC = () => {
       <CreateRecurringPaymentModal
         isOpen={isCreateModalOpen}
         loading={loading}
-        formData={formData}
         onClose={() => setIsCreateModalOpen(false)}
         onSubmit={handleCreatePayment}
-        onFieldChange={handleFieldChange}
       />
 
       {/* History Modal */}

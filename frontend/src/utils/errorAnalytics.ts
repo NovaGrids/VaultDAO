@@ -41,20 +41,36 @@ function persist(items: ErrorEvent[]) {
 
 /**
  * Record an error for analytics (in-memory + optional localStorage backup).
+ * @param payload - Error details including code, message, stack, and optional context (e.g., component stack)
  */
 export function recordError(payload: Omit<ErrorEvent, 'id' | 'timestamp' | 'userAgent' | 'url'>): void {
-  const event: ErrorEvent = {
-    ...payload,
-    id: `err_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-    timestamp: Date.now(),
-    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-    url: typeof window !== 'undefined' ? window.location.href : '',
-  };
-  events.push(event);
-  if (events.length > MAX_IN_MEMORY) events.splice(0, events.length - MAX_IN_MEMORY);
-  const stored = getStored();
-  stored.push(event);
-  persist(stored);
+  try {
+    const event: ErrorEvent = {
+      ...payload,
+      id: `err_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      timestamp: Date.now(),
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      url: typeof window !== 'undefined' ? window.location.href : '',
+    };
+    events.push(event);
+    if (events.length > MAX_IN_MEMORY) events.splice(0, events.length - MAX_IN_MEMORY);
+    
+    const stored = getStored();
+    stored.push(event);
+    persist(stored);
+    
+    // Log to console in development for debugging
+    if (import.meta.env.DEV) {
+      console.warn('[ErrorAnalytics] Recorded error:', {
+        code: event.code,
+        message: event.message,
+        context: event.context,
+      });
+    }
+  } catch (error) {
+    // Fail silently to prevent cascading errors
+    console.error('[ErrorAnalytics] Failed to record error:', error);
+  }
 }
 
 /**

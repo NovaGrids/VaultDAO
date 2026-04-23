@@ -57,6 +57,8 @@ pub struct InitConfig {
     /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
     /// Set to 0 to disable quorum enforcement.
     pub quorum: u32,
+    /// Quorum as a percentage of total signers (1-100). Ignored when quorum > 0.
+    pub quorum_percentage: u32,
     /// Maximum amount per proposal (in stroops)
     pub spending_limit: i128,
     /// Maximum aggregate daily spending (in stroops)
@@ -82,12 +84,12 @@ pub struct InitConfig {
     pub retry_config: RetryConfig,
     /// Recovery configuration
     pub recovery_config: RecoveryConfig,
-    // pub staking_config: StakingConfig, // Feature incomplete
+    pub staking_config: StakingConfig,
 }
 
 /// Vault configuration
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     /// List of authorized signers
     pub signers: Vec<Address>,
@@ -123,7 +125,7 @@ pub struct Config {
     pub retry_config: RetryConfig,
     /// Recovery configuration
     pub recovery_config: RecoveryConfig,
-    // pub staking_config: StakingConfig, // Feature incomplete
+    pub staking_config: StakingConfig,
 }
 
 /// Audit record for a cancelled proposal
@@ -154,7 +156,7 @@ pub struct ProposalAmendment {
 
 /// Threshold strategy for dynamic approval requirements
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ThresholdStrategy {
     /// Fixed threshold (original behavior)
     Fixed,
@@ -192,7 +194,7 @@ pub struct AmountTier {
 
 /// Time-based threshold configuration
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeBasedThreshold {
     /// Initial threshold
     pub initial_threshold: u32,
@@ -213,6 +215,14 @@ pub enum Role {
     Treasurer = 1,
     /// Full operational control: manages roles, signers, and configuration.
     Admin = 2,
+}
+
+/// Address-role pair returned by role enumeration queries.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoleAssignment {
+    pub addr: Address,
+    pub role: Role,
 }
 
 /// Granular permissions for fine-grained access control
@@ -496,7 +506,7 @@ pub struct StreamingPayment {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VelocityConfig {
     /// Maximum number of transfers allowed in the window
     pub limit: u32,
@@ -613,7 +623,7 @@ pub struct GasConfig {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StakingConfig {
     pub enabled: bool,
     pub min_amount: i128,
@@ -785,6 +795,7 @@ pub enum AuditAction {
     RemoveSigner = 7,
     UpdateLimits = 8,
     UpdateThreshold = 9,
+    AbstainProposal = 10,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -875,7 +886,7 @@ pub struct TemplateOverrides {
 
 /// Configuration for automatic retry of failed proposal executions
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetryConfig {
     /// Whether retry logic is enabled
     pub enabled: bool,
@@ -1080,7 +1091,7 @@ pub struct Dispute {
 
 /// Recovery configuration stored on-chain
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecoveryConfig {
     /// List of trusted guardians
     pub guardians: Vec<Address>,
@@ -1362,6 +1373,8 @@ pub struct FundingMilestone {
     pub verified_at: u64,
     /// Address that verified the milestone
     pub verified_by: Option<Address>,
+    /// Rejection reason, if rejected
+    pub rejection_reason: Option<String>,
 }
 
 /// Status of a funding round

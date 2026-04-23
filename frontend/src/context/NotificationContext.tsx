@@ -81,7 +81,8 @@ function notificationReducer(
 ): NotificationState {
   switch (action.type) {
     case 'ADD_NOTIFICATION': {
-      const newNotifications = [action.payload, ...state.notifications];
+      const newNotifications = [action.payload, ...state.notifications]
+        .slice(0, MAX_STORED_NOTIFICATIONS);
       return { ...state, notifications: newNotifications, page: 1 };
     }
     case 'MARK_AS_READ': {
@@ -119,7 +120,10 @@ function notificationReducer(
       return { ...state, notifications: [], page: 1 };
     }
     case 'LOAD_FROM_STORAGE': {
-      return { ...state, notifications: action.payload };
+      return {
+        ...state,
+        notifications: action.payload.slice(0, MAX_STORED_NOTIFICATIONS),
+      };
     }
     default:
       return state;
@@ -138,10 +142,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   // Save to storage whenever notifications change
+  // Also save when the list is empty (cleared)
   useEffect(() => {
-    if (state.notifications.length > 0) {
-      saveNotificationsToStorage(state.notifications);
-    }
+    saveNotificationsToStorage(state.notifications);
   }, [state.notifications]);
 
   const addNotification = useCallback(
@@ -186,24 +189,45 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  const unreadCount = state.notifications.filter((n) => n.status === 'unread').length;
+  const unreadCount = React.useMemo(
+    () => state.notifications.filter((n) => n.status === 'unread').length,
+    [state.notifications]
+  );
 
-  const value: NotificationContextValue = {
-    notifications: state.notifications,
-    unreadCount,
-    filter: state.filter,
-    sort: state.sort,
-    page: state.page,
-    pageSize: state.pageSize,
-    addNotification,
-    markAsRead,
-    markAllAsRead,
-    dismissNotification,
-    setFilter,
-    setSort,
-    setPage,
-    clearAll,
-  };
+  const value: NotificationContextValue = React.useMemo(
+    () => ({
+      notifications: state.notifications,
+      unreadCount,
+      filter: state.filter,
+      sort: state.sort,
+      page: state.page,
+      pageSize: state.pageSize,
+      addNotification,
+      markAsRead,
+      markAllAsRead,
+      dismissNotification,
+      setFilter,
+      setSort,
+      setPage,
+      clearAll,
+    }),
+    [
+      state.notifications,
+      state.filter,
+      state.sort,
+      state.page,
+      state.pageSize,
+      unreadCount,
+      addNotification,
+      markAsRead,
+      markAllAsRead,
+      dismissNotification,
+      setFilter,
+      setSort,
+      setPage,
+      clearAll,
+    ]
+  );
 
   return (
     <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>

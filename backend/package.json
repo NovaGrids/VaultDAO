@@ -1,18 +1,31 @@
 {
   "name": "@vaultdao/backend",
-  "private": true,
   "version": "0.1.0",
+  "description": "VaultDAO backend service exposing version and build metadata",
+  "private": true,
   "type": "module",
+  "build": {
+    "channel": "stable",
+    "updatedAt": "2026-03-25T13:35:46Z"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/**/*.test.js",
+    "test": "tsx --test src/**/*.test.ts",
     "lint": "npm run typecheck",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "replay": "tsx src/modules/events/replay/replay-cli.ts"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^24.10.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.12.0",
+    "@types/ws": "^8.18.1",
+    "fast-check": "^4.6.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }
