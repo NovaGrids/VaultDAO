@@ -297,6 +297,48 @@ export interface FundingReleasedData {
   readonly milestoneIndex: number;
 }
 
+// ── Staking data interfaces ───────────────────────────────────────────────────
+
+export interface StakeLockedData {
+  readonly proposalId: string;
+  readonly staker: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface StakeSlashedData {
+  readonly proposalId: string;
+  readonly staker: string;
+  readonly slashedAmount: string;
+  readonly returnedAmount: string;
+}
+
+export interface StakeRefundedData {
+  readonly proposalId: string;
+  readonly staker: string;
+  readonly amount: string;
+}
+
+// ── Funding round extension data interfaces ───────────────────────────────────
+
+export interface FundingRoundApprovedData {
+  readonly roundId: string;
+  readonly proposalId: string;
+  readonly approver: string;
+}
+
+export interface FundingRoundCancelledData {
+  readonly roundId: string;
+  readonly cancelledBy: string;
+  readonly reason: string;
+}
+
+export interface FundingRoundCompletedData {
+  readonly roundId: string;
+  readonly recipient: string;
+  readonly totalReleased: string;
+}
+
 // ── Recurring / streaming data interfaces ─────────────────────────────────────
 
 export interface StreamCreatedData {
@@ -306,6 +348,171 @@ export interface StreamCreatedData {
   readonly token: string;
   readonly totalAmount: string;
   readonly rate: string;
+}
+
+export interface StreamStatusData {
+  readonly streamId: string;
+  readonly status: string;
+  readonly updatedBy: string;
+}
+
+export interface StreamClaimedData {
+  readonly streamId: string;
+  readonly recipient: string;
+  readonly amount: string;
+}
+
+// ── Subscription data interfaces ──────────────────────────────────────────────
+
+export interface SubscriptionCreatedData {
+  readonly subscriptionId: string;
+  readonly subscriber: string;
+  readonly service: string;
+  readonly amount: string;
+  readonly token: string;
+  readonly intervalLedgers: number;
+}
+
+export interface SubscriptionRenewedData {
+  readonly subscriptionId: string;
+  readonly subscriber: string;
+  readonly renewedUntil: number;
+}
+
+export interface SubscriptionCancelledData {
+  readonly subscriptionId: string;
+  readonly cancelledBy: string;
+}
+
+export interface SubscriptionUpgradedData {
+  readonly subscriptionId: string;
+  readonly oldTier: string;
+  readonly newTier: string;
+  readonly additionalAmount: string;
+}
+
+export interface SubscriptionExpiredData {
+  readonly subscriptionId: string;
+  readonly subscriber: string;
+}
+
+// ── Recovery data interfaces ──────────────────────────────────────────────────
+
+export interface RecoveryProposedData {
+  readonly newOwner: string;
+  readonly proposer: string;
+  readonly proposalId: string;
+}
+
+export interface RecoveryApprovedData {
+  readonly newOwner: string;
+  readonly approver: string;
+  readonly approvalCount: number;
+}
+
+export interface RecoveryExecutedData {
+  readonly oldOwner: string;
+  readonly newOwner: string;
+  readonly executedBy: string;
+}
+
+export interface RecoveryCancelledData {
+  readonly newOwner: string;
+  readonly cancelledBy: string;
+}
+
+// ── Misc data interfaces ──────────────────────────────────────────────────────
+
+export interface ReputationUpdatedData {
+  readonly address: string;
+  readonly oldScore: number;
+  readonly newScore: number;
+  readonly reason: string;
+}
+
+export interface BatchExecutedData {
+  readonly batchId: string;
+  readonly executor: string;
+  readonly count: number;
+  readonly successCount: number;
+}
+
+export interface RetryScheduledData {
+  readonly targetId: string;
+  readonly retryAt: number;
+  readonly attemptNumber: number;
+}
+
+export interface RetryAttemptedData {
+  readonly targetId: string;
+  readonly attemptNumber: number;
+  readonly success: boolean;
+}
+
+export interface RetriesExhaustedData {
+  readonly targetId: string;
+  readonly maxAttempts: number;
+}
+
+export interface TokensLockedData {
+  readonly address: string;
+  readonly amount: string;
+  readonly token: string;
+  readonly unlockLedger: number;
+}
+
+export interface LockExtendedData {
+  readonly address: string;
+  readonly token: string;
+  readonly newUnlockLedger: number;
+}
+
+export interface TokensUnlockedData {
+  readonly address: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface EarlyUnlockData {
+  readonly address: string;
+  readonly amount: string;
+  readonly token: string;
+  readonly penalty: string;
+}
+
+export interface GasLimitExceededData {
+  readonly proposalId: string;
+  readonly gasUsed: number;
+  readonly gasLimit: number;
+}
+
+export interface CrossVaultProposedData {
+  readonly proposalId: string;
+  readonly sourceVault: string;
+  readonly targetVault: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface CrossVaultExecutedData {
+  readonly proposalId: string;
+  readonly sourceVault: string;
+  readonly targetVault: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface ConfigUpdatedData {
+  readonly admin: string;
+  readonly field: string;
+  readonly oldValue: string;
+  readonly newValue: string;
+}
+
+export interface OracleConfigUpdatedData {
+  readonly admin: string;
+  readonly oracle: string;
+  readonly config: string;
 }
 
 // ── Map of contract event topics → EventType ─────────────────────────────────
