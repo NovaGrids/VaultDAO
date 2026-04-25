@@ -20,6 +20,8 @@ export enum ProposalActivityType {
   CANCELLED = "PROPOSAL_CANCELLED",
   REJECTED = "PROPOSAL_REJECTED",
   AMENDED = "PROPOSAL_AMENDED",
+  VETOED = "PROPOSAL_VETOED",
+  PENDING = "PROPOSAL_PENDING",
 }
 
 /**
@@ -34,6 +36,7 @@ export const PROPOSAL_ACTIVITY_TYPE_MAP: Record<string, ProposalActivityType> = 
   [EventType.PROPOSAL_EXPIRED]: ProposalActivityType.EXPIRED,
   [EventType.PROPOSAL_CANCELLED]: ProposalActivityType.CANCELLED,
   [EventType.PROPOSAL_REJECTED]: ProposalActivityType.REJECTED,
+  [EventType.PROPOSAL_VETOED]: ProposalActivityType.VETOED,
 };
 
 /**
