@@ -14,13 +14,25 @@ const mockEnv = {
   contractId: "CDTEST",
   websocketUrl: "ws://localhost:8080",
   eventPollingIntervalMs: 100,
-  eventPollingEnabled: false, // We'll trigger broadcast manually
+  eventPollingEnabled: false,
 };
+
+function waitForMessage(ws: WebSocket, predicate: (msg: any) => boolean): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timed out waiting for message")), 3000);
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString());
+      if (predicate(msg)) {
+        clearTimeout(timeout);
+        resolve(msg);
+      }
+    });
+  });
+}
 
 test("WebSocket Server", async (t) => {
   const { server, runtime } = startServer(mockEnv as any);
 
-  // Wait for server to be listening
   if (!server.listening) {
     await new Promise((resolve) => server.once("listening", resolve));
   }
@@ -30,17 +42,9 @@ test("WebSocket Server", async (t) => {
 
   await t.test("client can connect and receive events", async () => {
     const ws = new WebSocket(wsUrl);
-
-    const eventPromise = new Promise<any>((resolve) => {
-      ws.on("message", (data: Buffer) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === "contract_event") {
-          resolve(msg.payload);
-        }
-      });
-    });
-
     await new Promise((resolve) => ws.on("open", resolve));
+
+    const eventPromise = waitForMessage(ws, (m) => m.type === "contract_event");
 
     const mockEvent: ContractEvent = {
       id: "test-event-1",
@@ -54,39 +58,24 @@ test("WebSocket Server", async (t) => {
     runtime.wsServer?.broadcastEvent(mockEvent);
 
     const receivedEvent = await eventPromise;
-    assert.equal(receivedEvent.id, "test-event-1");
-    assert.equal(receivedEvent.topic[0], "proposal_created");
+    assert.equal(receivedEvent.payload.id, "test-event-1");
+    assert.equal(receivedEvent.payload.topic[0], "proposal_created");
 
     ws.close();
   });
 
-  await t.test("client can subscribe to specific event types", async () => {
+  await t.test("client can subscribe using flat topics format", async () => {
     const ws = new WebSocket(wsUrl);
-
     await new Promise((resolve) => ws.on("open", resolve));
 
-    // Subscribe to only 'proposal_executed'
-    ws.send(
-      JSON.stringify({
-        type: "subscribe",
-        payload: { eventTypes: ["proposal_executed"] },
-      }),
-    );
+    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_executed"] }));
 
-    // Wait for subscription confirmation
-    await new Promise<void>((resolve) => {
-      ws.on("message", (data: Buffer) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === "subscribed") resolve();
-      });
-    });
+    await waitForMessage(ws, (m) => m.type === "subscribed");
 
     const receivedEvents: any[] = [];
     ws.on("message", (data: Buffer) => {
       const msg = JSON.parse(data.toString());
-      if (msg.type === "contract_event") {
-        receivedEvents.push(msg.payload);
-      }
+      if (msg.type === "contract_event") receivedEvents.push(msg.payload);
     });
 
     const event1: ContractEvent = {
@@ -110,13 +99,124 @@ test("WebSocket Server", async (t) => {
     runtime.wsServer?.broadcastEvent(event1);
     runtime.wsServer?.broadcastEvent(event2);
 
-    // Give it a moment to receive
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     assert.equal(receivedEvents.length, 1);
     assert.equal(receivedEvents[0].id, "test-event-2");
 
     ws.close();
+  });
+
+  await t.test("client can subscribe using legacy payload format", async () => {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve) => ws.on("open", resolve));
+
+    ws.send(JSON.stringify({ type: "subscribe", payload: { eventTypes: ["proposal_approved"] } }));
+
+    await waitForMessage(ws, (m) => m.type === "subscribed");
+
+    const receivedEvents: any[] = [];
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "contract_event") receivedEvents.push(msg.payload);
+    });
+
+    const event1: ContractEvent = {
+      id: "test-event-1",
+      contractId: "CDTEST",
+      topic: ["proposal_created"],
+      value: {},
+      ledger: 100,
+      ledgerClosedAt: new Date().toISOString(),
+    };
+
+    const event2: ContractEvent = {
+      id: "test-event-2",
+      contractId: "CDTEST",
+      topic: ["proposal_approved"],
+      value: {},
+      ledger: 101,
+      ledgerClosedAt: new Date().toISOString(),
+    };
+
+    runtime.wsServer?.broadcastEvent(event1);
+    runtime.wsServer?.broadcastEvent(event2);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(receivedEvents.length, 1);
+    assert.equal(receivedEvents[0].id, "test-event-2");
+
+    ws.close();
+  });
+
+  await t.test("subscription confirmation includes subscribed topics", async () => {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve) => ws.on("open", resolve));
+
+    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_created", "proposal_executed"] }));
+
+    const confirmation = await waitForMessage(ws, (m) => m.type === "subscribed");
+
+    assert.ok(Array.isArray(confirmation.topics));
+    assert.deepEqual(confirmation.topics, ["proposal_created", "proposal_executed"]);
+
+    ws.close();
+  });
+
+  await t.test("unsubscribed client receives all events", async () => {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve) => ws.on("open", resolve));
+
+    const receivedEvents: any[] = [];
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "contract_event") receivedEvents.push(msg.payload);
+    });
+
+    const event1: ContractEvent = {
+      id: "test-event-1",
+      contractId: "CDTEST",
+      topic: ["proposal_created"],
+      value: {},
+      ledger: 100,
+      ledgerClosedAt: new Date().toISOString(),
+    };
+
+    const event2: ContractEvent = {
+      id: "test-event-2",
+      contractId: "CDTEST",
+      topic: ["insurance_locked"],
+      value: {},
+      ledger: 101,
+      ledgerClosedAt: new Date().toISOString(),
+    };
+
+    runtime.wsServer?.broadcastEvent(event1);
+    runtime.wsServer?.broadcastEvent(event2);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(receivedEvents.length, 2);
+
+    ws.close();
+  });
+
+  await t.test("broadcast handles non-serializable event gracefully without throwing", async () => {
+    const circularValue: any = {};
+    circularValue.self = circularValue;
+
+    const badEvent: ContractEvent = {
+      id: "bad-event",
+      contractId: "CDTEST",
+      topic: ["proposal_created"],
+      value: circularValue,
+      ledger: 100,
+      ledgerClosedAt: new Date().toISOString(),
+    };
+
+    // Should not throw even though the value has a circular reference
+    assert.doesNotThrow(() => runtime.wsServer?.broadcastEvent(badEvent));
   });
 
   // Clean up server
