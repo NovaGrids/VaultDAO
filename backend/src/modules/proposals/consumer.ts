@@ -7,12 +7,26 @@
 
 import { createLogger } from "../../shared/logging/logger.js";
 import type { NormalizedEvent } from "../events/types.js";
-import { ProposalEventTransformer, transformEventBatch } from "./transforms.js";
 import {
   ProposalActivityRecord,
   ProposalEventConsumer,
   ProposalBatchConsumer,
   ProposalActivityPersistence,
+  PROPOSAL_ACTIVITY_TYPE_MAP,
+  ProposalActivityType,
+  ProposalActivityData,
+  ProposalAmendedActivityData,
+  ProposalCreatedActivityData,
+  ProposalApprovedActivityData,
+  ProposalAbstainedActivityData,
+  ProposalReadyActivityData,
+  ProposalExecutedActivityData,
+  ProposalExpiredActivityData,
+  ProposalCancelledActivityData,
+  ProposalRejectedActivityData,
+  ProposalScheduledActivityData,
+  ProposalDeadlineRejectedActivityData,
+  ProposalVetoedActivityData,
 } from "./types.js";
 
 /**
@@ -125,18 +139,23 @@ export class ProposalActivityConsumer {
    * Processes a single normalized event.
    */
   public async process(event: NormalizedEvent): Promise<void> {
-    const record = ProposalEventTransformer.transform(event);
+    const record = this.toRecord(event);
 
     if (!record) {
-      console.debug(
-        "[proposal-consumer] skipped non-proposal event:",
-        event.type,
-      );
       return;
     }
 
     this.buffer.push(record);
     console.debug("[proposal-consumer] buffered record:", record.activityId);
+
+    // Persist via persistence if configured
+    if (this.persistence) {
+      try {
+        await this.persistence.save(record);
+      } catch (error) {
+        console.error("[proposal-consumer] persistence error:", error);
+      }
+    }
 
     // Notify single consumers immediately
     for (const consumer of this.consumers) {
@@ -157,7 +176,14 @@ export class ProposalActivityConsumer {
    * Processes multiple normalized events in batch.
    */
   public async processBatch(events: NormalizedEvent[]): Promise<void> {
-    const records = transformEventBatch(events);
+    const records: ProposalActivityRecord[] = [];
+
+    for (const event of events) {
+      const record = this.toRecord(event);
+      if (record) {
+        records.push(record);
+      }
+    }
 
     if (records.length === 0) {
       console.debug("[proposal-consumer] no proposal events in batch");
@@ -170,6 +196,15 @@ export class ProposalActivityConsumer {
       records.length,
       "records from batch",
     );
+
+    // Persist batch if configured
+    if (this.persistence) {
+      try {
+        await this.persistence.saveBatch(records);
+      } catch (error) {
+        console.error("[proposal-consumer] persistence error:", error);
+      }
+    }
 
     // Notify batch consumers
     for (const consumer of this.batchConsumers) {
@@ -187,10 +222,42 @@ export class ProposalActivityConsumer {
   }
 
   /**
-   * Flushes the buffer to persistence and notifies all consumers.
-   * Concurrent calls are serialized via isFlushing/pendingFlush flags:
-   * if a flush is already in progress the caller sets pendingFlush and
-   * returns immediately; the active flush will re-run once it finishes.
+   * Converts a normalized event to a proposal activity record.
+   * Returns null if the event type is not a proposal activity.
+   */
+  private toRecord(event: NormalizedEvent): ProposalActivityRecord | null {
+    const activityType = PROPOSAL_ACTIVITY_TYPE_MAP[event.type];
+
+    if (!activityType) {
+      console.warn(
+        `[proposal-consumer] unknown proposal event type: ${event.type}`,
+      );
+      return null;
+    }
+
+    const proposalId = this.extractProposalId(event);
+    const data = this.mapActivityData(event, activityType);
+
+    return {
+      activityId: randomUUID(),
+      proposalId,
+      type: activityType,
+      timestamp: event.metadata.ledgerClosedAt,
+      metadata: {
+        id: event.metadata.id,
+        contractId: event.metadata.contractId,
+        ledger: event.metadata.ledger,
+        ledgerClosedAt: event.metadata.ledgerClosedAt,
+        transactionHash: (event.metadata as any).transactionHash ?? "",
+        eventIndex: (event.metadata as any).eventIndex ?? 0,
+      },
+      data,
+    };
+  }
+
+  /**
+   * Flushes the buffer to notify all consumers.
+   * Concurrent calls are serialized via isFlushing/pendingFlush flags.
    */
   public async flush(): Promise<void> {
     if (this.isFlushing) {
@@ -334,6 +401,150 @@ export class ProposalActivityConsumer {
         await this.flush();
       }
     }
+  }
+
+  /**
+   * Extracts proposal ID from event data or metadata.
+   */
+  private extractProposalId(event: NormalizedEvent): string {
+    const data = event.data as any;
+    if (data.proposalId) return String(data.proposalId);
+
+    const topic = (event.metadata as any).topic;
+    if (Array.isArray(topic) && topic.length > 1) {
+      return String(topic[1]);
+    }
+
+    return "0";
+  }
+
+  /**
+   * Maps event data to typed activity data.
+   */
+  private mapActivityData(
+    event: NormalizedEvent,
+    activityType: ProposalActivityType,
+  ): ProposalActivityData {
+    const rawData = (event.data as any) ?? {};
+
+    switch (activityType) {
+      case ProposalActivityType.CREATED:
+        return {
+          activityType: ProposalActivityType.CREATED,
+          proposer: String(rawData.proposer ?? ""),
+          recipient: String(rawData.recipient ?? ""),
+          token: String(rawData.token ?? ""),
+          amount: String(rawData.amount ?? "0"),
+          insuranceAmount: String(rawData.insuranceAmount ?? "0"),
+          description: rawData.description,
+        };
+
+      case ProposalActivityType.APPROVED:
+        return {
+          activityType: ProposalActivityType.APPROVED,
+          voter: String(rawData.voter ?? rawData.approver ?? ""),
+          votesFor: String(rawData.votesFor ?? rawData.approvalCount ?? "0"),
+          votesAgainst: String(rawData.votesAgainst ?? "0"),
+          votesAbstain: String(rawData.votesAbstain ?? "0"),
+        };
+
+      case ProposalActivityType.ABSTAINED:
+        return {
+          activityType: ProposalActivityType.ABSTAINED,
+          voter: String(rawData.voter ?? rawData.abstainer ?? ""),
+          votesAbstain: String(
+            rawData.votesAbstain ?? rawData.abstentionCount ?? "0",
+          ),
+        };
+
+      case ProposalActivityType.READY:
+        return {
+          activityType: ProposalActivityType.READY,
+          finalVotesFor: String(rawData.finalVotesFor ?? "0"),
+          finalVotesAgainst: String(rawData.finalVotesAgainst ?? "0"),
+          finalVotesAbstain: String(rawData.finalVotesAbstain ?? "0"),
+          quorumMet: Boolean(rawData.quorumMet ?? false),
+        };
+
+      case ProposalActivityType.EXECUTED:
+        return {
+          activityType: ProposalActivityType.EXECUTED,
+          executor: String(rawData.executor ?? ""),
+          recipient: String(rawData.recipient ?? ""),
+          token: String(rawData.token ?? ""),
+          amount: String(rawData.amount ?? "0"),
+          executionLedger: Number(rawData.ledger ?? event.metadata.ledger),
+        };
+
+      case ProposalActivityType.EXPIRED:
+        return {
+          activityType: ProposalActivityType.EXPIRED,
+          finalVotesFor: String(rawData.finalVotesFor ?? "0"),
+          finalVotesAgainst: String(rawData.finalVotesAgainst ?? "0"),
+          finalVotesAbstain: String(rawData.finalVotesAbstain ?? "0"),
+        };
+
+      case ProposalActivityType.CANCELLED:
+        return {
+          activityType: ProposalActivityType.CANCELLED,
+          cancelledBy: String(rawData.cancelledBy ?? ""),
+          reason: rawData.reason,
+        };
+
+      case ProposalActivityType.REJECTED:
+        return {
+          activityType: ProposalActivityType.REJECTED,
+          finalVotesFor: String(rawData.finalVotesFor ?? "0"),
+          finalVotesAgainst: String(rawData.finalVotesAgainst ?? "0"),
+          finalVotesAbstain: String(rawData.finalVotesAbstain ?? "0"),
+          rejectionReason: rawData.rejectionReason ?? rawData.reason,
+        };
+
+      case ProposalActivityType.AMENDED:
+        return this.processAmended(event);
+
+      case ProposalActivityType.SCHEDULED:
+        return {
+          activityType: ProposalActivityType.SCHEDULED,
+          executionTime: Number(rawData.executionTime ?? 0),
+          unlockLedger: Number(rawData.unlockLedger ?? 0),
+        };
+
+      case ProposalActivityType.DEADLINE_REJECTED:
+        return {
+          activityType: ProposalActivityType.DEADLINE_REJECTED,
+          rejector: String(rawData.rejector ?? ""),
+          proposer: String(rawData.proposer ?? ""),
+        };
+
+      case ProposalActivityType.VETOED:
+        return {
+          activityType: ProposalActivityType.VETOED,
+          vetoer: String(rawData.vetoer ?? ""),
+        };
+
+      default:
+        // This should be unreachable if PROPOSAL_ACTIVITY_TYPE_MAP is correctly configured
+        console.warn(`[proposal-consumer] unhandled activity type: ${activityType}`);
+        return {
+          activityType: activityType as any,
+        } as any;
+    }
+  }
+
+  /**
+   * Specifically handles proposal amended events.
+   */
+  private processAmended(event: NormalizedEvent): ProposalAmendedActivityData {
+    const data = event.data as any;
+    return {
+      activityType: ProposalActivityType.AMENDED,
+      amendedBy: data.amendedBy ?? "",
+      previousAmount: data.oldAmount,
+      newAmount: data.newAmount,
+      previousRecipient: data.oldRecipient,
+      newRecipient: data.newRecipient,
+    };
   }
 
   /**

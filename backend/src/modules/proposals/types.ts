@@ -76,7 +76,36 @@ export type ProposalActivityData =
   | ProposalExpiredActivityData
   | ProposalCancelledActivityData
   | ProposalRejectedActivityData
-  | ProposalAmendedActivityData;
+  | ProposalAmendedActivityData
+  | ProposalScheduledActivityData
+  | ProposalDeadlineRejectedActivityData
+  | ProposalVetoedActivityData;
+
+/**
+ * Activity data for proposal scheduled.
+ */
+export interface ProposalScheduledActivityData {
+  readonly activityType: ProposalActivityType.SCHEDULED;
+  readonly executionTime: number;
+  readonly unlockLedger: number;
+}
+
+/**
+ * Activity data for proposal deadline rejected.
+ */
+export interface ProposalDeadlineRejectedActivityData {
+  readonly activityType: ProposalActivityType.DEADLINE_REJECTED;
+  readonly rejector: string;
+  readonly proposer: string;
+}
+
+/**
+ * Activity data for proposal vetoed.
+ */
+export interface ProposalVetoedActivityData {
+  readonly activityType: ProposalActivityType.VETOED;
+  readonly vetoer: string;
+}
 
 /**
  * Activity data for proposal creation.
