@@ -120,6 +120,7 @@ test("WebSocket Server", async (t) => {
   });
 
   // Clean up server
+  await runtime.jobManager.stopAll();
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
