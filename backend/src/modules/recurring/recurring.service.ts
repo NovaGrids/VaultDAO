@@ -45,6 +45,11 @@ export class MemoryRecurringStorageAdapter implements RecurringStorageAdapter {
     let payments = Array.from(this.payments.values());
 
     if (filter) {
+      if (filter.contractId) {
+        payments = payments.filter(
+          (p) => p.metadata.contractId === filter.contractId,
+        );
+      }
       if (filter.status) {
         payments = payments.filter((p) => p.status === filter.status);
       }
@@ -398,6 +403,20 @@ export class RecurringIndexerService {
    */
   public async getDuePayments(): Promise<NormalizedRecurringPayment[]> {
     return this.storage.getAll({ status: RecurringStatus.DUE });
+  }
+
+  /**
+   * Get payments that are ready for execution at a specific ledger.
+   */
+  public async getDuePaymentsAtLedger(
+    currentLedger: number,
+  ): Promise<NormalizedRecurringPayment[]> {
+    const all = await this.storage.getAll();
+    return all.filter(
+      (payment) =>
+        payment.status !== RecurringStatus.CANCELLED &&
+        payment.nextPaymentLedger <= currentLedger,
+    );
   }
 
   /**

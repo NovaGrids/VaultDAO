@@ -112,6 +112,7 @@ export interface RecurringIndexerState {
  * Filter options for querying recurring payments.
  */
 export interface RecurringFilter {
+  readonly contractId?: string;
   readonly status?: RecurringStatus;
   readonly proposer?: string;
   readonly recipient?: string;

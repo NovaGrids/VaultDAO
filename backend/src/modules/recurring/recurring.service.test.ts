@@ -153,3 +153,176 @@ test("syncPayment throws when payment not in storage (RPC unavailable)", async (
     /syncPayment: RPC client not yet available/,
   );
 });
+
+test("getPayments supports combined filters and returns pagination metadata", async () => {
+  const storage = new MemoryRecurringStorageAdapter();
+  const service = new RecurringIndexerService(makeTestEnv(), storage);
+
+  const now = new Date().toISOString();
+  await storage.save({
+    paymentId: "p-1",
+    proposer: "alice",
+    recipient: "bob",
+    token: "USD",
+    amount: "10",
+    memo: "m1",
+    intervalLedgers: 10,
+    nextPaymentLedger: 50,
+    paymentCount: 0,
+    status: RecurringStatus.DUE,
+    events: [RecurringEvent.CREATED],
+    metadata: {
+      id: "p-1",
+      contractId: "C1",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 50,
+    },
+  });
+  await storage.save({
+    paymentId: "p-2",
+    proposer: "alice",
+    recipient: "carol",
+    token: "USD",
+    amount: "15",
+    memo: "m2",
+    intervalLedgers: 10,
+    nextPaymentLedger: 51,
+    paymentCount: 0,
+    status: RecurringStatus.ACTIVE,
+    events: [RecurringEvent.CREATED],
+    metadata: {
+      id: "p-2",
+      contractId: "C1",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 51,
+    },
+  });
+  await storage.save({
+    paymentId: "p-3",
+    proposer: "dan",
+    recipient: "bob",
+    token: "EUR",
+    amount: "20",
+    memo: "m3",
+    intervalLedgers: 10,
+    nextPaymentLedger: 52,
+    paymentCount: 0,
+    status: RecurringStatus.DUE,
+    events: [RecurringEvent.CREATED],
+    metadata: {
+      id: "p-3",
+      contractId: "C2",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 52,
+    },
+  });
+
+  const filtered = await service.getPayments(
+    {
+      contractId: "C1",
+      status: RecurringStatus.DUE,
+      proposer: "alice",
+      recipient: "bob",
+    },
+    { offset: 0, limit: 10 },
+  );
+  assert.equal(filtered.total, 1);
+  assert.equal(filtered.offset, 0);
+  assert.equal(filtered.limit, 10);
+  assert.equal(filtered.items.length, 1);
+  assert.equal(filtered.items[0]?.paymentId, "p-1");
+});
+
+test("getDuePaymentsAtLedger returns only payments ready for execution", async () => {
+  const storage = new MemoryRecurringStorageAdapter();
+  const service = new RecurringIndexerService(makeTestEnv(), storage);
+  const now = new Date().toISOString();
+
+  await storage.save({
+    paymentId: "due-now",
+    proposer: "alice",
+    recipient: "bob",
+    token: "USD",
+    amount: "10",
+    memo: "m1",
+    intervalLedgers: 10,
+    nextPaymentLedger: 10,
+    paymentCount: 1,
+    status: RecurringStatus.ACTIVE,
+    events: [RecurringEvent.CREATED],
+    metadata: {
+      id: "due-now",
+      contractId: "C1",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 10,
+    },
+  });
+  await storage.save({
+    paymentId: "due-status",
+    proposer: "alice",
+    recipient: "bob",
+    token: "USD",
+    amount: "15",
+    memo: "m2",
+    intervalLedgers: 10,
+    nextPaymentLedger: 11,
+    paymentCount: 1,
+    status: RecurringStatus.DUE,
+    events: [RecurringEvent.CREATED, RecurringEvent.BECAME_DUE],
+    metadata: {
+      id: "due-status",
+      contractId: "C1",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 11,
+    },
+  });
+  await storage.save({
+    paymentId: "not-due",
+    proposer: "alice",
+    recipient: "bob",
+    token: "USD",
+    amount: "20",
+    memo: "m3",
+    intervalLedgers: 10,
+    nextPaymentLedger: 30,
+    paymentCount: 1,
+    status: RecurringStatus.ACTIVE,
+    events: [RecurringEvent.CREATED],
+    metadata: {
+      id: "not-due",
+      contractId: "C1",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 30,
+    },
+  });
+  await storage.save({
+    paymentId: "cancelled",
+    proposer: "alice",
+    recipient: "bob",
+    token: "USD",
+    amount: "25",
+    memo: "m4",
+    intervalLedgers: 10,
+    nextPaymentLedger: 5,
+    paymentCount: 1,
+    status: RecurringStatus.CANCELLED,
+    events: [RecurringEvent.CREATED, RecurringEvent.CANCELLED],
+    metadata: {
+      id: "cancelled",
+      contractId: "C1",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 5,
+    },
+  });
+
+  const due = await service.getDuePaymentsAtLedger(12);
+  const ids = due.map((payment) => payment.paymentId).sort();
+  assert.deepEqual(ids, ["due-now", "due-status"]);
+});

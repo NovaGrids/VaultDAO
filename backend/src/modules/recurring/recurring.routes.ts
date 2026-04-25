@@ -40,7 +40,7 @@ export function createRecurringRouter(service: RecurringIndexerService) {
    * GET /api/v1/recurring/:id
    * Returns a single recurring payment by ID.
    */
-  router.get("/:id", getRecurringByIdController(service));
+  router.get("/:paymentId", getRecurringByIdController(service));
 
   return router;
 }
