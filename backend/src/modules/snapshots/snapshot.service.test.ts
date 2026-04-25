@@ -1239,6 +1239,94 @@ test("SnapshotService - processEvent - non-snapshot event returns zero updates",
   assert.equal(result.eventsProcessed, 0);
 });
 
+test("SnapshotService - processEvent - SIGNER_ADDED creates new signer with isActive: true", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  const addEvent: NormalizedEvent = {
+    type: EventType.SIGNER_ADDED,
+    data: {
+      signer: MEMBER_ADDRESS,
+      totalSigners: 1,
+    },
+    metadata: {
+      id: "event-signer-add-1",
+      contractId: CONTRACT_ID,
+      ledger: 150,
+      ledgerClosedAt: "2026-03-25T12:02:00Z",
+    },
+  };
+
+  const result = await service.processEvent(addEvent);
+
+  assert.equal(result.success, true);
+  assert.equal(result.signersUpdated, 1);
+  assert.equal(result.rolesUpdated, 0);
+  assert.equal(result.eventsProcessed, 1);
+
+  const signer = await service.getSigner(CONTRACT_ID, MEMBER_ADDRESS);
+  assert.notEqual(signer, null);
+  assert.equal(signer!.isActive, true);
+  assert.equal(signer!.addedAtLedger, 150);
+});
+
+test("SnapshotService - processEvent - SIGNER_ADDED reactivates a previously removed signer", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  // Initialize with admin
+  await service.processEvent({
+    type: EventType.INITIALIZED,
+    data: { address: ADMIN_ADDRESS, role: Role.ADMIN, ledger: 100, timestamp: "2026-03-25T12:00:00Z" },
+    metadata: { id: "evt-init", contractId: CONTRACT_ID, ledger: 100, ledgerClosedAt: "2026-03-25T12:00:00Z" },
+  } as NormalizedEvent<SignerAddedData>);
+
+  // Add the member
+  await service.processEvent({
+    type: EventType.SIGNER_ADDED,
+    data: { signer: MEMBER_ADDRESS, totalSigners: 2 },
+    metadata: { id: "evt-add", contractId: CONTRACT_ID, ledger: 200, ledgerClosedAt: "2026-03-25T12:05:00Z" },
+  } as NormalizedEvent);
+
+  // Remove the member
+  await service.processEvent({
+    type: EventType.SIGNER_REMOVED,
+    data: { signer: MEMBER_ADDRESS, totalSigners: 1 },
+    metadata: { id: "evt-remove", contractId: CONTRACT_ID, ledger: 300, ledgerClosedAt: "2026-03-25T12:10:00Z" },
+  } as NormalizedEvent);
+
+  const removedSigner = await service.getSigner(CONTRACT_ID, MEMBER_ADDRESS);
+  assert.equal(removedSigner!.isActive, false);
+
+  // Re-add the member
+  await service.processEvent({
+    type: EventType.SIGNER_ADDED,
+    data: { signer: MEMBER_ADDRESS, totalSigners: 2 },
+    metadata: { id: "evt-readd", contractId: CONTRACT_ID, ledger: 400, ledgerClosedAt: "2026-03-25T12:15:00Z" },
+  } as NormalizedEvent);
+
+  const reactivatedSigner = await service.getSigner(CONTRACT_ID, MEMBER_ADDRESS);
+  assert.notEqual(reactivatedSigner, null);
+  assert.equal(reactivatedSigner!.isActive, true);
+  assert.equal(reactivatedSigner!.lastActivityLedger, 400);
+});
+
+test("SnapshotService - processEvent - SIGNER_ADDED advances lastProcessedLedger", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  await service.processEvent({
+    type: EventType.SIGNER_ADDED,
+    data: { signer: MEMBER_ADDRESS, totalSigners: 1 },
+    metadata: { id: "evt-add-ledger", contractId: CONTRACT_ID, ledger: 999, ledgerClosedAt: "2026-03-25T12:00:00Z" },
+  } as NormalizedEvent);
+
+  const snapshot = await service.getSnapshot(CONTRACT_ID);
+  assert.notEqual(snapshot, null);
+  assert.equal(snapshot!.lastProcessedLedger, 999);
+  assert.equal(snapshot!.lastProcessedEventId, "evt-add-ledger");
+});
+
 test("SnapshotService - processEvent - storage error returns success: false", async () => {
   class ErrorAdapter extends MemorySnapshotAdapter {
     async saveSnapshot(): Promise<void> {

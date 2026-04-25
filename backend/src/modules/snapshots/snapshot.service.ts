@@ -128,6 +128,12 @@ export class SnapshotService {
           rolesUpdated = initResult.rolesUpdated;
           break;
 
+        case EventType.SIGNER_ADDED:
+          const addResult = await this.processSignerAdded(snapshot, event);
+          signersUpdated = addResult.signersUpdated;
+          rolesUpdated = addResult.rolesUpdated;
+          break;
+
         case EventType.SIGNER_REMOVED:
           const removeResult = await this.processSignerRemoved(snapshot, event);
           signersUpdated = removeResult.signersUpdated;
@@ -495,6 +501,50 @@ export class SnapshotService {
     }
 
     return { signersUpdated, rolesUpdated };
+  }
+
+  /**
+   * Process a SIGNER_ADDED event.
+   * Adds a new SignerSnapshot with isActive: true, or reactivates an existing one.
+   */
+  private async processSignerAdded(
+    snapshot: ContractSnapshot,
+    event: NormalizedEvent,
+  ): Promise<{ signersUpdated: number; rolesUpdated: number }> {
+    const data = event.data as any;
+    // Handle both SignerChangedData { signer } and SignerAddedData { address }
+    const address: string = data.address ?? data.signer ?? "";
+    const role: Role = (data.role as Role) ?? Role.MEMBER;
+    const { ledger, ledgerClosedAt } = event.metadata;
+
+    if (!address) {
+      return { signersUpdated: 0, rolesUpdated: 0 };
+    }
+
+    const existingSigner = snapshot.signers.get(address);
+    if (existingSigner) {
+      // Reactivate a previously removed signer
+      const updated: SignerSnapshot = {
+        ...existingSigner,
+        isActive: true,
+        lastActivityAt: ledgerClosedAt,
+        lastActivityLedger: ledger,
+      };
+      snapshot.signers.set(address, updated);
+    } else {
+      const signerSnapshot: SignerSnapshot = {
+        address,
+        role,
+        addedAt: ledgerClosedAt,
+        addedAtLedger: ledger,
+        isActive: true,
+        lastActivityAt: ledgerClosedAt,
+        lastActivityLedger: ledger,
+      };
+      snapshot.signers.set(address, signerSnapshot);
+    }
+
+    return { signersUpdated: 1, rolesUpdated: 0 };
   }
 
   /**

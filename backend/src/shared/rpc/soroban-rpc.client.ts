@@ -100,6 +100,15 @@ export class SorobanRpcClient {
     return result.sequence;
   }
 
+  /**
+   * Fetch a raw page of contract events from the Soroban RPC, including
+   * `latestLedger` and per-event `pagingToken` needed for cursor-based
+   * pagination.
+   */
+  async getEventsPage(params: GetEventsParams): Promise<GetEventsResult> {
+    return this.call<GetEventsParams, GetEventsResult>("getEvents", params);
+  }
+
   // ─── Internal ──────────────────────────────────────────────────────────────
 
   private async call<P, R>(method: string, params?: P): Promise<R> {

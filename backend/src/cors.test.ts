@@ -11,11 +11,32 @@ const mockRuntime = {
       errors: 0,
     }),
   },
-  snapshotService: {},
-  proposalActivityAggregator: {},
-  recurringIndexerService: {},
+  snapshotService: {
+    getSnapshot: async () => null,
+    getSigners: async () => [],
+    getSigner: async () => null,
+    getRoles: async () => [],
+    getStats: async () => null,
+  },
+  proposalActivityAggregator: {
+    getStats: () => ({
+      totalProposals: 0,
+      activeProposals: 0,
+      executedProposals: 0,
+      rejectedProposals: 0,
+      expiredProposals: 0,
+      cancelledProposals: 0,
+      byType: {},
+    }),
+    getSummary: () => null,
+    getAllProposals: () => ({ items: [], total: 0, offset: 0, limit: 10 }),
+  },
+  recurringIndexerService: {
+    getStatus: () => ({ isIndexing: true, lastLedger: 100 }),
+  },
   jobManager: {
     getAllJobs: () => [],
+    stopAll: async () => {},
   },
 };
 
@@ -48,7 +69,13 @@ test("CORS Production Behavior", async (t) => {
             "Forbidden: Origin not allowed",
           );
         } finally {
-          server.close(() => resolve(undefined));
+          if (typeof (server as any).closeAllConnections === "function") {
+            (server as any).closeAllConnections();
+          }
+          await new Promise<void>((closeResolve) =>
+            server.close(() => closeResolve()),
+          );
+          resolve();
         }
       });
     });
@@ -71,7 +98,13 @@ test("CORS Production Behavior", async (t) => {
             "https://allowed.com",
           );
         } finally {
-          server.close(() => resolve(undefined));
+          if (typeof (server as any).closeAllConnections === "function") {
+            (server as any).closeAllConnections();
+          }
+          await new Promise<void>((closeResolve) =>
+            server.close(() => closeResolve()),
+          );
+          resolve();
         }
       });
     });
@@ -94,7 +127,13 @@ test("CORS Production Behavior", async (t) => {
               null,
             );
           } finally {
-            server.close(() => resolve(undefined));
+            if (typeof (server as any).closeAllConnections === "function") {
+              (server as any).closeAllConnections();
+            }
+            await new Promise<void>((closeResolve) =>
+              server.close(() => closeResolve()),
+            );
+            resolve();
           }
         });
       });
@@ -131,7 +170,13 @@ test("CORS Development Behavior", async (t) => {
               "https://any-origin.com",
             );
           } finally {
-            server.close(() => resolve(undefined));
+            if (typeof (server as any).closeAllConnections === "function") {
+              (server as any).closeAllConnections();
+            }
+            await new Promise<void>((closeResolve) =>
+              server.close(() => closeResolve()),
+            );
+            resolve();
           }
         });
       });

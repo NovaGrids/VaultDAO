@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { BackendEnv } from "../../config/env.js";
 import type { BackendRuntime } from "../../server.js";
 import { publicContractIdForApi } from "../../shared/utils/mask.js";
+import { fetchWithTimeout } from "../../shared/http/fetchWithTimeout.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = join(__filename, "..");
@@ -134,6 +135,91 @@ function buildDependencyChecks(env: BackendEnv): ReadinessPayload["checks"] {
       details:
         "No database or persistent storage dependency is configured yet, so there is nothing to check at startup.",
     },
+  };
+}
+
+// ── Detailed health check types ───────────────────────────────────────────────
+
+export type CheckStatus = "healthy" | "degraded";
+
+export interface RpcCheckResult {
+  readonly status: CheckStatus;
+  readonly latencyMs: number;
+  readonly ledger?: number;
+  readonly error?: string;
+}
+
+export interface JobRunnerCheck {
+  readonly total: number;
+  readonly running: number;
+  readonly jobs: ReadonlyArray<{ name: string; running: boolean }>;
+}
+
+export interface DetailedHealthPayload {
+  readonly ok: boolean;
+  readonly version: string;
+  readonly uptime: number;
+  readonly rpc: RpcCheckResult;
+  readonly eventPolling: { lastLedgerPolled: number; isPolling: boolean; errors: number };
+  readonly jobRunner: JobRunnerCheck;
+}
+
+export async function checkRpc(rpcUrl: string, timeoutMs = 5000): Promise<RpcCheckResult> {
+  const start = Date.now();
+  try {
+    const response = await fetchWithTimeout(
+      rpcUrl,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger", params: [] }),
+      },
+      timeoutMs,
+    );
+    const latencyMs = Date.now() - start;
+    const json = await response.json() as any;
+    const ledger: number | undefined = json?.result?.sequence ?? json?.result?.ledger;
+    return { status: "healthy", latencyMs, ledger };
+  } catch (error) {
+    return { status: "degraded", latencyMs: Date.now() - start, error: String(error) };
+  }
+}
+
+export function checkEventPolling(runtime: BackendRuntime) {
+  return runtime.eventPollingService.getStatus();
+}
+
+export function checkJobRunner(runtime: BackendRuntime): JobRunnerCheck {
+  const jobs = runtime.jobManager.getAllJobs().map((job) => ({
+    name: job.name,
+    running: job.isRunning(),
+  }));
+  return {
+    total: jobs.length,
+    running: jobs.filter((j) => j.running).length,
+    jobs,
+  };
+}
+
+export async function buildDetailedHealthPayload(
+  env: BackendEnv,
+  runtime: BackendRuntime,
+): Promise<DetailedHealthPayload> {
+  const [rpc, eventPolling, jobRunner] = await Promise.all([
+    checkRpc(env.sorobanRpcUrl),
+    Promise.resolve(checkEventPolling(runtime)),
+    Promise.resolve(checkJobRunner(runtime)),
+  ]);
+
+  const ok = rpc.status === "healthy";
+
+  return {
+    ok,
+    version: VERSION,
+    uptime: getUptimeSeconds(runtime.startedAt),
+    rpc,
+    eventPolling,
+    jobRunner,
   };
 }
 

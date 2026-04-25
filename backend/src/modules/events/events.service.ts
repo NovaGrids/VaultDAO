@@ -8,9 +8,13 @@ import type { EventWebSocketServer } from "../websocket/websocket.server.js";
 import type { SnapshotService } from "../snapshots/snapshot.service.js";
 import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 import { TimeoutError } from "../../shared/http/fetchWithTimeout.js";
+import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
+
+/** Maximum number of events to request per RPC page. */
+const EVENTS_PAGE_LIMIT = 200;
 
 /** Contract topics that should be forwarded to the proposal consumer. */
 const PROPOSAL_TOPICS = new Set([
@@ -48,6 +52,7 @@ export class EventPollingService {
   private consecutiveErrors: number = 0;
   private processedEventIds: Set<string> = new Set();
   private readonly MAX_PROCESSED_IDS = 1000;
+  private readonly rpcClient: SorobanRpcClient;
 
   constructor(
     private readonly env: BackendEnv,
@@ -55,7 +60,10 @@ export class EventPollingService {
     private readonly proposalConsumer?: ProposalActivityConsumer,
     private readonly wsServer?: EventWebSocketServer,
     private readonly snapshotService?: SnapshotService,
-  ) {}
+    rpcClient?: SorobanRpcClient,
+  ) {
+    this.rpcClient = rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
+  }
 
   /**
    * Starts the polling loop if enabled in config.
@@ -158,31 +166,79 @@ export class EventPollingService {
 
   /**
    * Performs the actual RPC call to find new events.
+   *
+   * On the very first run (`lastLedgerPolled === 0`) the service has no
+   * starting point, so it fetches the current chain head and persists it as
+   * the initial cursor without processing any historical events.
+   *
+   * On subsequent runs it pages through all events in the range
+   * `[lastLedgerPolled + 1, latestLedger]` using cursor-based pagination,
+   * then advances the cursor to `latestLedger`.
    */
   private async poll(): Promise<void> {
-    // Placeholder for RPC call to get events
-    // Example (future implementation):
-    // const results = await this.rpcService.getContractEvents({
-    //   startLedger: this.lastLedgerPolled + 1,
-    //   contractIds: [this.env.contractId],
-    // });
-
-    // For now, we mock the polling activity
-    const mockEvents: ContractEvent[] = [];
-
-    if (mockEvents.length > 0) {
-      await this.handleBatch(mockEvents);
+    // ── First-run initialisation ─────────────────────────────────────────────
+    if (this.lastLedgerPolled === 0) {
+      const latestLedger = await this.rpcClient.getLatestLedger();
+      this.logger.info(`initializing polling cursor at ledger ${latestLedger}`);
+      await this.storage.saveCursor({
+        lastLedger: latestLedger,
+        updatedAt: new Date().toISOString(),
+      });
+      this.lastLedgerPolled = latestLedger;
+      return;
     }
 
-    // Advance the "last polled" pointer (simulation)
-    // Normally this would be updated based on the last event's ledger or the RPC's newest ledger.
-    this.lastLedgerPolled += 1;
+    // ── Paginated event fetch ────────────────────────────────────────────────
+    const startLedger = this.lastLedgerPolled + 1;
+    const allEvents: ContractEvent[] = [];
+    let cursor: string | undefined;
+    let latestLedger = this.lastLedgerPolled;
 
-    // Persist new cursor
+    do {
+      const result = await this.rpcClient.getEventsPage({
+        startLedger,
+        filters: [
+          {
+            type: "contract",
+            contractIds: [this.env.contractId],
+          },
+        ],
+        pagination: {
+          limit: EVENTS_PAGE_LIMIT,
+          ...(cursor !== undefined ? { cursor } : {}),
+        },
+      });
+
+      latestLedger = result.latestLedger;
+
+      allEvents.push(
+        ...result.events.map((raw) => ({
+          id: raw.id,
+          contractId: raw.contractId,
+          topic: raw.topic,
+          value: raw.value,
+          ledger: raw.ledger,
+          ledgerClosedAt: raw.ledgerClosedAt,
+        })),
+      );
+
+      // Continue paginating when the page was full — there may be more events.
+      cursor =
+        result.events.length === EVENTS_PAGE_LIMIT
+          ? result.events[result.events.length - 1].pagingToken
+          : undefined;
+    } while (cursor !== undefined);
+
+    if (allEvents.length > 0) {
+      await this.handleBatch(allEvents);
+    }
+
+    // Advance cursor to the latest ledger reported by the RPC.
     await this.storage.saveCursor({
-      lastLedger: this.lastLedgerPolled,
+      lastLedger: latestLedger,
       updatedAt: new Date().toISOString(),
     });
+    this.lastLedgerPolled = latestLedger;
   }
 
   /**

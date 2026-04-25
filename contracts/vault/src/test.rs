@@ -3903,7 +3903,7 @@ fn test_execute_swap() {
     assert_eq!(proposal.status, ProposalStatus::Executed);
 
     // Check that swap result is stored
-    let swap_result = client.get_swap_result(&proposal_id);
+    let swap_result = client.get_swap_result(&proposal_id).unwrap();
     assert_eq!(swap_result.amount_in, 1000);
     assert_eq!(swap_result.amount_out, 990); // Mock: 1% slippage
 }
@@ -8640,7 +8640,8 @@ fn test_rollback_execution_reverses_transfer_and_clears_snapshot() {
 
     // Note: This test is incomplete - requires full implementation
     // For now, just verify setup works
-    assert_eq!(token_sac.balance(&contract_id), 500);
+    let _bal = soroban_sdk::token::Client::new(&env, &token_addr).balance(&contract_id);
+    assert_eq!(_bal, 500);
 }
 
 // ============================================================================
@@ -8699,6 +8700,8 @@ fn setup_escrow_env(
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(env),
+        quorum_percentage: 0,
+        staking_config: crate::types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -8744,7 +8747,7 @@ fn test_escrow_creation_locks_funds() {
     env.mock_all_auths();
 
     let (client, contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
 
     let amount = 1_000i128;
     let funder_balance_before = token_client.balance(&funder);
@@ -8806,7 +8809,7 @@ fn test_escrow_milestone_completion_flow() {
     env.mock_all_auths();
 
     let (client, contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
 
     let amount = 1_000i128;
     let escrow_id = client.create_escrow(
@@ -8839,7 +8842,7 @@ fn test_escrow_release_after_all_milestones() {
     env.mock_all_auths();
 
     let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
 
     let amount = 1_000i128;
     let escrow_id = client.create_escrow(
@@ -9020,7 +9023,7 @@ fn test_escrow_dispute_resolution_release_to_recipient() {
     env.mock_all_auths();
 
     let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
 
     let amount = 1_000i128;
     let escrow_id = client.create_escrow(
@@ -9053,7 +9056,7 @@ fn test_escrow_dispute_resolution_refund_to_funder() {
     env.mock_all_auths();
 
     let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
 
     let amount = 1_000i128;
     let escrow_id = client.create_escrow(
@@ -9101,7 +9104,7 @@ fn test_escrow_resolve_dispute_non_admin_fails() {
     client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
 
     // Non-admin cannot resolve
-    let res = client.try_resolve_dispute(&stranger, &escrow_id, &true);
+    let res = client.try_resolve_escrow_dispute(&stranger, &escrow_id, &true);
     assert!(res.is_err());
 }
 
@@ -9146,7 +9149,8 @@ fn test_escrow_invalid_milestone_id_fails() {
         &1000u64,
         &admin,
     );
-    assert_eq!(round_id, 1);
+    // escrow_id should be 1 for the first escrow
+    assert_eq!(escrow_id, 1);
 
     // Milestone ID 99 doesn't exist
     let res = client.try_complete_milestone(&funder, &escrow_id, &99u64);

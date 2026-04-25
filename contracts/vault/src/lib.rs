@@ -112,6 +112,32 @@ mod test_subscriptions;
 mod test_voting_deadline;
 #[cfg(test)]
 mod test_streaming;
+#[cfg(test)]
+mod test_attachments;
+
+#[cfg(test)]
+pub mod mock_oracle {
+    use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+    use crate::types::VaultPriceData;
+
+    #[contract]
+    pub struct MockOracle;
+
+    #[contractimpl]
+    impl MockOracle {
+        /// Always returns price = 1000 at timestamp = 0.
+        pub fn lastprice(_env: Env, _asset: Address) -> Option<VaultPriceData> {
+            Some(VaultPriceData {
+                price: 1000,
+                timestamp: 0,
+            })
+        }
+
+        pub fn base(_env: Env) -> Symbol {
+            Symbol::new(&_env, "USD")
+        }
+    }
+}
 
 #[contractimpl]
 #[allow(clippy::too_many_arguments)]
@@ -1147,6 +1173,9 @@ impl VaultDAO {
         // Validate state
         if proposal.status == ProposalStatus::Executed {
             return Err(VaultError::ProposalAlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(VaultError::ProposalAlreadyCancelled);
         }
         if proposal.status == ProposalStatus::Vetoed {
             return Err(VaultError::ProposalNotApproved);
@@ -2630,7 +2659,7 @@ impl VaultDAO {
 
         // Transfer claimable tokens to recipient
         if token::try_transfer(&env, &stream.token_addr, &recipient, claimable).is_err() {
-            return Err(VaultError::TransferFailed);
+            return Err(VaultError::InsufficientBalance);
         }
 
         stream.claimed_amount += claimable;
@@ -2794,7 +2823,7 @@ impl VaultDAO {
             if token::try_transfer(&env, &stream.token_addr, &stream.sender, refund_amount)
                 .is_err()
             {
-                return Err(VaultError::TransferFailed);
+                return Err(VaultError::InsufficientBalance);
             }
         }
 
@@ -3478,6 +3507,11 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Get all IPFS attachment hashes for a proposal (public read).
+    pub fn get_attachments(env: Env, proposal_id: u64) -> Vec<String> {
+        storage::get_attachments(&env, proposal_id)
+    }
+
     // ========================================================================
     // Metadata Management
     // ========================================================================
@@ -3595,7 +3629,7 @@ impl VaultDAO {
         }
 
         if proposal.tags.len() >= MAX_TAGS {
-            return Err(VaultError::TooManyTags);
+            return Err(VaultError::TooManyAttachments);
         }
 
         proposal.tags.push_back(tag);
@@ -5012,7 +5046,7 @@ impl VaultDAO {
                 fee_estimate.total_fee,
                 proposal.gas_limit,
             );
-            return Err(VaultError::GasLimitExceeded);
+            return Err(VaultError::ExceedsProposalLimit);
         }
 
         // Calculate fee for this transaction
@@ -5034,7 +5068,7 @@ impl VaultDAO {
         let transfer_amount = proposal.amount.saturating_sub(fee_amount);
         if token::try_transfer(env, &proposal.token, &proposal.recipient, transfer_amount).is_err()
         {
-            return Err(VaultError::TransferFailed);
+            return Err(VaultError::InsufficientBalance);
         }
 
         // Return insurance to proposer on success
@@ -6889,10 +6923,10 @@ impl VaultDAO {
         timelock_end: u64,
     ) -> Result<(), VaultError> {
         if execution_time <= current_ledger {
-            return Err(VaultError::SchedulingError);
+            return Err(VaultError::TimelockNotExpired);
         }
         if execution_time < timelock_end {
-            return Err(VaultError::SchedulingError);
+            return Err(VaultError::TimelockNotExpired);
         }
         Ok(())
     }
@@ -6922,13 +6956,13 @@ impl VaultDAO {
 
         // Verify proposal is scheduled
         if proposal.status != ProposalStatus::Scheduled {
-            return Err(VaultError::SchedulingError);
+            return Err(VaultError::TimelockNotExpired);
         }
 
         // Verify execution time has been reached
-        let execution_time = proposal.execution_time.ok_or(VaultError::SchedulingError)?;
+        let execution_time = proposal.execution_time.ok_or(VaultError::TimelockNotExpired)?;
         if current_ledger < execution_time {
-            return Err(VaultError::SchedulingError);
+            return Err(VaultError::TimelockNotExpired);
         }
 
         // Verify sufficient approvals
@@ -7015,7 +7049,7 @@ impl VaultDAO {
 
         // Verify proposal is scheduled
         if proposal.status != ProposalStatus::Scheduled {
-            return Err(VaultError::SchedulingError);
+            return Err(VaultError::TimelockNotExpired);
         }
 
         // Transition to Cancelled
@@ -7161,25 +7195,25 @@ impl VaultDAO {
         }
 
         if milestones.is_empty() {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         // Validate against config if present
         if let Some(config) = storage::get_funding_round_config(&env) {
             if !config.enabled {
-                return Err(VaultError::FundingRoundError);
+                return Err(VaultError::InvalidAmount);
             }
             if milestones.len() < config.min_milestones {
-                return Err(VaultError::FundingRoundError);
+                return Err(VaultError::InvalidAmount);
             }
             if milestones.len() > config.max_milestones {
-                return Err(VaultError::FundingRoundError);
+                return Err(VaultError::InvalidAmount);
             }
             if config.min_milestone_amount > 0 {
                 for i in 0..milestones.len() {
                     let m = milestones.get(i).unwrap();
                     if m.amount < config.min_milestone_amount {
-                        return Err(VaultError::FundingRoundError);
+                        return Err(VaultError::InvalidAmount);
                     }
                 }
             }
@@ -7195,7 +7229,7 @@ impl VaultDAO {
             milestone_sum = milestone_sum.saturating_add(m.amount);
         }
         if milestone_sum != total_amount {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let milestone_count = milestones.len();
@@ -7249,7 +7283,7 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Pending {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         // Transition: Pending → Approved → Active (combined for simplicity)
@@ -7281,18 +7315,18 @@ impl VaultDAO {
         }
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let milestone = round.milestones.get(milestone_index).unwrap();
 
         // Prevent re-submission
         if milestone.status != FundingMilestoneStatus::Pending {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let mut updated = milestone.clone();
@@ -7331,18 +7365,18 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let milestone = round.milestones.get(milestone_index).unwrap();
 
         // Must be submitted, not already verified
         if milestone.status != FundingMilestoneStatus::Submitted {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let amount = milestone.amount;
@@ -7397,7 +7431,7 @@ impl VaultDAO {
         if round.status == FundingRoundStatus::Completed
             || round.status == FundingRoundStatus::Cancelled
         {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         round.status = FundingRoundStatus::Cancelled;

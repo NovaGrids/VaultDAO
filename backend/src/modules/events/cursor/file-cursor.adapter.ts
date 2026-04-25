@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, renameSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../../shared/logging/logger.js";
 import type { CursorStorage, EventCursor } from "./cursor.types.js";
@@ -7,10 +7,13 @@ import type { CursorStorage, EventCursor } from "./cursor.types.js";
  * FileCursorAdapter
  * 
  * Stores event polling cursor in a local JSON file for persistence across restarts.
+ * The file adapter manages a single "singleton" cursor, so listCursors returns at
+ * most one entry and deleteCursor removes the backing file.
  */
 export class FileCursorAdapter implements CursorStorage {
   private readonly filePath: string;
   private readonly logger = createLogger("file-cursor");
+  private static readonly CURSOR_ID = "singleton-cursor";
 
   constructor(baseDir: string = "./") {
     this.filePath = join(baseDir, ".event-cursor.json");
@@ -69,6 +72,34 @@ export class FileCursorAdapter implements CursorStorage {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
+    }
+  }
+
+  /**
+   * Lists all stored cursors. The file adapter holds at most one cursor.
+   */
+  public async listCursors(): Promise<Array<{ id: string; cursor: EventCursor }>> {
+    const cursor = await this.getCursor();
+    if (!cursor) return [];
+    return [{ id: FileCursorAdapter.CURSOR_ID, cursor }];
+  }
+
+  /**
+   * Deletes the cursor file. The id parameter is accepted for interface
+   * compatibility but the file adapter only has one cursor.
+   */
+  public async deleteCursor(_id: string): Promise<void> {
+    if (existsSync(this.filePath)) {
+      try {
+        unlinkSync(this.filePath);
+        this.logger.debug("cursor file deleted", { path: this.filePath });
+      } catch (error) {
+        this.logger.error("failed to delete cursor file", {
+          path: this.filePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     }
   }
 }

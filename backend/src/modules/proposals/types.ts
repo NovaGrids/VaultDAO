@@ -20,6 +20,8 @@ export enum ProposalActivityType {
   CANCELLED = "PROPOSAL_CANCELLED",
   REJECTED = "PROPOSAL_REJECTED",
   AMENDED = "PROPOSAL_AMENDED",
+  VETOED = "PROPOSAL_VETOED",
+  PENDING = "PROPOSAL_PENDING",
 }
 
 /**
@@ -34,6 +36,7 @@ export const PROPOSAL_ACTIVITY_TYPE_MAP: Record<string, ProposalActivityType> = 
   [EventType.PROPOSAL_EXPIRED]: ProposalActivityType.EXPIRED,
   [EventType.PROPOSAL_CANCELLED]: ProposalActivityType.CANCELLED,
   [EventType.PROPOSAL_REJECTED]: ProposalActivityType.REJECTED,
+  [EventType.PROPOSAL_VETOED]: ProposalActivityType.VETOED,
 };
 
 /**
@@ -73,7 +76,36 @@ export type ProposalActivityData =
   | ProposalExpiredActivityData
   | ProposalCancelledActivityData
   | ProposalRejectedActivityData
-  | ProposalAmendedActivityData;
+  | ProposalAmendedActivityData
+  | ProposalScheduledActivityData
+  | ProposalDeadlineRejectedActivityData
+  | ProposalVetoedActivityData;
+
+/**
+ * Activity data for proposal scheduled.
+ */
+export interface ProposalScheduledActivityData {
+  readonly activityType: ProposalActivityType.SCHEDULED;
+  readonly executionTime: number;
+  readonly unlockLedger: number;
+}
+
+/**
+ * Activity data for proposal deadline rejected.
+ */
+export interface ProposalDeadlineRejectedActivityData {
+  readonly activityType: ProposalActivityType.DEADLINE_REJECTED;
+  readonly rejector: string;
+  readonly proposer: string;
+}
+
+/**
+ * Activity data for proposal vetoed.
+ */
+export interface ProposalVetoedActivityData {
+  readonly activityType: ProposalActivityType.VETOED;
+  readonly vetoer: string;
+}
 
 /**
  * Activity data for proposal creation.

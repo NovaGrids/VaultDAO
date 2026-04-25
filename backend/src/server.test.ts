@@ -17,7 +17,7 @@ const mockEnv = {
 
 test("Server Startup", async (t) => {
   await t.test("starts successfully with valid env", async () => {
-    const { server } = startServer(mockEnv as any);
+    const { server, runtime } = startServer(mockEnv as any);
 
     assert.ok(server, "Server should start");
     assert.ok(
@@ -26,6 +26,7 @@ test("Server Startup", async (t) => {
     );
 
     // Clean up
+    await runtime.jobManager.stopAll();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
@@ -33,9 +34,12 @@ test("Server Startup", async (t) => {
 
   await t.test("returns BackendRuntime with required properties", async () => {
     // Note: startServer returns { server, runtime }
-    assert.doesNotThrow(() => {
-      const { server } = startServer(mockEnv as any);
-      server.close();
+    const { server, runtime } = startServer(mockEnv as any);
+    assert.ok(runtime.jobManager);
+
+    await runtime.jobManager.stopAll();
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
     });
   });
 });

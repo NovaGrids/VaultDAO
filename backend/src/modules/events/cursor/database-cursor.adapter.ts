@@ -47,4 +47,32 @@ export class DatabaseCursorAdapter implements CursorStorage {
       throw error;
     }
   }
+
+  /**
+   * Lists all stored cursors with their IDs.
+   */
+  public async listCursors(): Promise<Array<{ id: string; cursor: EventCursor }>> {
+    try {
+      const records = await this.adapter.getAll();
+      return records.map(({ id, ...cursor }) => ({
+        id,
+        cursor: cursor as EventCursor,
+      }));
+    } catch (error) {
+      console.error("[database-cursor] failed to list cursors:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Deletes a cursor by its ID.
+   */
+  public async deleteCursor(id: string): Promise<void> {
+    try {
+      await this.adapter.delete(id);
+    } catch (error) {
+      console.error("[database-cursor] failed to delete cursor:", error);
+      throw error;
+    }
+  }
 }
