@@ -17,6 +17,7 @@ import {
 import {
   ProposalActivityConsumer,
   ProposalActivityAggregator,
+  createMemoryPersistence,
 } from "./modules/proposals/index.js";
 import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
@@ -34,6 +35,7 @@ export interface BackendRuntime {
   readonly snapshotService: SnapshotService;
   readonly proposalActivityAggregator: ProposalActivityAggregator;
   readonly proposalActivityConsumer: ProposalActivityConsumer;
+  readonly proposalActivityPersistence: ReturnType<typeof createMemoryPersistence>;
   readonly transactionsService: TransactionsService;
   readonly jobManager: JobManager;
   readonly wsServer?: EventWebSocketServer;
@@ -53,6 +55,8 @@ export function startServer(
   // Initialize proposal activity components
   const proposalActivityAggregator = new ProposalActivityAggregator();
   const proposalActivityConsumer = new ProposalActivityConsumer();
+  const proposalActivityPersistence = createMemoryPersistence();
+  proposalActivityConsumer.setPersistence(proposalActivityPersistence);
   proposalActivityConsumer.registerBatchConsumer((records) => {
     proposalActivityAggregator.addRecords(records);
   });
@@ -72,6 +76,7 @@ export function startServer(
     snapshotService,
     proposalActivityAggregator,
     proposalActivityConsumer,
+    proposalActivityPersistence,
     transactionsService,
     jobManager,
   };

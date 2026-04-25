@@ -1,80 +1,76 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
+import { validatePagination } from "../../shared/http/validateQuery.js";
 import type { ProposalActivityAggregator } from "./aggregator.js";
+import type { ProposalActivityPersistence } from "./types.js";
 
-/**
- * Get all proposals with pagination
- */
 export function getAllProposalsController(
-  aggregator: ProposalActivityAggregator,
+  persistence: ProposalActivityPersistence,
 ): RequestHandler {
-  return (request, response) => {
-    try {
-      const offset = request.query.offset
-        ? parseInt(String(request.query.offset), 10)
-        : undefined;
-      const limit = request.query.limit
-        ? parseInt(String(request.query.limit), 10)
-        : undefined;
+  return async (req, res) => {
+    const contractId = typeof req.query.contractId === "string" ? req.query.contractId : undefined;
+    if (!contractId) {
+      error(res, { message: "contractId is required", status: 400, code: ErrorCode.BAD_REQUEST });
+      return;
+    }
 
-      const result = aggregator.getAllProposals({ offset, limit });
-      success(response, result);
+    const pagination = validatePagination(req, res);
+    if (!pagination) return;
+
+    try {
+      const all = await persistence.getByContractId(contractId);
+      const total = all.length;
+      const data = all.slice(pagination.offset, pagination.offset + pagination.limit);
+      success(res, { data, total, offset: pagination.offset, limit: pagination.limit });
     } catch (err) {
-      error(response, {
-        message: "Failed to fetch proposals",
-        status: 500,
-        code: ErrorCode.INTERNAL_ERROR,
-        details: err instanceof Error ? err.message : undefined,
-      });
+      error(res, { message: "Failed to fetch proposals", status: 500, code: ErrorCode.INTERNAL_ERROR });
     }
   };
 }
 
-/**
- * Get a single proposal by ID
- */
 export function getProposalByIdController(
-  aggregator: ProposalActivityAggregator,
+  persistence: ProposalActivityPersistence,
 ): RequestHandler {
-  return (request, response) => {
+  return async (req, res) => {
     try {
-      const id = String(request.params.id);
-
-      const summary = aggregator.getSummary(id);
+      const summary = await persistence.getSummary(req.params.proposalId);
       if (!summary) {
-        error(response, { message: "Proposal not found", status: 404, code: ErrorCode.NOT_FOUND });
+        error(res, { message: "Proposal not found", status: 404, code: ErrorCode.NOT_FOUND });
         return;
       }
-
-      success(response, summary);
+      success(res, summary);
     } catch (err) {
-      error(response, {
-        message: "Failed to fetch proposal",
-        status: 500,
-        code: ErrorCode.INTERNAL_ERROR,
-        details: err instanceof Error ? err.message : undefined,
-      });
+      error(res, { message: "Failed to fetch proposal", status: 500, code: ErrorCode.INTERNAL_ERROR });
     }
   };
 }
 
-/**
- * Get aggregated proposal statistics
- */
+export function getProposalActivityController(
+  persistence: ProposalActivityPersistence,
+): RequestHandler {
+  return async (req, res) => {
+    try {
+      const records = await persistence.getByProposalId(req.params.proposalId);
+      if (records.length === 0) {
+        error(res, { message: "Proposal not found", status: 404, code: ErrorCode.NOT_FOUND });
+        return;
+      }
+      success(res, { data: records, total: records.length });
+    } catch (err) {
+      error(res, { message: "Failed to fetch proposal activity", status: 500, code: ErrorCode.INTERNAL_ERROR });
+    }
+  };
+}
+
 export function getProposalStatsController(
   aggregator: ProposalActivityAggregator,
 ): RequestHandler {
-  return (_request, response) => {
+  return (_req, res) => {
     try {
-      const stats = aggregator.getStats();
-      success(response, stats);
+      success(res, aggregator.getStats());
     } catch (err) {
-      error(response, {
-        message: "Failed to fetch proposal statistics",
-        status: 500,
-        details: err instanceof Error ? err.message : undefined,
-      });
+      error(res, { message: "Failed to fetch proposal statistics", status: 500, code: ErrorCode.INTERNAL_ERROR });
     }
   };
 }

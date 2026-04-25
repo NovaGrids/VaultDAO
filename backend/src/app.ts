@@ -144,7 +144,10 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/proposals",
     authMiddleware,
-    createProposalsRouter(runtime.proposalActivityAggregator),
+    createProposalsRouter(
+      runtime.proposalActivityAggregator,
+      runtime.proposalActivityPersistence,
+    ),
   );
 
   v1Router.use(
