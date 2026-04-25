@@ -1,107 +1,152 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Pause, Play } from 'lucide-react';
+import { AlertTriangle, XCircle, Lock, RefreshCw } from 'lucide-react';
+import { useVaultContract } from '../hooks/useVaultContract';
+import { useToast } from '../context/ToastContext';
 
-interface EmergencyControlsProps {
-  isAdmin?: boolean;
-  isSigner?: boolean;
-}
+type Action = 'cancel_all' | 'freeze' | 'recovery' | null;
 
-const EmergencyControls: React.FC<EmergencyControlsProps> = ({ isAdmin = false, isSigner = false }) => {
-  const [isPaused, setIsPaused] = useState(false);
-  const [showModal, setShowModal] = useState(false);
-  const [reason, setReason] = useState('');
-  const [votes, setVotes] = useState(0);
-  const required = 4; // 80% of 5 signers
+const EmergencyControls: React.FC = () => {
+  const { getVaultConfig, getProposals, rejectProposal, updateSpendingLimits } = useVaultContract();
+  const { showToast } = useToast();
 
-  const handlePause = () => {
-    if (!reason.trim()) return;
-    setIsPaused(true);
-    setShowModal(false);
-    setReason('');
+  const [role, setRole] = useState<number | null>(null);
+  const [activeAction, setActiveAction] = useState<Action>(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [progress, setProgress] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Lazy-load role on first render
+  React.useEffect(() => {
+    getVaultConfig().then((cfg) => setRole(cfg.currentUserRole)).catch(() => setRole(0));
+  }, [getVaultConfig]);
+
+  if (role !== 2) return null;
+
+  const confirmed = confirmText === 'CONFIRM';
+
+  const reset = () => {
+    setActiveAction(null);
+    setConfirmText('');
+    setProgress(null);
   };
 
-  const handleVote = () => {
-    setVotes(v => v + 1);
-    if (votes + 1 >= required) setIsPaused(false);
+  const handleCancelAll = async () => {
+    setBusy(true);
+    try {
+      const proposals = await getProposals();
+      const pending = proposals.filter((p) => p.status === 'Pending');
+      if (pending.length === 0) {
+        showToast('No pending proposals to cancel.', 'info');
+        reset();
+        return;
+      }
+      for (let i = 0; i < pending.length; i++) {
+        setProgress(`Cancelling ${i + 1}/${pending.length}...`);
+        await rejectProposal(Number(pending[i].id));
+      }
+      showToast(`Cancelled ${pending.length} proposal(s).`, 'success');
+      reset();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Bulk cancel failed.', 'error');
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
+  const handleFreeze = async () => {
+    setBusy(true);
+    try {
+      await updateSpendingLimits(0n, 0n, 0n);
+      showToast('Vault frozen: all spending limits set to 0.', 'success');
+      reset();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Freeze failed.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRecovery = () => {
+    showToast('Redirecting to recovery proposal creation.', 'info');
+    reset();
+    // Recovery flow: navigate to proposal creation with recovery flag
+    window.location.hash = '#recovery';
+  };
+
+  const onExecute = () => {
+    if (!confirmed || busy) return;
+    if (activeAction === 'cancel_all') handleCancelAll();
+    else if (activeAction === 'freeze') handleFreeze();
+    else if (activeAction === 'recovery') handleRecovery();
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Emergency Controls</h3>
-        <div className={`px-3 py-1 rounded-full text-sm ${isPaused ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
-          {isPaused ? 'PAUSED' : 'ACTIVE'}
-        </div>
+      {/* Warning banner */}
+      <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/40 rounded-lg p-3">
+        <AlertTriangle className="text-red-400 shrink-0 mt-0.5" size={18} />
+        <p className="text-sm text-red-400 font-medium">
+          Emergency controls are irreversible. Use with extreme caution.
+        </p>
       </div>
 
-      {isPaused && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="text-red-500 shrink-0" size={20} />
-            <div>
-              <p className="font-semibold text-red-400">Vault is Paused</p>
-              <p className="text-sm text-gray-400 mt-1">All operations are frozen</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isAdmin && !isPaused && (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <button
-          onClick={() => setShowModal(true)}
-          className="w-full min-h-[44px] px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center justify-center gap-2"
+          onClick={() => { setActiveAction('cancel_all'); setConfirmText(''); }}
+          className="min-h-[44px] px-4 py-2 bg-red-700/80 hover:bg-red-700 text-white rounded-lg flex items-center justify-center gap-2 text-sm"
         >
-          <Pause size={18} />
-          Emergency Pause
+          <XCircle size={16} /> Cancel All Pending
         </button>
-      )}
+        <button
+          onClick={() => { setActiveAction('freeze'); setConfirmText(''); }}
+          className="min-h-[44px] px-4 py-2 bg-orange-700/80 hover:bg-orange-700 text-white rounded-lg flex items-center justify-center gap-2 text-sm"
+        >
+          <Lock size={16} /> Freeze Vault
+        </button>
+        <button
+          onClick={() => { setActiveAction('recovery'); setConfirmText(''); }}
+          className="min-h-[44px] px-4 py-2 bg-yellow-700/80 hover:bg-yellow-700 text-white rounded-lg flex items-center justify-center gap-2 text-sm"
+        >
+          <RefreshCw size={16} /> Initiate Recovery
+        </button>
+      </div>
 
-      {isSigner && isPaused && (
-        <div className="space-y-3">
-          <button
-            onClick={handleVote}
-            className="w-full min-h-[44px] px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center gap-2"
-          >
-            <Play size={18} />
-            Vote to Unpause
-          </button>
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span>Votes</span>
-              <span>{votes} / {required}</span>
-            </div>
-            <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-              <div className="h-full bg-green-500 transition-all" style={{ width: `${(votes / required) * 100}%` }} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showModal && (
+      {activeAction && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md">
-            <h3 className="text-xl font-bold mb-4">Confirm Emergency Pause</h3>
-            <p className="text-gray-400 mb-4">This will freeze all vault operations.</p>
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-bold text-red-400">
+              {activeAction === 'cancel_all' && 'Cancel All Pending Proposals'}
+              {activeAction === 'freeze' && 'Freeze Vault'}
+              {activeAction === 'recovery' && 'Initiate Vault Recovery'}
+            </h3>
+            <p className="text-sm text-gray-400">
+              {activeAction === 'cancel_all' && 'This will reject every pending proposal. Type CONFIRM to proceed.'}
+              {activeAction === 'freeze' && 'This sets all spending limits to 0, blocking new proposals. Type CONFIRM to proceed.'}
+              {activeAction === 'recovery' && 'This opens the recovery proposal flow. Type CONFIRM to proceed.'}
+            </p>
             <input
               type="text"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Reason for pausing"
-              className="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg mb-4"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder='Type "CONFIRM"'
+              className="w-full px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm"
             />
+            {progress && <p className="text-sm text-yellow-400">{progress}</p>}
             <div className="flex gap-3">
               <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 min-h-[48px] py-3 bg-gray-700 hover:bg-gray-600 rounded-lg"
+                onClick={reset}
+                disabled={busy}
+                className="flex-1 min-h-[44px] py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
-                onClick={handlePause}
-                disabled={!reason.trim()}
-                className="flex-1 min-h-[48px] py-3 bg-red-600 hover:bg-red-700 rounded-lg disabled:opacity-50"
+                onClick={onExecute}
+                disabled={!confirmed || busy}
+                className="flex-1 min-h-[44px] py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm disabled:opacity-50"
               >
-                Pause Vault
+                {busy ? 'Processing...' : 'Execute'}
               </button>
             </div>
           </div>
