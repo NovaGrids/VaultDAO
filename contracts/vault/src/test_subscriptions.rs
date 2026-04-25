@@ -526,7 +526,7 @@ fn test_get_nonexistent_subscription_fails() {
 
     let (client, _admin, _token_admin, _token) = setup(&env);
     let res = client.try_get_subscription(&999u64);
-    assert_eq!(res, Err(Ok(VaultError::SubscriptionNotFound)));
+    assert_eq!(res.err(), Some(Ok(VaultError::SubscriptionNotFound)));
 }
 
 #[test]

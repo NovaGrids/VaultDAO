@@ -23,7 +23,6 @@ pub enum VaultError {
     ProposalAlreadyExecuted = 23,
     ProposalExpired = 24,
     ProposalAlreadyCancelled = 25,
-    VotingDeadlinePassed = 26,
     AlreadyApproved = 30,
     InvalidAmount = 40,
     ExceedsProposalLimit = 41,
@@ -31,9 +30,7 @@ pub enum VaultError {
     ExceedsWeeklyLimit = 43,
     VelocityLimitExceeded = 50,
     TimelockNotExpired = 60,
-    SchedulingError = 61,
     InsufficientBalance = 70,
-    TransferFailed = 71,
     SignerAlreadyExists = 80,
     SignerNotFound = 81,
     CannotRemoveSigner = 82,
@@ -42,7 +39,6 @@ pub enum VaultError {
     AddressAlreadyOnList = 92,
     AddressNotOnList = 93,
     InsuranceInsufficient = 110,
-    GasLimitExceeded = 120,
     BatchTooLarge = 130,
     ConditionsNotMet = 140,
     IntervalTooShort = 150,
@@ -56,8 +52,6 @@ pub enum VaultError {
     AttachmentHashInvalid = 230,
     /// Proposal has reached the maximum number of attachments
     TooManyAttachments = 231,
-    /// Proposal has reached the maximum number of tags
-    TooManyTags = 232,
     /// Metadata value is empty or exceeds the maximum allowed length
     MetadataValueInvalid = 233,
     // -----------------------------------------------------------------------

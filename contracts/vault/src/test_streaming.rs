@@ -102,7 +102,7 @@ fn test_create_stream_happy_path() {
 
     assert_eq!(stream_id, 1);
 
-    let stream = client.get_stream(&stream_id).unwrap();
+    let stream = client.get_stream(&stream_id);
     assert_eq!(stream.rate, rate);
     assert_eq!(stream.total_amount, total_amount);
     assert_eq!(stream.claimed_amount, 0);
@@ -189,7 +189,7 @@ fn test_claim_stream_calculates_correctly() {
     // 30 seconds × 10 tokens/sec = 300
     assert_eq!(claimed, 300);
 
-    let stream = client.get_stream(&stream_id).unwrap();
+    let stream = client.get_stream(&stream_id);
     assert_eq!(stream.claimed_amount, 300);
     assert_eq!(stream.status, StreamStatus::Active);
 }
@@ -238,7 +238,7 @@ fn test_claim_stream_caps_at_total_amount() {
     // Should be capped at total_amount
     assert_eq!(claimed, total_amount);
 
-    let stream = client.get_stream(&stream_id).unwrap();
+    let stream = client.get_stream(&stream_id);
     assert_eq!(stream.status, StreamStatus::Completed);
 }
 
@@ -283,7 +283,7 @@ fn test_pause_stream_stops_accumulation() {
     env.ledger().with_mut(|l| l.timestamp = 1020);
     client.pause_stream(&treasurer, &stream_id);
 
-    let stream = client.get_stream(&stream_id).unwrap();
+    let stream = client.get_stream(&stream_id);
     assert_eq!(stream.status, StreamStatus::Paused);
     // 20 seconds accumulated before pause
     assert_eq!(stream.accumulated_seconds, 20);
@@ -370,7 +370,7 @@ fn test_cancel_stream_returns_unclaimed_to_sender() {
     // 1000 total − 300 earned = 700 refunded
     assert_eq!(refund, 700);
 
-    let stream = client.get_stream(&stream_id).unwrap();
+    let stream = client.get_stream(&stream_id);
     assert_eq!(stream.status, StreamStatus::Cancelled);
 }
 
