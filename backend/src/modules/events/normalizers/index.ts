@@ -5,6 +5,10 @@ import { ProposalNormalizer } from "./proposal.normalizer.js";
 import { RoleNormalizer } from "./role.normalizer.js";
 import { EscrowNormalizer } from "./escrow.normalizer.js";
 import { RecurringNormalizer } from "./recurring.normalizer.js";
+import { InsuranceNormalizer } from "./insurance.normalizer.js";
+import { RecoveryNormalizer } from "./recovery.normalizer.js";
+import { SubscriptionNormalizer } from "./subscription.normalizer.js";
+import { MiscNormalizer } from "./misc.normalizer.js";
 import { SnapshotNormalizer } from "../../snapshots/normalizer.js";
 
 export class EventNormalizer {
@@ -25,6 +29,7 @@ export class EventNormalizer {
     switch (type) {
       // ── Proposal lifecycle ──────────────────────────────────────────────
       case EventType.PROPOSAL_CREATED:
+      case EventType.PROPOSAL_FROM_TEMPLATE:
         return ProposalNormalizer.normalizeCreated(event);
       case EventType.PROPOSAL_APPROVED:
         return ProposalNormalizer.normalizeApproved(event);
@@ -66,6 +71,24 @@ export class EventNormalizer {
         return RoleNormalizer.normalizeSignerRemoved(event);
       case EventType.QUORUM_UPDATED:
         return RoleNormalizer.normalizeQuorumUpdated(event);
+      case EventType.CONFIG_UPDATED:
+        return MiscNormalizer.normalizeConfigUpdated(event);
+      case EventType.ORACLE_CONFIG_UPDATED:
+        return MiscNormalizer.normalizeOracleConfigUpdated(event);
+
+      // ── Insurance / staking ─────────────────────────────────────────────
+      case EventType.INSURANCE_LOCKED:
+        return InsuranceNormalizer.normalizeInsuranceLocked(event);
+      case EventType.INSURANCE_SLASHED:
+        return InsuranceNormalizer.normalizeInsuranceSlashed(event);
+      case EventType.INSURANCE_RETURNED:
+        return InsuranceNormalizer.normalizeInsuranceReturned(event);
+      case EventType.STAKE_LOCKED:
+        return InsuranceNormalizer.normalizeStakeLocked(event);
+      case EventType.STAKE_SLASHED:
+        return InsuranceNormalizer.normalizeStakeSlashed(event);
+      case EventType.STAKE_REFUNDED:
+        return InsuranceNormalizer.normalizeStakeRefunded(event);
 
       // ── Escrow / funding ────────────────────────────────────────────────
       case EventType.ESCROW_CREATED:
@@ -88,25 +111,75 @@ export class EventNormalizer {
         return EscrowNormalizer.normalizeFundingRoundCreated(event);
       case EventType.FUNDING_RELEASED:
         return EscrowNormalizer.normalizeFundingReleased(event);
+      case EventType.FUNDING_ROUND_APPROVED:
+        return MiscNormalizer.normalizeFundingRoundApproved(event);
+      case EventType.FUNDING_ROUND_CANCELLED:
+        return MiscNormalizer.normalizeFundingRoundCancelled(event);
+      case EventType.FUNDING_ROUND_COMPLETED:
+        return MiscNormalizer.normalizeFundingRoundCompleted(event);
 
       // ── Recurring / streaming ───────────────────────────────────────────
       case EventType.STREAM_CREATED:
         return RecurringNormalizer.normalizeStreamCreated(event);
+      case EventType.STREAM_STATUS:
+        return SubscriptionNormalizer.normalizeStreamStatus(event);
+      case EventType.STREAM_CLAIMED:
+        return SubscriptionNormalizer.normalizeStreamClaimed(event);
+
+      // ── Subscriptions ───────────────────────────────────────────────────
+      case EventType.SUBSCRIPTION_CREATED:
+        return SubscriptionNormalizer.normalizeSubscriptionCreated(event);
+      case EventType.SUBSCRIPTION_RENEWED:
+        return SubscriptionNormalizer.normalizeSubscriptionRenewed(event);
+      case EventType.SUBSCRIPTION_CANCELLED:
+        return SubscriptionNormalizer.normalizeSubscriptionCancelled(event);
+      case EventType.SUBSCRIPTION_UPGRADED:
+        return SubscriptionNormalizer.normalizeSubscriptionUpgraded(event);
+      case EventType.SUBSCRIPTION_EXPIRED:
+        return SubscriptionNormalizer.normalizeSubscriptionExpired(event);
+
+      // ── Recovery ────────────────────────────────────────────────────────
+      case EventType.RECOVERY_PROPOSED:
+        return RecoveryNormalizer.normalizeRecoveryProposed(event);
+      case EventType.RECOVERY_APPROVED:
+        return RecoveryNormalizer.normalizeRecoveryApproved(event);
+      case EventType.RECOVERY_EXECUTED:
+        return RecoveryNormalizer.normalizeRecoveryExecuted(event);
+      case EventType.RECOVERY_CANCELLED:
+        return RecoveryNormalizer.normalizeRecoveryCancelled(event);
+
+      // ── Misc ────────────────────────────────────────────────────────────
+      case EventType.REPUTATION_UPDATED:
+        return MiscNormalizer.normalizeReputationUpdated(event);
+      case EventType.BATCH_EXECUTED:
+        return MiscNormalizer.normalizeBatchExecuted(event);
+      case EventType.RETRY_SCHEDULED:
+        return MiscNormalizer.normalizeRetryScheduled(event);
+      case EventType.RETRY_ATTEMPTED:
+        return MiscNormalizer.normalizeRetryAttempted(event);
+      case EventType.RETRIES_EXHAUSTED:
+        return MiscNormalizer.normalizeRetriesExhausted(event);
+      case EventType.TOKENS_LOCKED:
+        return MiscNormalizer.normalizeTokensLocked(event);
+      case EventType.LOCK_EXTENDED:
+        return MiscNormalizer.normalizeLockExtended(event);
+      case EventType.TOKENS_UNLOCKED:
+        return MiscNormalizer.normalizeTokensUnlocked(event);
+      case EventType.EARLY_UNLOCK:
+        return MiscNormalizer.normalizeEarlyUnlock(event);
+      case EventType.GAS_LIMIT_EXCEEDED:
+        return MiscNormalizer.normalizeGasLimitExceeded(event);
+      case EventType.CROSS_VAULT_PROPOSED:
+        return MiscNormalizer.normalizeCrossVaultProposed(event);
+      case EventType.CROSS_VAULT_EXECUTED:
+        return MiscNormalizer.normalizeCrossVaultExecuted(event);
 
       // ── Unknown ─────────────────────────────────────────────────────────
       case EventType.UNKNOWN:
         return EventNormalizer.unknown(event, "Unmapped topic");
 
-      // All remaining mapped types (insurance, staking, recovery, misc, etc.)
-      // are known but have no dedicated downstream consumer yet. Return a
-      // typed passthrough so they are logged and routable in future.
       default:
-        return { type, data: event.value, metadata: {
-          id: event.id,
-          contractId: event.contractId,
-          ledger: event.ledger,
-          ledgerClosedAt: event.ledgerClosedAt,
-        }};
+        return EventNormalizer.unknown(event, "Unhandled event type");
     }
   }
 

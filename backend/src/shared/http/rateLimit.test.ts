@@ -1,8 +1,8 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fc from "fast-check";
-import type { Request } from "express";
-import { RateLimiter } from "./rateLimit.js";
+import type { Request, Response, NextFunction } from "express";
+import { RateLimiter, createRateLimitMiddleware } from "./rateLimit.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -228,5 +228,200 @@ describe("Requirement 5 – getResetTime()", () => {
       ),
       { numRuns: 100 },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 6 – createRateLimitMiddleware() Express middleware
+// ---------------------------------------------------------------------------
+
+function makeExpressReq(ip = "127.0.0.1"): Request {
+  return { socket: { remoteAddress: ip }, method: "GET" } as unknown as Request;
+}
+
+function makeExpressRes(): {
+  res: Response;
+  state: { headers: Record<string, string>; statusCode: number; body: unknown };
+} {
+  const state: { headers: Record<string, string>; statusCode: number; body: unknown } = {
+    headers: {},
+    statusCode: 200,
+    body: undefined,
+  };
+
+  const res = {
+    set: (headerOrMap: string | Record<string, string>, value?: string) => {
+      if (typeof headerOrMap === "string") {
+        state.headers[headerOrMap] = value!;
+      } else {
+        Object.assign(state.headers, headerOrMap);
+      }
+      return res;
+    },
+    status: (code: number) => {
+      state.statusCode = code;
+      return res;
+    },
+    json: (b: unknown) => {
+      state.body = b;
+      return res;
+    },
+  } as unknown as Response;
+
+  return { res, state };
+}
+
+describe("Requirement 6 – createRateLimitMiddleware()", () => {
+  beforeEach(() => {
+    mockDate(BASE_TIME);
+  });
+
+  afterEach(() => {
+    restoreDate();
+  });
+
+  it("M1: allows requests within the limit and calls next()", () => {
+    // Validates: Acceptance Criteria – GET requests allowed up to maxRequests
+    const middleware = createRateLimitMiddleware({
+      windowMs: WINDOW_MS,
+      maxRequests: MAX_REQUESTS,
+    });
+    const req = makeExpressReq();
+
+    for (let i = 0; i < MAX_REQUESTS; i++) {
+      const { res } = makeExpressRes();
+      let nextCalled = false;
+      const next: NextFunction = () => { nextCalled = true; };
+      middleware(req, res, next);
+      assert.equal(nextCalled, true, `Request ${i + 1} should pass through`);
+    }
+  });
+
+  it("M2: 101st GET request returns 429 with Retry-After header", () => {
+    // Validates: Acceptance Criteria – 101st GET request in a minute returns 429
+    //            and Retry-After header is present on 429 response
+    const limit = 100;
+    const middleware = createRateLimitMiddleware({
+      windowMs: 60_000,
+      maxRequests: limit,
+    });
+    const req = makeExpressReq("10.0.0.1");
+
+    // Exhaust the limit
+    for (let i = 0; i < limit; i++) {
+      const { res } = makeExpressRes();
+      middleware(req, res, () => {});
+    }
+
+    // 101st request must be rejected
+    const { res, state } = makeExpressRes();
+    let nextCalled = false;
+    middleware(req, res, () => { nextCalled = true; });
+
+    assert.equal(nextCalled, false, "next() must NOT be called on 429");
+    assert.equal(state.statusCode, 429);
+    assert.ok(state.headers["Retry-After"], "Retry-After header must be present");
+    assert.ok(state.headers["X-RateLimit-Limit"], "X-RateLimit-Limit header must be present");
+    assert.equal(state.headers["X-RateLimit-Remaining"], "0");
+
+    const b = state.body as any;
+    assert.equal(b.success, false);
+    assert.equal(b.error.code, "RATE_LIMIT_EXCEEDED");
+  });
+
+  it("M3: sets X-RateLimit-* headers on every allowed response", () => {
+    // Validates: Rate limit headers are sent with every non-limited response
+    const middleware = createRateLimitMiddleware({
+      windowMs: WINDOW_MS,
+      maxRequests: MAX_REQUESTS,
+    });
+    const req = makeExpressReq("10.0.0.2");
+    const { res, state } = makeExpressRes();
+    middleware(req, res, () => {});
+
+    assert.ok(state.headers["X-RateLimit-Limit"], "X-RateLimit-Limit must be set");
+    assert.ok(state.headers["X-RateLimit-Remaining"], "X-RateLimit-Remaining must be set");
+    assert.ok(state.headers["X-RateLimit-Reset"], "X-RateLimit-Reset must be set");
+    assert.equal(state.headers["X-RateLimit-Limit"], String(MAX_REQUESTS));
+  });
+
+  it("M4: rate limit resets after the window expires", () => {
+    // Validates: Acceptance Criteria – Rate limit resets after the window expires
+    const middleware = createRateLimitMiddleware({
+      windowMs: WINDOW_MS,
+      maxRequests: MAX_REQUESTS,
+    });
+    const req = makeExpressReq("10.0.0.3");
+
+    // Exhaust the limit
+    for (let i = 0; i < MAX_REQUESTS; i++) {
+      middleware(req, makeExpressRes().res, () => {});
+    }
+    // Confirm blocked
+    let wasBlocked = false;
+    middleware(req, makeExpressRes().res, () => { wasBlocked = true; });
+    assert.equal(wasBlocked, false);
+
+    // Advance time past the window
+    mockDate(BASE_TIME + WINDOW_MS + 1);
+
+    // First request in new window must succeed
+    let afterReset = false;
+    middleware(req, makeExpressRes().res, () => { afterReset = true; });
+    assert.equal(afterReset, true, "After window reset, request should pass");
+  });
+
+  it("M5: health limit (300/min) is higher than read limit (100/min)", () => {
+    // Validates: Acceptance Criteria – Health endpoint has higher limit than API endpoints
+    const healthMiddleware = createRateLimitMiddleware({
+      windowMs: 60_000,
+      maxRequests: 300,
+    });
+    const readMiddleware = createRateLimitMiddleware({
+      windowMs: 60_000,
+      maxRequests: 100,
+    });
+
+    const healthReq = makeExpressReq("10.0.0.4");
+    const readReq = makeExpressReq("10.0.0.5");
+
+    // Exhaust read limit
+    for (let i = 0; i < 100; i++) {
+      readMiddleware(readReq, makeExpressRes().res, () => {});
+    }
+    // 101st read request must be blocked
+    let readBlocked = false;
+    readMiddleware(readReq, makeExpressRes().res, () => { readBlocked = true; });
+    assert.equal(readBlocked, false, "101st read request must be blocked");
+
+    // Health endpoint should still allow 300 requests
+    for (let i = 0; i < 300; i++) {
+      let allowed = false;
+      healthMiddleware(healthReq, makeExpressRes().res, () => { allowed = true; });
+      assert.equal(allowed, true, `Health request ${i + 1} should be allowed`);
+    }
+    // 301st health request must be blocked
+    let healthBlocked = false;
+    healthMiddleware(healthReq, makeExpressRes().res, () => { healthBlocked = true; });
+    assert.equal(healthBlocked, false, "301st health request must be blocked");
+  });
+
+  it("M6: write limit (10/min) is enforced for POST routes", () => {
+    // Validates: Write endpoints limited to 10 req/min
+    const writeMiddleware = createRateLimitMiddleware({
+      windowMs: 60_000,
+      maxRequests: 10,
+    });
+    const req = makeExpressReq("10.0.0.6");
+
+    for (let i = 0; i < 10; i++) {
+      let allowed = false;
+      writeMiddleware(req, makeExpressRes().res, () => { allowed = true; });
+      assert.equal(allowed, true, `Write request ${i + 1} should be allowed`);
+    }
+    // 11th write request must be blocked
+    let blocked = false;
+    writeMiddleware(req, makeExpressRes().res, () => { blocked = true; });
+    assert.equal(blocked, false, "11th write request must be blocked");
   });
 });

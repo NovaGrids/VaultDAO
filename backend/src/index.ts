@@ -10,6 +10,12 @@ import {
 } from "./modules/realtime/index.js";
 import { InMemoryNotificationQueue } from "./modules/notifications/index.js";
 import { ScheduledJobRunner } from "./modules/jobs/index.js";
+import {
+  FileCursorAdapter,
+  DatabaseCursorAdapter,
+} from "./modules/events/cursor/index.js";
+import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
+import { SqliteStorageAdapter } from "./shared/storage/index.js";
 import { randomUUID } from "node:crypto";
 
 function logStartupConfig(env: BackendEnv) {
@@ -63,6 +69,25 @@ jobRunner.register({
     });
   },
 });
+
+// Register cursor storage cleanup job when enabled
+if (env.cursorCleanupJobEnabled) {
+  const cursorStorage =
+    env.cursorStorageType === "database"
+      ? new DatabaseCursorAdapter(
+          new SqliteStorageAdapter(env.databasePath, "event_cursors"),
+        )
+      : new FileCursorAdapter();
+
+  jobRunner.register(
+    new CursorStorageCleanupJob(
+      env.cursorCleanupJobIntervalMs,
+      true,
+      cursorStorage,
+      env.cursorRetentionDays,
+    ),
+  );
+}
 
 realtimeServer.start();
 jobRunner.start();

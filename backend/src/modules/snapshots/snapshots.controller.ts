@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 import type { SnapshotService } from "./snapshot.service.js";
 import { success, error } from "../../shared/http/response.js";
+import type { SerializableContractSnapshot } from "./types.js";
 
 export function createSnapshotControllers(service: SnapshotService) {
   const getSnapshot: RequestHandler = async (req, res) => {
@@ -9,7 +10,14 @@ export function createSnapshotControllers(service: SnapshotService) {
       const snapshot = await service.getSnapshot(contractId);
       if (!snapshot)
         return error(res, { message: "Snapshot not found", status: 404 });
-      success(res, snapshot);
+
+      const serializable: SerializableContractSnapshot = {
+        ...snapshot,
+        signers: Object.fromEntries(snapshot.signers),
+        roles: Object.fromEntries(snapshot.roles),
+      };
+
+      success(res, serializable);
     } catch (err) {
       console.error(
         `[snapshot-controller] getSnapshot error (reqId=${req.headers["x-request-id"]})`,
