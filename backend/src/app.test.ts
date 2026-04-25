@@ -29,7 +29,28 @@ const mockRuntime = {
     }),
   },
   snapshotService: {},
-  proposalActivityAggregator: {},
+  proposalActivityAggregator: {
+    getStats: () => ({
+      totalProposals: 0,
+      activeProposals: 0,
+      executedProposals: 0,
+      rejectedProposals: 0,
+      expiredProposals: 0,
+      cancelledProposals: 0,
+      totalActivities: 0,
+      activityTypeCounts: {},
+      consumerBufferSize: 0,
+      oldestActivityAt: null,
+      newestActivityAt: null,
+    }),
+  },
+  proposalActivityPersistence: {
+    save: async () => {},
+    saveBatch: async () => {},
+    getByProposalId: async () => [],
+    getByContractId: async () => [],
+    getSummary: async () => null,
+  },
   recurringIndexerService: {},
   jobManager: {
     getAllJobs: () => [
