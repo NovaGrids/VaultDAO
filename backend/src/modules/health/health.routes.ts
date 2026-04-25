@@ -6,6 +6,7 @@ import {
   getHealthController,
   getReadinessController,
   getStatusController,
+  getDetailedHealthController,
 } from "./health.controller.js";
 import { getMetricsController } from "./metrics.controller.js";
 
@@ -27,5 +28,11 @@ export function createStatusRouter(env: BackendEnv, runtime: BackendRuntime) {
 export function createMetricsRouter(runtime: BackendRuntime) {
   const router = Router();
   router.get("/", getMetricsController(runtime));
+  return router;
+}
+
+export function createDetailedHealthRouter(env: BackendEnv, runtime: BackendRuntime) {
+  const router = Router();
+  router.get("/detailed", getDetailedHealthController(env, runtime));
   return router;
 }

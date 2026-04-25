@@ -5,6 +5,7 @@ import {
   createHealthRouter,
   createStatusRouter,
   createMetricsRouter,
+  createDetailedHealthRouter,
 } from "./modules/health/health.routes.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
@@ -111,6 +112,7 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime));
+  v1Router.use("/health", createDetailedHealthRouter(env, runtime));
 
   v1Router.use(
     "/snapshots",

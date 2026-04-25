@@ -5,6 +5,10 @@ import {
   buildHealthPayload,
   buildReadinessPayload,
   buildStatusPayload,
+  checkRpc,
+  checkEventPolling,
+  checkJobRunner,
+  buildDetailedHealthPayload,
 } from "./health.service.js";
 
 const mockEnv = {
@@ -272,6 +276,144 @@ test("buildStatusPayload includes all endpoint URLs", () => {
   assert.equal(payload.rpcUrl, mockEnv.sorobanRpcUrl);
   assert.equal(payload.horizonUrl, mockEnv.horizonUrl);
   assert.equal(payload.websocketUrl, mockEnv.websocketUrl);
+});
+
+// ── Detailed health tests ─────────────────────────────────────────────────────
+
+test("checkRpc returns healthy status when RPC responds", async () => {
+  const mockFetch = async (_url: string, _opts?: any) => ({
+    json: async () => ({ result: { sequence: 1234567 } }),
+  });
+
+  // Temporarily override global fetch for this test
+  const originalFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = mockFetch;
+
+  try {
+    const result = await checkRpc("https://soroban-testnet.stellar.org", 5000);
+    assert.equal(result.status, "healthy");
+    assert.equal(typeof result.latencyMs, "number");
+    assert.ok(result.latencyMs >= 0);
+    assert.equal(result.ledger, 1234567);
+    assert.equal(result.error, undefined);
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("checkRpc returns degraded status when fetch throws", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = async () => {
+    throw new Error("connection refused");
+  };
+
+  try {
+    const result = await checkRpc("https://unreachable.example.com", 5000);
+    assert.equal(result.status, "degraded");
+    assert.ok(result.error?.includes("connection refused"));
+    assert.equal(typeof result.latencyMs, "number");
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("checkEventPolling returns event polling status from runtime", () => {
+  const runtime = {
+    ...mockRuntime,
+    eventPollingService: {
+      getStatus: () => ({ lastLedgerPolled: 500, isPolling: true, errors: 0 }),
+    },
+  };
+
+  const status = checkEventPolling(runtime as any);
+
+  assert.equal(status.lastLedgerPolled, 500);
+  assert.equal(status.isPolling, true);
+  assert.equal(status.errors, 0);
+});
+
+test("checkJobRunner returns job counts and statuses", () => {
+  const runtime = {
+    ...mockRuntime,
+    jobManager: {
+      getAllJobs: () => [
+        { name: "event-polling", isRunning: () => true },
+        { name: "recurring-indexer", isRunning: () => false },
+      ],
+    },
+  };
+
+  const result = checkJobRunner(runtime as any);
+
+  assert.equal(result.total, 2);
+  assert.equal(result.running, 1);
+  assert.equal(result.jobs.length, 2);
+  assert.equal(result.jobs[0].name, "event-polling");
+  assert.equal(result.jobs[0].running, true);
+  assert.equal(result.jobs[1].running, false);
+});
+
+test("buildDetailedHealthPayload returns ok:true when RPC is healthy", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = async () => ({
+    json: async () => ({ result: { sequence: 9999 } }),
+  });
+
+  try {
+    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.rpc.status, "healthy");
+    assert.equal(payload.rpc.ledger, 9999);
+    assert.ok(typeof payload.version === "string");
+    assert.ok(typeof payload.uptime === "number");
+    assert.ok(typeof payload.eventPolling === "object");
+    assert.ok(typeof payload.jobRunner === "object");
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("buildDetailedHealthPayload returns ok:false when RPC is unreachable", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = async () => {
+    throw new Error("ECONNREFUSED");
+  };
+
+  try {
+    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+
+    assert.equal(payload.ok, false);
+    assert.equal(payload.rpc.status, "degraded");
+    assert.ok(payload.rpc.error?.includes("ECONNREFUSED"));
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("buildDetailedHealthPayload response includes all required fields", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = async () => ({
+    json: async () => ({ result: { sequence: 1 } }),
+  });
+
+  try {
+    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+
+    assert.ok("ok" in payload);
+    assert.ok("version" in payload);
+    assert.ok("uptime" in payload);
+    assert.ok("rpc" in payload);
+    assert.ok("eventPolling" in payload);
+    assert.ok("jobRunner" in payload);
+    assert.ok("status" in payload.rpc);
+    assert.ok("latencyMs" in payload.rpc);
+    assert.ok("total" in payload.jobRunner);
+    assert.ok("running" in payload.jobRunner);
+    assert.ok("jobs" in payload.jobRunner);
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
 });
 
 test("buildReadinessPayload with missing websocket URL shows not_ready but not required", () => {

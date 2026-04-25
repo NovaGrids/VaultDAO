@@ -6,6 +6,7 @@ import {
   buildHealthPayload,
   buildReadinessPayload,
   buildStatusPayload,
+  buildDetailedHealthPayload,
 } from "./health.service.js";
 import { success, error } from "../../shared/http/response.js";
 
