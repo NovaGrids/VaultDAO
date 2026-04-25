@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import type { BackendAuditEntry } from '../components/AuditLog';
 
 /**
  * Strip HTML tags from a string, converting <br> variants to spaces
@@ -155,4 +156,52 @@ export async function exportComparisonToPDF(proposals: ProposalForExport[]): Pro
 function formatAddress(address: string): string {
   if (address.length <= 12) return address;
   return `${address.slice(0, 6)}...${address.slice(-6)}`;
+}
+
+/**
+ * Export audit entries to a PDF with vault contract ID and export date header.
+ */
+export async function exportAuditToPDF(
+  entries: BackendAuditEntry[],
+  contractId: string,
+): Promise<Blob> {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  doc.setFontSize(16);
+  doc.setTextColor(88, 28, 135);
+  doc.text('Vault Audit Log', 14, 14);
+
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.text(`Contract: ${contractId}`, 14, 21);
+  doc.text(`Exported: ${new Date().toLocaleString()}`, 14, 26);
+
+  (doc as unknown as { autoTable: (opts: Record<string, unknown>) => void }).autoTable({
+    startY: 31,
+    head: [['Timestamp', 'Action', 'Actor', 'Target', 'Tx Hash']],
+    body: entries.map((e) => [
+      new Date(e.timestamp).toLocaleString(),
+      e.action,
+      e.actor,
+      e.target ?? '',
+      e.txHash ?? '',
+    ]),
+    theme: 'grid',
+    headStyles: { fillColor: [88, 28, 135], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 7, textColor: [50, 50, 50] },
+    alternateRowStyles: { fillColor: [245, 245, 245] },
+    margin: { left: 14, right: 14 },
+  });
+
+  const pageCount = (doc as unknown as { internal: { getNumberOfPages: () => number; pageSize: { getWidth: () => number; getHeight: () => number } } }).internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(150, 150, 150);
+    const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
+    doc.text(`Page ${i} of ${pageCount}`, pw / 2, ph - 8, { align: 'center' });
+  }
+
+  return doc.output('blob');
 }
