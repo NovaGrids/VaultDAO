@@ -59,6 +59,91 @@ export interface ActivityBucket {
 }
 
 /**
+ * ProposalAggregator
+ * 
+ * Static utility for building ProposalActivitySummary from activity records.
+ * Implements status priority and aggregation logic.
+ */
+export class ProposalAggregator {
+  /**
+   * Status priority for determining currentStatus.
+   * EXECUTED > REJECTED > CANCELLED > VETOED > APPROVED > PENDING
+   */
+  private static readonly STATUS_PRIORITY: Record<string, number> = {
+    [ProposalActivityType.EXECUTED]: 6,
+    [ProposalActivityType.REJECTED]: 5,
+    [ProposalActivityType.CANCELLED]: 4,
+    [ProposalActivityType.VETOED]: 3,
+    [ProposalActivityType.APPROVED]: 2,
+    [ProposalActivityType.PENDING]: 1,
+    [ProposalActivityType.READY]: 1, // Treat READY as similar to PENDING/APPROVED priority-wise if not specified
+    [ProposalActivityType.CREATED]: 1,
+  };
+
+  /**
+   * Aggregates a list of records into a single ProposalActivitySummary.
+   * 
+   * @param records List of activity records for a single proposal
+   * @throws Error if records array is empty
+   */
+  public static aggregate(records: ProposalActivityRecord[]): ProposalActivitySummary {
+    if (!records || records.length === 0) {
+      throw new Error("Cannot aggregate empty records array");
+    }
+
+    // Sort by timestamp for sequential processing
+    const sortedRecords = [...records].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    const firstCreated = sortedRecords.find(r => r.type === ProposalActivityType.CREATED);
+    const lastActivity = sortedRecords[sortedRecords.length - 1];
+
+    // Determine current status based on priority
+    let currentStatus = ProposalActivityType.PENDING;
+    let maxPriority = -1;
+
+    for (const record of records) {
+      const priority = this.STATUS_PRIORITY[record.type] ?? 0;
+      if (priority > maxPriority) {
+        maxPriority = priority;
+        currentStatus = record.type;
+      }
+    }
+
+    // If no high-priority status found, use the latest record's type
+    if (maxPriority <= 1) {
+      currentStatus = lastActivity.type;
+    }
+
+    return {
+      proposalId: lastActivity.proposalId,
+      contractId: lastActivity.metadata.contractId,
+      createdAt: firstCreated?.timestamp ?? lastActivity.timestamp,
+      lastActivityAt: lastActivity.timestamp,
+      totalEvents: records.length,
+      currentStatus,
+      events: sortedRecords,
+    };
+  }
+
+  /**
+   * Aggregates multiple groups of records in bulk.
+   * 
+   * @param groups Map of proposalId to activity records
+   */
+  public static aggregateBatch(groups: Map<string, ProposalActivityRecord[]>): ProposalActivitySummary[] {
+    const summaries: ProposalActivitySummary[] = [];
+    for (const records of groups.values()) {
+      if (records.length > 0) {
+        summaries.push(this.aggregate(records));
+      }
+    }
+    return summaries;
+  }
+}
+
+/**
  * ProposalActivityAggregator
  * 
  * Aggregates proposal activity records into summaries and statistics.
@@ -158,25 +243,7 @@ export class ProposalActivityAggregator {
       return null;
     }
 
-    // Sort by timestamp
-    const sortedRecords = [...records].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-
-    const createdRecord = sortedRecords.find(
-      (r) => r.type === ProposalActivityType.CREATED
-    );
-    const latestRecord = sortedRecords[sortedRecords.length - 1];
-
-    return {
-      proposalId,
-      contractId: latestRecord.metadata.contractId,
-      createdAt: createdRecord?.timestamp ?? latestRecord.timestamp,
-      lastActivityAt: latestRecord.timestamp,
-      totalEvents: records.length,
-      currentStatus: latestRecord.type,
-      events: sortedRecords,
-    };
+    return ProposalAggregator.aggregate(records);
   }
 
   /**

@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ProposalActivityAggregator } from "./aggregator.js";
+import { ProposalActivityAggregator, ProposalAggregator } from "./aggregator.js";
 import { ProposalActivityRecord, ProposalActivityType } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -605,6 +605,164 @@ test("getProposalsByStatus — uses latest activity for filtering, not all recor
     "p1 should appear in EXECUTED results",
   );
   assert.equal(executedResults[0].proposalId, "p1");
+});
+
+// ---------------------------------------------------------------------------
+// ProposalAggregator suite
+// ---------------------------------------------------------------------------
+
+test("ProposalAggregator.aggregate — throws on empty records array", () => {
+  assert.throws(() => {
+    ProposalAggregator.aggregate([]);
+  }, /Cannot aggregate empty records array/);
+});
+
+test("ProposalAggregator.aggregate — status priority: EXECUTED > REJECTED", () => {
+  const r1 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.REJECTED,
+    timestamp: "2026-01-02T00:00:00.000Z",
+  });
+  const r2 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.EXECUTED,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  });
+
+  const summary = ProposalAggregator.aggregate([r1, r2]);
+  assert.equal(summary.currentStatus, ProposalActivityType.EXECUTED);
+});
+
+test("ProposalAggregator.aggregate — status priority: REJECTED > CANCELLED", () => {
+  const r1 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.CANCELLED,
+    timestamp: "2026-01-02T00:00:00.000Z",
+  });
+  const r2 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.REJECTED,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  });
+
+  const summary = ProposalAggregator.aggregate([r1, r2]);
+  assert.equal(summary.currentStatus, ProposalActivityType.REJECTED);
+});
+
+test("ProposalAggregator.aggregate — status priority: CANCELLED > VETOED", () => {
+  const r1 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.VETOED,
+    timestamp: "2026-01-02T00:00:00.000Z",
+  });
+  const r2 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.CANCELLED,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  });
+
+  const summary = ProposalAggregator.aggregate([r1, r2]);
+  assert.equal(summary.currentStatus, ProposalActivityType.CANCELLED);
+});
+
+test("ProposalAggregator.aggregate — status priority: VETOED > APPROVED", () => {
+  const r1 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.APPROVED,
+    timestamp: "2026-01-02T00:00:00.000Z",
+  });
+  const r2 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.VETOED,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  });
+
+  const summary = ProposalAggregator.aggregate([r1, r2]);
+  assert.equal(summary.currentStatus, ProposalActivityType.VETOED);
+});
+
+test("ProposalAggregator.aggregate — status priority: APPROVED > PENDING", () => {
+  const r1 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.PENDING,
+    timestamp: "2026-01-02T00:00:00.000Z",
+  });
+  const r2 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.APPROVED,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  });
+
+  const summary = ProposalAggregator.aggregate([r1, r2]);
+  assert.equal(summary.currentStatus, ProposalActivityType.APPROVED);
+});
+
+test("ProposalAggregator.aggregate — createdAt is from first CREATED event", () => {
+  const r1 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.CREATED,
+    timestamp: "2026-01-01T10:00:00.000Z",
+  });
+  const r2 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.CREATED,
+    timestamp: "2026-01-01T09:00:00.000Z",
+  });
+  const r3 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.APPROVED,
+    timestamp: "2026-01-01T11:00:00.000Z",
+  });
+
+  const summary = ProposalAggregator.aggregate([r1, r2, r3]);
+  assert.equal(summary.createdAt, "2026-01-01T09:00:00.000Z");
+});
+
+test("ProposalAggregator.aggregate — lastActivityAt is from most recent event", () => {
+  const r1 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.CREATED,
+    timestamp: "2026-01-01T09:00:00.000Z",
+  });
+  const r2 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.APPROVED,
+    timestamp: "2026-01-01T11:00:00.000Z",
+  });
+  const r3 = buildRecord({
+    proposalId: "p1",
+    type: ProposalActivityType.AMENDED,
+    timestamp: "2026-01-01T10:00:00.000Z",
+  });
+
+  const summary = ProposalAggregator.aggregate([r1, r2, r3]);
+  assert.equal(summary.lastActivityAt, "2026-01-01T11:00:00.000Z");
+});
+
+test("ProposalAggregator.aggregateBatch — aggregates multiple groups", () => {
+  const groups = new Map<string, ProposalActivityRecord[]>();
+  
+  const p1Records = [
+    buildRecord({ proposalId: "p1", type: ProposalActivityType.CREATED, timestamp: "2026-01-01T00:00:00Z" }),
+    buildRecord({ proposalId: "p1", type: ProposalActivityType.EXECUTED, timestamp: "2026-01-02T00:00:00Z" }),
+  ];
+  
+  const p2Records = [
+    buildRecord({ proposalId: "p2", type: ProposalActivityType.CREATED, timestamp: "2026-01-01T00:00:00Z" }),
+    buildRecord({ proposalId: "p2", type: ProposalActivityType.REJECTED, timestamp: "2026-01-02T00:00:00Z" }),
+  ];
+
+  groups.set("p1", p1Records);
+  groups.set("p2", p2Records);
+
+  const summaries = ProposalAggregator.aggregateBatch(groups);
+  assert.equal(summaries.length, 2);
+  
+  const p1Summary = summaries.find(s => s.proposalId === "p1");
+  const p2Summary = summaries.find(s => s.proposalId === "p2");
+  
+  assert.equal(p1Summary?.currentStatus, ProposalActivityType.EXECUTED);
+  assert.equal(p2Summary?.currentStatus, ProposalActivityType.REJECTED);
 });
 
 // ---------------------------------------------------------------------------
