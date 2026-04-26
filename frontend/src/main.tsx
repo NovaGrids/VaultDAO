@@ -13,6 +13,7 @@ import { OnboardingProvider } from './context/OnboardingProvider';
 import { RealtimeProvider } from './contexts/RealtimeContext';
 import { AppErrorBoundary } from './components/ErrorHandler';
 import { flushOfflineErrorQueue } from './components/ErrorReporting';
+import { RealtimeNotificationBridge } from './components/RealtimeNotificationBridge';
 import { registerServiceWorker } from './utils/pwa';
 import { AccessibilityProvider } from './contexts/AccessibilityContext';
 import { SkipLinks } from './components/SkipLinks';

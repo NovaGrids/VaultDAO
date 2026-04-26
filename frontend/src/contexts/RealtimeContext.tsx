@@ -16,7 +16,7 @@ export interface UserPresence {
 
 export interface RealtimeUpdate {
   type: 'proposal_created' | 'proposal_updated' | 'proposal_approved' | 'proposal_rejected' | 'activity_new' | 'user_joined' | 'user_left';
-  data: any;
+  data: Record<string, unknown>;
   timestamp: number;
   /** Unique event ID used for deduplication across reconnects. */
   eventId?: string;
@@ -27,8 +27,8 @@ interface RealtimeContextValue {
   isConnected: boolean;
   connectionStatus: WebSocketStatus;
   onlineUsers: UserPresence[];
-  subscribe: (type: string, handler: (data: any) => void) => () => void;
-  sendUpdate: (type: string, data: any) => void;
+  subscribe: (type: string, handler: (data: Record<string, unknown>) => void) => () => void;
+  sendUpdate: (type: string, data: Record<string, unknown>) => void;
   updatePresence: (status: 'online' | 'away', currentPage?: string) => void;
   /** Returns true and marks the id as seen if it hasn't been seen before. */
   trackEvent: (id: string) => boolean;
@@ -80,12 +80,14 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     });
 
     // Subscribe to presence updates
-    const unsubscribePresence = wsClient.current.on('presence_update', (users: UserPresence[]) => {
+    const unsubscribePresence = wsClient.current.on('presence_update', (payload: unknown) => {
+      const users = payload as UserPresence[];
       setOnlineUsers(users);
     });
 
     // Subscribe to user joined
-    const unsubscribeJoined = wsClient.current.on('user_joined', (user: UserPresence) => {
+    const unsubscribeJoined = wsClient.current.on('user_joined', (payload: unknown) => {
+      const user = payload as UserPresence;
       setOnlineUsers((prev) => {
         const exists = prev.find((u) => u.userId === user.userId);
         if (exists) {
@@ -96,7 +98,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     });
 
     // Subscribe to user left
-    const unsubscribeLeft = wsClient.current.on('user_left', (userId: string) => {
+    const unsubscribeLeft = wsClient.current.on('user_left', (payload: unknown) => {
+      const userId = payload as string;
       setOnlineUsers((prev) => prev.filter((u) => u.userId !== userId));
     });
 
@@ -133,16 +136,16 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Subscribe to specific message type
-  const subscribe = useCallback((type: string, handler: (data: any) => void) => {
+  const subscribe = useCallback((type: string, handler: (data: Record<string, unknown>) => void) => {
     if (!wsClient.current) {
       return () => {};
     }
 
-    return wsClient.current.on(type, handler);
+    return wsClient.current.on(type, handler as (payload: unknown) => void);
   }, []);
 
   // Send update to server
-  const sendUpdate = useCallback((type: string, data: any) => {
+  const sendUpdate = useCallback((type: string, data: Record<string, unknown>) => {
     if (!wsClient.current) {
       console.warn('[Realtime] Cannot send update, not connected');
       return;
@@ -151,7 +154,6 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     wsClient.current.send(type, data);
   }, []);
 
-  // Update user presence
   const updatePresence = useCallback((status: 'online' | 'away', currentPage?: string) => {
     if (!wsClient.current) {
       return;
@@ -159,7 +161,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     currentPresence.current = { status, currentPage };
     wsClient.current.send('presence_update', {
       status,
-      currentPage,
+      currentPage: currentPage ?? null,
       timestamp: Date.now(),
     });
   }, []);

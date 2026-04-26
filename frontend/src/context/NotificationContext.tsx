@@ -7,7 +7,7 @@ import type {
 } from '../types/notification';
 
 const STORAGE_KEY = 'vaultdao_notifications';
-const MAX_STORED_NOTIFICATIONS = 500;
+const MAX_STORED_NOTIFICATIONS = 50;
 
 interface NotificationContextValue {
   notifications: Notification[];
