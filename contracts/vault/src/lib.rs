@@ -114,6 +114,8 @@ mod test_voting_deadline;
 mod test_streaming;
 #[cfg(test)]
 mod test_attachments;
+#[cfg(test)]
+mod test_staking;
 
 #[cfg(test)]
 pub mod mock_oracle {
