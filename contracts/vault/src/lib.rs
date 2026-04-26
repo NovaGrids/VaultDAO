@@ -115,7 +115,7 @@ mod test_streaming;
 #[cfg(test)]
 mod test_attachments;
 #[cfg(test)]
-mod test_staking;
+mod test_tags;
 
 #[cfg(test)]
 pub mod mock_oracle {
@@ -3627,11 +3627,12 @@ impl VaultDAO {
         }
 
         if proposal.tags.contains(&tag) {
-            return Err(VaultError::AlreadyApproved); // duplicate tag
+            // Duplicate tag — silently ignored per spec
+            return Ok(());
         }
 
         if proposal.tags.len() >= MAX_TAGS {
-            return Err(VaultError::TooManyAttachments);
+            return Err(VaultError::TooManyTags);
         }
 
         proposal.tags.push_back(tag);
