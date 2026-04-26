@@ -182,7 +182,7 @@ export const parseError = (error: unknown): VaultError => {
   }
 
   const msg = rawMessage(error);
-  const debugMsg = import.meta.env.DEV ? msg : undefined;
+  const debugMsg = (import.meta as any).env?.DEV ? msg : undefined;
   const make = (code: string): VaultError => ({ code, message: msg, debug: debugMsg, _parsed: true });
 
   // 1. Wallet errors (check object shape first)

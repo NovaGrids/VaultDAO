@@ -1,109 +1,90 @@
 export interface Anomaly {
   id: string;
   type: 'amount' | 'frequency' | 'recipient';
-  severity: 'low' | 'medium' | 'high';
+  severity: 'medium' | 'high' | 'info';
   message: string;
-  details: Record<string, unknown>;
-  timestamp: string;
+  proposalId?: string;
+  timestamp: number;
 }
 
-export function detectAmountAnomalies(
-  amounts: number[],
-  threshold: number = 2
-): { isAnomaly: boolean; zScore: number }[] {
-  if (amounts.length < 3) return amounts.map(() => ({ isAnomaly: false, zScore: 0 }));
-  
+export function calculateZScore(value: number, mean: number, stdDev: number): number {
+  if (stdDev === 0) return 0;
+  return (value - mean) / stdDev;
+}
+
+export function detectAmountAnomalies(proposals: { id: string; amount: number }[]): Anomaly[] {
+  if (proposals.length < 3) return [];
+
+  const amounts = proposals.map(p => p.amount);
   const mean = amounts.reduce((a, b) => a + b, 0) / amounts.length;
   const stdDev = Math.sqrt(
     amounts.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / amounts.length
   );
-  
-  if (stdDev === 0) return amounts.map(() => ({ isAnomaly: false, zScore: 0 }));
-  
-  return amounts.map(amount => {
-    const zScore = Math.abs((amount - mean) / stdDev);
-    return { isAnomaly: zScore > threshold, zScore };
-  });
+
+  return proposals
+    .map(p => {
+      const z = Math.abs(calculateZScore(p.amount, mean, stdDev));
+      if (z > 2.5) {
+        const anomaly: Anomaly = {
+          id: `anomaly-amount-${p.id}`,
+          type: 'amount',
+          severity: z > 4 ? 'high' : 'medium',
+          message: `Unusual amount detected: ${p.amount.toLocaleString()}`,
+          proposalId: p.id,
+          timestamp: Date.now(),
+        };
+        return anomaly;
+      }
+      return null;
+    })
+    .filter((a): a is Anomaly => a !== null);
 }
 
 export function detectFrequencyAnomalies(
-  timestamps: string[],
-  windowHours: number = 24,
-  threshold: number = 5
+  proposals: { id: string; timestamp: number }[],
+  windowHours = 24
 ): Anomaly[] {
-  const anomalies: Anomaly[] = [];
   const now = Date.now();
-  
-  const recentCount = timestamps.filter(ts => {
-    const diff = now - new Date(ts).getTime();
-    return diff < windowHours * 60 * 60 * 1000;
-  }).length;
-  
-  if (recentCount > threshold) {
-    anomalies.push({
-      id: `freq-${Date.now()}`,
-      type: 'frequency',
-      severity: recentCount > threshold * 2 ? 'high' : 'medium',
-      message: `Unusual transaction frequency: ${recentCount} transactions in ${windowHours}h`,
-      details: { count: recentCount, window: windowHours },
-      timestamp: new Date().toISOString()
-    });
+  const windowMs = windowHours * 60 * 60 * 1000;
+  const recentProposals = proposals.filter(p => now - p.timestamp < windowMs);
+
+  // If more than 5 proposals in 24 hours, it's a burst
+  if (recentProposals.length > 5) {
+    return [{
+      id: `anomaly-freq-${now}`,
+      type: 'frequency' as const,
+      severity: recentProposals.length > 10 ? 'high' : 'medium' as const,
+      message: `Proposal burst detected: ${recentProposals.length} proposals in last ${windowHours}h`,
+      timestamp: now,
+    }];
   }
-  
-  return anomalies;
+
+  return [];
 }
 
-export function detectRecipientAnomalies(
-  recipients: string[],
-  knownRecipients: Set<string>
+export function detectNewRecipients(
+  proposals: { id: string; recipient: string }[],
+  historicalRecipients: Set<string>
 ): Anomaly[] {
-  const anomalies: Anomaly[] = [];
-  const newRecipients = recipients.filter(r => !knownRecipients.has(r));
-  
-  if (newRecipients.length > 0) {
-    anomalies.push({
-      id: `recipient-${Date.now()}`,
-      type: 'recipient',
-      severity: 'low',
-      message: `${newRecipients.length} new recipient(s) detected`,
-      details: { recipients: newRecipients },
-      timestamp: new Date().toISOString()
-    });
-  }
-  
-  return anomalies;
+  return proposals
+    .filter(p => !historicalRecipients.has(p.recipient))
+    .map(p => ({
+      id: `anomaly-new-recipient-${p.id}`,
+      type: 'recipient' as const,
+      severity: 'info' as const,
+      message: `First-time recipient: ${p.recipient.slice(0, 8)}...`,
+      proposalId: p.id,
+      timestamp: Date.now(),
+    }));
 }
 
-export function analyzeAnomalies(
-  transactions: Array<{ amount: number; timestamp: string; recipient: string }>
+export function runFullAnomalyDetection(
+  proposals: { id: string; amount: number; timestamp: number; recipient: string }[],
+  historicalRecipients: Set<string>
 ): Anomaly[] {
-  const anomalies: Anomaly[] = [];
-  
-  const amounts = transactions.map(t => t.amount);
-  const amountResults = detectAmountAnomalies(amounts);
-  
-  transactions.forEach((tx, i) => {
-    if (amountResults[i].isAnomaly) {
-      anomalies.push({
-        id: `amount-${i}`,
-        type: 'amount',
-        severity: amountResults[i].zScore > 3 ? 'high' : 'medium',
-        message: `Unusual transaction amount: ${tx.amount.toLocaleString()}`,
-        details: { amount: tx.amount, zScore: amountResults[i].zScore },
-        timestamp: tx.timestamp
-      });
-    }
-  });
-  
-  const timestamps = transactions.map(t => t.timestamp);
-  anomalies.push(...detectFrequencyAnomalies(timestamps));
-  
-  const knownRecipients = new Set(transactions.slice(0, -5).map(t => t.recipient));
-  const recentRecipients = transactions.slice(-5).map(t => t.recipient);
-  anomalies.push(...detectRecipientAnomalies(recentRecipients, knownRecipients));
-  
-  return anomalies.sort((a, b) => {
-    const severityOrder = { high: 0, medium: 1, low: 2 };
-    return severityOrder[a.severity] - severityOrder[b.severity];
-  });
+  return [
+    ...detectAmountAnomalies(proposals),
+    ...detectFrequencyAnomalies(proposals),
+    ...detectNewRecipients(proposals, historicalRecipients),
+  ].sort((a, b) => b.timestamp - a.timestamp);
 }
