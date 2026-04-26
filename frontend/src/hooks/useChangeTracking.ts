@@ -4,8 +4,15 @@ import type { UserChange } from '../types/collaboration';
 const STORAGE_KEY_PREFIX = 'draft_changes_';
 const MAX_CHANGES = 100;
 
+interface FieldChange {
+  field: string;
+  oldValue: string;
+  newValue: string;
+}
+
 export function useChangeTracking(draftId: string) {
   const [changes, setChanges] = useState<UserChange[]>([]);
+  const [initialState, setInitialState] = useState<Record<string, string>>({});
 
   // Load changes from localStorage
   useEffect(() => {
@@ -50,33 +57,31 @@ export function useChangeTracking(draftId: string) {
     }
   }, [draftId, changes]);
 
-  // Get changes by user
-  const getChangesByUser = useCallback((userId: string) => {
-    return changes.filter(c => c.userId === userId);
-  }, [changes]);
+  // Get changes since last save
+  const getChanges = useCallback(() => {
+    const currentState: Record<string, string> = {};
+    changes.forEach(change => {
+      currentState[change.field] = change.newValue;
+    });
+    
+    return Object.entries(currentState)
+      .filter(([field, value]) => initialState[field] !== value)
+      .map(([field, value]) => ({ field, value }));
+  }, [changes, initialState]);
 
-  // Get changes by field
-  const getChangesByField = useCallback((field: string) => {
-    return changes.filter(c => c.field === field);
-  }, [changes]);
-
-  // Get recent changes (last N)
-  const getRecentChanges = useCallback((count: number = 10) => {
-    return changes.slice(0, count);
-  }, [changes]);
-
-  // Clear all changes
+  // Clear changes after save
   const clearChanges = useCallback(() => {
-    setChanges([]);
-    localStorage.removeItem(`${STORAGE_KEY_PREFIX}${draftId}`);
-  }, [draftId]);
+    const currentState: Record<string, string> = {};
+    changes.forEach(change => {
+      currentState[change.field] = change.newValue;
+    });
+    setInitialState(currentState);
+  }, [changes]);
 
   return {
     changes,
     trackChange,
-    getChangesByUser,
-    getChangesByField,
-    getRecentChanges,
+    getChanges,
     clearChanges,
   };
 }

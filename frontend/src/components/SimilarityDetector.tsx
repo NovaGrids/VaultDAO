@@ -1,159 +1,96 @@
-import React, { useMemo } from 'react';
-import { AlertTriangle, Copy, CheckCircle2 } from 'lucide-react';
-import { calculateSimilarityMatrix, detectDuplicates } from '../utils/similarityDetection';
+import React, { useState } from 'react';
+import { AlertTriangle, Eye, CheckCircle } from 'lucide-react';
+import { findSimilarProposals } from '../utils/similarityDetection';
 
 interface SimilarityDetectorProps {
-  proposals: any[];
-  onDuplicateClick?: (id1: string, id2: string) => void;
+  newProposal: any;
+  existingProposals: any[];
+  onDismiss: () => void;
+  onProceed: () => void;
 }
 
 const SimilarityDetector: React.FC<SimilarityDetectorProps> = ({
-  proposals,
-  onDuplicateClick,
+  newProposal,
+  existingProposals,
+  onDismiss,
+  onProceed,
 }) => {
-  const { duplicates, similarityMatrix } = useMemo(() => {
-    if (proposals.length < 2) {
-      return { duplicates: [], similarityMatrix: new Map() };
-    }
+  const [dismissed, setDismissed] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState<any | null>(null);
 
-    const matrix = calculateSimilarityMatrix(proposals);
-    const dups = detectDuplicates(proposals, 0.85);
+  const similarProposals = findSimilarProposals(newProposal, existingProposals, 0.7);
 
-    return { duplicates: dups, similarityMatrix: matrix };
-  }, [proposals]);
-
-  const getSimilarityColor = (score: number): string => {
-    if (score >= 0.85) return 'text-red-500';
-    if (score >= 0.7) return 'text-orange-500';
-    if (score >= 0.5) return 'text-yellow-500';
-    return 'text-green-500';
-  };
-
-  const getSimilarityBgColor = (score: number): string => {
-    if (score >= 0.85) return 'bg-red-500/10 border-red-500/20';
-    if (score >= 0.7) return 'bg-orange-500/10 border-orange-500/20';
-    if (score >= 0.5) return 'bg-yellow-500/10 border-yellow-500/20';
-    return 'bg-green-500/10 border-green-500/20';
-  };
-
-  const formatPercentage = (score: number): string => {
-    return `${(score * 100).toFixed(1)}%`;
-  };
-
-  if (proposals.length < 2) {
-    return (
-      <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-        <div className="flex items-center gap-2 text-gray-400 text-sm">
-          <CheckCircle2 size={16} />
-          <span>Select at least 2 proposals to detect similarities</span>
-        </div>
-      </div>
-    );
+  if (dismissed || similarProposals.length === 0) {
+    return null;
   }
 
-  if (duplicates.length === 0) {
-    return (
-      <div className="bg-green-500/10 rounded-lg p-4 border border-green-500/20">
-        <div className="flex items-center gap-2 text-green-500 text-sm">
-          <CheckCircle2 size={16} />
-          <span>No duplicate proposals detected</span>
-        </div>
-      </div>
-    );
-  }
+  const handleProceedAnyway = () => {
+    setDismissed(true);
+    onProceed();
+  };
 
   return (
-    <div className="space-y-4">
-      {/* Duplicate Alert */}
-      <div className="bg-red-500/10 rounded-lg p-4 border border-red-500/20">
-        <div className="flex items-start gap-3">
-          <AlertTriangle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <h3 className="text-red-500 font-semibold mb-1">
-              Potential Duplicates Detected
-            </h3>
-            <p className="text-red-400 text-sm">
-              {duplicates.length} pair{duplicates.length > 1 ? 's' : ''} of proposals with high
-              similarity detected. Review carefully before proceeding.
-            </p>
+    <div className="bg-yellow-900/20 border border-yellow-600/50 rounded-lg p-4 mb-4">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <h3 className="font-semibold text-yellow-200 mb-2">
+            Similar Proposals Detected
+          </h3>
+          <p className="text-sm text-yellow-100 mb-3">
+            We found {similarProposals.length} similar proposal{similarProposals.length !== 1 ? 's' : ''} in your vault.
+            Review them before proceeding.
+          </p>
+
+          <div className="space-y-2 mb-4">
+            {similarProposals.map((item, idx) => (
+              <div
+                key={idx}
+                className="bg-gray-800/50 rounded p-3 border border-gray-700 hover:border-yellow-600/50 transition-colors cursor-pointer"
+                onClick={() => setSelectedProposal(item.proposal)}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium text-white">
+                    {item.proposal.recipient?.slice(0, 12)}...
+                  </span>
+                  <span className="text-sm font-bold text-yellow-400">
+                    {(item.score * 100).toFixed(0)}% match
+                  </span>
+                </div>
+                <div className="text-xs text-gray-400 space-y-1">
+                  {item.reasons.map((reason, i) => (
+                    <div key={i}>• {reason}</div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSelectedProposal(null)}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium text-gray-300 transition-colors"
+            >
+              <Eye size={16} />
+              View Similar
+            </button>
+            <button
+              onClick={handleProceedAnyway}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-sm font-medium text-white transition-colors"
+            >
+              <CheckCircle size={16} />
+              Proceed Anyway
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Duplicate List */}
-      <div className="space-y-2">
-        {duplicates.map(([id1, id2, score]) => {
-          const proposal1 = proposals.find((p) => p.id === id1);
-          const proposal2 = proposals.find((p) => p.id === id2);
-
-          if (!proposal1 || !proposal2) return null;
-
-          return (
-            <div
-              key={`${id1}-${id2}`}
-              className={`rounded-lg p-4 border ${getSimilarityBgColor(score)}`}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Copy size={16} className={getSimilarityColor(score)} />
-                    <span className={`font-semibold ${getSimilarityColor(score)}`}>
-                      {formatPercentage(score)} Similar
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                    <div className="space-y-1">
-                      <div className="text-gray-400">Proposal #{id1}</div>
-                      <div className="text-white truncate">{proposal1.memo || 'No description'}</div>
-                      <div className="text-gray-500 text-xs">
-                        {proposal1.amount} {proposal1.tokenSymbol || 'XLM'} → {proposal1.recipient.slice(0, 8)}...
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="text-gray-400">Proposal #{id2}</div>
-                      <div className="text-white truncate">{proposal2.memo || 'No description'}</div>
-                      <div className="text-gray-500 text-xs">
-                        {proposal2.amount} {proposal2.tokenSymbol || 'XLM'} → {proposal2.recipient.slice(0, 8)}...
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {onDuplicateClick && (
-                  <button
-                    onClick={() => onDuplicateClick(id1, id2)}
-                    className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs text-white transition-colors flex-shrink-0"
-                  >
-                    Compare
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Similarity Matrix Summary */}
-      {proposals.length > 2 && (
-        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-          <h4 className="text-sm font-semibold text-white mb-3">Similarity Matrix</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-            {Array.from(similarityMatrix.entries()).map(([key, similarity]) => {
-              const [id1, id2] = key.split('-');
-              return (
-                <div
-                  key={key}
-                  className={`p-2 rounded border ${getSimilarityBgColor(similarity.overall)}`}
-                >
-                  <div className="text-gray-400 mb-1">
-                    #{id1} ↔ #{id2}
-                  </div>
-                  <div className={`font-semibold ${getSimilarityColor(similarity.overall)}`}>
-                    {formatPercentage(similarity.overall)}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      {selectedProposal && (
+        <div className="mt-4 p-3 bg-gray-900 rounded border border-gray-700">
+          <div className="text-xs text-gray-400 mb-2">Similar Proposal Details:</div>
+          <pre className="text-xs text-gray-300 overflow-auto max-h-40">
+            {JSON.stringify(selectedProposal, null, 2)}
+          </pre>
         </div>
       )}
     </div>

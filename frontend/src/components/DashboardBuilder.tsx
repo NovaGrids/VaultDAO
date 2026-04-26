@@ -131,9 +131,18 @@ const WidgetOverlay = memo(({ widget }: { widget: WidgetConfig }) => (
 ));
 WidgetOverlay.displayName = 'WidgetOverlay';
 
+const DASHBOARD_STORAGE_KEY = 'vaultdao-dashboard-widgets';
+
 const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = [] }) => {
   const [editMode, setEditMode] = useState(false);
-  const [widgets, setWidgets] = useState<WidgetConfig[]>(initialWidgets);
+  const [widgets, setWidgets] = useState<WidgetConfig[]>(() => {
+    try {
+      const stored = localStorage.getItem(DASHBOARD_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : initialWidgets;
+    } catch {
+      return initialWidgets;
+    }
+  });
   const [showLibrary, setShowLibrary] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showWidgetSystem, setShowWidgetSystem] = useState(false);
@@ -172,9 +181,12 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
       setAnnouncement(
         `${widget.title} moved to position ${newIndex + 1} of ${reordered.length}.`
       );
+      if (editMode) {
+        localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(reordered));
+      }
       return reordered;
     });
-  }, []);
+  }, [editMode]);
 
   const handleDrillDown = useCallback((widget: string, data: unknown) => {
     setDrillDownData({ widget, data });
@@ -197,10 +209,19 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
 
   const handleSaveLayout = useCallback(() => {
     setWidgets((prev) => {
+      localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(prev));
       saveDashboardLayout({ widgets: prev });
       return prev;
     });
     setEditMode(false);
+  }, []);
+
+  const handleResetLayout = useCallback(() => {
+    const template = dashboardTemplates[0];
+    if (template) {
+      setWidgets(template.layout.widgets);
+      localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(template.layout.widgets));
+    }
   }, []);
 
   const loadTemplate = useCallback((templateId: string) => {
@@ -277,6 +298,12 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
               >
                 <Grid3x3 className="h-4 w-4" />
                 <span className="text-sm">Templates</span>
+              </button>
+              <button
+                onClick={handleResetLayout}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+              >
+                <span className="text-sm">Reset to Default</span>
               </button>
             </>
           )}

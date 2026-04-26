@@ -56,32 +56,65 @@ export function calculateStringSimilarity(str1: string, str2: string): number {
 }
 
 /**
- * Calculate similarity between two proposals
+ * Calculate similarity between two proposals with weighted factors
  */
 export function calculateProposalSimilarity(
   proposal1: any,
-  proposal2: any,
-  fields: string[] = ['recipient', 'amount', 'memo', 'token']
-): SimilarityScore {
-  const fieldScores: Record<string, number> = {};
-  let totalScore = 0;
+  proposal2: any
+): SimilarityScore & { reasons: string[] } {
+  let score = 0;
+  const reasons: string[] = [];
 
-  for (const field of fields) {
-    const val1 = String(proposal1[field] || '');
-    const val2 = String(proposal2[field] || '');
-    const score = calculateStringSimilarity(val1, val2);
-    fieldScores[field] = score;
-    totalScore += score;
+  // Same recipient (50%)
+  if (proposal1.recipient === proposal2.recipient) {
+    score += 50;
+    reasons.push('Same recipient');
   }
 
-  const overall = totalScore / fields.length;
-  const isDuplicate = overall >= 0.85; // 85% similarity threshold
+  // Amount within 10% (30%)
+  const amount1 = parseFloat(proposal1.amount) || 0;
+  const amount2 = parseFloat(proposal2.amount) || 0;
+  if (amount1 > 0 && amount2 > 0) {
+    const diff = Math.abs(amount1 - amount2) / Math.max(amount1, amount2);
+    if (diff <= 0.1) {
+      score += 30;
+      reasons.push(`Amount within ${(diff * 100).toFixed(1)}%`);
+    }
+  }
+
+  // Same token (20%)
+  if (proposal1.token === proposal2.token) {
+    score += 20;
+    reasons.push('Same token');
+  }
+
+  const overall = score / 100;
+  const isDuplicate = overall > 0.7;
 
   return {
     overall,
-    fields: fieldScores,
+    fields: { recipient: proposal1.recipient === proposal2.recipient ? 1 : 0 },
     isDuplicate,
+    reasons,
   };
+}
+
+export function findSimilarProposals(
+  newProposal: any,
+  existingProposals: any[],
+  threshold: number = 0.7
+): Array<{ proposal: any; score: number; reasons: string[] }> {
+  return existingProposals
+    .map(proposal => {
+      const similarity = calculateProposalSimilarity(newProposal, proposal);
+      return {
+        proposal,
+        score: similarity.overall,
+        reasons: similarity.reasons,
+      };
+    })
+    .filter(item => item.score > threshold)
+    .sort((a, b) => b.score - a.score);
 }
 
 /**
