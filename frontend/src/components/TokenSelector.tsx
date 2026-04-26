@@ -1,361 +1,135 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { ChevronDown, Search, Plus, X, Loader2, AlertCircle, Check, Coins } from 'lucide-react';
-import type { TokenInfo, TokenBalance } from '../types';
-import { getTokenIcon, isValidStellarAddress, formatTokenBalance, fetchMultipleTokenMetadata, formatUsdPrice } from '../constants/tokens';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ChevronDown, Search, Plus, Check, Loader2, AlertCircle } from 'lucide-react';
+import { useWallet } from '../hooks/useWallet';
+import { env } from '../config/env';
+import { 
+  TokenInfo, 
+  getAllTrackedTokens, 
+  isValidStellarAddress, 
+  saveCustomTokens, 
+  formatTokenBalance,
+  getTokenIcon
+} from '../constants/tokens';
 
 interface TokenSelectorProps {
-  tokens: TokenBalance[];
-  selectedToken: TokenInfo | null;
-  onSelect: (token: TokenInfo) => void;
-  onAddCustomToken?: (address: string) => Promise<TokenInfo | null>;
+  value: string;
+  onChange: (address: string) => void;
   showBalance?: boolean;
-  disabled?: boolean;
-  placeholder?: string;
-  className?: string;
 }
 
-const TokenSelector: React.FC<TokenSelectorProps> = ({
-  tokens,
-  selectedToken,
-  onSelect,
-  onAddCustomToken,
-  showBalance = true,
-  disabled = false,
-  placeholder = 'Select token',
-  className = '',
-}) => {
+interface TokenWithBalance extends TokenInfo {
+  balance?: string;
+  loading?: boolean;
+}
+
+const TokenSelector: React.FC<TokenSelectorProps> = ({ value, onChange, showBalance = true }) => {
+  const { address } = useWallet();
   const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showAddToken, setShowAddToken] = useState(false);
-  const [customTokenAddress, setCustomTokenAddress] = useState('');
-  const [isAddingToken, setIsAddingToken] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-  const [tokenMetadata, setTokenMetadata] = useState<Map<string, { logoUrl?: string; usdPrice?: number }>>(new Map());
-  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [search, setSearch] = useState('');
+  const [customAddress, setCustomAddress] = useState('');
+  const [tokens, setTokens] = useState<TokenWithBalance[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        setShowAddToken(false);
-        setSearchQuery('');
-        setCustomTokenAddress('');
-        setAddError(null);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // Fetch token metadata on mount
-  useEffect(() => {
-    const loadMetadata = async () => {
-      if (tokens.length === 0) return;
-      
-      setIsLoadingMetadata(true);
-      try {
-        const metadata = await fetchMultipleTokenMetadata(tokens.map(tb => tb.token));
-        setTokenMetadata(metadata);
-      } catch (error) {
-        console.error('Failed to load token metadata:', error);
-      } finally {
-        setIsLoadingMetadata(false);
-      }
-    };
-
-    loadMetadata();
-  }, [tokens]);
-
-  // Focus search input when dropdown opens
-  useEffect(() => {
-    if (isOpen && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [isOpen]);
-
-  // Filter tokens based on search query
-  const filteredTokens = useMemo(() => {
-    if (!searchQuery) return tokens;
-    const query = searchQuery.toLowerCase();
-    return tokens.filter(
-      (tb) =>
-        tb.token.symbol.toLowerCase().includes(query) ||
-        tb.token.name.toLowerCase().includes(query) ||
-        tb.token.address.toLowerCase().includes(query)
-    );
-  }, [tokens, searchQuery]);
-
-  const selectedTokenBalance = useMemo(() => {
-    if (!selectedToken) return null;
-    return tokens.find((tb) => tb.token.address === selectedToken.address);
-  }, [tokens, selectedToken]);
-
-  const handleSelect = (token: TokenInfo) => {
-    onSelect(token);
-    setIsOpen(false);
-    setSearchQuery('');
-  };
-
-  const handleAddCustomToken = async () => {
-    if (!onAddCustomToken || !customTokenAddress.trim()) return;
-
-    // Validate address
-    if (!isValidStellarAddress(customTokenAddress.trim())) {
-      setAddError('Invalid Stellar token address');
-      return;
-    }
-
-    // Check if already exists
-    if (tokens.some((t) => t.token.address === customTokenAddress.trim())) {
-      setAddError('Token already in list');
-      return;
-    }
-
-    setIsAddingToken(true);
-    setAddError(null);
+  const fetchBalances = async () => {
+    if (!address) return;
+    const tracked = getAllTrackedTokens();
+    setTokens(tracked.map(t => ({ ...t, loading: true })));
 
     try {
-      const newToken = await onAddCustomToken(customTokenAddress.trim());
-      if (newToken) {
-        onSelect(newToken);
-        setShowAddToken(false);
-        setCustomTokenAddress('');
-        setIsOpen(false);
-      }
-    } catch (error) {
-      setAddError(error instanceof Error ? error.message : 'Failed to add token');
-    } finally {
-      setIsAddingToken(false);
+      const res = await fetch(`${env.horizonUrl}/accounts/${address}`);
+      const data = await res.json();
+      interface HorizonBalance { asset_type: string; balance: string; asset_code?: string; }
+      const balances: HorizonBalance[] = data.balances || [];
+      
+      setTokens(prev => prev.map(t => {
+        const b = t.isNative 
+          ? balances.find(b => b.asset_type === 'native')
+          : balances.find(b => b.asset_code === t.symbol);
+        return { ...t, balance: b?.balance || '0', loading: false };
+      }));
+    } catch (err) {
+      setTokens(prev => prev.map(t => ({ ...t, loading: false })));
     }
   };
 
-  const selectedIcon = selectedToken?.icon || (selectedToken ? getTokenIcon(selectedToken.symbol) : '🪙');
+  useEffect(() => { if (isOpen) fetchBalances(); }, [isOpen, address]);
+
+  const filtered = useMemo(() => tokens.filter(t => 
+    t.symbol.toLowerCase().includes(search.toLowerCase()) || 
+    t.address.toLowerCase().includes(search.toLowerCase())
+  ), [tokens, search]);
+
+  const selected = useMemo(() => tokens.find(t => t.address === value) || tokens[0], [tokens, value]);
+
+  const handleAdd = () => {
+    if (!isValidStellarAddress(customAddress)) return setError('Invalid address');
+    if (tokens.some(t => t.address === customAddress)) return setError('Token already exists');
+    
+    const newToken: TokenInfo = { 
+      address: customAddress, 
+      symbol: 'CUSTOM', 
+      name: 'Custom Token', 
+      decimals: 7, 
+      isNative: false 
+    };
+    
+    const currentCustom = getAllTrackedTokens().filter(t => !t.isNative);
+    saveCustomTokens([...currentCustom, newToken]);
+    setCustomAddress('');
+    setError(null);
+    fetchBalances();
+  };
 
   return (
-    <div ref={dropdownRef} className={`relative ${className}`}>
-      {/* Trigger Button */}
-      <button
-        type="button"
-        onClick={() => !disabled && setIsOpen(!isOpen)}
-        disabled={disabled}
-        className={`
-          w-full flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 sm:py-3
-          rounded-lg border transition-all
-          ${disabled
-            ? 'bg-gray-800/50 border-gray-700 cursor-not-allowed opacity-50'
-            : isOpen
-              ? 'bg-gray-800 border-purple-500 ring-1 ring-purple-500'
-              : 'bg-gray-800/50 border-gray-600 hover:border-purple-500/50'
-          }
-        `}
-      >
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          {selectedToken ? (
-            <>
-              <span className="text-lg sm:text-xl flex-shrink-0">{selectedIcon}</span>
-              <div className="min-w-0">
-                <span className="font-semibold text-white">{selectedToken.symbol}</span>
-                {showBalance && selectedTokenBalance && (
-                  <span className="text-xs sm:text-sm text-gray-400 ml-2">
-                    {formatTokenBalance(selectedTokenBalance.balance, selectedToken.decimals)}
-                  </span>
-                )}
-              </div>
-            </>
-          ) : (
-            <span className="text-gray-400">{placeholder}</span>
-          )}
+    <div className="relative w-full">
+      <button onClick={() => setIsOpen(!isOpen)} className="w-full flex items-center justify-between p-3 bg-gray-800 border border-gray-700 rounded-lg text-white hover:border-purple-500 transition-all">
+        <div className="flex items-center gap-2 overflow-hidden">
+          <span className="text-xl">{selected?.icon || getTokenIcon(selected?.symbol || '')}</span>
+          <div className="flex flex-col items-start min-w-0">
+            <span className="font-bold">{selected?.symbol || 'Select Token'}</span>
+            <span className="text-xs text-gray-400 truncate w-full">
+              {selected?.address === 'NATIVE' ? 'Native XLM' : `${selected?.address.slice(0, 6)}...${selected?.address.slice(-6)}`}
+            </span>
+          </div>
         </div>
-        <ChevronDown
-          size={18}
-          className={`text-gray-400 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`}
-        />
+        <ChevronDown className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} size={20} />
       </button>
 
-      {/* Dropdown */}
       {isOpen && (
-        <div className="absolute z-50 w-full mt-2 bg-gray-900 border border-gray-700 rounded-xl shadow-xl overflow-hidden">
-          {/* Search Input */}
-          <div className="p-2 sm:p-3 border-b border-gray-700">
+        <div className="absolute z-50 w-full mt-2 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden animate-fadeIn">
+          <div className="p-3 border-b border-gray-800">
             <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                ref={inputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by name or address..."
-                className="w-full pl-9 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:border-purple-500 focus:outline-none"
-              />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tokens..." className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white focus:outline-none focus:border-purple-500" />
             </div>
           </div>
 
-          {/* Token List or Add Token Form */}
-          {!showAddToken ? (
-            <>
-              {/* Token List */}
-              <div className="max-h-[200px] sm:max-h-[250px] overflow-y-auto">
-                {filteredTokens.length > 0 ? (
-                  filteredTokens.map((tokenBalance) => {
-                    const { token, balance, isLoading } = tokenBalance;
-                    const icon = token.icon || getTokenIcon(token.symbol);
-                    const isSelected = selectedToken?.address === token.address;
-                    const metadata = tokenMetadata.get(token.address);
-
-                    return (
-                      <button
-                        key={token.address}
-                        type="button"
-                        onClick={() => handleSelect(token)}
-                        className={`
-                          w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3
-                          transition-colors text-left
-                          ${isSelected
-                            ? 'bg-purple-600/20'
-                            : 'hover:bg-gray-800'
-                          }
-                        `}
-                      >
-                        {/* Token Logo/Icon */}
-                        {metadata?.logoUrl ? (
-                          <img 
-                            src={metadata.logoUrl} 
-                            alt={token.symbol}
-                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex-shrink-0 object-cover"
-                            onError={(e) => {
-                              // Fallback to emoji icon if image fails to load
-                              e.currentTarget.style.display = 'none';
-                              e.currentTarget.nextElementSibling?.classList.remove('hidden');
-                            }}
-                          />
-                        ) : null}
-                        <span className={`text-lg sm:text-xl flex-shrink-0 ${metadata?.logoUrl ? 'hidden' : ''}`}>
-                          {icon}
-                        </span>
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-white">{token.symbol}</span>
-                            {token.isNative && (
-                              <span className="px-1.5 py-0.5 text-[10px] rounded bg-purple-500/20 text-purple-300">
-                                Native
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-xs text-gray-400 truncate">{token.name}</p>
-                            {metadata?.usdPrice !== undefined && (
-                              <span className="text-xs text-green-400 flex items-center gap-1">
-                                <Coins size={10} />
-                                {formatUsdPrice(metadata.usdPrice)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        {showBalance && (
-                          <div className="text-right flex-shrink-0">
-                            {isLoading ? (
-                              <Loader2 size={14} className="animate-spin text-gray-400" />
-                            ) : (
-                              <span className="text-sm text-gray-300">
-                                {formatTokenBalance(balance, token.decimals)}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {isSelected && (
-                          <Check size={16} className="text-purple-400 flex-shrink-0" />
-                        )}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <div className="px-4 py-6 text-center text-gray-400">
-                    <p className="text-sm">No tokens found</p>
-                    <p className="text-xs mt-1">Try a different search or add a custom token</p>
+          <div className="max-h-60 overflow-y-auto">
+            {filtered.map(t => (
+              <button key={t.address} onClick={() => { onChange(t.address); setIsOpen(false); }} className={`w-full flex items-center justify-between p-3 hover:bg-gray-800 transition-colors ${value === t.address ? 'bg-purple-600/20' : ''}`}>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">{t.icon || getTokenIcon(t.symbol)}</span>
+                  <div className="text-left">
+                    <div className="font-medium text-white">{t.symbol}</div>
+                    <div className="text-xs text-gray-500">{t.name}</div>
+                  </div>
+                </div>
+                {showBalance && (
+                  <div className="text-right">
+                    {t.loading ? <Loader2 className="animate-spin text-gray-600" size={14} /> : <div className="text-sm font-semibold text-gray-300">{formatTokenBalance(t.balance || '0')}</div>}
                   </div>
                 )}
-              </div>
+              </button>
+            ))}
+          </div>
 
-              {/* Add Custom Token Button */}
-              {onAddCustomToken && (
-                <div className="p-2 border-t border-gray-700">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddToken(true)}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-purple-300 transition-colors"
-                  >
-                    <Plus size={16} />
-                    <span className="text-sm font-medium">Add Custom Token</span>
-                  </button>
-                </div>
-              )}
-            </>
-          ) : (
-            /* Add Custom Token Form */
-            <div className="p-3 sm:p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-white">Add Custom Token</h4>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddToken(false);
-                    setCustomTokenAddress('');
-                    setAddError(null);
-                  }}
-                  className="p-1 hover:bg-gray-700 rounded text-gray-400"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Token Contract Address</label>
-                  <input
-                    type="text"
-                    value={customTokenAddress}
-                    onChange={(e) => {
-                      setCustomTokenAddress(e.target.value);
-                      setAddError(null);
-                    }}
-                    placeholder="C... (56 characters)"
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:border-purple-500 focus:outline-none"
-                  />
-                </div>
-
-                {addError && (
-                  <div className="flex items-center gap-2 text-red-400 text-xs">
-                    <AlertCircle size={14} />
-                    <span>{addError}</span>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleAddCustomToken}
-                  disabled={isAddingToken || !customTokenAddress.trim()}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isAddingToken ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      <span>Adding...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Plus size={16} />
-                      <span>Add Token</span>
-                    </>
-                  )}
-                </button>
-              </div>
+          <div className="p-3 border-t border-gray-800 bg-gray-900/50">
+            <div className="flex gap-2">
+              <input value={customAddress} onChange={e => { setCustomAddress(e.target.value); setError(null); }} placeholder="Paste SAC address..." className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500" />
+              <button onClick={handleAdd} className="p-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white transition-colors"><Plus size={18} /></button>
             </div>
-          )}
+            {error && <div className="mt-2 flex items-center gap-1 text-red-400 text-[10px]"><AlertCircle size={10} /> {error}</div>}
+          </div>
         </div>
       )}
     </div>
