@@ -108,7 +108,7 @@ const ProposalComparison: React.FC<ProposalComparisonProps> = ({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-4 space-y-4">
+        <div className="flex-1 overflow-auto p-4 space-y-4 min-w-0">
           {/* Info Banner */}
           {selectedIds.size < 2 && (
             <div className="bg-blue-500/10 rounded-lg p-4 border border-blue-500/20">
@@ -195,7 +195,7 @@ const ProposalComparison: React.FC<ProposalComparisonProps> = ({
                           {proposal.status}
                         </span>
                       </div>
-                      <p className="text-gray-300 text-sm mb-2 line-clamp-2">
+                      <p className="text-gray-300 text-sm mb-2 line-clamp-2 break-words">
                         {proposal.memo || 'No description'}
                       </p>
                       <div className="flex flex-wrap gap-3 text-xs text-gray-400">

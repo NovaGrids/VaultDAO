@@ -11,6 +11,39 @@ interface TokenBalanceCardProps {
   compact?: boolean;
 }
 
+export const TokenBalanceCardSkeleton: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
+  if (compact) {
+    return (
+      <div className="flex items-center gap-3 p-3 rounded-lg bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 animate-pulse">
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700" />
+        <div className="flex-1 space-y-2">
+          <div className="h-3 w-16 rounded bg-gray-200 dark:bg-gray-700" />
+          <div className="h-3 w-24 rounded bg-gray-200 dark:bg-gray-700" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50 p-4 sm:p-5 animate-pulse">
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gray-200 dark:bg-gray-700" />
+          <div className="space-y-2">
+            <div className="h-4 w-14 rounded bg-gray-200 dark:bg-gray-700" />
+            <div className="h-3 w-20 rounded bg-gray-200 dark:bg-gray-700" />
+          </div>
+        </div>
+        <div className="w-8 h-8 rounded-lg bg-gray-200 dark:bg-gray-700" />
+      </div>
+      <div className="mt-4 space-y-2">
+        <div className="h-7 w-28 rounded bg-gray-200 dark:bg-gray-700" />
+        <div className="h-4 w-16 rounded bg-gray-200 dark:bg-gray-700" />
+      </div>
+    </div>
+  );
+};
+
 const TokenBalanceCard: React.FC<TokenBalanceCardProps> = ({
   tokenBalance,
   onClick,
@@ -85,7 +118,7 @@ const TokenBalanceCard: React.FC<TokenBalanceCardProps> = ({
     <div
       onClick={onClick}
       className={`
-        relative overflow-hidden rounded-xl border p-4 sm:p-5 transition-all cursor-pointer
+        relative overflow-hidden rounded-xl border p-4 sm:p-5 transition-all cursor-pointer animate-fadeIn
         ${isSelected
           ? 'bg-purple-600/10 border-purple-500 shadow-lg shadow-purple-500/10'
           : 'bg-white dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 hover:border-purple-500/50 hover:shadow-lg'

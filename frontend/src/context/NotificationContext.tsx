@@ -81,7 +81,8 @@ function notificationReducer(
 ): NotificationState {
   switch (action.type) {
     case 'ADD_NOTIFICATION': {
-      const newNotifications = [action.payload, ...state.notifications];
+      const newNotifications = [action.payload, ...state.notifications]
+        .slice(0, MAX_STORED_NOTIFICATIONS);
       return { ...state, notifications: newNotifications, page: 1 };
     }
     case 'MARK_AS_READ': {
@@ -119,7 +120,10 @@ function notificationReducer(
       return { ...state, notifications: [], page: 1 };
     }
     case 'LOAD_FROM_STORAGE': {
-      return { ...state, notifications: action.payload };
+      return {
+        ...state,
+        notifications: action.payload.slice(0, MAX_STORED_NOTIFICATIONS),
+      };
     }
     default:
       return state;

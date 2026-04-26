@@ -26,10 +26,17 @@ const CACHE_DURATION = 30000; // 30 seconds
 const simulationCache: SimulationCache = {};
 
 /**
- * Generate cache key from transaction parameters
+ * Generate cache key from transaction parameters.
+ * Primary usage is functionName + args as required by simulation flow.
  */
-export function generateCacheKey(params: Record<string, unknown>): string {
-    return JSON.stringify(params);
+export function generateCacheKey(
+    functionNameOrParams: string | Record<string, unknown>,
+    args: string[] = []
+): string {
+    if (typeof functionNameOrParams === 'string') {
+        return JSON.stringify({ functionName: functionNameOrParams, args });
+    }
+    return JSON.stringify(functionNameOrParams);
 }
 
 /**

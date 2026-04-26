@@ -22,8 +22,6 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { useWallet } from "../../hooks/useWallet";
-import type { WalletAdapter } from "../../adapters";
-import { WalletSwitcher } from "../WalletSwitcher";
 import CopyButton from '../CopyButton';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { LayoutErrorBoundary } from '../ErrorHandler';
@@ -36,10 +34,15 @@ import { useOnboarding } from "../../context/OnboardingProvider";
 import { ONBOARDING_CONFIG } from "../../constants/onboarding";
 import VoiceCommands from "../VoiceCommands";
 import VoiceNavigation from "../VoiceNavigation";
+import { useWalletProviderInfo } from "../WalletProviders";
+import { useKeyboardShortcut } from "../../hooks/useKeyboardShortcut";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
+import { KeyboardShortcuts } from "../KeyboardShortcuts";
 
 const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
-  const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
+  const { isConnected, address, network, connect, disconnect, walletType } = useWallet();
+  const { providers } = useWalletProviderInfo();
   const { unreadCount } = useNotifications();
   const onboarding = useOnboarding();
   const location = useLocation();
@@ -49,6 +52,15 @@ const DashboardLayout: React.FC = () => {
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
+  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+
+  // Keyboard shortcuts: Alt+P → Proposals, Alt+S → Settings, Alt+N → Notifications
+  useKeyboardShortcut({ key: 'p', altKey: true }, () => navigate('/dashboard/proposals'));
+  useKeyboardShortcut({ key: 's', altKey: true }, () => navigate('/dashboard/settings'));
+  useKeyboardShortcut({ key: 'n', altKey: true }, () => setIsNotificationCenterOpen(true));
+
+  // Focus trap for wallet modal
+  const walletModalRef = useFocusTrap<HTMLDivElement>(isWalletModalOpen);
 
   // Auto-show onboarding prompt for new users
   useEffect(() => {
@@ -66,14 +78,14 @@ const DashboardLayout: React.FC = () => {
   };
 
   const navItems = [
-    { label: 'Overview', path: '/dashboard', icon: LayoutDashboard, id: 'overview-nav' },
-    { label: 'Proposals', path: '/dashboard/proposals', icon: FileText, id: 'proposals-nav' },
-    { label: 'Recurring Payments', path: '/dashboard/recurring-payments', icon: RefreshCw, id: 'recurring-nav' },
-    { label: 'Activity', path: '/dashboard/activity', icon: ActivityIcon, id: 'activity-nav' },
-    { label: 'Templates', path: '/dashboard/templates', icon: Files, id: 'templates-nav' },
-    { label: 'Analytics', path: '/dashboard/analytics', icon: BarChart3, id: 'analytics-nav' },
-    { label: 'Error analytics', path: '/dashboard/errors', icon: AlertCircle, id: 'errors-nav' },
-    { label: 'Settings', path: '/dashboard/settings', icon: Settings, id: 'settings-nav' },
+    { label: t('nav.overview'), path: '/dashboard', icon: LayoutDashboard, id: 'overview-nav' },
+    { label: t('nav.proposals'), path: '/dashboard/proposals', icon: FileText, id: 'proposals-nav' },
+    { label: t('nav.recurringPayments'), path: '/dashboard/recurring-payments', icon: RefreshCw, id: 'recurring-nav' },
+    { label: t('nav.activity'), path: '/dashboard/activity', icon: ActivityIcon, id: 'activity-nav' },
+    { label: t('nav.templates'), path: '/dashboard/templates', icon: Files, id: 'templates-nav' },
+    { label: t('nav.analytics'), path: '/dashboard/analytics', icon: BarChart3, id: 'analytics-nav' },
+    { label: t('nav.errorAnalytics'), path: '/dashboard/errors', icon: AlertCircle, id: 'errors-nav' },
+    { label: t('nav.settings'), path: '/dashboard/settings', icon: Settings, id: 'settings-nav' },
   ];
 
   return (
@@ -87,7 +99,7 @@ const DashboardLayout: React.FC = () => {
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800/50 backdrop-blur-md border-r border-slate-200 dark:border-gray-700/50 transform transition-all duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}>
+      <aside id="navigation" className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800/50 backdrop-blur-md border-r border-slate-200 dark:border-gray-700/50 transform transition-all duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}>
         <div className="p-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-pink-600 dark:from-purple-400 dark:to-pink-600">
             VaultDAO
@@ -166,7 +178,7 @@ const DashboardLayout: React.FC = () => {
                     {address.slice(0, 2)}
                   </div>
                   <div className="hidden sm:block text-left">
-                    <p className="text-xs text-slate-500 dark:text-gray-400 leading-none mb-1">Stellar Account</p>
+                    <p className="text-xs text-slate-500 dark:text-gray-400 leading-none mb-1">{t('wallet.stellarAccount')}</p>
                     <p className="text-sm font-bold">{shortenAddress(address, 6)}</p>
                   </div>
                 </button>
@@ -187,14 +199,14 @@ const DashboardLayout: React.FC = () => {
                         {network !== "TESTNET" && (
                           <div className="m-2 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center text-yellow-600 dark:text-yellow-500">
                             <ShieldAlert size={14} className="mr-2" />
-                            <span className="text-[10px] font-bold">WRONG NETWORK</span>
+                            <span className="text-[10px] font-bold">{t('settings.wrongNetwork')}</span>
                           </div>
                         )}
                         <button className="w-full flex items-center px-4 py-2 text-sm text-slate-600 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700 rounded-lg" onClick={() => window.open(`https://stellar.expert/explorer/testnet/account/${address}`, "_blank")}>
-                          <ExternalLink size={16} className="mr-3" /> View on Explorer
+                          <ExternalLink size={16} className="mr-3" /> {t('settings.viewOnExplorer')}
                         </button>
                         <button onClick={() => { disconnect(); setIsUserMenuOpen(false); }} className="w-full flex items-center px-4 py-2 text-sm text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-400/10 rounded-lg">
-                          <LogOut size={16} className="mr-3" /> Disconnect
+                          <LogOut size={16} className="mr-3" /> {t('wallet.disconnect')}
                         </button>
                       </div>
                     </div>
@@ -202,23 +214,16 @@ const DashboardLayout: React.FC = () => {
                 )}
               </div>
             ) : (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <WalletSwitcher
-                  availableWallets={availableWallets}
-                  selectedWalletId={selectedWalletId}
-                  onSelect={(adapter: WalletAdapter) => switchWallet(adapter)}
-                />
-                <button
-                  onClick={connect}
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-5 py-2.5 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95 flex items-center min-h-[44px] shadow-lg shadow-purple-500/20"
-                >
-                  <Wallet size={18} className="mr-2" /> Connect
-                </button>
-              </div>
+              <button
+                onClick={() => setIsWalletModalOpen(true)}
+                className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-5 py-2.5 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95 flex items-center min-h-[44px] shadow-lg shadow-purple-500/20"
+              >
+                <Wallet size={18} className="mr-2" /> {t('wallet.connect')}
+              </button>
             )}
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50 dark:bg-gray-900 transition-colors">
+        <main id="main-content" className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50 dark:bg-gray-900 transition-colors">
           <LayoutErrorBoundary>
             <Outlet />
           </LayoutErrorBoundary>
@@ -242,12 +247,68 @@ const DashboardLayout: React.FC = () => {
       <VoiceNavigation />
       <VoiceCommands />
 
+      {/* Keyboard Shortcuts Modal — ? key toggles it */}
+      <KeyboardShortcuts
+        shortcuts={[
+          { key: 'Alt+P', description: 'Go to Proposals', category: 'navigation', action: () => navigate('/dashboard/proposals') },
+          { key: 'Alt+S', description: 'Go to Settings', category: 'navigation', action: () => navigate('/dashboard/settings') },
+          { key: 'Alt+N', description: 'Open Notifications', category: 'navigation', action: () => setIsNotificationCenterOpen(true) },
+          { key: '?', description: 'Show keyboard shortcuts', category: 'accessibility', action: () => {} },
+        ]}
+      />
+
+      {isWalletModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div
+            ref={walletModalRef}
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-gray-700 dark:bg-gray-800"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="wallet-modal-title"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 id="wallet-modal-title" className="text-lg font-semibold">{t('wallet.selectWallet')}</h2>
+              <button
+                onClick={() => setIsWalletModalOpen(false)}
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 dark:text-gray-400 dark:hover:bg-gray-700"
+                aria-label="Close wallet selection"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {providers.map((provider) => (
+                <button
+                  key={provider.id}
+                  onClick={async () => {
+                    await connect(provider.id);
+                    setIsWalletModalOpen(false);
+                  }}
+                  className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                    provider.available
+                      ? 'border-slate-300 hover:bg-slate-100 dark:border-gray-600 dark:hover:bg-gray-700'
+                      : 'border-slate-200 text-slate-500 dark:border-gray-700 dark:text-gray-400'
+                  } ${walletType === provider.id ? 'ring-2 ring-purple-500' : ''}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{provider.name}</span>
+                    <span className={`text-xs ${provider.available ? 'text-green-500' : 'text-yellow-500'}`}>
+                      {provider.available ? t('common.detected') : t('common.installRequired')}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Onboarding Prompt for New Users */}
       {showOnboardingPrompt && !onboarding.hasCompletedOnboarding && (
         <div className="fixed bottom-6 right-6 z-40 max-w-sm">
           <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg shadow-lg p-4 text-white">
-            <h3 className="font-semibold mb-2">Welcome to VaultDAO!</h3>
-            <p className="text-sm mb-4">Take a quick tour to learn about all the features.</p>
+            <h3 className="font-semibold mb-2">{t('navigation.welcomeBack')}</h3>
+            <p className="text-sm mb-4">{t('onboarding.tourDesc', 'Take a quick tour to learn about all the features.')}</p>
             <div className="flex gap-2">
               <button
                 onClick={() => {
@@ -256,13 +317,13 @@ const DashboardLayout: React.FC = () => {
                 }}
                 className="flex-1 bg-white text-purple-600 font-semibold py-2 rounded hover:bg-gray-100 transition-colors"
               >
-                Start Tour
+                {t('settings.restartTour')}
               </button>
               <button
                 onClick={() => setShowOnboardingPrompt(false)}
                 className="flex-1 bg-white/20 hover:bg-white/30 font-semibold py-2 rounded transition-colors"
               >
-                Later
+                {t('common.cancel')}
               </button>
             </div>
           </div>

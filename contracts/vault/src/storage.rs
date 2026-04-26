@@ -23,11 +23,12 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     AuditEntry, BatchExecutionResult, BatchTransaction, Comment, Config, DelegatedPermission,
-    DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure, FundingRound,
-    FundingRoundConfig, GasConfig, InsuranceConfig, ListMode, NotificationPreferences,
-    PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
-    RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, SwapProposal, SwapResult,
-    TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig, VotingStrategy,
+    Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot,
+    FeeStructure, FundingRound, FundingRoundConfig, GasConfig, InsuranceConfig, ListMode,
+    NotificationPreferences, PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate,
+    RecoveryProposal, Reputation, RetryState, Role, RoleAssignment, StakeRecord, StakingConfig,
+    Subscription, SwapProposal, SwapResult, TimeWeightedConfig, TokenLock, VaultMetrics,
+    VelocityConfig, VotingStrategy,
 };
 
 /// Core storage key definitions (kept minimal to avoid size limits)
@@ -98,6 +99,14 @@ pub enum DataKey {
     ExecutionSnapshot(u64),
     /// Execution fee estimate
     ExecutionFeeEstimate(u64),
+    /// Voting power delegation (delegator) -> Delegation
+    Delegation(Address),
+    /// Delegation history for an address -> Vec<DelegationHistory>
+    DelegationHistory(Address),
+    /// Next delegation history ID counter -> u64
+    NextDelegationId,
+    /// Reverse delegation index: delegate -> Vec<delegators>
+    DelegatorsFor(Address),
 }
 
 /// Feature-specific storage keys (split to avoid enum size limits)
@@ -199,8 +208,12 @@ pub enum FeatureKey {
     Permissions(Address),
     /// Delegated permissions (delegatee, delegator, permission as u32) -> DelegatedPermission
     DelegatedPermission(Address, Address, u32),
-    // Stream payment storage (nested with StreamKey)
-    // Stream(StreamKey), // Feature incomplete
+    /// Subscription by ID -> Subscription
+    Subscription(u64),
+    /// Next subscription ID counter -> u64
+    NextSubscriptionId,
+    /// Subscription IDs indexed by subscriber address -> Vec<u64>
+    SubscriberIndex(Address),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -587,42 +600,39 @@ pub fn get_recurring_payments_paginated(
 // Streaming Payments
 // ============================================================================
 
-// pub fn get_next_stream_id(env: &Env) -> u64 {
-//     env.storage()
-//         .instance()
-//         .get::<DataKey, u64>(&DataKey::Stream(StreamKey::Counter))
-//         .unwrap_or(1)
-// }
+pub fn get_next_stream_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextStreamId)
+        .unwrap_or(1u64)
+}
 
-// pub fn increment_stream_id(env: &Env) -> u64 {
-//     let id = get_next_stream_id(env);
-//     env.storage()
-//         .instance()
-//         .set(&DataKey::Stream(StreamKey::Counter), &(id + 1));
-//     extend_instance_ttl(env);
-//     id
-// }
+pub fn increment_stream_id(env: &Env) -> u64 {
+    let id = get_next_stream_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextStreamId, &(id + 1));
+    extend_instance_ttl(env);
+    id
+}
 
-// pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
-//     let key = DataKey::Stream(StreamKey::Payment(stream.id));
-//     env.storage().persistent().set(&key, stream);
-//     env.storage()
-//         .persistent()
-//         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-// }
+pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
+    let key = DataKey::Stream(stream.id);
+    env.storage().persistent().set(&key, stream);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
 
-// #[allow(dead_code)]
-// pub fn get_streaming_payment(
-//     env: &Env,
-//     id: u64,
-// ) -> Result<crate::types::StreamingPayment, VaultError> {
-//     let key = DataKey::Stream(StreamKey::Payment(id));
-//     env.storage()
-//         .persistent()
-//         .get(&key)
-//         .flatten()
-//         .ok_or(VaultError::ProposalNotFound)
-// }
+pub fn get_streaming_payment(
+    env: &Env,
+    id: u64,
+) -> Result<crate::types::StreamingPayment, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Stream(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
 
 // ============================================================================
 // TTL Management
@@ -896,14 +906,12 @@ pub fn set_execution_snapshot(env: &Env, proposal_id: u64, snapshot: &ExecutionS
         .extend_ttl(&key, DAY_IN_LEDGERS, DAY_IN_LEDGERS);
 }
 
-#[allow(dead_code)]
 pub fn get_execution_snapshot(env: &Env, proposal_id: u64) -> Option<ExecutionSnapshot> {
     env.storage()
         .temporary()
         .get(&DataKey::ExecutionSnapshot(proposal_id))
 }
 
-#[allow(dead_code)]
 pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
     env.storage()
         .temporary()
@@ -982,13 +990,10 @@ pub fn apply_reputation_decay(env: &Env, rep: &mut Reputation) {
     let current_ledger = env.ledger().sequence() as u64;
     // ~30 days in ledgers
     const DECAY_INTERVAL: u64 = 17_280 * 30;
-    if rep.last_decay_ledger == 0 {
-        rep.last_decay_ledger = current_ledger;
-        return;
-    }
     let elapsed = current_ledger.saturating_sub(rep.last_decay_ledger);
     let periods = elapsed / DECAY_INTERVAL;
     if periods == 0 {
+        rep.last_decay_ledger = current_ledger;
         return;
     }
     // Move score toward neutral (500) by 5% per period
@@ -1446,44 +1451,6 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 }
 
 // ============================================================================
-// Streaming Payments
-// ============================================================================
-
-pub fn get_next_stream_id(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get(&DataKey::NextStreamId)
-        .unwrap_or(1)
-}
-
-pub fn increment_stream_id(env: &Env) -> u64 {
-    let id = get_next_stream_id(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::NextStreamId, &(id + 1));
-    id
-}
-
-pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
-    let key = DataKey::Stream(stream.id);
-    env.storage().persistent().set(&key, stream);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-}
-
-#[allow(dead_code)]
-pub fn get_streaming_payment(
-    env: &Env,
-    id: u64,
-) -> Result<crate::types::StreamingPayment, VaultError> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Stream(id))
-        .ok_or(VaultError::ProposalNotFound)
-}
-
-// ============================================================================
 // Escrow
 // ============================================================================
 
@@ -1593,10 +1560,11 @@ pub fn set_batch_result(env: &Env, result: &BatchExecutionResult) {
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
-pub fn get_batch_result(env: &Env, batch_id: u64) -> Option<BatchExecutionResult> {
+pub fn get_batch_result(env: &Env, batch_id: u64) -> Result<BatchExecutionResult, VaultError> {
     env.storage()
         .persistent()
         .get(&FeatureKey::BatchResult(batch_id))
+        .ok_or(VaultError::ProposalNotFound)
 }
 
 pub fn set_rollback_state(env: &Env, batch_id: u64, state: &Vec<(Address, i128)>) {
@@ -1827,13 +1795,91 @@ pub fn add_user_volume(env: &Env, user: &Address, token: &Address, amount: i128)
 // Delegation (compatibility helpers)
 // ============================================================================
 
-#[allow(dead_code)]
-pub fn get_delegation(_env: &Env, _delegator: &Address) -> Option<crate::types::Delegation> {
-    None
+pub fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Delegation(delegator.clone()))
 }
 
-#[allow(dead_code)]
-pub fn set_delegation(_env: &Env, _delegation: &crate::types::Delegation) {}
+pub fn set_delegation(env: &Env, delegation: &Delegation) {
+    // If there's an existing delegation, remove from old reverse index
+    if let Some(old) = get_delegation(env, &delegation.delegator) {
+        remove_from_delegators_index(env, &old.delegate, &delegation.delegator);
+    }
+
+    let key = DataKey::Delegation(delegation.delegator.clone());
+    env.storage().persistent().set(&key, delegation);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+
+    // Update reverse index
+    add_to_delegators_index(env, &delegation.delegate, &delegation.delegator);
+}
+
+pub fn remove_delegation(env: &Env, delegator: &Address) {
+    if let Some(old) = get_delegation(env, delegator) {
+        remove_from_delegators_index(env, &old.delegate, delegator);
+    }
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Delegation(delegator.clone()));
+}
+
+fn add_to_delegators_index(env: &Env, delegate: &Address, delegator: &Address) {
+    let mut delegators = get_delegators_for(env, delegate);
+    if !delegators.contains(delegator) {
+        delegators.push_back(delegator.clone());
+        let key = DataKey::DelegatorsFor(delegate.clone());
+        env.storage().persistent().set(&key, &delegators);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    }
+}
+
+fn remove_from_delegators_index(env: &Env, delegate: &Address, delegator: &Address) {
+    let delegators = get_delegators_for(env, delegate);
+    let mut new_delegators = Vec::new(env);
+    for d in delegators.iter() {
+        if d != *delegator {
+            new_delegators.push_back(d);
+        }
+    }
+    let key = DataKey::DelegatorsFor(delegate.clone());
+    env.storage().persistent().set(&key, &new_delegators);
+}
+
+pub fn get_delegators_for(env: &Env, delegate: &Address) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DelegatorsFor(delegate.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn get_delegation_history(env: &Env, user: &Address) -> Vec<DelegationHistory> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DelegationHistory(user.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_delegation_history(env: &Env, history: &DelegationHistory) {
+    let mut entries = get_delegation_history(env, &history.delegator);
+    entries.push_back(history.clone());
+    let key = DataKey::DelegationHistory(history.delegator.clone());
+    env.storage().persistent().set(&key, &entries);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn increment_delegation_id(env: &Env) -> u64 {
+    let key = DataKey::NextDelegationId;
+    let id: u64 = env.storage().instance().get(&key).unwrap_or(1);
+    env.storage().instance().set(&key, &(id + 1));
+    id
+}
 
 // ============================================================================
 // Cross-Vault
@@ -1868,4 +1914,110 @@ pub fn get_cross_vault_proposal(
     env.storage()
         .persistent()
         .get(&FeatureKey::CrossVaultProposal(proposal_id))
+}
+
+// ============================================================================
+// Dispute Resolution
+// ============================================================================
+
+fn get_next_dispute_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NextDisputeId)
+        .unwrap_or(1)
+}
+
+pub fn increment_dispute_id(env: &Env) -> u64 {
+    let id = get_next_dispute_id(env);
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NextDisputeId, &(id + 1));
+    id
+}
+
+pub fn set_dispute(env: &Env, dispute: &crate::types::Dispute) {
+    let key = FeatureKey::Dispute(dispute.id);
+    env.storage().persistent().set(&key, dispute);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_dispute(env: &Env, id: u64) -> Result<crate::types::Dispute, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::Dispute(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn get_proposal_disputes(env: &Env, proposal_id: u64) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposalDisputes(proposal_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
+    let key = FeatureKey::ProposalDisputes(proposal_id);
+    let mut ids = get_proposal_disputes(env, proposal_id);
+    ids.push_back(dispute_id);
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Subscriptions
+// ============================================================================
+
+fn get_next_subscription_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NextSubscriptionId)
+        .unwrap_or(1)
+}
+
+pub fn increment_subscription_id(env: &Env) -> u64 {
+    let id = get_next_subscription_id(env);
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NextSubscriptionId, &(id + 1));
+    id
+}
+
+pub fn set_subscription(env: &Env, sub: &Subscription) {
+    let key = FeatureKey::Subscription(sub.id);
+    env.storage().persistent().set(&key, sub);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::Subscription(id))
+        .ok_or(VaultError::SubscriptionNotFound)
+}
+
+// ============================================================================
+// Subscriber Index
+// ============================================================================
+
+pub fn get_subscriber_index(env: &Env, subscriber: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::SubscriberIndex(subscriber.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_to_subscriber_index(env: &Env, subscriber: &Address, subscription_id: u64) {
+    let mut ids = get_subscriber_index(env, subscriber);
+    ids.push_back(subscription_id);
+    let key = FeatureKey::SubscriberIndex(subscriber.clone());
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }

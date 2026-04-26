@@ -3,14 +3,21 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import { detectAvailableWallets } from '../adapters';
 import type { WalletAdapter } from '../adapters';
+import type { WalletType } from '../context/WalletContextProps';
+import { WalletProvider } from '../context/WalletContext';
 
 export interface WalletProviderInfo {
-  id: string;
+  id: WalletType;
   name: string;
   url: string;
   available: boolean;
+}
+
+export function WalletProviders({ children }: { children: ReactNode }) {
+  return <WalletProvider>{children}</WalletProvider>;
 }
 
 export function useWalletProviders() {

@@ -2,3 +2,5 @@
 
 npm run backend:typecheck
 npm run backend:test
+npm run typecheck
+npm run build:frontend

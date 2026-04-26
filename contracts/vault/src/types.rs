@@ -57,6 +57,8 @@ pub struct InitConfig {
     /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
     /// Set to 0 to disable quorum enforcement.
     pub quorum: u32,
+    /// Quorum as a percentage of total signers (1-100). Ignored when quorum > 0.
+    pub quorum_percentage: u32,
     /// Maximum amount per proposal (in stroops)
     pub spending_limit: i128,
     /// Maximum aggregate daily spending (in stroops)
@@ -1371,6 +1373,8 @@ pub struct FundingMilestone {
     pub verified_at: u64,
     /// Address that verified the milestone
     pub verified_by: Option<Address>,
+    /// Rejection reason, if rejected
+    pub rejection_reason: Option<String>,
 }
 
 /// Status of a funding round
@@ -1379,9 +1383,11 @@ pub struct FundingMilestone {
 pub enum FundingRoundStatus {
     /// Round is pending approval
     Pending,
-    /// Round has been approved and is active
+    /// Round has been approved by admin (ready to become active)
+    Approved,
+    /// Round is active — milestones can be submitted and verified
     Active,
-    /// Round has been completed
+    /// Round has been completed (all milestones verified and paid)
     Completed,
     /// Round was cancelled
     Cancelled,

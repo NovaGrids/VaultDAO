@@ -14,6 +14,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         signers,
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,

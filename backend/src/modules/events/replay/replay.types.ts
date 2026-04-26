@@ -7,6 +7,14 @@
 import type { ContractEvent } from "../events.types.js";
 import type { NormalizedEvent } from "../types.js";
 
+export type ReplayEventConsumer = (
+  event: NormalizedEvent,
+) => void | Promise<void>;
+
+export type ReplayBatchConsumer = (
+  events: NormalizedEvent[],
+) => void | Promise<void>;
+
 /**
  * Configuration options for the replay command.
  */

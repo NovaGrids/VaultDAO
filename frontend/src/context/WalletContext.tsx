@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useToast } from './ToastContext';
 import { WalletContext } from './WalletContextProps';
+import type { WalletType } from './WalletContextProps';
 import { detectAvailableWallets, getAdapterById } from '../adapters';
 import type { WalletAdapter } from '../adapters';
 
@@ -10,7 +11,7 @@ const WALLET_CONNECTED_KEY = 'vaultdao_wallet_connected';
 
 export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [availableWallets, setAvailableWallets] = useState<WalletAdapter[]>([]);
-  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
+  const [selectedWalletId, setSelectedWalletId] = useState<WalletType | null>(null);
   const [connected, setConnected] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [network, setNetwork] = useState<string | null>(null);
@@ -81,7 +82,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
       const preferred = localStorage.getItem(PREFERRED_WALLET_KEY);
       const id = preferred && getAdapterById(preferred) ? preferred : wallets[0]?.id ?? null;
-      if (id) setSelectedWalletId(id);
+      if (id) setSelectedWalletId(id as WalletType);
 
       const wasConnected = localStorage.getItem(WALLET_CONNECTED_KEY);
       if (!wasConnected || !id) return;
@@ -107,22 +108,59 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, []);
 
   // Poll wallet state while connected to catch external disconnects
+  // Pause polling when tab is hidden to save resources
   useEffect(() => {
     if (!selectedWalletId || !connected) return;
     const adapter = getAdapterById(selectedWalletId);
-    if (adapter && adapter.isAvailable) {
-      const interval = setInterval(async () => {
+    if (!adapter || !adapter.isAvailable) return;
+
+    let interval: NodeJS.Timeout | null = null;
+
+    const startPolling = () => {
+      if (interval) return; // Already polling
+      interval = setInterval(async () => {
         if (await adapter.isAvailable()) {
           await updateWalletState(adapter);
         }
       }, 3000);
-      return () => clearInterval(interval);
+    };
+
+    const stopPolling = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'hidden') {
+        stopPolling();
+      } else {
+        // Tab became visible - check state once immediately, then resume polling
+        if (await adapter.isAvailable()) {
+          await updateWalletState(adapter);
+        }
+        startPolling();
+      }
+    };
+
+    // Start polling if tab is visible
+    if (document.visibilityState === 'visible') {
+      startPolling();
     }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWalletId, connected, updateWalletState]);
 
-  const connect = useCallback(async () => {
-    const adapter = selectedWalletId ? getAdapterById(selectedWalletId) : availableWallets[0];
+  const connect = useCallback(async (walletType?: WalletType) => {
+    const targetWalletId = walletType ?? selectedWalletId;
+    const adapter = targetWalletId ? getAdapterById(targetWalletId) : availableWallets[0];
     if (!adapter) {
       showToast('No wallet selected. Please install Freighter, Albedo, or Rabet.', 'error');
       if (availableWallets.length === 0) {
@@ -130,6 +168,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
       return;
     }
+    setSelectedWalletId(adapter.id as WalletType);
 
     const isAvailable = await adapter.isAvailable();
     if (!isAvailable) {
@@ -174,7 +213,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, [showToast]);
 
   const switchWallet = useCallback((adapter: WalletAdapter) => {
-    setSelectedWalletId(adapter.id);
+    setSelectedWalletId(adapter.id as WalletType);
     savePreferredWallet(adapter.id);
     if (connected) {
       disconnect();
@@ -197,11 +236,12 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         isInstalled: availableWallets.length > 0,
         address,
         network,
+        walletType: (activeAdapterRef.current?.id ?? selectedWalletId) as WalletType | null,
         connect,
         disconnect,
         availableWallets,
         selectedWalletId,
-        setSelectedWallet: (id: string) => setSelectedWalletId(id),
+        setSelectedWallet: (id: WalletType) => setSelectedWalletId(id),
         switchWallet,
         signTransaction,
         detectWallets,

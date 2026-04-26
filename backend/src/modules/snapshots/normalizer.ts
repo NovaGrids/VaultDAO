@@ -143,9 +143,54 @@ export class SnapshotNormalizer {
   }
 
   /**
+   * Normalize a signer_added event.
+   * Extracts address and role from the event value.
+   * If role is absent, defaults to Role.MEMBER (0).
+   */
+  public static normalizeSignerAdded(event: ContractEvent): NormalizedEvent<SignerAddedData> {
+    const value = event.value as any;
+
+    let address: string;
+    let role: number;
+
+    if (Array.isArray(value)) {
+      address = this.extractAddress(value[0]);
+      role = value[1] !== undefined ? this.extractNumber(value[1]) : 0;
+    } else if (value && typeof value === "object") {
+      address = this.extractAddress(value.signer || value.addr || value.address);
+      role = value.role !== undefined ? this.extractNumber(value.role) : 0;
+    } else {
+      throw new Error("Invalid signer_added event structure");
+    }
+
+    const metadata: EventMetadata = {
+      id: event.id,
+      contractId: event.contractId,
+      ledger: event.ledger,
+      ledgerClosedAt: event.ledgerClosedAt,
+    };
+
+    return {
+      type: EventType.SIGNER_ADDED,
+      data: {
+        address,
+        role,
+        ledger: event.ledger,
+        timestamp: event.ledgerClosedAt,
+      },
+      metadata,
+    };
+  }
+
+  /**
    * Check if an event is relevant for snapshot building.
    */
   public static isSnapshotEvent(eventType: EventType): boolean {
-    return eventType === EventType.ROLE_ASSIGNED || eventType === EventType.INITIALIZED;
+    return (
+      eventType === EventType.ROLE_ASSIGNED ||
+      eventType === EventType.INITIALIZED ||
+      eventType === EventType.SIGNER_ADDED ||
+      eventType === EventType.SIGNER_REMOVED
+    );
   }
 }

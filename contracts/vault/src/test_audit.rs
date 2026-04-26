@@ -25,6 +25,7 @@ fn setup_test_environment(env: &Env) -> (VaultDAOClient<'_>, Address, Address, A
         signers,
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -503,4 +504,178 @@ fn test_audit_trail_actor_tracking() {
     // Entry 5: update_limits by admin
     let entry3 = client.get_audit_entry(&5);
     assert_eq!(entry3.actor, admin);
+}
+
+#[test]
+fn test_get_audit_trail_pagination_and_limit_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, signer1, user) = setup_test_environment(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+
+    for _ in 0..52 {
+        client.propose_transfer(
+            &signer1,
+            &user,
+            &token,
+            &10i128,
+            &Symbol::new(&env, "page"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+    }
+
+    let first_page = client.get_audit_trail(&0u64, &100u32);
+    assert_eq!(first_page.len(), 50);
+    assert_eq!(first_page.get(0).unwrap().id, 1);
+    assert_eq!(first_page.get(49).unwrap().id, 50);
+
+    let second_page = client.get_audit_trail(&50u64, &50u32);
+    assert_eq!(second_page.len(), 4);
+    assert_eq!(second_page.get(0).unwrap().id, 51);
+    assert_eq!(second_page.get(3).unwrap().id, 54);
+}
+
+#[test]
+fn test_verify_audit_chain_detects_tampering() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, signer1, user) = setup_test_environment(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "tamper"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    assert!(client.verify_audit_chain(&1, &4));
+
+    let mut tampered = storage::get_audit_entry(&env, 3).unwrap();
+    tampered.hash = tampered.hash.wrapping_add(1);
+    storage::set_audit_entry(&env, &tampered);
+
+    assert!(!client.verify_audit_chain(&1, &4));
+}
+
+#[test]
+fn test_audit_entries_added_for_execute_cancel_and_remove_signer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        default_voting_deadline: 0,
+        veto_addresses: Vec::new(&env),
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    let execute_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "exec"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &execute_id);
+    client.execute_proposal(&signer1, &execute_id);
+
+    let cancel_id = client.propose_transfer(
+        &signer2,
+        &user,
+        &token,
+        &50i128,
+        &Symbol::new(&env, "cancel"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.cancel_proposal(&signer2, &cancel_id, &Symbol::new(&env, "user_req"));
+
+    let count_before_remove = client.get_audit_entry_count();
+    client.remove_signer(&admin, &signer2);
+    let count_after_remove = client.get_audit_entry_count();
+
+    assert_eq!(count_after_remove, count_before_remove + 1);
+    assert_eq!(count_after_remove, 9);
+    assert_eq!(
+        client.get_audit_entry(&6).action,
+        AuditAction::ExecuteProposal
+    );
+    assert_eq!(
+        client.get_audit_entry(&8).action,
+        AuditAction::RejectProposal
+    );
+    assert_eq!(
+        client.get_audit_entry(&9).action,
+        AuditAction::RemoveSigner
+    );
+    assert!(client.verify_audit_chain(&1, &count_after_remove));
 }

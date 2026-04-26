@@ -10,6 +10,12 @@ import {
 } from "./modules/realtime/index.js";
 import { InMemoryNotificationQueue } from "./modules/notifications/index.js";
 import { ScheduledJobRunner } from "./modules/jobs/index.js";
+import {
+  FileCursorAdapter,
+  DatabaseCursorAdapter,
+} from "./modules/events/cursor/index.js";
+import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
+import { SqliteStorageAdapter } from "./shared/storage/index.js";
 import { randomUUID } from "node:crypto";
 
 function logStartupConfig(env: BackendEnv) {
@@ -64,12 +70,50 @@ jobRunner.register({
   },
 });
 
+// Register cursor storage cleanup job when enabled
+if (env.cursorCleanupJobEnabled) {
+  const cursorStorage =
+    env.cursorStorageType === "database"
+      ? new DatabaseCursorAdapter(
+          new SqliteStorageAdapter(env.databasePath, "event_cursors"),
+        )
+      : new FileCursorAdapter();
+
+  jobRunner.register(
+    new CursorStorageCleanupJob(
+      env.cursorCleanupJobIntervalMs,
+      true,
+      cursorStorage,
+      env.cursorRetentionDays,
+    ),
+  );
+}
+
 realtimeServer.start();
 jobRunner.start();
 
 // Start server and integrate with lifecycle management
-const { server } = startServer(env);
-const lifecycle = new LifecycleManager(server);
+const { server, runtime } = startServer(env, notificationQueue);
+const lifecycle = new LifecycleManager(server, 10_000); // 10s shutdown timeout
+
+registerDuePaymentsJob(
+  jobRunner,
+  env,
+  runtime.recurringIndexerService,
+  notificationQueue,
+);
+
+lifecycle.onShutdown({
+  // "job-manager" hook stops all background jobs (EventPollingService,
+  // RecurringIndexerService, ProposalActivityConsumer) before cache teardown.
+  // Must be registered before lifecycle.initialize() — LifecycleManager
+  // executes hooks in LIFO order so this runs first.
+  name: "job-manager",
+  handler: async () => {
+    await runtime.jobManager.stopAll();
+  },
+});
+
 lifecycle.onShutdown({
   name: "scheduled-job-runner",
   handler: () => {

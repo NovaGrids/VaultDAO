@@ -47,6 +47,18 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
   );
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const prevIsOpenRef = useRef(isOpen);
+
+  // Sync local filter state from context when panel opens
+  useEffect(() => {
+    // Only sync when transitioning from closed to open
+    if (isOpen && !prevIsOpenRef.current) {
+      setSelectedCategories(filter.categories);
+      setSelectedPriorities(filter.priorities);
+      setSelectedStatus(filter.status || 'all');
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen, filter]);
 
   // Filter and sort notifications
   const filteredNotifications = useMemo(() => {
@@ -71,6 +83,11 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
 
     return filtered;
   }, [notifications, filter, sort]);
+
+  // Reset page when filtered notifications change (e.g., new notifications arrive)
+  useEffect(() => {
+    setPage(1);
+  }, [filteredNotifications.length, setPage]);
 
   // Pagination
   const totalPages = Math.ceil(filteredNotifications.length / pageSize);

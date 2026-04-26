@@ -15,6 +15,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         signers,
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -175,6 +176,7 @@ fn test_hooks_with_initialization() {
         },
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -261,6 +263,7 @@ fn setup_execution_test(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Add
         signers: signers.clone(),
         threshold: 1,
         quorum: 0,
+        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -381,4 +384,311 @@ fn test_failing_hook_halts_execution() {
 
     client.register_pre_hook(&admin, &hook_id);
     client.execute_proposal(&admin, &proposal_id);
+}
+
+// ============================================================================
+// emit_hook_executed event verification
+// ============================================================================
+
+#[test]
+fn test_hook_executed_event_emitted_for_pre_hook() {
+    let env = Env::default();
+    let (client, admin, _, _, proposal_id) = setup_execution_test(&env);
+    let hook_id = env.register(mock_hook::MockHook, ());
+
+    client.register_pre_hook(&admin, &hook_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    // Verify the vault emits hook_executed (topic[0] = "hook_executed")
+    let events = env.events().all();
+    let mut found = false;
+    for event in events.iter() {
+        let topics = event.1;
+        if topics.len() >= 1 {
+            use soroban_sdk::IntoVal;
+            let expected: soroban_sdk::Val =
+                soroban_sdk::Symbol::new(&env, "hook_executed").into_val(&env);
+            if topics.get(0).unwrap().get_payload() == expected.get_payload() {
+                found = true;
+            }
+        }
+    }
+    assert!(found, "hook_executed event not found for pre-hook");
+}
+
+#[test]
+fn test_hook_executed_event_emitted_for_post_hook() {
+    let env = Env::default();
+    let (client, admin, _, _, proposal_id) = setup_execution_test(&env);
+    let hook_id = env.register(mock_hook::MockHook, ());
+
+    client.register_post_hook(&admin, &hook_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    let events = env.events().all();
+    let mut found = false;
+    for event in events.iter() {
+        let topics = event.1;
+        if topics.len() >= 1 {
+            use soroban_sdk::IntoVal;
+            let expected: soroban_sdk::Val =
+                soroban_sdk::Symbol::new(&env, "hook_executed").into_val(&env);
+            if topics.get(0).unwrap().get_payload() == expected.get_payload() {
+                found = true;
+            }
+        }
+    }
+    assert!(found, "hook_executed event not found for post-hook");
+}
+
+// ============================================================================
+// Multiple hooks called in order
+// ============================================================================
+
+#[test]
+fn test_multiple_pre_hooks_called_in_order() {
+    let env = Env::default();
+    let (client, admin, _, _, proposal_id) = setup_execution_test(&env);
+
+    let hook1 = env.register(mock_hook::MockHook, ());
+    let hook2 = env.register(mock_hook::MockHook, ());
+
+    client.register_pre_hook(&admin, &hook1);
+    client.register_pre_hook(&admin, &hook2);
+
+    let hooks = client.get_pre_hooks();
+    assert_eq!(hooks.len(), 2);
+    assert_eq!(hooks.get(0).unwrap(), hook1);
+    assert_eq!(hooks.get(1).unwrap(), hook2);
+
+    client.execute_proposal(&admin, &proposal_id);
+
+    // Both hooks should have emitted their "hook"/"pre" events
+    let events = env.events().all();
+    let mut pre_hook_events = 0u32;
+    for event in events.iter() {
+        let topics = event.1;
+        if topics.len() > 1 {
+            use soroban_sdk::IntoVal;
+            let sym1: soroban_sdk::Val = soroban_sdk::symbol_short!("hook").into_val(&env);
+            let sym2: soroban_sdk::Val = soroban_sdk::symbol_short!("pre").into_val(&env);
+            if topics.get(0).unwrap().get_payload() == sym1.get_payload()
+                && topics.get(1).unwrap().get_payload() == sym2.get_payload()
+            {
+                pre_hook_events += 1;
+            }
+        }
+    }
+    assert_eq!(pre_hook_events, 2, "Expected 2 pre-hook events, one per hook");
+}
+
+#[test]
+fn test_multiple_post_hooks_called_in_order() {
+    let env = Env::default();
+    let (client, admin, _, _, proposal_id) = setup_execution_test(&env);
+
+    let hook1 = env.register(mock_hook::MockHook, ());
+    let hook2 = env.register(mock_hook::MockHook, ());
+
+    client.register_post_hook(&admin, &hook1);
+    client.register_post_hook(&admin, &hook2);
+
+    let hooks = client.get_post_hooks();
+    assert_eq!(hooks.len(), 2);
+    assert_eq!(hooks.get(0).unwrap(), hook1);
+    assert_eq!(hooks.get(1).unwrap(), hook2);
+
+    client.execute_proposal(&admin, &proposal_id);
+
+    let events = env.events().all();
+    let mut post_hook_events = 0u32;
+    for event in events.iter() {
+        let topics = event.1;
+        if topics.len() > 1 {
+            use soroban_sdk::IntoVal;
+            let sym1: soroban_sdk::Val = soroban_sdk::symbol_short!("hook").into_val(&env);
+            let sym2: soroban_sdk::Val = soroban_sdk::symbol_short!("post").into_val(&env);
+            if topics.get(0).unwrap().get_payload() == sym1.get_payload()
+                && topics.get(1).unwrap().get_payload() == sym2.get_payload()
+            {
+                post_hook_events += 1;
+            }
+        }
+    }
+    assert_eq!(post_hook_events, 2, "Expected 2 post-hook events, one per hook");
+}
+
+// ============================================================================
+// Pre-hook called before transfer, post-hook called after
+// ============================================================================
+
+#[test]
+fn test_pre_hook_called_before_post_hook() {
+    let env = Env::default();
+    let (client, admin, _, _, proposal_id) = setup_execution_test(&env);
+
+    let pre_hook = env.register(mock_hook::MockHook, ());
+    let post_hook = env.register(mock_hook::MockHook, ());
+
+    client.register_pre_hook(&admin, &pre_hook);
+    client.register_post_hook(&admin, &post_hook);
+    client.execute_proposal(&admin, &proposal_id);
+
+    // Collect event order: look for "hook"/"pre" and "hook"/"post" events
+    let events = env.events().all();
+    let mut pre_idx: Option<usize> = None;
+    let mut post_idx: Option<usize> = None;
+
+    for (i, event) in events.iter().enumerate() {
+        let topics = event.1;
+        if topics.len() > 1 {
+            use soroban_sdk::IntoVal;
+            let sym_hook: soroban_sdk::Val = soroban_sdk::symbol_short!("hook").into_val(&env);
+            let sym_pre: soroban_sdk::Val = soroban_sdk::symbol_short!("pre").into_val(&env);
+            let sym_post: soroban_sdk::Val = soroban_sdk::symbol_short!("post").into_val(&env);
+
+            if topics.get(0).unwrap().get_payload() == sym_hook.get_payload() {
+                if topics.get(1).unwrap().get_payload() == sym_pre.get_payload() {
+                    pre_idx = Some(i);
+                } else if topics.get(1).unwrap().get_payload() == sym_post.get_payload() {
+                    post_idx = Some(i);
+                }
+            }
+        }
+    }
+
+    assert!(pre_idx.is_some(), "Pre-hook event not found");
+    assert!(post_idx.is_some(), "Post-hook event not found");
+    assert!(
+        pre_idx.unwrap() < post_idx.unwrap(),
+        "Pre-hook must fire before post-hook"
+    );
+}
+
+// ============================================================================
+// Hook registration events
+// ============================================================================
+
+#[test]
+fn test_hook_registered_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let hook = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+    client.register_pre_hook(&admin, &hook);
+
+    let events = env.events().all();
+    let mut found = false;
+    for event in events.iter() {
+        let topics = event.1;
+        if topics.len() >= 1 {
+            use soroban_sdk::IntoVal;
+            let expected: soroban_sdk::Val =
+                soroban_sdk::Symbol::new(&env, "hook_registered").into_val(&env);
+            if topics.get(0).unwrap().get_payload() == expected.get_payload() {
+                found = true;
+            }
+        }
+    }
+    assert!(found, "hook_registered event not emitted");
+}
+
+#[test]
+fn test_hook_removed_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let hook = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+    client.register_pre_hook(&admin, &hook);
+    client.remove_pre_hook(&admin, &hook);
+
+    let events = env.events().all();
+    let mut found = false;
+    for event in events.iter() {
+        let topics = event.1;
+        if topics.len() >= 1 {
+            use soroban_sdk::IntoVal;
+            let expected: soroban_sdk::Val =
+                soroban_sdk::Symbol::new(&env, "hook_removed").into_val(&env);
+            if topics.get(0).unwrap().get_payload() == expected.get_payload() {
+                found = true;
+            }
+        }
+    }
+    assert!(found, "hook_removed event not emitted");
+}
+
+// ============================================================================
+// Failing post-hook blocks execution result
+// ============================================================================
+
+#[test]
+#[should_panic(expected = "Hook failed intentionally")]
+fn test_failing_post_hook_panics() {
+    let env = Env::default();
+    let (client, admin, _, _, proposal_id) = setup_execution_test(&env);
+    let hook_id = env.register(mock_failing_hook::MockFailingHook, ());
+
+    client.register_post_hook(&admin, &hook_id);
+    client.execute_proposal(&admin, &proposal_id);
+}
+
+// ============================================================================
+// Remove non-existent hook returns error
+// ============================================================================
+
+#[test]
+fn test_remove_nonexistent_hook_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let hook = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+
+    let res = client.try_remove_pre_hook(&admin, &hook);
+    assert_eq!(res.err(), Some(Ok(VaultError::SignerNotFound)));
+}
+
+// ============================================================================
+// Hook index 0 is called first (order preserved)
+// ============================================================================
+
+#[test]
+fn test_hook_order_index_zero_first() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+
+    let hook_a = Address::generate(&env);
+    let hook_b = Address::generate(&env);
+    let hook_c = Address::generate(&env);
+
+    client.register_pre_hook(&admin, &hook_a);
+    client.register_pre_hook(&admin, &hook_b);
+    client.register_pre_hook(&admin, &hook_c);
+
+    let hooks = client.get_pre_hooks();
+    assert_eq!(hooks.len(), 3);
+    assert_eq!(hooks.get(0).unwrap(), hook_a);
+    assert_eq!(hooks.get(1).unwrap(), hook_b);
+    assert_eq!(hooks.get(2).unwrap(), hook_c);
 }

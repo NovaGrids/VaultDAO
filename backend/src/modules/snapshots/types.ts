@@ -126,6 +126,14 @@ export interface SignerAddedData {
 }
 
 /**
+ * Signer removed event data from contract.
+ */
+export interface SignerRemovedData {
+  readonly signer: string;
+  readonly totalSigners?: number;
+}
+
+/**
  * Snapshot update result.
  */
 export interface SnapshotUpdateResult {
@@ -133,6 +141,7 @@ export interface SnapshotUpdateResult {
   readonly signersUpdated: number;
   readonly rolesUpdated: number;
   readonly eventsProcessed: number;
+  readonly skippedEvents?: number;
   readonly lastProcessedLedger: number;
   readonly error?: string;
 }

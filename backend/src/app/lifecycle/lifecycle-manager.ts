@@ -61,9 +61,29 @@ export class LifecycleManager {
 
     // Handle uncaught exceptions
     process.on("uncaughtException", (err) => {
-      this.logger.error("uncaught exception", { error: err.message });
+      this.logger.error("uncaught exception", {
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
       this.shutdown().catch((shutdownErr) => {
         this.logger.error("shutdown failed after exception", {
+          error:
+            shutdownErr instanceof Error
+              ? shutdownErr.message
+              : String(shutdownErr),
+        });
+        process.exit(1);
+      });
+    });
+
+    // Handle unhandled promise rejections
+    process.on("unhandledRejection", (reason) => {
+      this.logger.error("unhandled promise rejection", {
+        reason: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      this.shutdown().catch((shutdownErr) => {
+        this.logger.error("shutdown failed after rejection", {
           error:
             shutdownErr instanceof Error
               ? shutdownErr.message
@@ -85,6 +105,7 @@ export class LifecycleManager {
       return;
     }
 
+    const startTime = Date.now();
     this.shuttingDown = true;
     this.logger.info("starting graceful shutdown");
 
@@ -97,15 +118,18 @@ export class LifecycleManager {
     }, this.shutdownTimeoutMs);
 
     try {
-      // Close HTTP server first (stop accepting connections)
+      // 1. Stop accepting new connections first (drain in-flight requests)
       if (this.server) {
         await this.closeServer();
       }
 
-      // Execute shutdown hooks in reverse order (LIFO)
+      // 2. Execute shutdown hooks (background jobs, queues, etc.) after HTTP is drained
       await this.executeShutdownHooks();
 
-      this.logger.info("graceful shutdown completed");
+      const totalDuration = Date.now() - startTime;
+      this.logger.info("graceful shutdown completed", {
+        durationMs: totalDuration,
+      });
       process.exit(0);
     } catch (err) {
       this.logger.error("graceful shutdown failed", {
@@ -123,6 +147,7 @@ export class LifecycleManager {
    * Close the HTTP server.
    */
   private closeServer(): Promise<void> {
+    const stepStart = Date.now();
     return new Promise((resolve, reject) => {
       if (!this.server) {
         resolve();
@@ -135,10 +160,13 @@ export class LifecycleManager {
         if (err) {
           this.logger.error("HTTP server close error", {
             error: err.message,
+            durationMs: Date.now() - stepStart,
           });
           reject(err);
         } else {
-          this.logger.info("HTTP server closed");
+          this.logger.info("HTTP server closed", {
+            durationMs: Date.now() - stepStart,
+          });
           resolve();
         }
       });
@@ -159,14 +187,19 @@ export class LifecycleManager {
     const reversedHooks = [...this.hooks].reverse();
 
     for (const hook of reversedHooks) {
+      const stepStart = Date.now();
       try {
         this.logger.info("executing shutdown hook", { hook: hook.name });
         await Promise.resolve(hook.handler());
-        this.logger.info("shutdown hook completed", { hook: hook.name });
+        this.logger.info("shutdown hook completed", {
+          hook: hook.name,
+          durationMs: Date.now() - stepStart,
+        });
       } catch (err) {
         this.logger.error("shutdown hook failed", {
           hook: hook.name,
           error: err instanceof Error ? err.message : String(err),
+          durationMs: Date.now() - stepStart,
         });
       }
     }

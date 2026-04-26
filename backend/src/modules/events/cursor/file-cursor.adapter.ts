@@ -1,14 +1,19 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "../../../shared/logging/logger.js";
 import type { CursorStorage, EventCursor } from "./cursor.types.js";
 
 /**
  * FileCursorAdapter
  * 
  * Stores event polling cursor in a local JSON file for persistence across restarts.
+ * The file adapter manages a single "singleton" cursor, so listCursors returns at
+ * most one entry and deleteCursor removes the backing file.
  */
 export class FileCursorAdapter implements CursorStorage {
   private readonly filePath: string;
+  private readonly logger = createLogger("file-cursor");
+  private static readonly CURSOR_ID = "singleton-cursor";
 
   constructor(baseDir: string = "./") {
     this.filePath = join(baseDir, ".event-cursor.json");
@@ -18,16 +23,31 @@ export class FileCursorAdapter implements CursorStorage {
    * Retrieves the cursor from disk.
    */
   public async getCursor(): Promise<EventCursor | null> {
-    try {
-      if (!existsSync(this.filePath)) {
-        console.debug(`[file-cursor] no cursor file found at ${this.filePath}`);
-        return null;
-      }
+    if (!existsSync(this.filePath)) {
+      this.logger.debug("no cursor file found", { path: this.filePath });
+      return null;
+    }
 
-      const content = readFileSync(this.filePath, "utf8");
+    const content = readFileSync(this.filePath, "utf8");
+
+    try {
       return JSON.parse(content) as EventCursor;
     } catch (error) {
-      console.warn(`[file-cursor] failed to read cursor from ${this.filePath}:`, error);
+      this.logger.warn(`corrupt cursor JSON in ${this.filePath}, backing up and starting fresh`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      const backupPath = `${this.filePath}.corrupt.${Date.now()}`;
+      try {
+        writeFileSync(backupPath, content, "utf8");
+        this.logger.warn("backed up corrupt cursor file", { backupPath });
+      } catch (backupError) {
+        this.logger.error("failed to backup corrupt cursor file", {
+          path: this.filePath,
+          error: backupError instanceof Error ? backupError.message : String(backupError),
+        });
+      }
+
       return null;
     }
   }
@@ -36,12 +56,50 @@ export class FileCursorAdapter implements CursorStorage {
    * Saves the cursor to disk.
    */
   public async saveCursor(cursor: EventCursor): Promise<void> {
+    const tempPath = `${this.filePath}.tmp-${process.pid}-${Date.now()}`;
     try {
       const content = JSON.stringify(cursor, null, 2);
-      writeFileSync(this.filePath, content, "utf8");
+      writeFileSync(tempPath, content, "utf8");
+      renameSync(tempPath, this.filePath);
     } catch (error) {
-      console.error(`[file-cursor] failed to persist cursor to ${this.filePath}:`, error);
+      try {
+        rmSync(tempPath, { force: true });
+      } catch {
+        // best-effort cleanup
+      }
+      this.logger.error("failed to persist cursor", {
+        path: this.filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
+    }
+  }
+
+  /**
+   * Lists all stored cursors. The file adapter holds at most one cursor.
+   */
+  public async listCursors(): Promise<Array<{ id: string; cursor: EventCursor }>> {
+    const cursor = await this.getCursor();
+    if (!cursor) return [];
+    return [{ id: FileCursorAdapter.CURSOR_ID, cursor }];
+  }
+
+  /**
+   * Deletes the cursor file. The id parameter is accepted for interface
+   * compatibility but the file adapter only has one cursor.
+   */
+  public async deleteCursor(_id: string): Promise<void> {
+    if (existsSync(this.filePath)) {
+      try {
+        unlinkSync(this.filePath);
+        this.logger.debug("cursor file deleted", { path: this.filePath });
+      } catch (error) {
+        this.logger.error("failed to delete cursor file", {
+          path: this.filePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     }
   }
 }

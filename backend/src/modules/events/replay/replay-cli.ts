@@ -1,6 +1,6 @@
 /**
  * EventReplayCLI
- * 
+ *
  * Command-line interface for the event replay and backfill command.
  * Provides a user-friendly way to configure and execute replay operations.
  */
@@ -8,6 +8,7 @@
 import type { ReplayOptions } from "./replay.types.js";
 import { EventReplayService } from "./replay.service.js";
 import { loadEnv } from "../../../config/env.js";
+import { fileURLToPath } from "node:url";
 
 /**
  * Parses command line arguments into ReplayOptions.
@@ -34,7 +35,9 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
         if (nextArg !== undefined && !nextArg.startsWith("-")) {
           const ledger = parseInt(nextArg, 10);
           if (isNaN(ledger) || ledger < 0) {
-            throw new Error(`Invalid start ledger: ${nextArg}. Must be a non-negative integer.`);
+            throw new Error(
+              `Invalid start ledger: ${nextArg}. Must be a non-negative integer.`,
+            );
           }
           options.startLedger = ledger;
           i++;
@@ -48,7 +51,9 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
         if (nextArg !== undefined && !nextArg.startsWith("-")) {
           const ledger = parseInt(nextArg, 10);
           if (isNaN(ledger) || ledger < 0) {
-            throw new Error(`Invalid end ledger: ${nextArg}. Must be a non-negative integer.`);
+            throw new Error(
+              `Invalid end ledger: ${nextArg}. Must be a non-negative integer.`,
+            );
           }
           options.endLedger = ledger;
           i++;
@@ -62,7 +67,9 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
         if (nextArg !== undefined && !nextArg.startsWith("-")) {
           const size = parseInt(nextArg, 10);
           if (isNaN(size) || size < 1 || size > 10000) {
-            throw new Error(`Invalid batch size: ${nextArg}. Must be between 1 and 10000.`);
+            throw new Error(
+              `Invalid batch size: ${nextArg}. Must be between 1 and 10000.`,
+            );
           }
           options.batchSize = size;
           i++;
@@ -118,14 +125,21 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
 
       default:
         if (arg.startsWith("-")) {
-          throw new Error(`Unknown option: ${arg}. Use --help for usage information.`);
+          throw new Error(
+            `Unknown option: ${arg}. Use --help for usage information.`,
+          );
         }
     }
   }
 
   // Validate that start ledger is less than end ledger if both are specified
-  if (options.endLedger !== undefined && options.startLedger > options.endLedger) {
-    throw new Error(`Start ledger (${options.startLedger}) must be less than or equal to end ledger (${options.endLedger}).`);
+  if (
+    options.endLedger !== undefined &&
+    options.startLedger > options.endLedger
+  ) {
+    throw new Error(
+      `Start ledger (${options.startLedger}) must be less than or equal to end ledger (${options.endLedger}).`,
+    );
   }
 
   return options as ReplayOptions;
@@ -212,8 +226,12 @@ export async function executeReplay(args: string[]): Promise<void> {
   const hasCursor = await service.hasExistingCursor();
   if (hasCursor) {
     const lastLedger = await service.getLastProcessedLedger();
-    console.log(`[replay-cli] Found existing cursor: last ledger = ${lastLedger}`);
-    console.log("[replay-cli] Use --start to override or let replay continue from cursor position");
+    console.log(
+      `[replay-cli] Found existing cursor: last ledger = ${lastLedger}`,
+    );
+    console.log(
+      "[replay-cli] Use --start to override or let replay continue from cursor position",
+    );
   }
 
   console.log("[replay-cli] Starting replay operation...");
@@ -223,7 +241,9 @@ export async function executeReplay(args: string[]): Promise<void> {
     const stats = await service.replay((currentStats, currentLedger) => {
       // Progress callback - could be enhanced with progress bar
       if (options.verbose) {
-        console.log(`[replay-cli] Progress: ledger ${currentLedger}, processed: ${currentStats.totalEventsProcessed}`);
+        console.log(
+          `[replay-cli] Progress: ledger ${currentLedger}, processed: ${currentStats.totalEventsProcessed}`,
+        );
       }
     });
 
@@ -231,7 +251,9 @@ export async function executeReplay(args: string[]): Promise<void> {
     console.log("[replay-cli] Replay completed successfully!");
 
     if (stats.errorCount > 0) {
-      console.warn(`[replay-cli] Warning: ${stats.errorCount} event(s) had processing errors. Check logs for details.`);
+      console.warn(
+        `[replay-cli] Warning: ${stats.errorCount} event(s) had processing errors. Check logs for details.`,
+      );
     }
 
     process.exit(0);
@@ -243,5 +265,10 @@ export async function executeReplay(args: string[]): Promise<void> {
 }
 
 // Main entry point for CLI execution
-const cliArgs = process.argv.slice(2);
-executeReplay(cliArgs);
+const currentFilePath = fileURLToPath(import.meta.url);
+const isDirectExecution = process.argv[1] === currentFilePath;
+
+if (isDirectExecution) {
+  const cliArgs = process.argv.slice(2);
+  void executeReplay(cliArgs);
+}

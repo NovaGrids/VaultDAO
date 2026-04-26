@@ -6,6 +6,7 @@ import {
   buildHealthPayload,
   buildReadinessPayload,
   buildStatusPayload,
+  buildDetailedHealthPayload,
 } from "./health.service.js";
 import { success, error } from "../../shared/http/response.js";
 
@@ -14,7 +15,16 @@ export function getHealthController(
   runtime: BackendRuntime,
 ): RequestHandler {
   return (_request, response) => {
-    success(response, buildHealthPayload(env, runtime));
+    const payload = buildHealthPayload(env, runtime);
+    if (payload.ok) {
+      success(response, payload);
+    } else {
+      error(
+        response,
+        { message: "Service unhealthy", status: 503, details: payload },
+        { exposeDetails: true },
+      );
+    }
   };
 }
 
@@ -36,11 +46,11 @@ export function getReadinessController(
     if (payload.ready) {
       success(response, payload);
     } else {
-      error(response, { 
-        message: "Service not ready", 
-        status: 503 
-      });
+      error(
+        response,
+        { message: "Service not ready", status: 503, details: payload },
+        { exposeDetails: true },
+      );
     }
   };
 }
-

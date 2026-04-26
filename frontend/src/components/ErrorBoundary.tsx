@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { recordError } from '../utils/errorAnalytics';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -20,6 +21,19 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    // Report error to analytics service
+    try {
+      recordError({
+        code: 'REACT_ERROR_BOUNDARY',
+        message: error.message || 'Unknown error',
+        stack: error.stack,
+        context: errorInfo.componentStack || undefined,
+      });
+    } catch (reportingError) {
+      // Prevent cascading failures - log but don't throw
+      console.error('Failed to report error to analytics:', reportingError);
+    }
+
     if (import.meta.env.DEV) {
       // Keep this in development to help debugging rendering/runtime failures.
       console.error('ErrorBoundary caught an error:', error);

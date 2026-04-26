@@ -1,77 +1,151 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
+import { ErrorCode } from "../../shared/http/errorCodes.js";
+import { validatePagination } from "../../shared/http/validateQuery.js";
 import type { ProposalActivityAggregator } from "./aggregator.js";
+import type { ProposalActivityPersistence } from "./types.js";
+import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 
-/**
- * Get all proposals with pagination
- */
+/** TTL for proposal list cache: 30 seconds */
+const PROPOSALS_CACHE_TTL_MS = 30_000;
+
 export function getAllProposalsController(
-  aggregator: ProposalActivityAggregator,
+  persistence: ProposalActivityPersistence,
+  cache?: CacheAdapter<unknown>,
 ): RequestHandler {
-  return (request, response) => {
-    try {
-      const offset = request.query.offset
-        ? parseInt(String(request.query.offset), 10)
+  return async (req, res) => {
+    const contractId =
+      typeof req.query.contractId === "string"
+        ? req.query.contractId
         : undefined;
-      const limit = request.query.limit
-        ? parseInt(String(request.query.limit), 10)
-        : undefined;
-
-      const result = aggregator.getAllProposals({ offset, limit });
-      success(response, result);
-    } catch (err) {
-      error(response, {
-        message: "Failed to fetch proposals",
-        status: 500,
-        details: err instanceof Error ? err.message : undefined,
+    if (!contractId) {
+      error(res, {
+        message: "contractId is required",
+        status: 400,
+        code: ErrorCode.BAD_REQUEST,
       });
+      return;
     }
-  };
-}
 
-/**
- * Get a single proposal by ID
- */
-export function getProposalByIdController(
-  aggregator: ProposalActivityAggregator,
-): RequestHandler {
-  return (request, response) => {
+    const pagination = validatePagination(req, res);
+    if (!pagination) return;
+
+    const cacheKey = `proposals:${contractId}:${pagination.offset}:${pagination.limit}`;
+
     try {
-      const id = String(request.params.id);
-
-      const summary = aggregator.getSummary(id);
-      if (!summary) {
-        error(response, { message: "Proposal not found", status: 404 });
-        return;
+      if (cache) {
+        const cached = cache.get(cacheKey);
+        if (cached !== null) {
+          res.json(cached);
+          return;
+        }
       }
 
-      success(response, summary);
+      const all = await persistence.getByContractId(contractId);
+      const total = all.length;
+      const data = all.slice(
+        pagination.offset,
+        pagination.offset + pagination.limit,
+      );
+      const payload = {
+        data,
+        total,
+        offset: pagination.offset,
+        limit: pagination.limit,
+      };
+
+      if (cache) {
+        cache.set(
+          cacheKey,
+          { ok: true, data: payload },
+          PROPOSALS_CACHE_TTL_MS,
+        );
+      }
+
+      success(res, payload);
     } catch (err) {
-      error(response, {
-        message: "Failed to fetch proposal",
+      error(res, {
+        message: "Failed to fetch proposals",
         status: 500,
-        details: err instanceof Error ? err.message : undefined,
+        code: ErrorCode.INTERNAL_ERROR,
       });
     }
   };
 }
 
-/**
- * Get aggregated proposal statistics
- */
+export function getProposalByIdController(
+  persistence: ProposalActivityPersistence,
+): RequestHandler {
+  return async (req, res) => {
+    try {
+      const summary = await persistence.getSummary(req.params.proposalId);
+      if (!summary) {
+        error(res, {
+          message: "Proposal not found",
+          status: 404,
+          code: ErrorCode.NOT_FOUND,
+        });
+        return;
+      }
+      success(res, summary);
+    } catch (err) {
+      error(res, {
+        message: "Failed to fetch proposal",
+        status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
+      });
+    }
+  };
+}
+
+export function getProposalActivityController(
+  persistence: ProposalActivityPersistence,
+): RequestHandler {
+  return async (req, res) => {
+    try {
+      const records = await persistence.getByProposalId(req.params.proposalId);
+      if (records.length === 0) {
+        error(res, {
+          message: "Proposal not found",
+          status: 404,
+          code: ErrorCode.NOT_FOUND,
+        });
+        return;
+      }
+      success(res, { data: records, total: records.length });
+    } catch (err) {
+      error(res, {
+        message: "Failed to fetch proposal activity",
+        status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
+      });
+    }
+  };
+}
+
 export function getProposalStatsController(
   aggregator: ProposalActivityAggregator,
 ): RequestHandler {
-  return (_request, response) => {
+  return (_req, res) => {
     try {
-      const stats = aggregator.getStats();
-      success(response, stats);
+      success(res, aggregator.getStats());
     } catch (err) {
-      error(response, {
+      error(res, {
         message: "Failed to fetch proposal statistics",
         status: 500,
-        details: err instanceof Error ? err.message : undefined,
+        code: ErrorCode.INTERNAL_ERROR,
       });
     }
   };
+}
+
+/**
+ * Invalidates all proposal cache entries for a given contractId.
+ * Call this when new proposal events are processed.
+ */
+export function invalidateProposalCache(
+  cache: CacheAdapter<unknown>,
+  contractId: string,
+): void {
+  cache.deleteByPrefix(`proposals:${contractId}:`);
 }

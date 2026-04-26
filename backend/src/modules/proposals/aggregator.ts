@@ -1,10 +1,11 @@
 /**
  * Proposal Activity Aggregator
- * 
+ *
  * Aggregates proposal activity records into summaries and statistics.
  * Designed for efficient querying by dashboards and feeds.
  */
 
+import { createLogger } from "../../shared/logging/logger.js";
 import {
   ProposalActivityRecord,
   ProposalActivitySummary,
@@ -59,20 +60,115 @@ export interface ActivityBucket {
 }
 
 /**
- * ProposalActivityAggregator
+ * ProposalAggregator
  * 
+ * Static utility for building ProposalActivitySummary from activity records.
+ * Implements status priority and aggregation logic.
+ */
+export class ProposalAggregator {
+  /**
+   * Status priority for determining currentStatus.
+   * EXECUTED > REJECTED > CANCELLED > VETOED > APPROVED > PENDING
+   */
+  private static readonly STATUS_PRIORITY: Record<string, number> = {
+    [ProposalActivityType.EXECUTED]: 6,
+    [ProposalActivityType.REJECTED]: 5,
+    [ProposalActivityType.CANCELLED]: 4,
+    [ProposalActivityType.VETOED]: 3,
+    [ProposalActivityType.APPROVED]: 2,
+    [ProposalActivityType.PENDING]: 1,
+    [ProposalActivityType.READY]: 1, // Treat READY as similar to PENDING/APPROVED priority-wise if not specified
+    [ProposalActivityType.CREATED]: 1,
+  };
+
+  /**
+   * Aggregates a list of records into a single ProposalActivitySummary.
+   * 
+   * @param records List of activity records for a single proposal
+   * @throws Error if records array is empty
+   */
+  public static aggregate(records: ProposalActivityRecord[]): ProposalActivitySummary {
+    if (!records || records.length === 0) {
+      throw new Error("Cannot aggregate empty records array");
+    }
+
+    // Sort by timestamp for sequential processing
+    const sortedRecords = [...records].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    const firstCreated = sortedRecords.find(r => r.type === ProposalActivityType.CREATED);
+    const lastActivity = sortedRecords[sortedRecords.length - 1];
+
+    // Determine current status based on priority
+    let currentStatus = ProposalActivityType.PENDING;
+    let maxPriority = -1;
+
+    for (const record of records) {
+      const priority = this.STATUS_PRIORITY[record.type] ?? 0;
+      if (priority > maxPriority) {
+        maxPriority = priority;
+        currentStatus = record.type;
+      }
+    }
+
+    // If no high-priority status found, use the latest record's type
+    if (maxPriority <= 1) {
+      currentStatus = lastActivity.type;
+    }
+
+    return {
+      proposalId: lastActivity.proposalId,
+      contractId: lastActivity.metadata.contractId,
+      createdAt: firstCreated?.timestamp ?? lastActivity.timestamp,
+      lastActivityAt: lastActivity.timestamp,
+      totalEvents: records.length,
+      currentStatus,
+      events: sortedRecords,
+    };
+  }
+
+  /**
+   * Aggregates multiple groups of records in bulk.
+   * 
+   * @param groups Map of proposalId to activity records
+   */
+  public static aggregateBatch(groups: Map<string, ProposalActivityRecord[]>): ProposalActivitySummary[] {
+    const summaries: ProposalActivitySummary[] = [];
+    for (const records of groups.values()) {
+      if (records.length > 0) {
+        summaries.push(this.aggregate(records));
+      }
+    }
+    return summaries;
+  }
+}
+
+/**
+ * ProposalActivityAggregator
+ *
  * Aggregates proposal activity records into summaries and statistics.
  * Supports in-memory aggregation with hooks for persistence integration.
  */
 export class ProposalActivityAggregator {
+  private static readonly DEFAULT_MAX_PROPOSALS = 10_000;
+  private readonly logger = createLogger("proposal-aggregator");
+
   private proposalCache: Map<string, ProposalActivityRecord[]> = new Map();
-  private proposalLatestActivity: Map<string, ProposalActivityRecord> = new Map();
+  private proposalLatestActivity: Map<string, ProposalActivityRecord> =
+    new Map();
   private onRecordAdded?: (record: ProposalActivityRecord) => void;
+  private maxProposals: number;
 
   constructor(options?: {
     onRecordAdded?: (record: ProposalActivityRecord) => void;
+    maxProposals?: number;
   }) {
     this.onRecordAdded = options?.onRecordAdded;
+    this.maxProposals =
+      options?.maxProposals && options.maxProposals > 0
+        ? Math.floor(options.maxProposals)
+        : ProposalActivityAggregator.DEFAULT_MAX_PROPOSALS;
   }
 
   /**
@@ -90,12 +186,45 @@ export class ProposalActivityAggregator {
       this.proposalLatestActivity.set(record.proposalId, record);
     }
 
+    this.evictIfNeeded();
+
     // Trigger callback
     if (this.onRecordAdded) {
       this.onRecordAdded(record);
     }
 
-    console.debug("[proposal-aggregator] added record:", record.activityId);
+    this.logger.debug("added record", { activityId: record.activityId });
+  }
+
+  /**
+   * Prunes activity records older than the specified retention date.
+   * Useful for background cleanup jobs.
+   */
+  public pruneRecords(olderThan: Date): number {
+    let prunedCount = 0;
+    const retentionTimestamp = olderThan.toISOString();
+
+    for (const [proposalId, records] of this.proposalCache.entries()) {
+      const filtered = records.filter((r) => r.timestamp >= retentionTimestamp);
+      const diff = records.length - filtered.length;
+
+      if (diff > 0) {
+        prunedCount += diff;
+        if (filtered.length === 0) {
+          this.proposalCache.delete(proposalId);
+          this.proposalLatestActivity.delete(proposalId);
+        } else {
+          this.proposalCache.set(proposalId, filtered);
+          // Re-calculate latest if it was pruned (unlikely but safe)
+          const latest = filtered.reduce((prev, current) =>
+            current.timestamp > prev.timestamp ? current : prev,
+          );
+          this.proposalLatestActivity.set(proposalId, latest);
+        }
+      }
+    }
+
+    return prunedCount;
   }
 
   /**
@@ -119,11 +248,12 @@ export class ProposalActivityAggregator {
 
     // Sort by timestamp
     const sortedRecords = [...records].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
 
     const createdRecord = sortedRecords.find(
-      (r) => r.type === ProposalActivityType.CREATED
+      (r) => r.type === ProposalActivityType.CREATED,
     );
     const latestRecord = sortedRecords[sortedRecords.length - 1];
 
@@ -170,7 +300,8 @@ export class ProposalActivityAggregator {
     for (const [, records] of this.proposalCache) {
       // Sort to get latest
       const sorted = [...records].sort(
-        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        (a, b) =>
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
       );
       const latestType = sorted[0]?.type;
 
@@ -209,10 +340,23 @@ export class ProposalActivityAggregator {
 
   /**
    * Gets activity buckets for a time period.
+   *
+   * @param intervalMs - Bucket width in milliseconds. Must be >= 60_000 (1 minute).
+   * @param maxBuckets - Maximum number of buckets to return (default 500).
+   *   If the natural bucket count exceeds this, overflow buckets are merged
+   *   into the last bucket.
+   * @throws {RangeError} if `intervalMs` is below 60_000.
    */
   public getActivityBuckets(
-    intervalMs: number = 86400000 // Default: 1 day
+    intervalMs: number = 86400000, // Default: 1 day
+    maxBuckets: number = 500,
   ): ActivityBucket[] {
+    if (intervalMs < 60_000) {
+      throw new RangeError(
+        `intervalMs must be >= 60000 (1 minute), got ${intervalMs}`,
+      );
+    }
+
     const buckets = new Map<number, ActivityBucket>();
 
     for (const records of this.proposalCache.values()) {
@@ -233,9 +377,31 @@ export class ProposalActivityAggregator {
       }
     }
 
-    return Array.from(buckets.values()).sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    const sorted = Array.from(buckets.values()).sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
+
+    if (sorted.length <= maxBuckets) {
+      return sorted;
+    }
+
+    // Merge overflow buckets into the last allowed bucket
+    const result = sorted.slice(0, maxBuckets);
+    const overflow = sorted.slice(maxBuckets);
+    const last = result[result.length - 1];
+
+    for (const bucket of overflow) {
+      last.count += bucket.count;
+      for (const [type, count] of Object.entries(bucket.types) as [
+        ProposalActivityType,
+        number,
+      ][]) {
+        last.types[type] = (last.types[type] ?? 0) + count;
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -255,9 +421,10 @@ export class ProposalActivityAggregator {
       result.push({ proposalId, latestActivity });
     }
 
-    return result.sort((a, b) =>
-      new Date(b.latestActivity.timestamp).getTime() -
-      new Date(a.latestActivity.timestamp).getTime()
+    return result.sort(
+      (a, b) =>
+        new Date(b.latestActivity.timestamp).getTime() -
+        new Date(a.latestActivity.timestamp).getTime(),
     );
   }
 
@@ -265,7 +432,9 @@ export class ProposalActivityAggregator {
    * Gets proposals with their latest status, sorted by latest activity (newest first),
    * then paginated. `total` is the unfiltered proposal count.
    */
-  public getAllProposals(params?: GetAllProposalsParams): GetAllProposalsResult {
+  public getAllProposals(
+    params?: GetAllProposalsParams,
+  ): GetAllProposalsResult {
     const sorted = this.getAllProposalsSorted();
     const total = sorted.length;
 
@@ -285,14 +454,12 @@ export class ProposalActivityAggregator {
   /**
    * Gets proposals by status.
    */
-  public getProposalsByStatus(
-    status: ProposalActivityType
-  ): Array<{
+  public getProposalsByStatus(status: ProposalActivityType): Array<{
     proposalId: string;
     latestActivity: ProposalActivityRecord;
   }> {
     return this.getAllProposalsSorted().filter(
-      (p) => p.latestActivity.type === status
+      (p) => p.latestActivity.type === status,
     );
   }
 
@@ -323,6 +490,41 @@ export class ProposalActivityAggregator {
   }
 
   /**
+   * Evict oldest proposals by latest activity until under the configured cap.
+   */
+  private evictIfNeeded(): void {
+    if (this.proposalCache.size <= this.maxProposals) {
+      return;
+    }
+
+    const candidates = Array.from(this.proposalLatestActivity.entries()).sort(
+      (a, b) =>
+        new Date(a[1].timestamp).getTime() - new Date(b[1].timestamp).getTime(),
+    );
+
+    const toEvict = this.proposalCache.size - this.maxProposals;
+    const evicted: string[] = [];
+
+    for (let i = 0; i < toEvict; i++) {
+      const entry = candidates[i];
+      if (!entry) {
+        break;
+      }
+      const [proposalId] = entry;
+      this.proposalCache.delete(proposalId);
+      this.proposalLatestActivity.delete(proposalId);
+      evicted.push(proposalId);
+    }
+
+    if (evicted.length > 0) {
+      console.warn(
+        `[proposal-aggregator] evicted ${evicted.length} oldest proposals to enforce maxProposals=${this.maxProposals}`,
+        { evictedProposalIds: evicted },
+      );
+    }
+  }
+
+  /**
    * Gets the total number of proposals being tracked.
    */
   public getProposalCount(): number {
@@ -346,6 +548,7 @@ export class ProposalActivityAggregator {
  */
 export function createProposalAggregator(options?: {
   onRecordAdded?: (record: ProposalActivityRecord) => void;
+  maxProposals?: number;
 }): ProposalActivityAggregator {
   return new ProposalActivityAggregator(options);
 }

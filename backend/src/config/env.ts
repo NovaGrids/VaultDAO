@@ -9,6 +9,16 @@ export interface BackendEnv {
   readonly websocketUrl: string;
   readonly eventPollingIntervalMs: number;
   readonly eventPollingEnabled: boolean;
+  readonly duePaymentsJobEnabled: boolean;
+  readonly duePaymentsJobIntervalMs: number;
+  readonly cursorCleanupJobEnabled: boolean;
+  readonly cursorCleanupJobIntervalMs: number;
+  readonly cursorRetentionDays: number;
+  readonly corsOrigin: string[];
+  readonly requestBodyLimit: string;
+  readonly apiKey?: string;
+  readonly cursorStorageType: "file" | "database";
+  readonly databasePath: string;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -20,6 +30,8 @@ const ALLOWED_STELLAR_NETWORKS = new Set([
   "futurenet",
   "standalone",
 ]);
+const ALLOWED_CURSOR_STORAGE_TYPES = new Set(["file", "database"]);
+const MIN_POLLING_INTERVAL_MS = 1000;
 
 function readValue(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -28,6 +40,12 @@ function readValue(name: string): string | undefined {
 
 function readString(name: string, fallback: string): string {
   return readValue(name) ?? fallback;
+}
+
+function readCommaSeparatedString(name: string, fallback: string[]): string[] {
+  const value = readValue(name);
+  if (!value) return fallback;
+  return value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
 function readPort(name: string, fallback: number, issues: string[]): number {
@@ -127,6 +145,16 @@ export function loadEnv(): BackendEnv {
   const websocketUrl = readString("VITE_WS_URL", "ws://localhost:8080");
   const eventPollingIntervalMs = readPort("EVENT_POLLING_INTERVAL_MS", 10000, issues);
   const eventPollingEnabled = readString("EVENT_POLLING_ENABLED", "true") === "true";
+  const duePaymentsJobEnabled = readString("DUE_PAYMENTS_JOB_ENABLED", "true") === "true";
+  const duePaymentsJobIntervalMs = readPort("DUE_PAYMENTS_JOB_INTERVAL_MS", 60000, issues);
+  const cursorCleanupJobEnabled = readString("CURSOR_CLEANUP_JOB_ENABLED", "true") === "true";
+  const cursorCleanupJobIntervalMs = readPort("CURSOR_CLEANUP_JOB_INTERVAL_MS", 86400000, issues);
+  const cursorRetentionDays = readPort("CURSOR_RETENTION_DAYS", 30, issues);
+  const corsOrigin = readCommaSeparatedString("CORS_ORIGIN", nodeEnv === "production" ? [] : ["*"]);
+  const requestBodyLimit = readString("REQUEST_BODY_LIMIT", "10kb");
+  const apiKey = readValue("API_KEY");
+  const cursorStorageType = readString("CURSOR_STORAGE_TYPE", "file") as "file" | "database";
+  const databasePath = readString("DATABASE_PATH", "./vaultdao.sqlite");
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -139,7 +167,28 @@ export function loadEnv(): BackendEnv {
   validateUrl("SOROBAN_RPC_URL", sorobanRpcUrl, ["http:", "https:"], issues);
   validateUrl("HORIZON_URL", horizonUrl, ["http:", "https:"], issues);
   validateUrl("VITE_WS_URL", websocketUrl, ["ws:", "wss:"], issues);
+
+  if (eventPollingIntervalMs < MIN_POLLING_INTERVAL_MS) {
+    issues.push(
+      `EVENT_POLLING_INTERVAL_MS must be at least ${MIN_POLLING_INTERVAL_MS}ms to prevent excessive RPC load. Received "${eventPollingIntervalMs}".`,
+    );
+  }
+
   validateContractId(contractId, nodeEnv, issues);
+  validateAllowedValue(
+    "CURSOR_STORAGE_TYPE",
+    cursorStorageType,
+    ALLOWED_CURSOR_STORAGE_TYPES,
+    issues,
+  );
+
+  if (nodeEnv === "production" && corsOrigin.length === 0) {
+    issues.push("CORS_ORIGIN is required in production environment.");
+  }
+
+  if (nodeEnv === "production" && !apiKey) {
+    issues.push("API_KEY is required in production environment.");
+  }
 
   throwIfInvalid(issues);
 
@@ -154,5 +203,15 @@ export function loadEnv(): BackendEnv {
     websocketUrl,
     eventPollingIntervalMs,
     eventPollingEnabled,
+    duePaymentsJobEnabled,
+    duePaymentsJobIntervalMs,
+    cursorCleanupJobEnabled,
+    cursorCleanupJobIntervalMs,
+    cursorRetentionDays,
+    corsOrigin,
+    requestBodyLimit,
+    apiKey,
+    cursorStorageType,
+    databasePath,
   };
 }

@@ -23,7 +23,6 @@ pub enum VaultError {
     ProposalAlreadyExecuted = 23,
     ProposalExpired = 24,
     ProposalAlreadyCancelled = 25,
-    VotingDeadlinePassed = 26,
     AlreadyApproved = 30,
     InvalidAmount = 40,
     ExceedsProposalLimit = 41,
@@ -31,9 +30,7 @@ pub enum VaultError {
     ExceedsWeeklyLimit = 43,
     VelocityLimitExceeded = 50,
     TimelockNotExpired = 60,
-    SchedulingError = 61,
     InsufficientBalance = 70,
-    TransferFailed = 71,
     SignerAlreadyExists = 80,
     SignerNotFound = 81,
     CannotRemoveSigner = 82,
@@ -42,7 +39,6 @@ pub enum VaultError {
     AddressAlreadyOnList = 92,
     AddressNotOnList = 93,
     InsuranceInsufficient = 110,
-    GasLimitExceeded = 120,
     BatchTooLarge = 130,
     ConditionsNotMet = 140,
     IntervalTooShort = 150,
@@ -51,15 +47,27 @@ pub enum VaultError {
     TemplateNotFound = 210,
     TemplateInactive = 211,
     TemplateValidationFailed = 212,
-    FundingRoundError = 220,
     /// Attachment hash is too short or too long to be a valid CID
     AttachmentHashInvalid = 230,
     /// Proposal has reached the maximum number of attachments
     TooManyAttachments = 231,
-    /// Proposal has reached the maximum number of tags
+    /// Proposal has reached the maximum number of tags (MAX_TAGS = 10)
     TooManyTags = 232,
     /// Metadata value is empty or exceeds the maximum allowed length
     MetadataValueInvalid = 233,
+    // -----------------------------------------------------------------------
+    // Subscription errors (feature/subscription-system)
+    // -----------------------------------------------------------------------
+    /// Subscription ID does not exist
+    SubscriptionNotFound = 240,
+    /// Subscription has already been cancelled
+    SubscriptionAlreadyCancelled = 241,
+    /// Renewal attempted before next_renewal_ledger has been reached
+    RenewalNotDue = 242,
+    /// Caller is neither the subscriber nor an Admin
+    NotSubscriberOrAdmin = 243,
+    /// Subscription is not in Active status (e.g. Cancelled / Suspended)
+    SubscriptionNotActive = 244,
 }
 
 // Compatibility markers for CI source checks:

@@ -136,15 +136,15 @@ export function createRateLimitMiddleware(config: RateLimitConfig) {
   const limiter = new RateLimiter(config);
 
   return (req: Request, res: Response, next: NextFunction): void => {
+    const resetMs = limiter.getResetTime(req);
+    const resetUnix = Math.ceil(resetMs / 1000); // Unix timestamp in seconds
+
     if (limiter.isLimited(req)) {
-      const resetTime = new Date(limiter.getResetTime(req));
       res.set({
-        "Retry-After": Math.ceil(
-          (limiter.getResetTime(req) - Date.now()) / 1000,
-        ).toString(),
+        "Retry-After": Math.ceil((resetMs - Date.now()) / 1000).toString(),
         "X-RateLimit-Limit": limiter.getMaxRequests().toString(),
         "X-RateLimit-Remaining": "0",
-        "X-RateLimit-Reset": resetTime.toISOString(),
+        "X-RateLimit-Reset": resetUnix.toString(),
       });
 
       res.status(429).json({
@@ -153,18 +153,18 @@ export function createRateLimitMiddleware(config: RateLimitConfig) {
           message: "Too Many Requests",
           code: "RATE_LIMIT_EXCEEDED",
           details: {
-            retryAfter: resetTime.toISOString(),
+            retryAfter: new Date(resetMs).toISOString(),
           },
         },
       });
       return;
     }
 
-    // Set rate limit headers
+    // Set rate limit headers on every non-limited response
     res.set({
       "X-RateLimit-Limit": limiter.getMaxRequests().toString(),
       "X-RateLimit-Remaining": limiter.getRemaining(req).toString(),
-      "X-RateLimit-Reset": new Date(limiter.getResetTime(req)).toISOString(),
+      "X-RateLimit-Reset": resetUnix.toString(),
     });
 
     next();
