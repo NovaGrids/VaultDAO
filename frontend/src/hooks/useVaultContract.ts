@@ -125,18 +125,80 @@ function getEventTypeFromTopic(topic0Base64: string): VaultEventType {
     }
 }
 
+// Type definitions for Soroban RPC responses and contract interactions
+interface SorobanRpcEvent {
+  type: string;
+  ledgerClosedAt?: string;
+  value?: {
+    xdr?: string;
+  };
+  eventId?: string;
+  contractId?: string;
+  topic?: string[];
+}
+
+interface SorobanRpcResponse<T> {
+  result?: T;
+  status: string;
+  latestLedger?: string;
+}
+
+interface SorobanGetEventsResponse {
+  events: SorobanRpcEvent[];
+  latestLedger: string;
+  cursor?: string;
+}
+
+interface SorobanSimulationResult {
+  result?: {
+    retval: xdr.ScVal;
+    auth?: Array<unknown>;
+  };
+  error?: string;
+  events?: SorobanRpcEvent[];
+  latestLedger?: string;
+}
+
+interface SorobanSendTransactionResponse {
+  status: string;
+  hash?: string;
+  ledger?: number;
+  errorResult?: string;
+}
+
+interface ContractStorageEntry {
+  key: string;
+  val: unknown;
+}
+
+interface SignerConfig {
+  address?: string | (() => string);
+  role?: unknown;
+}
+
+interface ProposalEventData {
+  proposer?: string;
+  recipient?: string;
+  amount?: string;
+  approval_count?: unknown;
+  threshold?: unknown;
+  total_signers?: unknown;
+  role?: unknown;
+  raw?: unknown;
+}
+
 function addressToNative(addrScVal: unknown): string {
     if (typeof addrScVal === 'string') return addrScVal;
     if (addrScVal != null && typeof addrScVal === 'object') {
-        const o = addrScVal as Record<string, unknown>;
+        const o = addrScVal as SignerConfig;
         if (typeof o.address === 'function') return (o.address as () => string)();
         if (typeof o.address === 'string') return o.address;
     }
     return String(addrScVal ?? '');
 }
 
-function parseEventValue(valueXdrBase64: string, eventType: VaultEventType): { actor: string; details: Record<string, unknown> } {
-    const details: Record<string, unknown> = {};
+function parseEventValue(valueXdrBase64: string, eventType: VaultEventType): { actor: string; details: ProposalEventData } {
+    const details: ProposalEventData = {};
     let actor = '';
     try {
         const scv = xdr.ScVal.fromXDR(valueXdrBase64, 'base64');
@@ -199,12 +261,18 @@ function parseSignerAddresses(value: unknown): string[] {
     return value.map((item) => addressToNative(item)).filter((item) => item.length > 0);
 }
 
+interface RoleAssignmentRecord {
+    address?: string;
+    addr?: string;
+    role?: unknown;
+}
+
 function parseRoleAssignments(value: unknown): RoleAssignment[] {
     if (!Array.isArray(value)) return [];
     return value
         .map((item) => {
             if (item == null || typeof item !== 'object') return null;
-            const record = item as Record<string, unknown>;
+            const record = item as RoleAssignmentRecord;
             const addressValue = record.address ?? record.addr;
             const roleValue = record.role;
             const address = addressToNative(addressValue);
@@ -385,11 +453,28 @@ if (accountInfo.status === 'fulfilled') {
     if (native) balance = parseFloat(native.balance).toLocaleString();
 }
 
+interface StellarBalance {
+    asset_type: string;
+    balance: string;
+}
+
+interface VaultConfig {
+    signers?: unknown;
+    threshold?: unknown;
+    [key: string]: unknown;
+}
+
+interface ProposalStatus {
+    status: string;
+    approvals: number;
+    threshold: number;
+}
+
 // --- Signer / threshold from config ---
 let activeSigners = 0;
 let threshold = '0/0';
 if (configResult.status === 'fulfilled' && configResult.value) {
-    const cfg = configResult.value as Record<string, unknown>;
+    const cfg = configResult.value as VaultConfig;
     const signers = parseSignerAddresses(cfg.signers);
     const t = parseNumericValue(cfg.threshold);
     activeSigners = signers.length;
@@ -402,7 +487,7 @@ let pendingApprovals = 0;
 let readyToExecute = 0;
 if (proposalsResult.status === 'fulfilled') {
     const events: RawEvent[] = proposalsResult.value;
-    const proposalMap = new Map<string, { status: string; approvals: number; threshold: number }>();
+    const proposalMap = new Map<string, ProposalStatus>();
     for (const ev of events) {
         const topic0 = ev.topic?.[0];
         if (!topic0) continue;
@@ -421,8 +506,8 @@ if (proposalsResult.status === 'fulfilled') {
         if (!p) continue;
         if (evType === 'proposal_approved') {
             const valueXdr = ev.value?.xdr;
-            const { details } = valueXdr ? parseEventValue(valueXdr, evType) : { details: {} as Record<string, unknown> };
-            const d = details as Record<string, unknown>;
+            const { details } = valueXdr ? parseEventValue(valueXdr, evType) : { details: {} as ProposalEventData };
+            const d = details as ProposalEventData;
             const approvals = Number(d.approval_count ?? p.approvals + 1);
             const t = Number(d.threshold ?? p.threshold);
             proposalMap.set(id, { ...p, approvals, threshold: t, status: approvals >= t ? 'Approved' : 'Pending' });
@@ -459,7 +544,7 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
         ]);
 
         const configRaw = configRawPrimary ?? configRawLegacy;
-        const configObject = (configRaw && typeof configRaw === 'object') ? configRaw as Record<string, unknown> : {};
+        const configObject = (configRaw && typeof configRaw === 'object') ? configRaw as VaultConfig : {};
 
         const signers = parseSignerAddresses(configObject.signers);
         const threshold = parseNumericValue(configObject.threshold);
@@ -780,7 +865,12 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
             const latestLedger = latestLedgerData?.result?.sequence ?? '0';
             const startLedger = cursor ? undefined : Math.max(1, parseInt(latestLedger, 10) - 50000);
 
-            const params: Record<string, unknown> = {
+interface GetEventsParams {
+    filters: Array<{ type: string; contractIds: string[] }>;
+    pagination: { limit: number };
+}
+
+            const params: GetEventsParams = {
                 filters: [{ type: 'contract', contractIds: [env.contractId] }],
                 pagination: { limit: Math.min(limit, 200) },
             };
@@ -852,7 +942,7 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
     const simulateTransaction = async (
         functionName: string,
         args: xdr.ScVal[],
-        params?: Record<string, unknown>
+        params?: GetEventsParams
     ): Promise<SimulationResult> => {
         if (!address) throw new Error("Wallet not connected");
 
@@ -928,7 +1018,7 @@ const [configPrimary, configLegacy] = await Promise.all([
     readContractValue('get_vault_config').catch(() => null),
 ]);
 const configRaw = configPrimary ?? configLegacy;
-const configObject = (configRaw && typeof configRaw === 'object') ? configRaw as Record<string, unknown> : {};
+const configObject = (configRaw && typeof configRaw === 'object') ? configRaw as VaultConfig : {};
 const allSigners = parseSignerAddresses(configObject.signers);
 
 // Fetch events to find approvals for this specific proposal
@@ -1084,7 +1174,7 @@ const exportSignatures = useCallback(async (proposalId: number) => {
         // First pass: build proposals from creation events
         for (const ev of activities) {
             if (ev.type === 'proposal_created') {
-                const d = ev.details as Record<string, unknown>;
+                const d = ev.details as ProposalEventData;
                 const id = String(ev.eventId.split('-')[0] ?? ev.eventId);
                 proposalMap.set(id, {
                     id,
@@ -1109,7 +1199,7 @@ const exportSignatures = useCallback(async (proposalId: number) => {
             if (!proposal) continue;
 
             if (ev.type === 'proposal_approved') {
-                const d = ev.details as Record<string, unknown>;
+                const d = ev.details as ProposalEventData;
                 const approvalCount = Number(d.approval_count ?? proposal.approvals + 1);
                 const threshold = Number(d.threshold ?? proposal.threshold);
                 const updatedApprovedBy = proposal.approvedBy.includes(ev.actor)
@@ -1392,10 +1482,16 @@ const exportSignatures = useCallback(async (proposalId: number) => {
                 currentLedger = latestData?.result?.sequence ?? 0;
             } catch { /* ignore */ }
 
+interface RecurringPaymentRaw {
+    is_active?: boolean;
+    isActive?: boolean;
+    [key: string]: unknown;
+}
+
             for (let i = 0; i < results.length; i++) {
                 const r = results[i];
                 if (r.status !== 'fulfilled' || r.value == null) continue;
-                const raw = r.value as Record<string, unknown>;
+                const raw = r.value as RecurringPaymentRaw;
                 const id = String(ids[i]);
                 const isActive = Boolean(raw.is_active ?? raw.isActive ?? true);
                 const isCancelled = cancelledSet.has(id);
