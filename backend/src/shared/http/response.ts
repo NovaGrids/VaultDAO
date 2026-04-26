@@ -12,6 +12,7 @@ export interface ApiErrorResponse {
     message: string;
     code: ErrorCode;
     details?: any;
+    requestId?: string;
   };
 }
 
@@ -41,6 +42,12 @@ export function error(
     message: err.message,
     code,
   };
+
+  const requestId = res.req && (res.req as any).requestId;
+  if (requestId) {
+    safeError.requestId = requestId;
+  }
+
 
   if (options.exposeDetails && err.details) {
     safeError.details = err.details;

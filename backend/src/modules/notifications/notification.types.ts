@@ -24,3 +24,27 @@ export interface NotificationQueue extends NotificationPublisher, NotificationSu
   size(): number;
   shutdown(): void;
 }
+
+export interface ProposalCreatedNotification {
+  notificationType: "PROPOSAL_CREATED";
+  proposalId: string;
+}
+
+export interface ProposalApprovedNotification {
+  notificationType: "PROPOSAL_APPROVED";
+  proposalId: string;
+}
+
+export interface ProposalExecutedNotification {
+  notificationType: "PROPOSAL_EXECUTED";
+  proposalId: string;
+  amount: string;
+  recipient: string;
+  token: string;
+}
+
+export interface ProposalExpiredNotification {
+  notificationType: "PROPOSAL_EXPIRED";
+  proposalId: string;
+  expiresAt: string;
+}

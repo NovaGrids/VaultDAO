@@ -9,6 +9,7 @@ import type { SnapshotService } from "../snapshots/snapshot.service.js";
 import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 import { TimeoutError } from "../../shared/http/fetchWithTimeout.js";
 import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
+import type { MetricsRegistry } from "../health/metrics.registry.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
@@ -61,6 +62,7 @@ export class EventPollingService {
     private readonly wsServer?: EventWebSocketServer,
     private readonly snapshotService?: SnapshotService,
     rpcClient?: SorobanRpcClient,
+    private readonly metrics?: MetricsRegistry,
   ) {
     this.rpcClient = rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
   }
@@ -238,6 +240,11 @@ export class EventPollingService {
       lastLedger: latestLedger,
       updatedAt: new Date().toISOString(),
     });
+    // Update polling lag metric
+    if (this.metrics) {
+      this.metrics.setGauge("vaultdao_polling_lag_ledgers", latestLedger - this.lastLedgerPolled);
+    }
+
     this.lastLedgerPolled = latestLedger;
   }
 
@@ -286,6 +293,12 @@ export class EventPollingService {
       if (this.wsServer) {
         this.wsServer.broadcastEvent(event);
       }
+
+      // Increment events processed metric
+      if (this.metrics) {
+        this.metrics.incrementCounter("vaultdao_events_processed_total");
+      }
+
       await this.processEvent(event);
     }
 
