@@ -3,6 +3,10 @@ import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 import { validatePagination } from "../../shared/http/validateQuery.js";
 import type { TransactionsService } from "./transactions.service.js";
+import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
+
+/** TTL for paginated transaction cache: 30 seconds */
+const TRANSACTIONS_CACHE_TTL_MS = 30_000;
 
 function getSingleQueryString(
   query: Record<string, unknown>,
@@ -19,28 +23,32 @@ function getSingleQueryString(
 
 /**
  * GET /api/v1/transactions
- *
- * Query parameters:
- * - contractId: string (optional, falls back to env default passed at construction)
- * - token:      string (optional)
- * - recipient:  string (optional)
- * - from:       number (optional) - minimum ledger
- * - to:         number (optional) - maximum ledger
- * - limit:      number (optional, default: 20, max: 100)
- * - offset:     number (optional, default: 0)
  */
 export function getTransactionsController(
   service: TransactionsService,
   defaultContractId: string,
+  cache?: CacheAdapter<unknown>,
 ): RequestHandler {
   return async (request, response) => {
     const pagination = validatePagination(request, response);
     if (!pagination) return;
 
-    const token = getSingleQueryString(request.query as any, "token");
-    const recipient = getSingleQueryString(request.query as any, "recipient");
-    const fromRaw = getSingleQueryString(request.query as any, "from");
-    const toRaw = getSingleQueryString(request.query as any, "to");
+    const token = getSingleQueryString(
+      request.query as Record<string, unknown>,
+      "token",
+    );
+    const recipient = getSingleQueryString(
+      request.query as Record<string, unknown>,
+      "recipient",
+    );
+    const fromRaw = getSingleQueryString(
+      request.query as Record<string, unknown>,
+      "from",
+    );
+    const toRaw = getSingleQueryString(
+      request.query as Record<string, unknown>,
+      "to",
+    );
 
     let from: number | undefined;
     if (fromRaw !== undefined && fromRaw !== "") {
@@ -81,9 +89,20 @@ export function getTransactionsController(
 
     try {
       const contractId =
-        typeof request.query.contractId === "string" && request.query.contractId.trim()
+        typeof request.query.contractId === "string" &&
+        request.query.contractId.trim()
           ? request.query.contractId.trim()
           : defaultContractId;
+
+      const cacheKey = `txns:${contractId}:${token ?? ""}:${recipient ?? ""}:${from ?? ""}:${to ?? ""}:${pagination.offset}:${pagination.limit}`;
+
+      if (cache) {
+        const cached = cache.get(cacheKey);
+        if (cached !== null) {
+          response.json(cached);
+          return;
+        }
+      }
 
       const result = await service.getTransactions({
         contractId,
@@ -94,6 +113,15 @@ export function getTransactionsController(
         limit: pagination.limit,
         offset: pagination.offset,
       });
+
+      if (cache) {
+        cache.set(
+          cacheKey,
+          { ok: true, data: result },
+          TRANSACTIONS_CACHE_TTL_MS,
+        );
+      }
+
       success(response, result);
     } catch (err) {
       error(response, {
@@ -116,11 +144,15 @@ export function getTransactionByHashController(
   return async (request, response) => {
     try {
       const contractId =
-        typeof request.query.contractId === "string" && request.query.contractId.trim()
+        typeof request.query.contractId === "string" &&
+        request.query.contractId.trim()
           ? request.query.contractId.trim()
           : defaultContractId;
       const txHash = String(request.params.txHash);
-      const transaction = await service.getTransactionByHash(contractId, txHash);
+      const transaction = await service.getTransactionByHash(
+        contractId,
+        txHash,
+      );
 
       if (!transaction) {
         error(response, {
@@ -141,4 +173,15 @@ export function getTransactionByHashController(
       });
     }
   };
+}
+
+/**
+ * Invalidates transaction cache entries for a given contractId.
+ * Call this when new transaction events are processed.
+ */
+export function invalidateTransactionCache(
+  cache: CacheAdapter<unknown>,
+  contractId: string,
+): void {
+  cache.deleteByPrefix(`txns:${contractId}:`);
 }

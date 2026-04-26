@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, Mic, MicOff, Download } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Search, Mic, MicOff, Download } from "lucide-react";
 import {
   getSearchHistory,
   addToSearchHistory,
@@ -11,13 +11,13 @@ import {
   searchParamsToFilters,
   filterValuesToRecord,
   recordToFilterValues,
-} from '../utils/search';
+} from "../utils/search";
 import SearchFilters, {
   type FilterFieldConfig,
   type FilterValue,
-} from './SearchFilters';
-import SavedSearches from './SavedSearches';
-import { useSearchParams } from 'react-router-dom';
+} from "./SearchFilters";
+import SavedSearches from "./SavedSearches";
+import { useSearchParams } from "react-router-dom";
 
 export interface AdvancedSearchProps<T extends Record<string, unknown>> {
   /** Current query (controlled) */
@@ -57,30 +57,55 @@ function AdvancedSearch<T extends Record<string, unknown>>({
   onFilterChange,
   onSearch,
   results,
-  exportFilename = 'search-results.csv',
-  placeholder = 'Search…',
+  exportFilename = "search-results.csv",
+  placeholder = "Search…",
   showSavedSearches = true,
   showExport = true,
   voiceSearchEnabled = true,
   persistenceKey,
-  className = '',
+  className = "",
 }: AdvancedSearchProps<T>) {
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [localValue, setLocalValue] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Keep localValue in sync when parent changes value externally
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const handleInputChange = useCallback(
+    (newVal: string) => {
+      setLocalValue(newVal);
+      setSuggestionsOpen(true);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        onChange(newVal);
+      }, 300);
+    },
+    [onChange],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   // Sync from URL on mount
   useEffect(() => {
     if (!persistenceKey) return;
-    
+
     const q = searchParams.get(`${persistenceKey}.q`);
     if (q != null && q !== value) {
       onChange(q);
     }
-    
+
     // Extract filters from params
     const record: Record<string, any> = {};
     searchParams.forEach((val: string, key: string) => {
@@ -94,9 +119,12 @@ function AdvancedSearch<T extends Record<string, unknown>>({
         }
       }
     });
-    
+
     const nextFilters = recordToFilterValues(record, filterFields);
-    if (nextFilters.length > 0 && JSON.stringify(nextFilters) !== JSON.stringify(filterValues)) {
+    if (
+      nextFilters.length > 0 &&
+      JSON.stringify(nextFilters) !== JSON.stringify(filterValues)
+    ) {
       onFilterChange(nextFilters);
     }
   }, [persistenceKey]);
@@ -104,27 +132,27 @@ function AdvancedSearch<T extends Record<string, unknown>>({
   // Sync to URL when state changes
   useEffect(() => {
     if (!persistenceKey) return;
-    
+
     const nextParams = new URLSearchParams(searchParams);
-    
+
     // Set query
     if (value) nextParams.set(`${persistenceKey}.q`, value);
     else nextParams.delete(`${persistenceKey}.q`);
-    
+
     // Set filters
     // Remove old filters for this key
     const keysToRemove: string[] = [];
     nextParams.forEach((_, key) => {
       if (key.startsWith(`${persistenceKey}.f.`)) keysToRemove.push(key);
     });
-    keysToRemove.forEach(k => nextParams.delete(k));
-    
+    keysToRemove.forEach((k) => nextParams.delete(k));
+
     const filterRecord = filterValuesToRecord(filterValues);
     const filterParams = filtersToSearchParams(filterRecord);
     filterParams.forEach((val, key) => {
       nextParams.append(`${persistenceKey}.f.${key}`, val);
     });
-    
+
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -141,14 +169,14 @@ function AdvancedSearch<T extends Record<string, unknown>>({
       onSearch?.(trimmed);
       setSuggestionsOpen(false);
     },
-    [onSearch]
+    [onSearch],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       handleSubmit(value);
     }
-    if (e.key === 'Escape') {
+    if (e.key === "Escape") {
       setSuggestionsOpen(false);
       inputRef.current?.blur();
     }
@@ -165,8 +193,8 @@ function AdvancedSearch<T extends Record<string, unknown>>({
         setSuggestionsOpen(false);
       }
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const startVoiceSearch = () => {
@@ -185,24 +213,26 @@ function AdvancedSearch<T extends Record<string, unknown>>({
     };
     const SR = Win.SpeechRecognition ?? Win.webkitSpeechRecognition;
     if (!SR) {
-      setVoiceError('Voice search not supported in this browser.');
+      setVoiceError("Voice search not supported in this browser.");
       return;
     }
     const recognition = new SR();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = "en-US";
     setVoiceError(null);
     setIsListening(true);
     recognition.onresult = (event: { results: unknown }) => {
-      const results = event.results as { [i: number]: { [j: number]: { transcript: string } } };
-      const transcript = results[0]?.[0]?.transcript ?? '';
-      onChange(transcript);
+      const results = event.results as {
+        [i: number]: { [j: number]: { transcript: string } };
+      };
+      const transcript = results[0]?.[0]?.transcript ?? "";
+      handleInputChange(transcript);
       handleSubmit(transcript);
       setIsListening(false);
     };
     recognition.onerror = () => {
-      setVoiceError('Voice input failed. Try again.');
+      setVoiceError("Voice input failed. Try again.");
       setIsListening(false);
     };
     recognition.onend = () => setIsListening(false);
@@ -214,24 +244,28 @@ function AdvancedSearch<T extends Record<string, unknown>>({
   };
 
   const handleSaveCurrentSearch = () => {
-    const name = window.prompt('Name this search', value.slice(0, 30) || 'My search');
+    const name = window.prompt(
+      "Name this search",
+      localValue.slice(0, 30) || "My search",
+    );
     if (name != null && name.trim()) {
       const filtersObj: Record<string, unknown> = {};
       filterValues.forEach((f) => {
-        if (f.type === 'text' && f.text != null) filtersObj[f.field] = f.text;
-        if (f.type === 'number_range') {
+        if (f.type === "text" && f.text != null) filtersObj[f.field] = f.text;
+        if (f.type === "number_range") {
           if (f.numberMin != null) filtersObj[`${f.field}_min`] = f.numberMin;
           if (f.numberMax != null) filtersObj[`${f.field}_max`] = f.numberMax;
         }
-        if (f.type === 'date_range') {
+        if (f.type === "date_range") {
           if (f.dateFrom) filtersObj[`${f.field}_from`] = f.dateFrom;
           if (f.dateTo) filtersObj[`${f.field}_to`] = f.dateTo;
         }
-        if (f.type === 'select' && f.select != null) filtersObj[f.field] = f.select;
-        if (f.type === 'multi_select' && f.multiSelect?.length)
+        if (f.type === "select" && f.select != null)
+          filtersObj[f.field] = f.select;
+        if (f.type === "multi_select" && f.multiSelect?.length)
           filtersObj[f.field] = f.multiSelect;
       });
-      saveSearch(name.trim(), value, filtersObj);
+      saveSearch(name.trim(), localValue, filtersObj);
     }
   };
 
@@ -246,10 +280,9 @@ function AdvancedSearch<T extends Record<string, unknown>>({
             <input
               ref={inputRef}
               type="search"
-              value={value}
+              value={localValue}
               onChange={(e) => {
-                onChange(e.target.value);
-                setSuggestionsOpen(true);
+                handleInputChange(e.target.value);
               }}
               onFocus={() => setSuggestionsOpen(true)}
               onKeyDown={handleKeyDown}
@@ -268,11 +301,11 @@ function AdvancedSearch<T extends Record<string, unknown>>({
                 disabled={isListening}
                 className={`flex items-center justify-center w-12 sm:w-10 shrink-0 border-l border-gray-600 ${
                   isListening
-                    ? 'bg-red-600/20 text-red-400'
-                    : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                    ? "bg-red-600/20 text-red-400"
+                    : "text-gray-400 hover:bg-gray-700 hover:text-white"
                 } min-h-[48px] sm:min-h-[40px]`}
                 title="Voice search"
-                aria-label={isListening ? 'Listening…' : 'Start voice search'}
+                aria-label={isListening ? "Listening…" : "Start voice search"}
               >
                 {isListening ? <MicOff size={20} /> : <Mic size={20} />}
               </button>
@@ -329,32 +362,50 @@ function AdvancedSearch<T extends Record<string, unknown>>({
                 handleSubmit(query);
                 if (Object.keys(filters).length && filterFields.length) {
                   const next: FilterValue[] = filterFields
-                    .filter((f) => f.key in filters || `${f.key}_min` in filters || `${f.key}_from` in filters)
+                    .filter(
+                      (f) =>
+                        f.key in filters ||
+                        `${f.key}_min` in filters ||
+                        `${f.key}_from` in filters,
+                    )
                     .map((f) => {
                       const v = filters[f.key];
                       const min = filters[`${f.key}_min`];
                       const max = filters[`${f.key}_max`];
                       const from = filters[`${f.key}_from`];
                       const to = filters[`${f.key}_to`];
-                      if (f.type === 'text') return { field: f.key, type: 'text', text: v as string };
-                      if (f.type === 'number_range')
+                      if (f.type === "text")
                         return {
                           field: f.key,
-                          type: 'number_range',
+                          type: "text",
+                          text: v as string,
+                        };
+                      if (f.type === "number_range")
+                        return {
+                          field: f.key,
+                          type: "number_range",
                           numberMin: min as number | undefined,
                           numberMax: max as number | undefined,
                         };
-                      if (f.type === 'date_range')
+                      if (f.type === "date_range")
                         return {
                           field: f.key,
-                          type: 'date_range',
+                          type: "date_range",
                           dateFrom: from as string | undefined,
                           dateTo: to as string | undefined,
                         };
-                      if (f.type === 'select')
-                        return { field: f.key, type: 'select', select: v as string };
-                      if (f.type === 'multi_select')
-                        return { field: f.key, type: 'multi_select', multiSelect: (v as string[]) ?? [] };
+                      if (f.type === "select")
+                        return {
+                          field: f.key,
+                          type: "select",
+                          select: v as string,
+                        };
+                      if (f.type === "multi_select")
+                        return {
+                          field: f.key,
+                          type: "multi_select",
+                          multiSelect: (v as string[]) ?? [],
+                        };
                       return { field: f.key, type: f.type };
                     });
                   if (next.length) onFilterChange(next);
@@ -376,9 +427,11 @@ function AdvancedSearch<T extends Record<string, unknown>>({
         </div>
       </div>
 
-      {value.trim() && (
+      {localValue.trim() && (
         <div className="flex items-center gap-2 text-sm text-gray-400">
-          <span>{results.length} result{results.length !== 1 ? 's' : ''}</span>
+          <span>
+            {results.length} result{results.length !== 1 ? "s" : ""}
+          </span>
           <button
             type="button"
             onClick={handleSaveCurrentSearch}
