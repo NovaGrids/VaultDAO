@@ -1,127 +1,123 @@
-import React from 'react';
-import { TrendingUp } from 'lucide-react';
-import type { ForecastPoint } from '../utils/forecasting';
+import React, { useState, useMemo } from 'react';
+import { 
+  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, 
+  Tooltip, ResponsiveContainer, ReferenceLine 
+} from 'recharts';
+import { TrendingUp, Calendar } from 'lucide-react';
+import { linearRegression, forecastNext, calculateStdError } from '../utils/forecasting';
 
 interface ForecastChartProps {
-  data: ForecastPoint[];
-  height?: number;
-  title?: string;
+  historicalData: { date: string; amount: number }[];
+  forecastDays?: number;
+  dailyLimit?: number;
+  weeklyLimit?: number;
 }
 
-const ForecastChart: React.FC<ForecastChartProps> = ({ data, height = 300, title }) => {
-  if (data.length === 0) {
+const ForecastChart: React.FC<ForecastChartProps> = ({ 
+  historicalData, forecastDays = 30, dailyLimit, weeklyLimit 
+}) => {
+  const [windowDays, setWindowDays] = useState(30);
+
+  const chartData = useMemo(() => {
+    if (historicalData.length < 3) return [];
+
+    const now = new Date();
+    const cutoff = new Date();
+    cutoff.setDate(now.getDate() - windowDays);
+
+    const filtered = historicalData
+      .filter(d => new Date(d.date) >= cutoff)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    if (filtered.length < 3) return [];
+
+    const points = filtered.map((d, i) => ({ x: i, y: d.amount }));
+    const { slope, intercept } = linearRegression(points);
+    const stdError = calculateStdError(points, slope, intercept);
+    const lastX = points.length - 1;
+
+    const historical = filtered.map((d, i) => ({
+      name: d.date.split('T')[0],
+      historical: d.amount,
+      forecast: i === lastX ? d.amount : null,
+    }));
+
+    const forecast = forecastNext(forecastDays, slope, intercept, lastX).map((p, i) => ({
+      name: `Forecast +${i + 1}d`,
+      forecast: p.y,
+      upper: p.y + 1.96 * stdError,
+      lower: Math.max(0, p.y - 1.96 * stdError),
+    }));
+
+    return [...historical, ...forecast];
+  }, [historicalData, windowDays, forecastDays]);
+
+  if (historicalData.length < 3) {
     return (
-      <div className="flex items-center justify-center" style={{ height }}>
-        <p className="text-gray-500 text-sm">No forecast data available</p>
+      <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-white/5 rounded-2xl bg-gray-900/20">
+        <TrendingUp className="text-gray-700 mb-2" size={32} />
+        <p className="text-gray-500 font-medium">Insufficient data for forecasting</p>
+        <p className="text-xs text-gray-600 mt-1">Need at least 3 historical points</p>
       </div>
     );
   }
 
-  const maxValue = Math.max(
-    ...data.map(d => Math.max(d.actual || 0, d.predicted || 0, d.upper || 0))
-  );
-  const minValue = Math.min(...data.map(d => d.lower || d.actual || d.predicted || 0));
-  const range = maxValue - minValue || 1;
-
-  const getY = (value: number) => {
-    return height - 40 - ((value - minValue) / range) * (height - 80);
-  };
-
-  const actualPoints = data.filter(d => d.actual !== undefined);
-  const predictedPoints = data.filter(d => d.predicted !== undefined);
-
   return (
-    <div>
-      {title && (
-        <div className="flex items-center gap-2 mb-4">
-          <TrendingUp size={18} className="text-purple-400" />
-          <h4 className="font-semibold text-white">{title}</h4>
+    <div className="p-6 rounded-2xl bg-gray-900/50 border border-white/5 backdrop-blur-xl">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+        <div>
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            <TrendingUp size={20} className="text-purple-400" />
+            Spending Forecast
+          </h3>
+          <p className="text-xs text-gray-500 mt-1">Linear regression trend analysis</p>
         </div>
-      )}
-      <svg width="100%" height={height} className="overflow-visible">
-        <defs>
-          <linearGradient id="confidenceGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.2" />
-            <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
-          </linearGradient>
-        </defs>
-
-        {/* Confidence interval */}
-        {predictedPoints.length > 0 && predictedPoints[0].lower !== undefined && (
-          <path
-            d={predictedPoints
-              .map((d) => {
-                const idx = data.indexOf(d);
-                const x = (idx / (data.length - 1)) * 100;
-                const yUpper = getY(d.upper || 0);
-                const yLower = getY(d.lower || 0);
-                return idx === 0
-                  ? `M ${x}% ${yUpper} L ${x}% ${yLower}`
-                  : `L ${x}% ${yUpper} M ${x}% ${yLower}`;
-              })
-              .join(' ')}
-            fill="url(#confidenceGradient)"
-            stroke="none"
-          />
-        )}
-
-        {/* Actual line */}
-        {actualPoints.length > 1 && (
-          <polyline
-            points={actualPoints
-              .map((d) => {
-                const idx = data.indexOf(d);
-                const x = (idx / (data.length - 1)) * 100;
-                const y = getY(d.actual || 0);
-                return `${x}%,${y}`;
-              })
-              .join(' ')}
-            fill="none"
-            stroke="#22c55e"
-            strokeWidth="2"
-          />
-        )}
-
-        {/* Predicted line */}
-        {predictedPoints.length > 1 && (
-          <polyline
-            points={predictedPoints
-              .map((d) => {
-                const idx = data.indexOf(d);
-                const x = (idx / (data.length - 1)) * 100;
-                const y = getY(d.predicted || 0);
-                return `${x}%,${y}`;
-              })
-              .join(' ')}
-            fill="none"
-            stroke="#8b5cf6"
-            strokeWidth="2"
-            strokeDasharray="5,5"
-          />
-        )}
-
-        {/* Y-axis labels */}
-        <text x="5" y="30" fill="#9ca3af" fontSize="12">
-          {maxValue.toFixed(0)}
-        </text>
-        <text x="5" y={height - 20} fill="#9ca3af" fontSize="12">
-          {minValue.toFixed(0)}
-        </text>
-      </svg>
-
-      <div className="flex items-center justify-center gap-6 mt-4 text-xs">
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-0.5 bg-green-500" />
-          <span className="text-gray-400">Actual</span>
+        
+        <div className="flex bg-black/40 p-1 rounded-lg border border-white/5">
+          {[7, 30, 90].map(d => (
+            <button
+              key={d}
+              onClick={() => setWindowDays(d)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
+                windowDays === d ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {d}D
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-0.5 bg-purple-500 border-dashed" style={{ borderTop: '2px dashed' }} />
-          <span className="text-gray-400">Forecast</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-3 bg-purple-500 opacity-20" />
-          <span className="text-gray-400">Confidence</span>
-        </div>
+      </div>
+
+      <div className="h-64 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <defs>
+              <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+            <XAxis dataKey="name" hide />
+            <YAxis stroke="#4b5563" fontSize={10} tickLine={false} axisLine={false} />
+            <Tooltip 
+              contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', fontSize: '12px' }}
+              itemStyle={{ fontWeight: 'bold' }}
+            />
+            {dailyLimit && <ReferenceLine y={dailyLimit} stroke="#ef4444" strokeDasharray="3 3" label={{ position: 'right', value: 'Daily', fill: '#ef4444', fontSize: 10 }} />}
+            {weeklyLimit && <ReferenceLine y={weeklyLimit} stroke="#f59e0b" strokeDasharray="3 3" label={{ position: 'right', value: 'Weekly', fill: '#f59e0b', fontSize: 10 }} />}
+            <Area type="monotone" dataKey="upper" stroke="none" fill="#8b5cf6" fillOpacity={0.1} />
+            <Area type="monotone" dataKey="lower" stroke="none" fill="#8b5cf6" fillOpacity={0.1} />
+            <Area type="monotone" dataKey="historical" stroke="#22c55e" strokeWidth={2} fill="url(#areaGradient)" />
+            <Line type="monotone" dataKey="forecast" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="flex justify-center gap-6 mt-6">
+        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-green-500" /><span className="text-[10px] font-bold text-gray-500 uppercase">Actual</span></div>
+        <div className="flex items-center gap-2"><div className="w-3 h-0.5 bg-purple-500 border-dashed" style={{ borderTop: '2px dashed' }} /><span className="text-[10px] font-bold text-gray-500 uppercase">Forecast</span></div>
+        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500/20" /><span className="text-[10px] font-bold text-gray-500 uppercase">Confidence</span></div>
       </div>
     </div>
   );

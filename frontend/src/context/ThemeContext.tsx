@@ -1,38 +1,56 @@
-import React, { useState, useEffect } from 'react';
-import { ThemeContext } from './themeContextDefinition';
-
-type Theme = 'light' | 'dark';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ThemeContext, type Theme } from './themeContextDefinition';
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setTheme] = useState<Theme>(() => {
-    // Check localStorage first
+  const [theme, _setTheme] = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('theme') as Theme;
-      if (saved) return saved;
-      // Check system preference
+      const saved = localStorage.getItem('vaultdao_theme') as Theme;
+      if (saved && ['light', 'dark', 'high-contrast'].includes(saved)) return saved;
+      
       return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
-    return 'light';
+    return 'dark'; // Default to dark
   });
 
-  useEffect(() => {
+  const applyTheme = useCallback((targetTheme: Theme) => {
     const root = window.document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    root.style.colorScheme = theme;
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+    root.classList.remove('light', 'dark', 'high-contrast');
+    root.classList.add(targetTheme);
+    root.style.colorScheme = targetTheme === 'light' ? 'light' : 'dark';
+    localStorage.setItem('vaultdao_theme', targetTheme);
+  }, []);
 
-  const toggleTheme = () => {
-    console.log("Toggle clicked! Current:", theme);
-    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme, applyTheme]);
+
+  const setTheme = (newTheme: Theme) => {
+    _setTheme(newTheme);
   };
 
+  const toggleTheme = () => {
+    _setTheme(prev => {
+      if (prev === 'dark') return 'light';
+      if (prev === 'light') return 'high-contrast';
+      return 'dark';
+    });
+  };
+
+  // Listen for system changes if no preference is set
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e: MediaQueryListEvent) => {
+      if (!localStorage.getItem('vaultdao_theme')) {
+        _setTheme(e.matches ? 'dark' : 'light');
+      }
+    };
+
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
       {children}
     </ThemeContext.Provider>
   );

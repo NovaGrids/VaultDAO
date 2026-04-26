@@ -20,7 +20,11 @@ import {
   AlertCircle,
   Bell,
   HelpCircle,
+  Sun,
+  Moon,
+  Contrast,
 } from "lucide-react";
+import { useTheme } from "../../context/useTheme";
 import { useWallet } from "../../hooks/useWallet";
 import CopyButton from '../CopyButton';
 import { LanguageSwitcher } from '../LanguageSwitcher';
@@ -41,6 +45,7 @@ import { KeyboardShortcuts } from "../KeyboardShortcuts";
 
 const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
+  const { theme, toggleTheme } = useTheme();
   const { isConnected, address, network, connect, disconnect, walletType } = useWallet();
   const { providers } = useWalletProviderInfo();
   const { unreadCount } = useNotifications();
@@ -146,6 +151,18 @@ const DashboardLayout: React.FC = () => {
           <div className="flex items-center space-x-4">
             {/* Language Switcher */}
             <LanguageSwitcher />
+
+            {/* Theme Toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white"
+              aria-label={`Switch theme (current: ${theme})`}
+              title={`Theme: ${theme}`}
+            >
+              {theme === 'dark' && <Moon size={20} />}
+              {theme === 'light' && <Sun size={20} />}
+              {theme === 'high-contrast' && <Contrast size={20} />}
+            </button>
             
             {/* Notification Bell */}
             <button
