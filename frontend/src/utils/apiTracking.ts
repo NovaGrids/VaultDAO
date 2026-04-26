@@ -4,9 +4,28 @@ interface FetchOptions extends RequestInit {
   timeout?: number;
 }
 
-/**
- * Wrapper around fetch that tracks slow API calls
- */
+export interface RpcCall {
+  endpoint: string;
+  duration: number;
+  success: boolean;
+  timestamp: number;
+}
+
+/** Ring buffer of the last 20 RPC calls for the latency histogram */
+const RPC_BUFFER_SIZE = 20;
+const rpcHistory: RpcCall[] = [];
+
+function recordRpc(call: RpcCall): void {
+  rpcHistory.push(call);
+  if (rpcHistory.length > RPC_BUFFER_SIZE) rpcHistory.shift();
+}
+
+/** Returns a snapshot of the last 20 RPC calls (newest last) */
+export function getRpcHistory(): RpcCall[] {
+  return [...rpcHistory];
+}
+
+/** Wrap fetch to track RPC call latency, success/failure, and endpoint */
 export async function trackedFetch(
   url: string,
   options: FetchOptions = {}
@@ -18,16 +37,12 @@ export async function trackedFetch(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    const response = await fetch(url, {
-      ...fetchOptions,
-      signal: controller.signal,
-    });
-
+    const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
     clearTimeout(timeoutId);
 
     const duration = performance.now() - startTime;
+    recordRpc({ endpoint: url, duration, success: response.ok, timestamp: Date.now() });
 
-    // Track slow API calls
     if (duration > 1000) {
       performanceTracker.trackSlowQuery(url, duration, 'api');
     }
@@ -35,52 +50,32 @@ export async function trackedFetch(
     return response;
   } catch (error) {
     const duration = performance.now() - startTime;
+    recordRpc({ endpoint: url, duration, success: false, timestamp: Date.now() });
     performanceTracker.trackSlowQuery(url, duration, 'api');
     throw error;
   }
 }
 
-/**
- * Create a fetch wrapper with automatic tracking
- */
 export function createTrackedFetch(baseURL?: string) {
-  return async (url: string, options?: FetchOptions): Promise<Response> => {
-    const fullUrl = baseURL ? `${baseURL}${url}` : url;
-    return trackedFetch(fullUrl, options);
-  };
+  return (url: string, options?: FetchOptions): Promise<Response> =>
+    trackedFetch(baseURL ? `${baseURL}${url}` : url, options);
 }
 
-/**
- * Batch multiple API calls and track overall performance
- */
 export async function batchTrackedFetch(
   requests: Array<{ url: string; options?: FetchOptions }>,
   batchName: string
 ): Promise<Response[]> {
   const startTime = performance.now();
-
   try {
-    const responses = await Promise.all(
-      requests.map((req) => trackedFetch(req.url, req.options))
-    );
-
+    const responses = await Promise.all(requests.map((r) => trackedFetch(r.url, r.options)));
     const duration = performance.now() - startTime;
     if (duration > 1000) {
-      performanceTracker.trackSlowQuery(
-        `${batchName} (${requests.length} requests)`,
-        duration,
-        'api'
-      );
+      performanceTracker.trackSlowQuery(`${batchName} (${requests.length} requests)`, duration, 'api');
     }
-
     return responses;
   } catch (error) {
     const duration = performance.now() - startTime;
-    performanceTracker.trackSlowQuery(
-      `${batchName} (${requests.length} requests) - FAILED`,
-      duration,
-      'api'
-    );
+    performanceTracker.trackSlowQuery(`${batchName} (${requests.length} requests) - FAILED`, duration, 'api');
     throw error;
   }
 }

@@ -14,6 +14,8 @@ import { RealtimeProvider } from './contexts/RealtimeContext';
 import { AppErrorBoundary } from './components/ErrorHandler';
 import { flushOfflineErrorQueue } from './components/ErrorReporting';
 import { registerServiceWorker } from './utils/pwa';
+import { AccessibilityProvider } from './contexts/AccessibilityContext';
+import { SkipLinks } from './components/SkipLinks';
 
 registerServiceWorker();
 
@@ -37,19 +39,30 @@ function RootApp() {
   return (
     <React.StrictMode>
       <I18nextProvider i18n={i18n}>
-        <ThemeProvider>
-          <ToastProvider>
-            <WalletProviders>
-              <NotificationProvider>
-                <OnboardingProvider>
-                  <RealtimeProvider>
-                    <AppWithErrorBoundary />
-                  </RealtimeProvider>
-                </OnboardingProvider>
-              </NotificationProvider>
-            </WalletProviders>
-          </ToastProvider>
-        </ThemeProvider>
+        <AccessibilityProvider>
+          <ThemeProvider>
+            <ToastProvider>
+              <WalletProviders>
+                <NotificationProvider>
+                  <OnboardingProvider>
+                    <RealtimeProvider>
+                      <SkipLinks />
+                      {/* aria-live region for screen reader announcements */}
+                      <div
+                        id="sr-announcer"
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="sr-only"
+                      />
+                      <AppWithErrorBoundary />
+                    </RealtimeProvider>
+                  </OnboardingProvider>
+                </NotificationProvider>
+              </WalletProviders>
+            </ToastProvider>
+          </ThemeProvider>
+        </AccessibilityProvider>
       </I18nextProvider>
     </React.StrictMode>
   );

@@ -1,4 +1,5 @@
 // Voice recognition utility using Web Speech API
+
 export interface VoiceCommand {
   command: string;
   action: () => void;
@@ -14,7 +15,7 @@ export interface VoiceRecognitionOptions {
 
 const SILENCE_TIMEOUT_MS = 5000;
 
-class VoiceRecognitionService {
+export class VoiceRecognitionService {
   private recognition: SpeechRecognition | null = null;
   private synthesis: SpeechSynthesis | null = null;
   private commands: Map<string, VoiceCommand> = new Map();
@@ -24,10 +25,12 @@ class VoiceRecognitionService {
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    const globalWindow = globalThis as Record<string, unknown>;
-    const SpeechRecognitionClass = (globalWindow.SpeechRecognition || globalWindow.webkitSpeechRecognition) as (new () => SpeechRecognition) | undefined;
-    if (SpeechRecognitionClass) {
-      this.recognition = new SpeechRecognitionClass();
+    const g = globalThis as Record<string, unknown>;
+    const Ctor = (g.SpeechRecognition ?? g.webkitSpeechRecognition) as
+      | (new () => SpeechRecognition)
+      | undefined;
+    if (Ctor) {
+      this.recognition = new Ctor();
       this.synthesis = window.speechSynthesis;
     }
   }
@@ -36,9 +39,8 @@ class VoiceRecognitionService {
     return this.recognition !== null;
   }
 
-  init(options: VoiceRecognitionOptions = {}) {
+  init(options: VoiceRecognitionOptions = {}): void {
     if (!this.recognition) return;
-
     this.recognition.continuous = options.continuous ?? true;
     this.recognition.interimResults = options.interimResults ?? false;
     this.recognition.lang = options.lang ?? 'en-US';
@@ -46,18 +48,20 @@ class VoiceRecognitionService {
     this.awake = !this.wakeWord;
   }
 
-  registerCommand(name: string, command: VoiceCommand) {
+  registerCommand(name: string, command: VoiceCommand): void {
     this.commands.set(name.toLowerCase(), command);
-    command.aliases?.forEach(alias => {
-      this.commands.set(alias.toLowerCase(), command);
-    });
+    command.aliases?.forEach((alias) => this.commands.set(alias.toLowerCase(), command));
   }
 
-  unregisterCommand(name: string) {
+  unregisterCommand(name: string): void {
     this.commands.delete(name.toLowerCase());
   }
 
-  start(onResult?: (transcript: string) => void, onError?: (error: string) => void, onTimeout?: () => void) {
+  start(
+    onResult?: (transcript: string) => void,
+    onError?: (error: string) => void,
+    onTimeout?: () => void,
+  ): void {
     if (!this.recognition || this.isListening) return;
 
     const resetSilenceTimer = () => {
@@ -70,7 +74,7 @@ class VoiceRecognitionService {
 
     this.recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = Array.from(event.results)
-        .map((result: SpeechRecognitionResult) => result[0].transcript)
+        .map((r: SpeechRecognitionResult) => r[0].transcript)
         .join('')
         .toLowerCase()
         .trim();
@@ -94,9 +98,7 @@ class VoiceRecognitionService {
     };
 
     this.recognition.onend = () => {
-      if (this.isListening) {
-        this.recognition?.start();
-      }
+      if (this.isListening) this.recognition?.start();
     };
 
     this.recognition.start();
@@ -104,7 +106,7 @@ class VoiceRecognitionService {
     resetSilenceTimer();
   }
 
-  stop() {
+  stop(): void {
     if (!this.recognition) return;
     if (this.silenceTimer) {
       clearTimeout(this.silenceTimer);
@@ -115,19 +117,8 @@ class VoiceRecognitionService {
     this.recognition.stop();
   }
 
-  private processCommand(transcript: string) {
-    for (const [key, command] of this.commands) {
-      if (transcript.includes(key)) {
-        command.action();
-        this.speak(command.command);
-        break;
-      }
-    }
-  }
-
-  speak(text: string) {
+  speak(text: string): void {
     if (!this.synthesis) return;
-    
     this.synthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.1;
@@ -138,12 +129,23 @@ class VoiceRecognitionService {
   async requestPermission(): Promise<boolean> {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach((t) => t.stop());
       return true;
     } catch {
       return false;
     }
   }
+
+  private processCommand(transcript: string): void {
+    for (const [key, command] of this.commands) {
+      if (transcript.includes(key)) {
+        command.action();
+        this.speak(command.command);
+        break;
+      }
+    }
+  }
 }
 
+/** Singleton for use in components */
 export const voiceService = new VoiceRecognitionService();
