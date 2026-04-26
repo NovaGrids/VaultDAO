@@ -28,6 +28,9 @@ import {
   ProposalDeadlineRejectedActivityData,
   ProposalVetoedActivityData,
 } from "./types.js";
+import type { MetricsRegistry } from "../health/metrics.registry.js";
+import type { NotificationPublisher } from "../notifications/notification.types.js";
+import { randomUUID } from "node:crypto";
 
 /**
  * Default batch size for consumer buffering.
@@ -57,6 +60,8 @@ export class ProposalActivityConsumer {
   private isRunning: boolean = false;
   private isFlushing: boolean = false;
   private pendingFlush: boolean = false;
+  private readonly metrics?: MetricsRegistry;
+  private readonly notificationQueue?: NotificationPublisher;
 
   // Persistence failure tracking
   private retryBuffer: ProposalActivityRecord[] = [];
@@ -70,12 +75,16 @@ export class ProposalActivityConsumer {
     flushIntervalMs?: number;
     maxRetries?: number;
     initialBackoffMs?: number;
+    metricsRegistry?: MetricsRegistry;
+    notificationQueue?: NotificationPublisher;
   }) {
     this.batchSize = options?.batchSize ?? DEFAULT_BATCH_SIZE;
     this.flushIntervalMs =
       options?.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.maxRetries = options?.maxRetries ?? 5;
     this.initialBackoffMs = options?.initialBackoffMs ?? 1000;
+    this.metrics = options?.metricsRegistry;
+    this.notificationQueue = options?.notificationQueue;
   }
 
   /**
@@ -166,6 +175,10 @@ export class ProposalActivityConsumer {
       }
     }
 
+    if (this.notificationQueue) {
+      await this.publishNotification(record);
+    }
+
     // Check if we should flush
     if (this.buffer.length >= this.batchSize) {
       await this.flush();
@@ -215,6 +228,12 @@ export class ProposalActivityConsumer {
       }
     }
 
+    if (this.notificationQueue) {
+      for (const record of records) {
+        await this.publishNotification(record);
+      }
+    }
+
     // Check if we should flush
     if (this.buffer.length >= this.batchSize) {
       await this.flush();
@@ -238,6 +257,14 @@ export class ProposalActivityConsumer {
     const proposalId = this.extractProposalId(event);
     const data = this.mapActivityData(event, activityType);
 
+    // Increment proposal metrics
+    if (this.metrics) {
+      const statusLabel = activityType.toLowerCase().replace("proposal_", "");
+      this.metrics.incrementCounter("vaultdao_proposals_total", {
+        status: statusLabel,
+      });
+    }
+
     return {
       activityId: randomUUID(),
       proposalId,
@@ -253,6 +280,62 @@ export class ProposalActivityConsumer {
       },
       data,
     };
+  }
+
+  /**
+   * Publishes notifications for key events.
+   */
+  private async publishNotification(record: ProposalActivityRecord): Promise<void> {
+    if (!this.notificationQueue) return;
+
+    let payload: any = null;
+
+    switch (record.type) {
+      case ProposalActivityType.CREATED:
+        payload = {
+          notificationType: "PROPOSAL_CREATED",
+          proposalId: record.proposalId,
+        };
+        break;
+      case ProposalActivityType.APPROVED:
+        payload = {
+          notificationType: "PROPOSAL_APPROVED",
+          proposalId: record.proposalId,
+        };
+        break;
+      case ProposalActivityType.EXECUTED: {
+        const data = record.data as ProposalExecutedActivityData;
+        payload = {
+          notificationType: "PROPOSAL_EXECUTED",
+          proposalId: record.proposalId,
+          amount: data.amount,
+          recipient: data.recipient,
+          token: data.token,
+        };
+        break;
+      }
+      case ProposalActivityType.EXPIRED:
+        payload = {
+          notificationType: "PROPOSAL_EXPIRED",
+          proposalId: record.proposalId,
+          expiresAt: record.timestamp,
+        };
+        break;
+    }
+
+    if (payload) {
+      try {
+        await this.notificationQueue.publish({
+          id: randomUUID(),
+          topic: "proposal-activity",
+          source: "proposal-consumer",
+          createdAt: new Date().toISOString(),
+          payload,
+        });
+      } catch (err) {
+        console.error("[proposal-consumer] failed to publish notification:", err);
+      }
+    }
   }
 
   /**
@@ -592,6 +675,8 @@ export class ProposalActivityConsumer {
 export function createProposalConsumer(options?: {
   batchSize?: number;
   flushIntervalMs?: number;
+  metricsRegistry?: MetricsRegistry;
+  notificationQueue?: NotificationPublisher;
 }): ProposalActivityConsumer {
   return new ProposalActivityConsumer(options);
 }

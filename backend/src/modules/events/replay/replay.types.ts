@@ -35,6 +35,8 @@ export interface ReplayOptions {
   readonly dryRun: boolean;
   /** Verbose logging output. */
   readonly verbose: boolean;
+  /** Clear existing state before replay. */
+  readonly clear: boolean;
 }
 
 /**

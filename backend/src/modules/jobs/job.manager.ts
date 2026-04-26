@@ -1,4 +1,5 @@
 import { createLogger } from "../../shared/logging/logger.js";
+import type { MetricsRegistry } from "../health/metrics.registry.js";
 
 export interface Job {
   readonly name: string;
@@ -17,6 +18,8 @@ export interface Job {
 export class JobManager {
   private readonly logger = createLogger("job-manager");
   private jobs = new Map<string, Job>();
+
+  constructor(private readonly metrics?: MetricsRegistry) {}
 
   private toErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -53,6 +56,11 @@ export class JobManager {
           .then(
           () => {
             this.logger.info("job started", { job: job.name });
+            if (this.metrics) {
+              this.metrics.incrementCounter("vaultdao_job_executions_total", {
+                job: job.name,
+              });
+            }
           },
           (err: unknown) => {
             this.logger.error("job start failed", {

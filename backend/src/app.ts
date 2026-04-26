@@ -75,6 +75,7 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
       "Access-Control-Allow-Headers",
       `Content-Type, Authorization, ${REQUEST_ID_HEADER}`,
     );
+    res.set("Access-Control-Expose-Headers", REQUEST_ID_HEADER);
 
     if (req.method === "OPTIONS") {
       res.sendStatus(204);

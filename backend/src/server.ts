@@ -7,6 +7,14 @@ import {
   DatabaseCursorAdapter,
 } from "./modules/events/index.js";
 import {
+  getHealthController,
+  getReadinessController,
+  getStatusController,
+  getDetailedHealthController,
+} from "./modules/health/health.controller.js";
+import { getMetricsController } from "./modules/health/metrics.controller.js";
+import { MetricsRegistry } from "./modules/health/metrics.registry.js";
+import {
   RecurringIndexerService,
   MemoryRecurringStorageAdapter,
 } from "./modules/recurring/index.js";
@@ -38,6 +46,7 @@ export interface BackendRuntime {
   readonly transactionsService: TransactionsService;
   readonly jobManager: JobManager;
   readonly wsServer?: EventWebSocketServer;
+  readonly metricsRegistry: MetricsRegistry;
 }
 
 export interface BackendServer {
@@ -47,13 +56,22 @@ export interface BackendServer {
 
 export function startServer(
   env: BackendEnv = loadEnv(),
-  _notificationQueue?: NotificationQueue,
+  notificationQueue?: NotificationQueue,
 ): BackendServer {
-  const jobManager = new JobManager();
+  const metricsRegistry = new MetricsRegistry();
+  
+  // Register metrics
+  metricsRegistry.register("vaultdao_uptime_seconds", "Backend uptime in seconds", "gauge");
+  metricsRegistry.register("vaultdao_events_processed_total", "Total contract events processed", "counter");
+  metricsRegistry.register("vaultdao_proposals_total", "Total proposal lifecycle events", "counter");
+  metricsRegistry.register("vaultdao_polling_lag_ledgers", "Polling lag in ledgers", "gauge");
+  metricsRegistry.register("vaultdao_job_executions_total", "Total background job executions", "counter");
+
+  const jobManager = new JobManager(metricsRegistry);
 
   // Initialize proposal activity components
   const proposalActivityAggregator = new ProposalActivityAggregator();
-  const proposalActivityConsumer = new ProposalActivityConsumer();
+  const proposalActivityConsumer = new ProposalActivityConsumer({ metricsRegistry, notificationQueue });
   const proposalActivityPersistence = createMemoryPersistence();
   proposalActivityConsumer.setPersistence(proposalActivityPersistence);
   proposalActivityConsumer.registerBatchConsumer((records) => {
@@ -77,6 +95,7 @@ export function startServer(
     proposalActivityPersistence,
     transactionsService,
     jobManager,
+    metricsRegistry,
   };
 
   const app = createApp(env, runtime);
@@ -104,6 +123,8 @@ export function startServer(
     proposalActivityConsumer,
     wsServer,
     snapshotService,
+    undefined, // rpcClient
+    metricsRegistry,
   );
   runtime.eventPollingService = eventPollingService;
 
