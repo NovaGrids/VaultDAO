@@ -2,11 +2,28 @@ import type { RequestHandler } from "express";
 import type { SnapshotService } from "./snapshot.service.js";
 import { success, error } from "../../shared/http/response.js";
 import type { SerializableContractSnapshot } from "./types.js";
+import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 
-export function createSnapshotControllers(service: SnapshotService) {
+/** TTL for snapshot cache: 60 seconds */
+const SNAPSHOT_CACHE_TTL_MS = 60_000;
+
+export function createSnapshotControllers(
+  service: SnapshotService,
+  cache?: CacheAdapter<unknown>,
+) {
   const getSnapshot: RequestHandler = async (req, res) => {
     try {
       const contractId = req.params.contractId as string;
+      const cacheKey = `snapshot:${contractId}`;
+
+      if (cache) {
+        const cached = cache.get(cacheKey);
+        if (cached !== null) {
+          res.json(cached);
+          return;
+        }
+      }
+
       const snapshot = await service.getSnapshot(contractId);
       if (!snapshot)
         return error(res, { message: "Snapshot not found", status: 404 });
@@ -16,6 +33,14 @@ export function createSnapshotControllers(service: SnapshotService) {
         signers: Object.fromEntries(snapshot.signers),
         roles: Object.fromEntries(snapshot.roles),
       };
+
+      if (cache) {
+        cache.set(
+          cacheKey,
+          { ok: true, data: serializable },
+          SNAPSHOT_CACHE_TTL_MS,
+        );
+      }
 
       success(res, serializable);
     } catch (err) {
@@ -98,7 +123,6 @@ export function createSnapshotControllers(service: SnapshotService) {
       const contractId = req.params.contractId as string;
       const { startLedger = 0, endLedger } = req.body;
 
-      // Validate ledger range if provided
       if (
         startLedger < 0 ||
         (endLedger !== undefined && endLedger < startLedger)
@@ -106,7 +130,6 @@ export function createSnapshotControllers(service: SnapshotService) {
         return error(res, { message: "Invalid ledger range", status: 400 });
       }
 
-      // Determine end ledger if not provided
       let finalEndLedger = endLedger;
       if (finalEndLedger === undefined) {
         const stats = await service.getStats(contractId);
@@ -124,6 +147,8 @@ export function createSnapshotControllers(service: SnapshotService) {
               `[snapshot-controller] Async rebuild failed: ${rebuildErr}`,
             ),
           );
+        // Invalidate cache after rebuild is triggered
+        if (cache) cache.deleteByPrefix(`snapshot:${contractId}`);
         return success(
           res,
           {
@@ -147,6 +172,9 @@ export function createSnapshotControllers(service: SnapshotService) {
           details: result,
         });
       }
+
+      // Invalidate snapshot cache after successful rebuild
+      if (cache) cache.deleteByPrefix(`snapshot:${contractId}`);
 
       success(res, {
         message: "Rebuild completed successfully",
@@ -174,4 +202,15 @@ export function createSnapshotControllers(service: SnapshotService) {
     getStats,
     rebuildSnapshot,
   };
+}
+
+/**
+ * Invalidates snapshot cache for a given contractId.
+ * Call this when new snapshot events are processed.
+ */
+export function invalidateSnapshotCache(
+  cache: CacheAdapter<unknown>,
+  contractId: string,
+): void {
+  cache.deleteByPrefix(`snapshot:${contractId}`);
 }
