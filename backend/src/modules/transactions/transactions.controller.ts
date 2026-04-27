@@ -1,25 +1,16 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
-import { validatePagination } from "../../shared/http/validateQuery.js";
+import {
+  validatePagination,
+  validateOptionalString,
+  validateLedgerRange,
+} from "../../shared/http/validateQuery.js";
 import type { TransactionsService } from "./transactions.service.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 
 /** TTL for paginated transaction cache: 30 seconds */
 const TRANSACTIONS_CACHE_TTL_MS = 30_000;
-
-function getSingleQueryString(
-  query: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = query[key];
-  if (value === undefined) return undefined;
-  if (Array.isArray(value)) {
-    const first = value[0];
-    return typeof first === "string" ? first : undefined;
-  }
-  return typeof value === "string" ? value : undefined;
-}
 
 /**
  * GET /api/v1/transactions
@@ -33,64 +24,18 @@ export function getTransactionsController(
     const pagination = validatePagination(request, response);
     if (!pagination) return;
 
-    const token = getSingleQueryString(
-      request.query as Record<string, unknown>,
-      "token",
-    );
-    const recipient = getSingleQueryString(
-      request.query as Record<string, unknown>,
-      "recipient",
-    );
-    const fromRaw = getSingleQueryString(
-      request.query as Record<string, unknown>,
-      "from",
-    );
-    const toRaw = getSingleQueryString(
-      request.query as Record<string, unknown>,
-      "to",
-    );
+    const token = validateOptionalString(request, "token");
+    const recipient = validateOptionalString(request, "recipient");
 
-    let from: number | undefined;
-    if (fromRaw !== undefined && fromRaw !== "") {
-      const parsed = Number(fromRaw);
-      if (!Number.isInteger(parsed) || parsed < 0) {
-        error(response, {
-          message: `Invalid from: expected a non-negative integer, received "${fromRaw}"`,
-          status: 400,
-          code: ErrorCode.BAD_REQUEST,
-        });
-        return;
-      }
-      from = parsed;
-    }
+    const ledgerRange = validateLedgerRange(request, response);
+    if (!ledgerRange) return;
 
-    let to: number | undefined;
-    if (toRaw !== undefined && toRaw !== "") {
-      const parsed = Number(toRaw);
-      if (!Number.isInteger(parsed) || parsed < 0) {
-        error(response, {
-          message: `Invalid to: expected a non-negative integer, received "${toRaw}"`,
-          status: 400,
-          code: ErrorCode.BAD_REQUEST,
-        });
-        return;
-      }
-      to = parsed;
-    }
-
-    if (from !== undefined && to !== undefined && from > to) {
-      error(response, {
-        message: "Invalid ledger range: from must be less than or equal to to",
-        status: 400,
-        code: ErrorCode.BAD_REQUEST,
-      });
-      return;
-    }
+    const { from, to } = ledgerRange;
 
     try {
       const contractId =
         typeof request.query.contractId === "string" &&
-        request.query.contractId.trim()
+          request.query.contractId.trim()
           ? request.query.contractId.trim()
           : defaultContractId;
 
@@ -145,7 +90,7 @@ export function getTransactionByHashController(
     try {
       const contractId =
         typeof request.query.contractId === "string" &&
-        request.query.contractId.trim()
+          request.query.contractId.trim()
           ? request.query.contractId.trim()
           : defaultContractId;
       const txHash = String(request.params.txHash);
