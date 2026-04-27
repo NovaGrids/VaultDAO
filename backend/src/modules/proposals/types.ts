@@ -259,3 +259,79 @@ export interface ProposalActivityPersistence {
 export interface PersistenceAdapterFactory {
   create(): ProposalActivityPersistence;
 }
+
+// ─── Core entity ─────────────────────────────────────────────────────────
+
+export interface ProposalActivity {
+  /** Auto-incremented primary key (undefined before first save). */
+  id?: number;
+  /** On-chain proposal ID (e.g. UUID or incremented integer as string). */
+  proposalId: string;
+  /** Soroban contract address that owns this proposal. */
+  contractId: string;
+  /**
+   * Activity type tag.
+   *
+   * Standard values: `"created"` | `"vote_cast"` | `"vote_approved"` |
+   * `"vote_rejected"` | `"executed"` | `"cancelled"` | `"timelock_started"` |
+   * `"timelock_expired"` | `"spending_limit_exceeded"`
+   */
+  activityType: string;
+  /** Stellar public key of the actor (signer, executor, etc.). */
+  actor?: string;
+  /** Arbitrary JSON payload — stored as a serialized string in SQLite. */
+  data?: Record<string, unknown>;
+  /** Unix timestamp in milliseconds when the event occurred. */
+  timestamp: number;
+  /** Stellar ledger sequence number when the event was recorded. */
+  ledgerSequence?: number;
+  /** On-chain transaction hash. */
+  txHash?: string;
+}
+
+// ─── Summary ──────────────────────────────────────────────────────────────
+
+export interface ProposalActivitySummary {
+  proposalId: string;
+  contractId: string;
+  totalEvents: number;
+  firstEventAt: number;
+  lastEventAt: number;
+  voteCount: number;
+  approvalCount: number;
+  rejectionCount: number;
+  executionCount: number;
+  cancellationCount: number;
+}
+
+// ─── Persistence interface ─────────────────────────────────────────────────
+
+export interface ProposalActivityPersistence {
+  /**
+   * Persist a single activity record.
+   * Returns the saved record with its assigned `id`.
+   */
+  save(activity: Omit<ProposalActivity, "id">): ProposalActivity;
+
+  /**
+   * Persist multiple activity records atomically.
+   * Implementations should use a transaction for batch inserts.
+   */
+  saveBatch(activities: Omit<ProposalActivity, "id">[]): ProposalActivity[];
+
+  /**
+   * Return all activity records for a proposal in chronological order.
+   */
+  getByProposalId(proposalId: string): ProposalActivity[];
+
+  /**
+   * Return all activity records for a contract in chronological order.
+   */
+  getByContractId(contractId: string): ProposalActivity[];
+
+  /**
+   * Return an aggregated summary for a proposal.
+   * Returns `null` when no activity exists.
+   */
+  getSummary(proposalId: string): ProposalActivitySummary | null;
+}
