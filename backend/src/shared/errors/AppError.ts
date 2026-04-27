@@ -33,9 +33,27 @@ export class BadRequestError extends AppError {
   }
 }
 
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Unauthorized') {
+    super('UnauthorizedError', message, 401, true);
+  }
+}
+
+export class ForbiddenError extends AppError {
+  constructor(message = 'Forbidden') {
+    super('ForbiddenError', message, 403, true);
+  }
+}
+
 export class ValidationError extends AppError {
-  constructor(message = 'Validation Error') {
+  constructor(message = 'Validation Error', public readonly details?: unknown[]) {
     super('ValidationError', message, 400, true);
+  }
+}
+
+export class RateLimitError extends AppError {
+  constructor(message = 'Rate Limit Exceeded') {
+    super('RateLimitError', message, 429, true);
   }
 }
 
