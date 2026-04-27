@@ -11,6 +11,7 @@ import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
+import { createAuditRouter } from "./modules/audit/audit.routes.js";
 import { error } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
@@ -21,6 +22,7 @@ import {
   requestIdStorage,
 } from "./shared/http/requestId.js";
 import { createRequestLogger } from "./shared/http/requestLogger.js";
+import { createErrorMiddleware } from "./shared/errors/handleError.js";
 
 export function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
@@ -63,17 +65,15 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
     if (isAllowed && origin) {
       res.set("Access-Control-Allow-Origin", origin);
+      res.set("Vary", "Origin");
     } else if (env.corsOrigin.includes("*")) {
       res.set("Access-Control-Allow-Origin", "*");
     }
 
-    res.set(
-      "Access-Control-Allow-Methods",
-      "GET, POST, PUT, DELETE, PATCH, OPTIONS",
-    );
+    res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.set(
       "Access-Control-Allow-Headers",
-      `Content-Type, Authorization, ${REQUEST_ID_HEADER}`,
+      `Content-Type, Authorization, X-API-Key, ${REQUEST_ID_HEADER}`,
     );
     res.set("Access-Control-Expose-Headers", REQUEST_ID_HEADER);
 
@@ -164,6 +164,12 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
     createTransactionsRouter(runtime.transactionsService, env.contractId),
   );
 
+  v1Router.use(
+    "/audit",
+    authMiddleware,
+    createAuditRouter(env.sorobanRpcUrl),
+  );
+
   app.use("/api/v1", v1Router);
 
   app.use((_request, response) => {
@@ -173,6 +179,8 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
       code: ErrorCode.NOT_FOUND,
     });
   });
+
+  app.use(createErrorMiddleware(env));
 
   return app;
 }
