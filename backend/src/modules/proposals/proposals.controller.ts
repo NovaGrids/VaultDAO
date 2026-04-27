@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
-import { validatePagination } from "../../shared/http/validateQuery.js";
+import { validatePagination, validateRequiredString } from "../../shared/http/validateQuery.js";
 import type { ProposalActivityAggregator } from "./aggregator.js";
 import type { ProposalActivityPersistence } from "./types.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
@@ -14,18 +14,8 @@ export function getAllProposalsController(
   cache?: CacheAdapter<unknown>,
 ): RequestHandler {
   return async (req, res) => {
-    const contractId =
-      typeof req.query.contractId === "string"
-        ? req.query.contractId
-        : undefined;
-    if (!contractId) {
-      error(res, {
-        message: "contractId is required",
-        status: 400,
-        code: ErrorCode.BAD_REQUEST,
-      });
-      return;
-    }
+    const contractId = validateRequiredString(req, res, "contractId");
+    if (!contractId) return;
 
     const pagination = validatePagination(req, res);
     if (!pagination) return;

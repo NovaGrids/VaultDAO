@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchWithTimeout, TimeoutError } from "./fetchWithTimeout.js";
+import {
+  fetchWithTimeout,
+  fetchWithRetry,
+  TimeoutError,
+  CircuitBreaker,
+  CircuitState,
+  CircuitBreakerOpenError,
+} from "./fetchWithTimeout.js";
 
 // Mock fetch for testing
 const originalFetch = global.fetch;
@@ -40,6 +47,10 @@ function mockFetch(
     return response;
   };
 }
+
+// ============================================================================
+// fetchWithTimeout Tests (existing)
+// ============================================================================
 
 test("fetchWithTimeout", async (t) => {
   await t.test("returns response before timeout", async () => {
@@ -172,7 +183,431 @@ test("fetchWithTimeout", async (t) => {
   });
 });
 
-// Property-based tests
+// ============================================================================
+// fetchWithRetry Tests
+// ============================================================================
+
+test("fetchWithRetry", async (t) => {
+  await t.test("succeeds on first attempt", async () => {
+    const mockResponse = new Response("success", { status: 200 });
+    global.fetch = mockFetch(mockResponse, 10);
+
+    const response = await fetchWithRetry("http://example.com", {}, 1000, {
+      maxRetries: 3,
+    });
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "success");
+
+    global.fetch = originalFetch;
+  });
+
+  await t.test("retries on network error and succeeds", async () => {
+    let attemptCount = 0;
+    global.fetch = async () => {
+      attemptCount++;
+      if (attemptCount < 3) {
+        throw new TypeError("Network error");
+      }
+      return new Response("success", { status: 200 });
+    };
+
+    const response = await fetchWithRetry("http://example.com", {}, 1000, {
+      maxRetries: 3,
+      initialDelayMs: 10,
+    });
+    assert.equal(attemptCount, 3);
+    assert.equal(response.status, 200);
+
+    global.fetch = originalFetch;
+  });
+
+  await t.test("retries on 5xx error and succeeds", async () => {
+    let attemptCount = 0;
+    global.fetch = async () => {
+      attemptCount++;
+      if (attemptCount < 3) {
+        return new Response("Server Error", { status: 503 });
+      }
+      return new Response("success", { status: 200 });
+    };
+
+    const response = await fetchWithRetry("http://example.com", {}, 1000, {
+      maxRetries: 3,
+      initialDelayMs: 10,
+    });
+    assert.equal(attemptCount, 3);
+    assert.equal(response.status, 200);
+
+    global.fetch = originalFetch;
+  });
+
+  await t.test("exhausts retries and throws last error", async () => {
+    let attemptCount = 0;
+    global.fetch = async () => {
+      attemptCount++;
+      throw new TypeError("Network error");
+    };
+
+    try {
+      await fetchWithRetry("http://example.com", {}, 1000, {
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+      assert.fail("should have thrown error");
+    } catch (error) {
+      assert.ok(error instanceof TypeError);
+      assert.equal(attemptCount, 4); // 1 initial + 3 retries
+    }
+
+    global.fetch = originalFetch;
+  });
+
+  await t.test("uses exponential backoff by default", async () => {
+    const delays: number[] = [];
+    let lastTime = Date.now();
+    let attemptCount = 0;
+
+    global.fetch = async () => {
+      attemptCount++;
+      if (attemptCount > 1) {
+        const now = Date.now();
+        delays.push(now - lastTime);
+        lastTime = now;
+      } else {
+        lastTime = Date.now();
+      }
+      throw new TypeError("Network error");
+    };
+
+    try {
+      await fetchWithRetry("http://example.com", {}, 1000, {
+        maxRetries: 3,
+        initialDelayMs: 100,
+      });
+    } catch (error) {
+      // Expected
+    }
+
+    // Verify exponential backoff: 100ms, 200ms, 400ms (with some tolerance)
+    assert.equal(delays.length, 3);
+    assert.ok(delays[0] >= 90 && delays[0] <= 150); // ~100ms
+    assert.ok(delays[1] >= 180 && delays[1] <= 250); // ~200ms
+    assert.ok(delays[2] >= 380 && delays[2] <= 450); // ~400ms
+
+    global.fetch = originalFetch;
+  });
+
+  await t.test("does not retry on 4xx errors", async () => {
+    let attemptCount = 0;
+    global.fetch = async () => {
+      attemptCount++;
+      return new Response("Bad Request", { status: 400 });
+    };
+
+    const response = await fetchWithRetry("http://example.com", {}, 1000, {
+      maxRetries: 3,
+      initialDelayMs: 10,
+    });
+    assert.equal(attemptCount, 1); // No retries
+    assert.equal(response.status, 400);
+
+    global.fetch = originalFetch;
+  });
+
+  await t.test("respects custom shouldRetry function", async () => {
+    let attemptCount = 0;
+    global.fetch = async () => {
+      attemptCount++;
+      return new Response("Rate Limited", { status: 429 });
+    };
+
+    const response = await fetchWithRetry("http://example.com", {}, 1000, {
+      maxRetries: 2,
+      initialDelayMs: 10,
+      shouldRetry: (_error, response) => response?.status === 429,
+    });
+    assert.equal(attemptCount, 3); // 1 initial + 2 retries
+    assert.equal(response.status, 429);
+
+    global.fetch = originalFetch;
+  });
+
+  await t.test("retries on TimeoutError", async () => {
+    let attemptCount = 0;
+    global.fetch = async (_url: URL | RequestInfo, init?: RequestInit) => {
+      attemptCount++;
+      return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          resolve(new Response("delayed", { status: 200 }));
+        }, 200);
+
+        if (init?.signal) {
+          init.signal.addEventListener("abort", () => {
+            clearTimeout(timeoutId);
+            reject(new DOMException("The operation was aborted", "AbortError"));
+          });
+        }
+      });
+    };
+
+    try {
+      await fetchWithRetry("http://example.com", {}, 50, {
+        maxRetries: 2,
+        initialDelayMs: 10,
+      });
+      assert.fail("should have thrown TimeoutError");
+    } catch (error) {
+      assert.ok(error instanceof TimeoutError);
+      assert.equal(attemptCount, 3); // 1 initial + 2 retries
+    }
+
+    global.fetch = originalFetch;
+  });
+});
+
+// ============================================================================
+// CircuitBreaker Tests
+// ============================================================================
+
+test("CircuitBreaker", async (t) => {
+  await t.test("starts in CLOSED state", () => {
+    const breaker = new CircuitBreaker();
+    assert.equal(breaker.getState(), CircuitState.CLOSED);
+    assert.equal(breaker.getFailureCount(), 0);
+  });
+
+  await t.test("allows requests in CLOSED state", async () => {
+    const breaker = new CircuitBreaker();
+    const result = await breaker.execute(async () => "success");
+    assert.equal(result, "success");
+    assert.equal(breaker.getState(), CircuitState.CLOSED);
+  });
+
+  await t.test("opens after failure threshold", async () => {
+    const breaker = new CircuitBreaker({ failureThreshold: 3 });
+
+    // Fail 3 times
+    for (let i = 0; i < 3; i++) {
+      try {
+        await breaker.execute(async () => {
+          throw new Error("fail");
+        });
+      } catch (error) {
+        // Expected
+      }
+    }
+
+    assert.equal(breaker.getState(), CircuitState.OPEN);
+    assert.equal(breaker.getFailureCount(), 3);
+  });
+
+  await t.test("rejects requests immediately when OPEN", async () => {
+    const breaker = new CircuitBreaker({ failureThreshold: 2 });
+
+    // Fail twice to open circuit
+    for (let i = 0; i < 2; i++) {
+      try {
+        await breaker.execute(async () => {
+          throw new Error("fail");
+        });
+      } catch (error) {
+        // Expected
+      }
+    }
+
+    assert.equal(breaker.getState(), CircuitState.OPEN);
+
+    // Next request should be rejected immediately
+    try {
+      await breaker.execute(async () => "should not execute");
+      assert.fail("should have thrown CircuitBreakerOpenError");
+    } catch (error) {
+      assert.ok(error instanceof CircuitBreakerOpenError);
+      assert.match(error.message, /Circuit breaker is open/);
+    }
+  });
+
+  await t.test("transitions to HALF_OPEN after reset timeout", async () => {
+    const breaker = new CircuitBreaker({
+      failureThreshold: 2,
+      resetTimeoutMs: 100,
+    });
+
+    // Open the circuit
+    for (let i = 0; i < 2; i++) {
+      try {
+        await breaker.execute(async () => {
+          throw new Error("fail");
+        });
+      } catch (error) {
+        // Expected
+      }
+    }
+
+    assert.equal(breaker.getState(), CircuitState.OPEN);
+
+    // Wait for reset timeout
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assert.equal(breaker.getState(), CircuitState.HALF_OPEN);
+  });
+
+  await t.test("closes from HALF_OPEN on successful request", async () => {
+    const breaker = new CircuitBreaker({
+      failureThreshold: 2,
+      resetTimeoutMs: 100,
+    });
+
+    // Open the circuit
+    for (let i = 0; i < 2; i++) {
+      try {
+        await breaker.execute(async () => {
+          throw new Error("fail");
+        });
+      } catch (error) {
+        // Expected
+      }
+    }
+
+    // Wait for reset timeout
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(breaker.getState(), CircuitState.HALF_OPEN);
+
+    // Successful request should close circuit
+    const result = await breaker.execute(async () => "success");
+    assert.equal(result, "success");
+    assert.equal(breaker.getState(), CircuitState.CLOSED);
+    assert.equal(breaker.getFailureCount(), 0);
+  });
+
+  await t.test("reopens from HALF_OPEN on failed request", async () => {
+    const breaker = new CircuitBreaker({
+      failureThreshold: 2,
+      resetTimeoutMs: 100,
+    });
+
+    // Open the circuit
+    for (let i = 0; i < 2; i++) {
+      try {
+        await breaker.execute(async () => {
+          throw new Error("fail");
+        });
+      } catch (error) {
+        // Expected
+      }
+    }
+
+    // Wait for reset timeout
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(breaker.getState(), CircuitState.HALF_OPEN);
+
+    // Failed request should reopen circuit
+    try {
+      await breaker.execute(async () => {
+        throw new Error("fail again");
+      });
+    } catch (error) {
+      // Expected
+    }
+
+    assert.equal(breaker.getState(), CircuitState.OPEN);
+  });
+
+  await t.test("resets failure count on success in CLOSED state", async () => {
+    const breaker = new CircuitBreaker({ failureThreshold: 5 });
+
+    // Fail twice
+    for (let i = 0; i < 2; i++) {
+      try {
+        await breaker.execute(async () => {
+          throw new Error("fail");
+        });
+      } catch (error) {
+        // Expected
+      }
+    }
+
+    assert.equal(breaker.getFailureCount(), 2);
+    assert.equal(breaker.getState(), CircuitState.CLOSED);
+
+    // Successful request should reset count
+    await breaker.execute(async () => "success");
+    assert.equal(breaker.getFailureCount(), 0);
+    assert.equal(breaker.getState(), CircuitState.CLOSED);
+  });
+
+  await t.test("reset() forces circuit to CLOSED", async () => {
+    const breaker = new CircuitBreaker({ failureThreshold: 2 });
+
+    // Open the circuit
+    for (let i = 0; i < 2; i++) {
+      try {
+        await breaker.execute(async () => {
+          throw new Error("fail");
+        });
+      } catch (error) {
+        // Expected
+      }
+    }
+
+    assert.equal(breaker.getState(), CircuitState.OPEN);
+
+    // Reset should close circuit immediately
+    breaker.reset();
+    assert.equal(breaker.getState(), CircuitState.CLOSED);
+    assert.equal(breaker.getFailureCount(), 0);
+
+    // Should allow requests now
+    const result = await breaker.execute(async () => "success");
+    assert.equal(result, "success");
+  });
+
+  await t.test("forceOpen() forces circuit to OPEN", async () => {
+    const breaker = new CircuitBreaker();
+    assert.equal(breaker.getState(), CircuitState.CLOSED);
+
+    breaker.forceOpen();
+    assert.equal(breaker.getState(), CircuitState.OPEN);
+
+    // Should reject requests
+    try {
+      await breaker.execute(async () => "should not execute");
+      assert.fail("should have thrown CircuitBreakerOpenError");
+    } catch (error) {
+      assert.ok(error instanceof CircuitBreakerOpenError);
+    }
+  });
+
+  await t.test("includes name in error message", async () => {
+    const breaker = new CircuitBreaker({
+      failureThreshold: 1,
+      name: "TestBreaker",
+    });
+
+    // Open the circuit
+    try {
+      await breaker.execute(async () => {
+        throw new Error("fail");
+      });
+    } catch (error) {
+      // Expected
+    }
+
+    // Should include name in error
+    try {
+      await breaker.execute(async () => "should not execute");
+      assert.fail("should have thrown CircuitBreakerOpenError");
+    } catch (error) {
+      assert.ok(error instanceof CircuitBreakerOpenError);
+      assert.match(error.message, /TestBreaker/);
+    }
+  });
+});
+
+// ============================================================================
+// Property-based tests (existing)
+// ============================================================================
+
 test("fetchWithTimeout properties", async (t) => {
   await t.test(
     "Property 1: Timeout Enforcement - timeout expires before response",

@@ -198,8 +198,50 @@ pnpm test
 All business logic routes are strictly versioned under the `/api/v1/` prefix (e.g., `/api/v1/status`). 
 The `/health` and `/ready` validation endpoints are kept at the root level (`/health`, `/ready`) to maintain compatibility with standard Kubernetes probe paths.
 
+## Authentication
+
+### Admin Endpoints
+
+Certain administrative endpoints require API key authentication for security. These endpoints are protected by the `requireApiKey` middleware.
+
+**Protected Endpoints:**
+- `POST /api/v1/snapshots/:contractId/rebuild` - Trigger manual snapshot rebuild
+- `GET /api/v1/metrics` - Access Prometheus metrics
+
+**Authentication Methods:**
+
+You can provide the API key using either of these headers:
+
+1. **Authorization Bearer Token:**
+   ```bash
+   curl -H "Authorization: Bearer YOUR_API_KEY" https://api.example.com/api/v1/metrics
+   ```
+
+2. **X-API-Key Header:**
+   ```bash
+   curl -H "X-API-Key: YOUR_API_KEY" https://api.example.com/api/v1/metrics
+   ```
+
+**Response Codes:**
+- `401 Unauthorized` - API key is missing
+- `403 Forbidden` - API key is invalid
+- `200 OK` - Request successful
+
+**Development Mode:**
+When `API_KEY` is not configured (development environments), authentication checks are skipped and all endpoints are accessible.
+
+**Production Mode:**
+The `API_KEY` environment variable is **required** in production. The backend will fail to start if it's not set.
+
+**Security Features:**
+- Constant-time comparison prevents timing attacks
+- Clear distinction between missing (401) and invalid (403) credentials
+- Supports both standard Authorization header and custom X-API-Key header
+
 ## Current Endpoints
 
 - `GET /health` (root)
 - `GET /ready` (root)
 - `GET /api/v1/status`
+- `GET /api/v1/metrics` 🔒 (requires API key)
+- `POST /api/v1/snapshots/:contractId/rebuild` 🔒 (requires API key)

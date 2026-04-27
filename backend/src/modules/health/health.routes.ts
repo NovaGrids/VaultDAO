@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 
 import type { BackendEnv } from "../../config/env.js";
 import type { BackendRuntime } from "../../server.js";
@@ -25,9 +26,13 @@ export function createStatusRouter(env: BackendEnv, runtime: BackendRuntime) {
   return router;
 }
 
-export function createMetricsRouter(runtime: BackendRuntime) {
+export function createMetricsRouter(
+  runtime: BackendRuntime,
+  adminAuthMiddleware: (req: Request, res: Response, next: NextFunction) => void,
+) {
   const router = Router();
-  router.get("/", getMetricsController(runtime));
+  // Admin-only: Metrics endpoint (requires API key)
+  router.get("/", adminAuthMiddleware, getMetricsController(runtime));
   return router;
 }
 
