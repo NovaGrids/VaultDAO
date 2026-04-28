@@ -79,37 +79,45 @@ await widgetSDK.setConfig({
 });
 ```
 
-#### `getData(query: string): Promise<any>`
+#### `getProposals(filter?: any): Promise<Proposal[]>`
 
-Fetch data from the host application. Requires `network` permission.
+Retrieve the list of proposals from the vault.
 
 ```javascript
-const data = await widgetSDK.getData('vault-balance');
+const proposals = await widgetSDK.getProposals({ status: 'active' });
 ```
 
-#### `sendNotification(message: string): Promise<void>`
+#### `getVaultConfig(): Promise<VaultConfig>`
 
-Display a notification. Requires `notifications` permission.
+Get the current vault configuration and governance settings.
 
 ```javascript
-await widgetSDK.sendNotification('Widget updated!');
+const config = await widgetSDK.getVaultConfig();
 ```
 
-#### `requestPermission(permission: string): Promise<boolean>`
+#### `showToast(message: string, type?: string): Promise<void>`
 
-Request additional permission from the user.
+Display a system notification. Requires `notifications` permission.
 
 ```javascript
-const granted = await widgetSDK.requestPermission('notifications');
+await widgetSDK.showToast('Action successful!', 'success');
 ```
 
-#### `on(event: string, handler: Function): void`
+#### `navigate(path: string): Promise<void>`
 
-Listen for events from the host application.
+Navigate the main application to a specific dashboard route.
 
 ```javascript
-widgetSDK.on('data-update', (data) => {
-  console.log('New data:', data);
+await widgetSDK.navigate('/treasury');
+```
+
+#### `onEvent(type: WidgetEventType, handler: Function): void`
+
+Subscribe to real-time vault events.
+
+```javascript
+widgetSDK.onEvent('proposalCreated', (proposal) => {
+  console.log('New proposal:', proposal);
 });
 ```
 
