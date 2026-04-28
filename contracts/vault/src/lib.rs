@@ -3947,6 +3947,32 @@ impl VaultDAO {
     // ========================================================================
 
     /// Get the reputation record for an address.
+    ///
+    /// Retrieves the reputation score and statistics for a given address.
+    /// Automatically applies reputation decay based on the time since last participation.
+    /// The returned reputation is updated in storage after decay is applied.
+    ///
+    /// # Arguments
+    /// * `addr` - The address to retrieve reputation for
+    ///
+    /// # Returns
+    /// A `Reputation` struct containing:
+    /// - `score` - Composite reputation score (0-1000, higher = more trusted)
+    /// - `proposals_executed` - Total proposals successfully executed by this address
+    /// - `proposals_rejected` - Total proposals rejected
+    /// - `proposals_created` - Total proposals created
+    /// - `approvals_given` - Total approvals given
+    /// - `abstentions_given` - Total abstentions recorded
+    /// - `participation_count` - Total governance votes cast
+    /// - `last_participation_ledger` - Ledger of last governance vote
+    /// - `last_decay_ledger` - Ledger when reputation was last decayed
+    ///
+    /// # Reputation Scoring
+    /// - Proposer execution: +10 points
+    /// - Approver execution: +5 points per approver
+    /// - Approval vote: +2 points
+    /// - Rejection penalty: -20 points
+    /// - Decay: Score decreases over time without participation
     pub fn get_reputation(env: Env, addr: Address) -> Reputation {
         let mut rep = storage::get_reputation(&env, &addr);
         storage::apply_reputation_decay(&env, &mut rep);
