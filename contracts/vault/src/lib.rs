@@ -1332,10 +1332,35 @@ impl VaultDAO {
             Err(err) => Err(err),
         }
     }
+
+    /// Get the retry state for a proposal.
+    ///
+    /// Returns the current retry state if the proposal has been scheduled for retry,
+    /// or `None` if no retry is pending.
+    ///
+    /// # Arguments
+    /// * `proposal_id` - The ID of the proposal to check
+    ///
+    /// # Returns
+    /// `Some(RetryState)` if a retry is scheduled, `None` otherwise
     pub fn get_retry_state(env: Env, proposal_id: u64) -> Option<RetryState> {
         storage::get_retry_state(&env, proposal_id)
     }
 
+    /// Delegate voting power to another signer.
+    ///
+    /// Allows a signer to delegate their voting power to another signer for a specified period.
+    /// The delegation chain is validated to prevent circular delegations and excessive depth.
+    ///
+    /// # Arguments
+    /// * `delegator` - The signer delegating their voting power (must authorize)
+    /// * `delegate` - The signer receiving the delegated voting power
+    /// * `expiry_ledger` - Ledger at which the delegation expires (0 = no expiration)
+    ///
+    /// # Errors
+    /// - [`VaultError::InvalidAmount`] if delegator and delegate are the same
+    /// - [`VaultError::NotASigner`] if either address is not a signer
+    /// - [`VaultError::Unauthorized`] if delegation would create a circular chain or exceed max depth
     pub fn delegate_voting_power(
         env: Env,
         delegator: Address,
@@ -1436,6 +1461,19 @@ impl VaultDAO {
         }
     }
 
+    /// Revoke a voting power delegation.
+    ///
+    /// Removes the delegation set by the caller, restoring their voting power to themselves.
+    /// If no delegation exists, returns an error.
+    ///
+    /// # Arguments
+    /// * `delegator` - The signer revoking their delegation (must authorize)
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// - [`VaultError::ProposalNotFound`] if no delegation exists for the caller
     pub fn revoke_delegation(env: Env, delegator: Address) -> Result<(), VaultError> {
         delegator.require_auth();
 
