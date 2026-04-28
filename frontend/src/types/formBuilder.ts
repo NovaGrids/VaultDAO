@@ -1,5 +1,5 @@
 // Form field types
-export type FieldType = 'text' | 'number' | 'date' | 'select' | 'multi-select' | 'file-upload' | 'textarea' | 'checkbox' | 'radio';
+export type FieldType = 'text' | 'number' | 'date' | 'select' | 'multi-select' | 'file-upload' | 'textarea' | 'checkbox' | 'radio' | 'address';
 
 // Validation rule types
 export type ValidationRuleType = 'required' | 'min' | 'max' | 'minLength' | 'maxLength' | 'regex' | 'custom' | 'email' | 'url';
