@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 import type { SnapshotService } from "./snapshot.service.js";
 import { success, error } from "../../shared/http/response.js";
+import { validateOptionalBoolean } from "../../shared/http/validateQuery.js";
 import type { SerializableContractSnapshot } from "./types.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 
@@ -55,12 +56,9 @@ export function createSnapshotControllers(
   const getSigners: RequestHandler = async (req, res) => {
     try {
       const contractId = req.params.contractId as string;
-      const isActive =
-        req.query.active === "true"
-          ? true
-          : req.query.active === "false"
-            ? false
-            : undefined;
+      const isActive = validateOptionalBoolean(req, res, "active");
+      if (isActive === null) return;
+
       const signers = await service.getSigners(contractId, { isActive });
       success(res, signers);
     } catch (err) {
