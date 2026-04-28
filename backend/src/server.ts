@@ -30,6 +30,8 @@ import {
 import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import type { NotificationQueue } from "./modules/notifications/notification.types.js";
+import { PriorityNotificationQueue } from "./modules/notifications/priority-queue.js";
+import { CacheManager } from "./shared/cache/cache-manager.js";
 import { createLogger } from "./shared/logging/logger.js";
 import { SqliteStorageAdapter } from "./shared/storage/index.js";
 import { TransactionsService } from "./modules/transactions/transactions.service.js";
@@ -47,6 +49,8 @@ export interface BackendRuntime {
   readonly jobManager: JobManager;
   readonly wsServer?: EventWebSocketServer;
   readonly metricsRegistry: MetricsRegistry;
+  readonly notificationQueue?: PriorityNotificationQueue;
+  readonly cacheManager?: CacheManager;
 }
 
 export interface BackendServer {
@@ -68,6 +72,12 @@ export function startServer(
   metricsRegistry.register("vaultdao_job_executions_total", "Total background job executions", "counter");
 
   const jobManager = new JobManager(metricsRegistry);
+
+  // Priority notification queue (replaces basic InMemoryNotificationQueue)
+  const priorityNotificationQueue = new PriorityNotificationQueue();
+
+  // Cache manager (in-memory by default; swap primary for RedisCacheAdapter when Redis is available)
+  const cacheManager = new CacheManager();
 
   // Initialize proposal activity components
   const proposalActivityAggregator = new ProposalActivityAggregator();
@@ -96,6 +106,8 @@ export function startServer(
     transactionsService,
     jobManager,
     metricsRegistry,
+    notificationQueue: priorityNotificationQueue,
+    cacheManager,
   };
 
   const app = createApp(env, runtime);
