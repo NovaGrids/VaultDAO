@@ -7,3 +7,10 @@ export enum ErrorCode {
   FORBIDDEN = "FORBIDDEN",
   BAD_REQUEST = "BAD_REQUEST",
 }
+
+export interface ErrorResponse {
+  code: string;
+  message: string;
+  requestId?: string;
+  details?: unknown;
+}

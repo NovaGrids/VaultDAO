@@ -4,22 +4,11 @@ import { ErrorCode } from "../../shared/http/errorCodes.js";
 import {
   validateEnum,
   validatePagination,
+  validateOptionalString,
+  validateOptionalInteger,
 } from "../../shared/http/validateQuery.js";
 import type { RecurringIndexerService } from "./recurring.service.js";
-import type { RecurringStatus } from "./types.js";
-
-function getSingleQueryString(
-  query: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = query[key];
-  if (value === undefined) return undefined;
-  if (Array.isArray(value)) {
-    const first = value[0];
-    return typeof first === "string" ? first : undefined;
-  }
-  return typeof value === "string" ? value : undefined;
-}
+import { RecurringStatus } from "./types.js";
 
 /**
  * Get all recurring payments with optional status filter and pagination
@@ -35,13 +24,13 @@ export function getAllRecurringController(
       request,
       response,
       "status",
-      Object.values(RecurringStatus),
+      [RecurringStatus.ACTIVE, RecurringStatus.DUE, RecurringStatus.CANCELLED] as const,
     );
     if (status === null) return;
 
-    const contractId = getSingleQueryString(request.query as any, "contractId");
-    const proposer = getSingleQueryString(request.query as any, "proposer");
-    const recipient = getSingleQueryString(request.query as any, "recipient");
+    const contractId = validateOptionalString(request, "contractId");
+    const proposer = validateOptionalString(request, "proposer");
+    const recipient = validateOptionalString(request, "recipient");
 
     try {
       const result = await service.getPayments(
@@ -113,25 +102,8 @@ export function getDueRecurringController(
     const pagination = validatePagination(request, response);
     if (!pagination) return;
 
-    const currentLedgerRaw = getSingleQueryString(
-      request.query as any,
-      "currentLedger",
-    );
-
-    let currentLedger: number | undefined;
-    if (currentLedgerRaw !== undefined && currentLedgerRaw !== "") {
-      const parsed = Number(currentLedgerRaw);
-      if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
-        error(response, {
-          message:
-            "Invalid currentLedger: expected a non-negative integer when provided",
-          status: 400,
-          code: ErrorCode.BAD_REQUEST,
-        });
-        return;
-      }
-      currentLedger = parsed;
-    }
+    const currentLedger = validateOptionalInteger(request, response, "currentLedger", { min: 0 });
+    if (currentLedger === null) return;
 
     try {
       const payments =

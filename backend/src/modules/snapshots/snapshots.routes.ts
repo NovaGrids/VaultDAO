@@ -22,7 +22,10 @@ function validateStellarId(...params: string[]) {
   };
 }
 
-export function createSnapshotRouter(service: SnapshotService) {
+export function createSnapshotRouter(
+  service: SnapshotService,
+  adminAuthMiddleware: (req: Request, res: Response, next: NextFunction) => void,
+) {
   const router = Router();
   const ctrl = createSnapshotControllers(service);
   const validateContract = validateStellarId("contractId");
@@ -38,8 +41,13 @@ export function createSnapshotRouter(service: SnapshotService) {
   router.get("/:contractId/roles", validateContract, ctrl.getRoles);
   router.get("/:contractId/stats", validateContract, ctrl.getStats);
 
-  // Trigger manual rebuild
-  router.post("/:contractId/rebuild", validateContract, ctrl.rebuildSnapshot);
+  // Admin-only: Trigger manual rebuild (requires API key)
+  router.post(
+    "/:contractId/rebuild",
+    adminAuthMiddleware,
+    validateContract,
+    ctrl.rebuildSnapshot,
+  );
 
   return router;
 }

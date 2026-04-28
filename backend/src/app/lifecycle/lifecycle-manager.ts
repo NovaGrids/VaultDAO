@@ -23,6 +23,7 @@ export class LifecycleManager {
   private hooks: ShutdownHook[] = [];
   private shuttingDown = false;
   private shutdownTimeout: NodeJS.Timeout | null = null;
+  private initialized = false;
 
   constructor(
     private server: Server | null = null,
@@ -50,6 +51,12 @@ export class LifecycleManager {
    * Initialize signal handlers and start listening for shutdown signals.
    */
   public initialize(): void {
+    if (this.initialized) {
+      this.logger.warn("lifecycle manager already initialized, skipping");
+      return;
+    }
+    this.initialized = true;
+
     const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
     signals.forEach((signal) => {

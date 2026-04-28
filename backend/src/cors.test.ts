@@ -183,3 +183,161 @@ test("CORS Development Behavior", async (t) => {
     },
   );
 });
+
+test("CORS Preflight Behavior", async (t) => {
+  const prodEnv = {
+    port: 0,
+    host: "127.0.0.1",
+    nodeEnv: "production",
+    corsOrigin: ["https://allowed.com"],
+    requestBodyLimit: "1mb",
+    apiKey: "test-api-key",
+  };
+
+  await t.test("Preflight OPTIONS returns 204 with no body", async () => {
+    const app = createApp(prodEnv as any, mockRuntime as any);
+    await new Promise<void>((resolve) => {
+      const server = app.listen(0, "127.0.0.1", async () => {
+        const address = server.address() as any;
+        const port = address.port;
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, {
+            method: "OPTIONS",
+            headers: { Origin: "https://allowed.com" },
+          });
+          assert.strictEqual(response.status, 204);
+          const body = await response.text();
+          assert.strictEqual(body, "");
+        } finally {
+          if (typeof (server as any).closeAllConnections === "function") {
+            (server as any).closeAllConnections();
+          }
+          await new Promise<void>((r) => server.close(() => r()));
+          resolve();
+        }
+      });
+    });
+  });
+
+  await t.test("Preflight: Access-Control-Allow-Methods is GET, POST, OPTIONS only", async () => {
+    const app = createApp(prodEnv as any, mockRuntime as any);
+    await new Promise<void>((resolve) => {
+      const server = app.listen(0, "127.0.0.1", async () => {
+        const address = server.address() as any;
+        const port = address.port;
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, {
+            method: "OPTIONS",
+            headers: { Origin: "https://allowed.com" },
+          });
+          const methods = response.headers.get("Access-Control-Allow-Methods");
+          assert.strictEqual(methods, "GET, POST, OPTIONS");
+        } finally {
+          if (typeof (server as any).closeAllConnections === "function") {
+            (server as any).closeAllConnections();
+          }
+          await new Promise<void>((r) => server.close(() => r()));
+          resolve();
+        }
+      });
+    });
+  });
+
+  await t.test("Preflight: Access-Control-Allow-Headers includes required values", async () => {
+    const app = createApp(prodEnv as any, mockRuntime as any);
+    await new Promise<void>((resolve) => {
+      const server = app.listen(0, "127.0.0.1", async () => {
+        const address = server.address() as any;
+        const port = address.port;
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, {
+            method: "OPTIONS",
+            headers: { Origin: "https://allowed.com" },
+          });
+          const headers = response.headers.get("Access-Control-Allow-Headers") ?? "";
+          assert.ok(headers.includes("Content-Type"), "must include Content-Type");
+          assert.ok(headers.includes("Authorization"), "must include Authorization");
+          assert.ok(headers.includes("X-API-Key"), "must include X-API-Key");
+          assert.ok(headers.includes("X-Request-ID"), "must include X-Request-ID");
+        } finally {
+          if (typeof (server as any).closeAllConnections === "function") {
+            (server as any).closeAllConnections();
+          }
+          await new Promise<void>((r) => server.close(() => r()));
+          resolve();
+        }
+      });
+    });
+  });
+});
+
+test("CORS Credentials and Vary", async (t) => {
+  await t.test("Development: Access-Control-Allow-Credentials absent when origin is *", async () => {
+    const devEnv = {
+      port: 0,
+      host: "127.0.0.1",
+      nodeEnv: "development",
+      corsOrigin: ["*"],
+      requestBodyLimit: "1mb",
+      apiKey: "test-api-key",
+    };
+    const app = createApp(devEnv as any, mockRuntime as any);
+    await new Promise<void>((resolve) => {
+      const server = app.listen(0, "127.0.0.1", async () => {
+        const address = server.address() as any;
+        const port = address.port;
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, {
+            headers: { Origin: "https://any.com" },
+          });
+          assert.strictEqual(
+            response.headers.get("Access-Control-Allow-Credentials"),
+            null,
+            "credentials header must be absent when origin is *",
+          );
+        } finally {
+          if (typeof (server as any).closeAllConnections === "function") {
+            (server as any).closeAllConnections();
+          }
+          await new Promise<void>((r) => server.close(() => r()));
+          resolve();
+        }
+      });
+    });
+  });
+
+  await t.test("Production: Vary: Origin present when serving specific origin", async () => {
+    const prodEnv = {
+      port: 0,
+      host: "127.0.0.1",
+      nodeEnv: "production",
+      corsOrigin: ["https://allowed.com"],
+      requestBodyLimit: "1mb",
+      apiKey: "test-api-key",
+    };
+    const app = createApp(prodEnv as any, mockRuntime as any);
+    await new Promise<void>((resolve) => {
+      const server = app.listen(0, "127.0.0.1", async () => {
+        const address = server.address() as any;
+        const port = address.port;
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, {
+            headers: { Origin: "https://allowed.com" },
+          });
+          assert.strictEqual(response.status, 200);
+          assert.strictEqual(
+            response.headers.get("Vary"),
+            "Origin",
+            "Vary: Origin must be set when serving a specific allowed origin",
+          );
+        } finally {
+          if (typeof (server as any).closeAllConnections === "function") {
+            (server as any).closeAllConnections();
+          }
+          await new Promise<void>((r) => server.close(() => r()));
+          resolve();
+        }
+      });
+    });
+  });
+});
