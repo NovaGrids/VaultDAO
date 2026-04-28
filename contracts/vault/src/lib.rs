@@ -1332,10 +1332,35 @@ impl VaultDAO {
             Err(err) => Err(err),
         }
     }
+
+    /// Get the retry state for a proposal.
+    ///
+    /// Returns the current retry state if the proposal has been scheduled for retry,
+    /// or `None` if no retry is pending.
+    ///
+    /// # Arguments
+    /// * `proposal_id` - The ID of the proposal to check
+    ///
+    /// # Returns
+    /// `Some(RetryState)` if a retry is scheduled, `None` otherwise
     pub fn get_retry_state(env: Env, proposal_id: u64) -> Option<RetryState> {
         storage::get_retry_state(&env, proposal_id)
     }
 
+    /// Delegate voting power to another signer.
+    ///
+    /// Allows a signer to delegate their voting power to another signer for a specified period.
+    /// The delegation chain is validated to prevent circular delegations and excessive depth.
+    ///
+    /// # Arguments
+    /// * `delegator` - The signer delegating their voting power (must authorize)
+    /// * `delegate` - The signer receiving the delegated voting power
+    /// * `expiry_ledger` - Ledger at which the delegation expires (0 = no expiration)
+    ///
+    /// # Errors
+    /// - [`VaultError::InvalidAmount`] if delegator and delegate are the same
+    /// - [`VaultError::NotASigner`] if either address is not a signer
+    /// - [`VaultError::Unauthorized`] if delegation would create a circular chain or exceed max depth
     pub fn delegate_voting_power(
         env: Env,
         delegator: Address,
@@ -1436,6 +1461,19 @@ impl VaultDAO {
         }
     }
 
+    /// Revoke a voting power delegation.
+    ///
+    /// Removes the delegation set by the caller, restoring their voting power to themselves.
+    /// If no delegation exists, returns an error.
+    ///
+    /// # Arguments
+    /// * `delegator` - The signer revoking their delegation (must authorize)
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// - [`VaultError::ProposalNotFound`] if no delegation exists for the caller
     pub fn revoke_delegation(env: Env, delegator: Address) -> Result<(), VaultError> {
         delegator.require_auth();
 
@@ -1749,6 +1787,31 @@ impl VaultDAO {
     ///
     /// Only the original proposer can amend. Approvals and abstentions are reset,
     /// and an amendment record is appended to on-chain history for auditing.
+    /// The new amount is re-validated against spending limits.
+    ///
+    /// # Arguments
+    /// * `proposer` - The original proposer (must authorize and match proposal.proposer)
+    /// * `proposal_id` - ID of the proposal to amend
+    /// * `new_recipient` - New recipient address for the transfer
+    /// * `new_amount` - New transfer amount (must be positive and within limits)
+    /// * `new_memo` - New descriptive symbol for the transaction
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// - [`VaultError::Unauthorized`] if caller is not the original proposer
+    /// - [`VaultError::ProposalNotPending`] if proposal is not in Pending status
+    /// - [`VaultError::InvalidAmount`] if new_amount is zero or negative
+    /// - [`VaultError::ExceedsProposalLimit`] if new_amount exceeds spending_limit
+    /// - [`VaultError::ExceedsDailyLimit`] if amendment would exceed daily limit
+    /// - [`VaultError::ExceedsWeeklyLimit`] if amendment would exceed weekly limit
+    ///
+    /// # Behavior
+    /// - Clears all existing approvals and abstentions
+    /// - Adjusts spending limit reservations based on amount change
+    /// - Records amendment in history for audit trail
+    /// - Emits `proposal_amended` event with full diff
     pub fn amend_proposal(
         env: Env,
         proposer: Address,
@@ -1833,6 +1896,24 @@ impl VaultDAO {
     }
 
     /// Get amendment history for a proposal.
+    ///
+    /// Returns a vector of all amendments made to a proposal, in chronological order.
+    /// Each amendment record contains the old and new values for recipient, amount, and memo,
+    /// along with who made the amendment and when.
+    ///
+    /// # Arguments
+    /// * `proposal_id` - ID of the proposal to retrieve amendments for
+    ///
+    /// # Returns
+    /// A vector of `ProposalAmendment` records, empty if no amendments exist
+    ///
+    /// # Amendment Record Fields
+    /// - `proposal_id` - The proposal being amended
+    /// - `amended_by` - Address that made the amendment
+    /// - `amended_at_ledger` - Ledger when amendment occurred
+    /// - `old_recipient` / `new_recipient` - Recipient change
+    /// - `old_amount` / `new_amount` - Amount change
+    /// - `old_memo` / `new_memo` - Memo change
     pub fn get_proposal_amendments(env: Env, proposal_id: u64) -> Vec<ProposalAmendment> {
         storage::get_amendment_history(&env, proposal_id)
     }
@@ -1959,6 +2040,57 @@ impl VaultDAO {
         events::emit_quorum_updated(&env, &admin, old_quorum, quorum);
 
         Ok(())
+    }
+
+    /// Get the current quorum requirement.
+    ///
+    /// Returns a tuple of (quorum, quorum_percentage) representing the current quorum settings.
+    /// This is a read-only function that can be called by anyone without authorization.
+    ///
+    /// # Returns
+    /// A tuple `(quorum, quorum_percentage)` where:
+    /// - `quorum` is the absolute number of votes required (0 = disabled)
+    /// - `quorum_percentage` is the percentage-based quorum (1-100, ignored if quorum > 0)
+    pub fn get_quorum(env: Env) -> (u32, u32) {
+        let config = storage::get_config(&env).unwrap_or_else(|_| {
+            // Return defaults if not initialized
+            Config {
+                signers: Vec::new(&env),
+                threshold: 1,
+                quorum: 0,
+                quorum_percentage: 0,
+                spending_limit: 0,
+                daily_limit: 0,
+                weekly_limit: 0,
+                timelock_threshold: 0,
+                timelock_delay: 0,
+                velocity_limit: VelocityConfig {
+                    max_transfers_per_ledger: 0,
+                    cooldown_ledgers: 0,
+                },
+                threshold_strategy: ThresholdStrategy::Fixed,
+                pre_execution_hooks: Vec::new(&env),
+                post_execution_hooks: Vec::new(&env),
+                default_voting_deadline: 0,
+                veto_addresses: Vec::new(&env),
+                retry_config: RetryConfig {
+                    enabled: false,
+                    max_retries: 0,
+                    backoff_ledgers: 0,
+                },
+                recovery_config: RecoveryConfig {
+                    enabled: false,
+                    recovery_delay: 0,
+                    recovery_threshold: 0,
+                },
+                staking_config: StakingConfig {
+                    enabled: false,
+                    min_stake: 0,
+                    slash_percentage: 0,
+                },
+            }
+        });
+        (config.quorum, config.quorum_percentage)
     }
 
     /// Update the voting strategy used for proposal approvals.
@@ -3858,6 +3990,32 @@ impl VaultDAO {
     // ========================================================================
 
     /// Get the reputation record for an address.
+    ///
+    /// Retrieves the reputation score and statistics for a given address.
+    /// Automatically applies reputation decay based on the time since last participation.
+    /// The returned reputation is updated in storage after decay is applied.
+    ///
+    /// # Arguments
+    /// * `addr` - The address to retrieve reputation for
+    ///
+    /// # Returns
+    /// A `Reputation` struct containing:
+    /// - `score` - Composite reputation score (0-1000, higher = more trusted)
+    /// - `proposals_executed` - Total proposals successfully executed by this address
+    /// - `proposals_rejected` - Total proposals rejected
+    /// - `proposals_created` - Total proposals created
+    /// - `approvals_given` - Total approvals given
+    /// - `abstentions_given` - Total abstentions recorded
+    /// - `participation_count` - Total governance votes cast
+    /// - `last_participation_ledger` - Ledger of last governance vote
+    /// - `last_decay_ledger` - Ledger when reputation was last decayed
+    ///
+    /// # Reputation Scoring
+    /// - Proposer execution: +10 points
+    /// - Approver execution: +5 points per approver
+    /// - Approval vote: +2 points
+    /// - Rejection penalty: -20 points
+    /// - Decay: Score decreases over time without participation
     pub fn get_reputation(env: Env, addr: Address) -> Reputation {
         let mut rep = storage::get_reputation(&env, &addr);
         storage::apply_reputation_decay(&env, &mut rep);
