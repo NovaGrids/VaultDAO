@@ -1577,6 +1577,69 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Add an address to the veto list
+    ///
+    /// Only admins can add veto addresses.
+    ///
+    /// # Arguments
+    /// * `admin` - Address performing the action (must be Admin)
+    /// * `addr` - Address to add to veto list
+    pub fn add_veto_address(env: Env, admin: Address, addr: Address) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut config = storage::get_config(&env)?;
+
+        if config.veto_addresses.contains(&addr) {
+            return Err(VaultError::AddressAlreadyOnList);
+        }
+
+        config.veto_addresses.push_back(addr.clone());
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Remove an address from the veto list
+    ///
+    /// Only admins can remove veto addresses.
+    ///
+    /// # Arguments
+    /// * `admin` - Address performing the action (must be Admin)
+    /// * `addr` - Address to remove from veto list
+    pub fn remove_veto_address(env: Env, admin: Address, addr: Address) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut config = storage::get_config(&env)?;
+
+        if !config.veto_addresses.contains(&addr) {
+            return Err(VaultError::AddressNotOnList);
+        }
+
+        let mut new_veto_addresses = Vec::new(&env);
+        for veto_addr in config.veto_addresses.iter() {
+            if veto_addr != addr {
+                new_veto_addresses.push_back(veto_addr);
+            }
+        }
+
+        config.veto_addresses = new_veto_addresses;
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
     /// Cancel a pending proposal and refund reserved spending limits.
     ///
     /// Only the original proposer or an Admin can cancel. Unlike rejection,
@@ -5278,7 +5341,94 @@ impl VaultDAO {
         storage::set_template_name_mapping(&env, &name, template_id);
         storage::extend_instance_ttl(&env);
 
+        events::emit_template_created(&env, template_id, &name, &creator);
+
         Ok(template_id)
+    }
+
+    /// Update an existing template
+    ///
+    /// Allows the creator or admin to update template parameters.
+    /// Increments the version number on each update.
+    ///
+    /// # Arguments
+    /// * `caller` - Address performing the update (must be creator or Admin)
+    /// * `template_id` - ID of the template to update
+    /// * `description` - New description
+    /// * `recipient` - New recipient address
+    /// * `amount` - New default amount
+    /// * `memo` - New memo
+    /// * `min_amount` - New minimum amount
+    /// * `max_amount` - New maximum amount
+    pub fn update_template(
+        env: Env,
+        caller: Address,
+        template_id: u64,
+        description: Symbol,
+        recipient: Address,
+        amount: i128,
+        memo: Symbol,
+        min_amount: i128,
+        max_amount: i128,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut template = storage::get_template(&env, template_id)?;
+
+        // Only creator or admin can update
+        let role = storage::get_role(&env, &caller);
+        if caller != template.creator && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Validate parameters
+        if !Self::validate_template_params(env.clone(), amount, min_amount, max_amount) {
+            return Err(VaultError::TemplateValidationFailed);
+        }
+
+        template.description = description;
+        template.recipient = recipient;
+        template.amount = amount;
+        template.memo = memo;
+        template.min_amount = min_amount;
+        template.max_amount = max_amount;
+        template.version += 1;
+        template.updated_at = env.ledger().sequence() as u64;
+
+        storage::set_template(&env, &template);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_template_updated(&env, template_id, &template.name, template.version, &caller);
+
+        Ok(())
+    }
+
+    /// Deactivate a template
+    ///
+    /// Sets a template's is_active flag to false, preventing new proposals from using it.
+    ///
+    /// # Arguments
+    /// * `admin` - Address performing the action (must be Admin)
+    /// * `template_id` - ID of the template to deactivate
+    pub fn deactivate_template(env: Env, admin: Address, template_id: u64) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        // Check role - only Admin can deactivate
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut template = storage::get_template(&env, template_id)?;
+        template.is_active = false;
+        template.updated_at = env.ledger().sequence() as u64;
+
+        storage::set_template(&env, &template);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_template_status_changed(&env, template_id, &template.name, false, &admin);
+
+        Ok(())
     }
 
     /// Set template active status
