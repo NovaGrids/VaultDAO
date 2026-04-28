@@ -1787,6 +1787,31 @@ impl VaultDAO {
     ///
     /// Only the original proposer can amend. Approvals and abstentions are reset,
     /// and an amendment record is appended to on-chain history for auditing.
+    /// The new amount is re-validated against spending limits.
+    ///
+    /// # Arguments
+    /// * `proposer` - The original proposer (must authorize and match proposal.proposer)
+    /// * `proposal_id` - ID of the proposal to amend
+    /// * `new_recipient` - New recipient address for the transfer
+    /// * `new_amount` - New transfer amount (must be positive and within limits)
+    /// * `new_memo` - New descriptive symbol for the transaction
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// - [`VaultError::Unauthorized`] if caller is not the original proposer
+    /// - [`VaultError::ProposalNotPending`] if proposal is not in Pending status
+    /// - [`VaultError::InvalidAmount`] if new_amount is zero or negative
+    /// - [`VaultError::ExceedsProposalLimit`] if new_amount exceeds spending_limit
+    /// - [`VaultError::ExceedsDailyLimit`] if amendment would exceed daily limit
+    /// - [`VaultError::ExceedsWeeklyLimit`] if amendment would exceed weekly limit
+    ///
+    /// # Behavior
+    /// - Clears all existing approvals and abstentions
+    /// - Adjusts spending limit reservations based on amount change
+    /// - Records amendment in history for audit trail
+    /// - Emits `proposal_amended` event with full diff
     pub fn amend_proposal(
         env: Env,
         proposer: Address,
@@ -1871,6 +1896,24 @@ impl VaultDAO {
     }
 
     /// Get amendment history for a proposal.
+    ///
+    /// Returns a vector of all amendments made to a proposal, in chronological order.
+    /// Each amendment record contains the old and new values for recipient, amount, and memo,
+    /// along with who made the amendment and when.
+    ///
+    /// # Arguments
+    /// * `proposal_id` - ID of the proposal to retrieve amendments for
+    ///
+    /// # Returns
+    /// A vector of `ProposalAmendment` records, empty if no amendments exist
+    ///
+    /// # Amendment Record Fields
+    /// - `proposal_id` - The proposal being amended
+    /// - `amended_by` - Address that made the amendment
+    /// - `amended_at_ledger` - Ledger when amendment occurred
+    /// - `old_recipient` / `new_recipient` - Recipient change
+    /// - `old_amount` / `new_amount` - Amount change
+    /// - `old_memo` / `new_memo` - Memo change
     pub fn get_proposal_amendments(env: Env, proposal_id: u64) -> Vec<ProposalAmendment> {
         storage::get_amendment_history(&env, proposal_id)
     }
