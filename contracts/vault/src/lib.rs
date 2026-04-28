@@ -1999,6 +1999,57 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Get the current quorum requirement.
+    ///
+    /// Returns a tuple of (quorum, quorum_percentage) representing the current quorum settings.
+    /// This is a read-only function that can be called by anyone without authorization.
+    ///
+    /// # Returns
+    /// A tuple `(quorum, quorum_percentage)` where:
+    /// - `quorum` is the absolute number of votes required (0 = disabled)
+    /// - `quorum_percentage` is the percentage-based quorum (1-100, ignored if quorum > 0)
+    pub fn get_quorum(env: Env) -> (u32, u32) {
+        let config = storage::get_config(&env).unwrap_or_else(|_| {
+            // Return defaults if not initialized
+            Config {
+                signers: Vec::new(&env),
+                threshold: 1,
+                quorum: 0,
+                quorum_percentage: 0,
+                spending_limit: 0,
+                daily_limit: 0,
+                weekly_limit: 0,
+                timelock_threshold: 0,
+                timelock_delay: 0,
+                velocity_limit: VelocityConfig {
+                    max_transfers_per_ledger: 0,
+                    cooldown_ledgers: 0,
+                },
+                threshold_strategy: ThresholdStrategy::Fixed,
+                pre_execution_hooks: Vec::new(&env),
+                post_execution_hooks: Vec::new(&env),
+                default_voting_deadline: 0,
+                veto_addresses: Vec::new(&env),
+                retry_config: RetryConfig {
+                    enabled: false,
+                    max_retries: 0,
+                    backoff_ledgers: 0,
+                },
+                recovery_config: RecoveryConfig {
+                    enabled: false,
+                    recovery_delay: 0,
+                    recovery_threshold: 0,
+                },
+                staking_config: StakingConfig {
+                    enabled: false,
+                    min_stake: 0,
+                    slash_percentage: 0,
+                },
+            }
+        });
+        (config.quorum, config.quorum_percentage)
+    }
+
     /// Update the voting strategy used for proposal approvals.
     ///
     /// Only Admin can update voting strategy.
