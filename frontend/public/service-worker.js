@@ -1,18 +1,30 @@
 const CACHE_NAME = 'vaultdao-v1';
+const RUNTIME_CACHE = 'vaultdao-runtime-v1';
+const OFFLINE_PAGE = '/offline.html';
+
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/vite.svg',
+  '/manifest.json',
 ];
 
 // Install event - cache assets
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE).catch((error) => {
-        console.warn('Failed to cache assets:', error);
-      });
-    })
+    Promise.all([
+      caches.open(CACHE_NAME).then((cache) => {
+        return cache.addAll(ASSETS_TO_CACHE).catch((error) => {
+          console.warn('Failed to cache assets:', error);
+        });
+      }),
+      // Pre-cache offline page
+      caches.open(RUNTIME_CACHE).then((cache) => {
+        return fetch(OFFLINE_PAGE)
+          .then((response) => cache.put(OFFLINE_PAGE, response))
+          .catch(() => console.warn('Offline page not available'));
+      }),
+    ])
   );
   self.skipWaiting();
 });
@@ -23,7 +35,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
+          if (cacheName !== CACHE_NAME && cacheName !== RUNTIME_CACHE) {
             return caches.delete(cacheName);
           }
         })
@@ -33,25 +45,51 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch event - network-first for API, cache-first for assets
 self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  const url = new URL(request.url);
+
   // Skip non-GET requests
-  if (event.request.method !== 'GET') {
+  if (request.method !== 'GET') {
     return;
   }
 
-  // Skip API calls - let them go to network
-  if (event.request.url.includes('/api/')) {
+  // Network-first strategy for API calls
+  if (url.pathname.includes('/api/')) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          // Cache successful API responses
+          if (response && response.status === 200) {
+            const responseToCache = response.clone();
+            caches.open(RUNTIME_CACHE).then((cache) => {
+              cache.put(request, responseToCache);
+            });
+          }
+          return response;
+        })
+        .catch(() => {
+          // Return cached API response if network fails
+          return caches.match(request).then((response) => {
+            return response || new Response(
+              JSON.stringify({ error: 'Offline' }),
+              { status: 503, headers: { 'Content-Type': 'application/json' } }
+            );
+          });
+        })
+    );
     return;
   }
 
+  // Cache-first strategy for static assets
   event.respondWith(
-    caches.match(event.request).then((response) => {
+    caches.match(request).then((response) => {
       if (response) {
         return response;
       }
 
-      return fetch(event.request)
+      return fetch(request)
         .then((response) => {
           // Don't cache non-successful responses
           if (!response || response.status !== 200 || response.type === 'error') {
@@ -62,24 +100,38 @@ self.addEventListener('fetch', (event) => {
           const responseToCache = response.clone();
 
           // Cache successful responses for static assets
-          if (
-            event.request.url.includes('.js') ||
-            event.request.url.includes('.css') ||
-            event.request.url.includes('.woff') ||
-            event.request.url.includes('.png') ||
-            event.request.url.includes('.svg')
-          ) {
+          const isStaticAsset =
+            url.pathname.includes('.js') ||
+            url.pathname.includes('.css') ||
+            url.pathname.includes('.woff') ||
+            url.pathname.includes('.png') ||
+            url.pathname.includes('.svg') ||
+            url.pathname.includes('.jpg') ||
+            url.pathname.includes('.jpeg');
+
+          if (isStaticAsset) {
             caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
+              cache.put(request, responseToCache);
             });
           }
 
           return response;
         })
         .catch(() => {
-          // Return cached response if network fails
-          return caches.match(event.request);
+          // Return offline page for navigation requests
+          if (request.mode === 'navigate') {
+            return caches.match(OFFLINE_PAGE);
+          }
+          // Return cached response if available
+          return caches.match(request);
         });
     })
   );
+});
+
+// Handle messages from clients
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
