@@ -76,6 +76,19 @@ export interface CacheStats {
   size: number;
   hits: number;
   misses: number;
+  hitRatio: number;
+}
+
+/**
+ * Extended cache adapter with tag-based invalidation and cache-aside helpers.
+ */
+export interface TaggedCacheAdapter<T = unknown> extends CacheAdapter<T> {
+  /** Cache-aside: return cached value or call fetchFn, store result, return it. */
+  getOrSet(key: string, ttlMs: number, fetchFn: () => Promise<T>, tags?: string[]): Promise<T>;
+  /** Invalidate all keys associated with a tag. */
+  invalidateByTag(tag: string): number;
+  /** Invalidate all keys matching a glob-style prefix pattern. */
+  invalidatePattern(pattern: string): number;
 }
 
 /**
@@ -171,10 +184,12 @@ export class InMemoryCacheAdapter<T> implements CacheAdapter<T> {
    * Get cache statistics.
    */
   stats(): CacheStats {
+    const total = this.hits + this.misses;
     return {
       size: this.cache.size,
       hits: this.hits,
       misses: this.misses,
+      hitRatio: total === 0 ? 0 : this.hits / total,
     };
   }
 
