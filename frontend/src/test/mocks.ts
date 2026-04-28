@@ -90,6 +90,37 @@ export const makeProposal = (overrides: Record<string, unknown> = {}) => ({
 });
 
 // ---------------------------------------------------------------------------
+// stellar-sdk / SorobanRpc Mocks
+// ---------------------------------------------------------------------------
+export const mockSorobanServer = {
+  getAccount: vi.fn(),
+  simulateTransaction: vi.fn(),
+  sendTransaction: vi.fn(),
+  getLatestLedger: vi.fn(),
+  getTransaction: vi.fn(),
+};
+
+export const mockTransactionBuilder = {
+  setNetworkPassphrase: vi.fn().mockReturnThis(),
+  setTimeout: vi.fn().mockReturnThis(),
+  addOperation: vi.fn().mockReturnThis(),
+  build: vi.fn().mockReturnValue({
+    toXDR: () => 'mock-xdr',
+  }),
+};
+
+export const mockOperation = {
+  invokeHostFunction: vi.fn().mockReturnValue({}),
+};
+
+export const mockAddress = {
+  fromString: vi.fn().mockReturnValue({
+    toScAddress: () => ({}),
+    toScVal: () => ({}),
+  }),
+};
+
+// ---------------------------------------------------------------------------
 // Sample recurring payment fixture
 // ---------------------------------------------------------------------------
 export const makeRecurringPayment = (overrides: Partial<RecurringPayment> = {}): RecurringPayment => ({

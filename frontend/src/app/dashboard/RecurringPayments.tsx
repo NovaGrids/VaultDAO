@@ -224,11 +224,12 @@ const PaymentHistoryModal: React.FC<{
 // Payment Card Component
 const PaymentCard: React.FC<{
   payment: RecurringPayment;
+  canStop: boolean;
   onExecute: (payment: RecurringPayment) => void;
   onCancel: (payment: RecurringPayment) => void;
   onViewHistory: (payment: RecurringPayment) => void;
   executing: boolean;
-}> = ({ payment, onExecute, onCancel, onViewHistory, executing }) => {
+}> = ({ payment, canStop, onExecute, onCancel, onViewHistory, executing }) => {
   const status = getPaymentStatus(payment);
   const isDue = status === 'due';
   const isPaused = status === 'paused';
@@ -302,7 +303,7 @@ const PaymentCard: React.FC<{
           <History className="w-4 h-4" />
           History
         </button>
-        {!isPaused && (
+        {!isPaused && canStop && (
           <button
             onClick={() => onCancel(payment)}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg font-medium transition-colors min-h-[44px]"
@@ -325,6 +326,7 @@ const RecurringPayments: React.FC = () => {
     schedulePayment,
     executeRecurringPayment,
     cancelRecurringPayment,
+    getVaultConfig,
     loading,
   } = useVaultContract();
   const { checkReady, isReady } = useActionReadiness();
@@ -338,20 +340,28 @@ const RecurringPayments: React.FC = () => {
   const [paymentHistory, setPaymentHistory] = useState<RecurringPaymentHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [executingPaymentId, setExecutingPaymentId] = useState<string | null>(null);
+  // role: 0=Member, 1=Treasurer, 2=Admin
+  const [userRole, setUserRole] = useState<number>(0);
 
   // Fetch payments on mount
   const fetchPayments = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await getRecurringPayments?.() ?? [];
-      setPayments(data);
+      const [data, config] = await Promise.allSettled([
+        getRecurringPayments?.() ?? Promise.resolve([]),
+        getVaultConfig?.(),
+      ]);
+      if (data.status === 'fulfilled') setPayments(data.value);
+      if (config.status === 'fulfilled' && config.value) {
+        setUserRole(config.value.currentUserRole);
+      }
     } catch (error) {
       console.error('Failed to fetch recurring payments:', error);
       notify('config_updated', 'Failed to load recurring payments', 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [getRecurringPayments, notify]);
+  }, [getRecurringPayments, getVaultConfig, notify]);
 
   useEffect(() => {
     fetchPayments();
@@ -538,6 +548,7 @@ const RecurringPayments: React.FC = () => {
             <PaymentCard
               key={payment.id}
               payment={payment}
+              canStop={userRole >= 1}
               onExecute={handleExecutePayment}
               onCancel={(p) => {
                 setSelectedPayment(p);

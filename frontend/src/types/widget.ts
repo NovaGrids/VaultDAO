@@ -60,14 +60,31 @@ export interface MarketplaceWidget {
 }
 
 export interface WidgetMessage {
-  type: 'init' | 'config' | 'data' | 'action' | 'error';
-  payload: any;
+  type: 'init' | 'config' | 'data' | 'action' | 'error' | 'event' | 'response';
+  payload: unknown;
+  callId?: string;
+  widgetId: string;
 }
 
+export type WidgetEventType = 
+  | 'proposalCreated' 
+  | 'proposalUpdated' 
+  | 'vaultConfigChanged' 
+  | 'balanceChanged';
+
 export interface WidgetAPI {
-  getConfig: () => Promise<Record<string, any>>;
-  setConfig: (config: Record<string, any>) => Promise<void>;
-  getData: (query: string) => Promise<any>;
-  sendNotification: (message: string) => Promise<void>;
+  // Config & Data
+  getConfig: () => Promise<Record<string, unknown>>;
+  setConfig: (config: Record<string, unknown>) => Promise<void>;
+  getProposals: (filter?: Record<string, unknown>) => Promise<unknown[]>;
+  getVaultConfig: () => Promise<unknown>;
+  
+  // Actions
+  showToast: (message: string, type?: 'success' | 'error' | 'info' | 'warning') => Promise<void>;
+  navigate: (path: string) => Promise<void>;
   requestPermission: (permission: keyof WidgetPermissions) => Promise<boolean>;
+  
+  // Events
+  onEvent: (type: WidgetEventType, handler: (data: unknown) => void) => void;
+  offEvent: (type: WidgetEventType, handler: (data: unknown) => void) => void;
 }
