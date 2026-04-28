@@ -218,3 +218,99 @@ export function aggregateAnalytics(
     dailyLimitUsedPercent: undefined,
   };
 }
+
+export interface DailySpendingPoint {
+  date: string;
+  amount: number;
+}
+
+export interface ProposalOutcome {
+  name: 'Executed' | 'Rejected' | 'Pending';
+  value: number;
+}
+
+export interface RecipientBar {
+  address: string;
+  total: number;
+  count: number;
+}
+
+export interface SignerRow {
+  signer: string;
+  approvals: number;
+  rate: number; // 0-100
+}
+
+export function aggregateDailySpending(
+  activities: ActivityLike[],
+  range: AnalyticsTimeRange
+): DailySpendingPoint[] {
+  const { start, end } = getRangeDates(range);
+  const byDate: Record<string, number> = {};
+  activities.forEach((a) => {
+    if (a.type !== 'proposal_executed' || !inRange(a.timestamp, start, end)) return;
+    const key = toDateKey(a.timestamp);
+    byDate[key] = (byDate[key] ?? 0) + (Number(a.details?.amount ?? 0) || 0);
+  });
+  return Object.keys(byDate).sort().map((date) => ({ date, amount: byDate[date] }));
+}
+
+export function aggregateProposalOutcomes(
+  activities: ActivityLike[],
+  range: AnalyticsTimeRange
+): ProposalOutcome[] {
+  const { start, end } = getRangeDates(range);
+  const inR = (a: ActivityLike) => inRange(a.timestamp, start, end);
+  const executed = activities.filter((a) => a.type === 'proposal_executed' && inR(a)).length;
+  const rejected = activities.filter((a) => a.type === 'proposal_rejected' && inR(a)).length;
+  const created = activities.filter((a) => a.type === 'proposal_created' && inR(a)).length;
+  const pending = Math.max(0, created - executed - rejected);
+  return [
+    { name: 'Executed', value: executed },
+    { name: 'Rejected', value: rejected },
+    { name: 'Pending', value: pending },
+  ].filter((o) => o.value > 0);
+}
+
+export function aggregateTopRecipients(
+  activities: ActivityLike[],
+  range: AnalyticsTimeRange,
+  limit = 5
+): RecipientBar[] {
+  const { start, end } = getRangeDates(range);
+  const byRecipient: Record<string, { total: number; count: number }> = {};
+  activities.forEach((a) => {
+    if (a.type !== 'proposal_executed' || !inRange(a.timestamp, start, end)) return;
+    const addr = String(a.details?.recipient ?? 'unknown');
+    if (!byRecipient[addr]) byRecipient[addr] = { total: 0, count: 0 };
+    byRecipient[addr].total += Number(a.details?.amount ?? 0) || 0;
+    byRecipient[addr].count += 1;
+  });
+  return Object.entries(byRecipient)
+    .map(([address, { total, count }]) => ({ address, total, count }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
+}
+
+export function aggregateSignerParticipation(
+  activities: ActivityLike[],
+  range: AnalyticsTimeRange
+): SignerRow[] {
+  const { start, end } = getRangeDates(range);
+  const totalProposals = activities.filter(
+    (a) => a.type === 'proposal_created' && inRange(a.timestamp, start, end)
+  ).length;
+  const byApprover: Record<string, number> = {};
+  activities.forEach((a) => {
+    if (a.type !== 'proposal_approved' || !inRange(a.timestamp, start, end)) return;
+    const s = a.actor || 'unknown';
+    byApprover[s] = (byApprover[s] ?? 0) + 1;
+  });
+  return Object.entries(byApprover)
+    .map(([signer, approvals]) => ({
+      signer,
+      approvals,
+      rate: totalProposals > 0 ? Math.min(100, (approvals / totalProposals) * 100) : 0,
+    }))
+    .sort((a, b) => b.approvals - a.approvals);
+}
