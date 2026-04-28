@@ -116,6 +116,8 @@ mod test_streaming;
 mod test_attachments;
 #[cfg(test)]
 mod test_tags;
+#[cfg(test)]
+mod test_retry;
 
 #[cfg(test)]
 pub mod mock_oracle {
@@ -1334,6 +1336,49 @@ impl VaultDAO {
     }
     pub fn get_retry_state(env: Env, proposal_id: u64) -> Option<RetryState> {
         storage::get_retry_state(&env, proposal_id)
+    }
+
+    /// Retry execution of a failed proposal after backoff period expires.
+    ///
+    /// # Arguments
+    /// * `executor` - Address attempting the retry
+    /// * `proposal_id` - ID of the proposal to retry
+    ///
+    /// # Returns
+    /// * `Ok(())` if retry scheduled or execution succeeded
+    /// * `Err(RetryError)` if backoff not expired or max retries exhausted
+    pub fn retry_execution(
+        env: Env,
+        executor: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        executor.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.retry_config.enabled {
+            return Err(VaultError::RetryError);
+        }
+
+        let retry_state = storage::get_retry_state(&env, proposal_id)
+            .ok_or(VaultError::RetryError)?;
+
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Check if backoff period has expired
+        if current_ledger < retry_state.next_retry_ledger {
+            return Err(VaultError::RetryError);
+        }
+
+        // Check if max retries exhausted
+        if retry_state.retry_count >= config.retry_config.max_retries {
+            return Err(VaultError::RetryError);
+        }
+
+        // Emit retry attempt event
+        events::emit_retry_attempted(&env, proposal_id, retry_state.retry_count, &executor);
+
+        // Attempt execution again (same logic as execute_proposal)
+        Self::execute_proposal(env, executor, proposal_id)
     }
 
     pub fn delegate_voting_power(
