@@ -42,6 +42,14 @@ export interface ProposalTemplate {
   memo: string;
   /** Whether this is a default template (immutable) */
   isDefault: boolean;
+  /** Whether this template is active (can be used) */
+  isActive: boolean;
+  /** Version number, incremented on each update */
+  version: number;
+  /** Minimum allowed override amount (in stroops), optional */
+  minAmount?: string;
+  /** Maximum allowed override amount (in stroops), optional */
+  maxAmount?: string;
   /** Number of times this template has been used */
   usageCount: number;
   /** ISO timestamp of last usage */
@@ -126,6 +134,8 @@ const DEFAULT_TEMPLATES: ProposalTemplate[] = [
     token: '',
     memo: 'Monthly Salary - {{month}}',
     isDefault: true,
+    isActive: true,
+    version: 1,
     usageCount: 0,
     lastUsedAt: null,
     createdAt: '2026-01-01T00:00:00Z'
@@ -140,6 +150,8 @@ const DEFAULT_TEMPLATES: ProposalTemplate[] = [
     token: '',
     memo: 'Invoice #{{invoice_number}}',
     isDefault: true,
+    isActive: true,
+    version: 1,
     usageCount: 0,
     lastUsedAt: null,
     createdAt: '2026-01-01T00:00:00Z'
@@ -154,6 +166,8 @@ const DEFAULT_TEMPLATES: ProposalTemplate[] = [
     token: '',
     memo: 'Token Swap',
     isDefault: true,
+    isActive: true,
+    version: 1,
     usageCount: 0,
     lastUsedAt: null,
     createdAt: '2026-01-01T00:00:00Z'
@@ -407,7 +421,9 @@ export function createTemplate(
   recipient: string,
   amount: string,
   token: string,
-  memo: string
+  memo: string,
+  minAmount?: string,
+  maxAmount?: string,
 ): ProposalTemplate {
   const template: Partial<ProposalTemplate> = {
     name,
@@ -431,6 +447,10 @@ export function createTemplate(
     token: token.trim(),
     memo: memo.trim(),
     isDefault: false,
+    isActive: true,
+    version: 1,
+    minAmount: minAmount?.trim() || undefined,
+    maxAmount: maxAmount?.trim() || undefined,
     usageCount: 0,
     lastUsedAt: null,
     createdAt: new Date().toISOString()
@@ -478,6 +498,8 @@ export function updateTemplate(
     ...updated,
     id: existing.id,
     isDefault: false,
+    isActive: existing.isActive,
+    version: existing.version + 1,
     usageCount: existing.usageCount,
     lastUsedAt: existing.lastUsedAt,
     createdAt: existing.createdAt
@@ -553,4 +575,24 @@ export function searchTemplates(query: string): ProposalTemplate[] {
     t.name.toLowerCase().includes(lowerQuery) ||
     t.description.toLowerCase().includes(lowerQuery)
   );
+}
+
+/**
+ * Deactivate a custom template so it can no longer be used.
+ * Default templates cannot be deactivated.
+ *
+ * @param id - Template ID
+ * @throws TemplateNotFoundError if template doesn't exist
+ * @throws ImmutableTemplateError if template is default
+ */
+export function deactivateTemplate(id: string): void {
+  const custom = loadCustomTemplates();
+  const index = custom.findIndex((t) => t.id === id);
+  if (index === -1) {
+    const isDefault = DEFAULT_TEMPLATES.some((t) => t.id === id);
+    if (isDefault) throw new ImmutableTemplateError(id);
+    throw new TemplateNotFoundError(id);
+  }
+  custom[index] = { ...custom[index], isActive: false };
+  saveCustomTemplates(custom);
 }
