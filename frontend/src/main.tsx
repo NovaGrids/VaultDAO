@@ -18,7 +18,10 @@ import { registerServiceWorker } from './utils/pwa';
 import { AccessibilityProvider } from './contexts/AccessibilityContext';
 import { SkipLinks } from './components/SkipLinks';
 
-registerServiceWorker();
+// Register service worker for PWA support
+registerServiceWorker().catch((error) => {
+  console.warn('Failed to register service worker:', error);
+});
 
 function AppWithErrorBoundary() {
   useEffect(() => {

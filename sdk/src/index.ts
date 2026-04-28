@@ -13,6 +13,14 @@ export type {
   VaultConfig,
   Proposal,
   RecurringPayment,
+  StreamingPayment,
+  Subscription,
+  Escrow,
+  ProposalTemplate,
+  Comment,
+  VaultMetrics,
+  Reputation,
+  AuditEntry,
   SdkOptions,
   Network,
 } from "./types";
@@ -57,6 +65,37 @@ export {
   // Recurring payments
   schedulePayment,
   executeRecurringPayment,
+  // Streaming payments
+  createStream,
+  claimStream,
+  pauseStream,
+  cancelStream,
+  // Subscriptions
+  createSubscription,
+  renewSubscription,
+  cancelSubscription,
+  // Escrow
+  createEscrow,
+  completeMilestone,
+  releaseEscrow,
+  disputeEscrow,
+  // Templates
+  createTemplate,
+  proposeFromTemplate,
+  deactivateTemplate,
+  // Comments
+  addComment,
+  editComment,
+  getComments,
+  // Recovery
+  proposeRecovery,
+  approveRecovery,
+  executeRecovery,
+  // Read functions
+  getVaultMetrics,
+  getReputation,
+  getAuditTrail,
+  getDelegationChain,
   // View / read-only
   getProposal,
   getRole,

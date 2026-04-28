@@ -13,6 +13,14 @@ interface UseCollaborationOptions {
   onError?: (error: Error) => void;
 }
 
+interface SharedDraft {
+  recipient: Y.Text;
+  token: Y.Text;
+  amount: Y.Text;
+  memo: Y.Text;
+  metadata: Y.Map<any>;
+}
+
 export function useCollaboration({
   draftId,
   userId,
@@ -23,95 +31,118 @@ export function useCollaboration({
   const [isConnected, setIsConnected] = useState(false);
   const [collaborators, setCollaborators] = useState<CollaboratorPresence[]>([]);
   const [hasConflict, setHasConflict] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(0);
   
   const ydocRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<WebsocketProvider | null>(null);
-
-  // Log onError to avoid unused warning
-  if (onError) {
-    console.debug('Error handler registered');
-  }
+  const sharedRef = useRef<SharedDraft | null>(null);
 
   // Initialize Yjs document and WebSocket provider
   useEffect(() => {
-    const ydoc = new Y.Doc();
-    ydocRef.current = ydoc;
+    try {
+      const ydoc = new Y.Doc();
+      ydocRef.current = ydoc;
 
-    // Create shared types for each field
-    const yRecipient = ydoc.getText('recipient');
-    const yToken = ydoc.getText('token');
-    const yAmount = ydoc.getText('amount');
-    const yMemo = ydoc.getText('memo');
-    const yMetadata = ydoc.getMap('metadata');
+      // Create shared types for each field
+      const yRecipient = ydoc.getText('recipient');
+      const yToken = ydoc.getText('token');
+      const yAmount = ydoc.getText('amount');
+      const yMemo = ydoc.getText('memo');
+      const yMetadata = ydoc.getMap('metadata');
 
-    // Initialize WebSocket provider
-    const provider = new WebsocketProvider(WEBSOCKET_URL, draftId, ydoc, {
-      connect: true,
-    });
-    providerRef.current = provider;
+      sharedRef.current = {
+        recipient: yRecipient,
+        token: yToken,
+        amount: yAmount,
+        memo: yMemo,
+        metadata: yMetadata,
+      };
 
-    // Set user awareness
-    provider.awareness.setLocalStateField('user', {
-      userId,
-      userName,
-      color: generateUserColor(userId),
-    });
+      // Initialize WebSocket provider
+      const provider = new WebsocketProvider(WEBSOCKET_URL, `draft-${draftId}`, ydoc, {
+        connect: true,
+        awareness: true,
+      });
+      providerRef.current = provider;
 
-    // Connection status handlers
-    provider.on('status', (event: { status: string }) => {
-      setIsConnected(event.status === 'connected');
-    });
+      // Set user awareness with color
+      provider.awareness.setLocalStateField('user', {
+        userId,
+        userName,
+        color: generateUserColor(userId),
+        lastActive: Date.now(),
+      });
 
-    provider.on('sync', (isSynced: boolean) => {
-      if (isSynced && onSync) {
-        onSync({
-          recipient: yRecipient.toString(),
-          token: yToken.toString(),
-          amount: yAmount.toString(),
-          memo: yMemo.toString(),
-        });
+      // Connection status handlers
+      provider.on('status', (event: { status: string }) => {
+        setIsConnected(event.status === 'connected');
+      });
+
+      // Sync progress
+      provider.on('sync', (isSynced: boolean) => {
+        if (isSynced) {
+          setSyncProgress(100);
+          if (onSync) {
+            onSync({
+              recipient: yRecipient.toString(),
+              token: yToken.toString(),
+              amount: yAmount.toString(),
+              memo: yMemo.toString(),
+            });
+          }
+        } else {
+          setSyncProgress(50);
+        }
+      });
+
+      // Awareness changes (collaborator presence)
+      const updateCollaborators = () => {
+        const states = Array.from(provider.awareness.getStates().entries());
+        const presences: CollaboratorPresence[] = states
+          .filter(([clientId]) => clientId !== provider.awareness.clientID)
+          .map(([, state]) => ({
+            userId: state.user?.userId || '',
+            userName: state.user?.userName || 'Anonymous',
+            color: state.user?.color || '#888',
+            cursor: state.cursor,
+            lastSeen: state.user?.lastActive || Date.now(),
+          }));
+        setCollaborators(presences);
+      };
+
+      provider.awareness.on('change', updateCollaborators);
+
+      // Conflict detection: track recent edits
+      const conflictDetector = () => {
+        const recentChanges = yMetadata.get('recentChanges') as any[] || [];
+        const now = Date.now();
+        const conflictWindow = 5000; // 5 seconds
+        
+        const hasRecentConflict = recentChanges.some((change: any) => 
+          change.userId !== userId && (now - change.timestamp) < conflictWindow
+        );
+        setHasConflict(hasRecentConflict);
+      };
+
+      ydoc.on('update', conflictDetector);
+
+      // Cleanup
+      return () => {
+        provider.disconnect();
+        ydoc.destroy();
+      };
+    } catch (error) {
+      if (onError && error instanceof Error) {
+        onError(error);
       }
-    });
+    }
+  }, [draftId, userId, userName, onSync, onError]);
 
-    // Awareness changes (collaborator presence)
-    provider.awareness.on('change', () => {
-      const states = Array.from(provider.awareness.getStates().entries());
-      const presences: CollaboratorPresence[] = states
-        .filter(([clientId]) => clientId !== provider.awareness.clientID)
-        .map(([, state]) => ({
-          userId: state.user?.userId || '',
-          userName: state.user?.userName || 'Anonymous',
-          color: state.user?.color || '#888',
-          cursor: state.cursor,
-          lastSeen: Date.now(),
-        }));
-      setCollaborators(presences);
-    });
-
-    // Conflict detection
-    ydoc.on('update', () => {
-      // Simple conflict detection: check if multiple users edited same field recently
-      const recentChanges = yMetadata.get('recentChanges') as any[] || [];
-      const now = Date.now();
-      const conflictWindow = 5000; // 5 seconds
-      
-      const hasRecentConflict = recentChanges.some((change: any) => 
-        change.userId !== userId && (now - change.timestamp) < conflictWindow
-      );
-      setHasConflict(hasRecentConflict);
-    });
-
-    return () => {
-      provider.disconnect();
-      ydoc.destroy();
-    };
-  }, [draftId, userId, userName, onSync]);
-
-  // Update field value
+  // Update field value with transaction
   const updateField = useCallback((field: 'recipient' | 'token' | 'amount' | 'memo', value: string) => {
-    if (!ydocRef.current) return;
+    if (!ydocRef.current || !sharedRef.current) return;
 
-    const yText = ydocRef.current.getText(field);
+    const yText = sharedRef.current[field];
     const currentValue = yText.toString();
     
     if (currentValue !== value) {
@@ -119,41 +150,74 @@ export function useCollaboration({
         yText.delete(0, yText.length);
         yText.insert(0, value);
 
-        // Track change in metadata
-        const yMetadata = ydocRef.current!.getMap('metadata');
-        const recentChanges = yMetadata.get('recentChanges') as any[] || [];
+        // Track change in metadata for conflict detection
+        const yMetadata = sharedRef.current!.metadata;
+        const recentChanges = (yMetadata.get('recentChanges') as any[]) || [];
         recentChanges.push({
           userId,
           field,
           timestamp: Date.now(),
         });
-        yMetadata.set('recentChanges', recentChanges.slice(-10)); // Keep last 10 changes
+        // Keep last 20 changes
+        yMetadata.set('recentChanges', recentChanges.slice(-20));
       });
     }
   }, [userId]);
 
-
-
   // Update cursor position for awareness
   const updateCursor = useCallback((field: string, position: number) => {
     if (!providerRef.current) return;
-    providerRef.current.awareness.setLocalStateField('cursor', { field, position });
+    providerRef.current.awareness.setLocalStateField('cursor', { 
+      field, 
+      position,
+      timestamp: Date.now(),
+    });
+  }, []);
+
+  // Get current draft state
+  const getDraftState = useCallback((): Partial<ProposalDraft> | null => {
+    if (!sharedRef.current) return null;
+    return {
+      recipient: sharedRef.current.recipient.toString(),
+      token: sharedRef.current.token.toString(),
+      amount: sharedRef.current.amount.toString(),
+      memo: sharedRef.current.memo.toString(),
+    };
+  }, []);
+
+  // Undo/Redo support
+  const undo = useCallback(() => {
+    if (ydocRef.current) {
+      // Yjs doesn't have built-in undo, but we can track history
+      // This is a placeholder for future enhancement
+    }
+  }, []);
+
+  const redo = useCallback(() => {
+    if (ydocRef.current) {
+      // Placeholder for future enhancement
+    }
   }, []);
 
   return {
     isConnected,
     collaborators,
     hasConflict,
+    syncProgress,
     updateField,
     updateCursor,
+    getDraftState,
+    undo,
+    redo,
   };
 }
 
-// Generate consistent color for user
+// Generate consistent color for user based on userId
 function generateUserColor(userId: string): string {
   const colors = [
     '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', 
-    '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'
+    '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+    '#F8B88B', '#A8E6CF', '#FFD3B6', '#FFAAA5',
   ];
   const hash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
   return colors[hash % colors.length];
