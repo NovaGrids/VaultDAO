@@ -4,6 +4,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from './components/Layout/DashboardLayout';
 import ErrorBoundary from './components/ErrorBoundary';
+import { ProductTour } from './components/ProductTour';
 
 const Overview = lazy(() => import('./app/dashboard/Overview'));
 const Proposals = lazy(() => import('./app/dashboard/Proposals'));
@@ -24,6 +25,7 @@ function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <ProductTour />
         <Suspense fallback={<PageFallback />}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />

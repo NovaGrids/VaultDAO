@@ -1,137 +1,120 @@
 import { useEffect, useState } from 'react';
-import Joyride, { ACTIONS, EVENTS, STATUS } from 'react-joyride';
-import type { Step, CallBackProps as JoyrideCallbackData } from 'react-joyride';
+import Joyride, { EVENTS, STATUS } from 'react-joyride';
+import type { Step, CallBackProps } from 'react-joyride';
 import { useOnboarding } from '../context/OnboardingProvider';
-import { ONBOARDING_STEPS } from '../constants/onboarding';
-import type { OnboardingStep } from '../types/onboarding';
+import { ONBOARDING_STEPS, STORAGE_KEYS } from '../constants/onboarding';
 
-interface ProductTourProps {
-  autoStart?: boolean;
-  onComplete?: () => void;
-  onSkip?: () => void;
-}
+const joyrideSteps: Step[] = ONBOARDING_STEPS
+  .filter((s) => s.id !== 'welcome' && s.id !== 'complete')
+  .map((s) => ({
+    target: s.target ? `#${s.target}` : 'body',
+    content: (
+      <div>
+        <p className="font-semibold text-white mb-1">{s.title}</p>
+        <p className="text-white/70 text-sm">{s.description}</p>
+      </div>
+    ),
+    placement: (s.placement ?? 'bottom') as Step['placement'],
+    disableBeacon: true,
+  }));
 
-const mapOnboardingStepsToJoyride = (steps: OnboardingStep[]): Step[] => {
-  return steps
-    .filter(step => step.id !== 'welcome' && step.id !== 'complete')
-    .map(step => ({
-      target: step.target ? `#${step.target}` : 'body',
-      content: (
-        <div className="text-sm">
-          <h3 className="font-semibold mb-2">{step.title}</h3>
-          <p className="text-gray-300">{step.description}</p>
-        </div>
-      ),
-      placement: (step.placement as 'bottom' | 'top' | 'left' | 'right') || 'bottom',
-      disableBeacon: false,
-      hideCloseButton: false,
-    }));
-};
+export const ProductTour: React.FC = () => {
+  const { skipOnboarding, completeStep } = useOnboarding();
+  const [run, setRun] = useState(false);
 
-export const ProductTour: React.FC<ProductTourProps> = ({
-  autoStart = false,
-  onComplete,
-  onSkip,
-}) => {
-  const { isOnboardingActive, nextStep, completeStep } =
-    useOnboarding();
-  const [run, setRun] = useState(autoStart && isOnboardingActive);
-  const [stepIndex, setStepIndex] = useState(0);
-
-  const steps = mapOnboardingStepsToJoyride(ONBOARDING_STEPS);
-
+  // Auto-start for first-time visitors
   useEffect(() => {
-    if (isOnboardingActive && autoStart) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    const completed = localStorage.getItem(STORAGE_KEYS.COMPLETED_ONBOARDING);
+    if (!completed) {
       setRun(true);
-    } else if (!isOnboardingActive) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setRun(false);
     }
-  }, [isOnboardingActive, autoStart]);
+  }, []);
 
-  const handleJoyrideCallback = (data: JoyrideCallbackData) => {
-    const { action, index, status, type } = data;
+  const handleCallback = (data: CallBackProps) => {
+    const { status, type, index } = data;
 
     if (type === EVENTS.STEP_AFTER) {
-      setStepIndex(index + 1);
       const step = ONBOARDING_STEPS[index + 1];
-      if (step) {
-        completeStep(step.id);
-      }
+      if (step) completeStep(step.id);
     }
 
     if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
       setRun(false);
-      if (status === STATUS.FINISHED) {
-        onComplete?.();
-      } else {
-        onSkip?.();
-      }
-    }
-
-    if (action === ACTIONS.NEXT) {
-      nextStep();
+      localStorage.setItem(STORAGE_KEYS.COMPLETED_ONBOARDING, 'true');
+      skipOnboarding();
     }
   };
 
+  if (!run) return null;
+
   return (
     <Joyride
-      steps={steps}
+      steps={joyrideSteps}
       run={run}
-      stepIndex={stepIndex}
       continuous
       showSkipButton
       showProgress
-      callback={handleJoyrideCallback}
+      disableScrolling
+      callback={handleCallback}
       styles={{
         options: {
-          arrowColor: '#1f2937',
-          backgroundColor: '#1f2937',
-          overlayColor: 'rgba(0, 0, 0, 0.5)',
+          arrowColor: 'rgba(255,255,255,0.05)',
+          backgroundColor: 'rgba(255,255,255,0.05)',
+          overlayColor: 'rgba(0,0,0,0.55)',
           primaryColor: '#a855f7',
           textColor: '#ffffff',
-          width: 300,
-          zIndex: 1000,
+          width: 320,
+          zIndex: 10000,
         },
         tooltip: {
-          backgroundColor: '#1f2937',
-          borderRadius: 8,
-          color: '#ffffff',
-          padding: '16px',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          backgroundColor: 'rgba(15,10,30,0.75)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 16,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          padding: '20px',
         },
-        tooltipContainer: {
-          textAlign: 'left' as const,
+        tooltipTitle: {
+          color: '#ffffff',
+          fontSize: 15,
+          fontWeight: 700,
+        },
+        tooltipContent: {
+          color: 'rgba(255,255,255,0.7)',
+          fontSize: 13,
+          padding: '8px 0 0',
         },
         buttonNext: {
-          backgroundColor: '#a855f7',
-          color: '#ffffff',
-          outline: 'none',
+          background: 'linear-gradient(135deg,#a855f7,#ec4899)',
           border: 'none',
-          borderRadius: 4,
+          borderRadius: 8,
+          color: '#ffffff',
           cursor: 'pointer',
-          padding: '8px 16px',
-          fontSize: 14,
+          fontSize: 13,
           fontWeight: 600,
+          padding: '8px 16px',
+          outline: 'none',
         },
         buttonSkip: {
-          color: '#9ca3af',
+          color: 'rgba(255,255,255,0.5)',
           cursor: 'pointer',
-          fontSize: 14,
+          fontSize: 13,
+          background: 'transparent',
+          border: 'none',
         },
         buttonBack: {
-          color: '#9ca3af',
+          color: 'rgba(255,255,255,0.5)',
           cursor: 'pointer',
-          fontSize: 14,
+          fontSize: 13,
+          background: 'transparent',
+          border: 'none',
+        },
+        buttonClose: {
+          color: 'rgba(255,255,255,0.5)',
         },
       }}
-      locale={{
-        back: 'Back',
-        close: 'Close',
-        last: 'Finish',
-        next: 'Next',
-        skip: 'Skip',
-      }}
+      locale={{ back: 'Back', close: 'Close', last: 'Finish', next: 'Next', skip: 'Skip Tour' }}
     />
   );
 };
