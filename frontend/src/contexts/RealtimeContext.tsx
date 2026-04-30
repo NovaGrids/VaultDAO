@@ -27,7 +27,7 @@ interface RealtimeContextValue {
   isConnected: boolean;
   connectionStatus: WebSocketStatus;
   onlineUsers: UserPresence[];
-  subscribe: (type: string, handler: (data: Record<string, unknown>) => void) => () => void;
+  subscribe: <T = Record<string, unknown>>(type: string, handler: (data: T) => void) => () => void;
   sendUpdate: (type: string, data: Record<string, unknown>) => void;
   updatePresence: (status: 'online' | 'away', currentPage?: string) => void;
   /** Returns true and marks the id as seen if it hasn't been seen before. */
@@ -136,7 +136,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Subscribe to specific message type
-  const subscribe = useCallback((type: string, handler: (data: Record<string, unknown>) => void) => {
+  const subscribe = useCallback(<T,>(type: string, handler: (data: T) => void) => {
     if (!wsClient.current) {
       return () => {};
     }

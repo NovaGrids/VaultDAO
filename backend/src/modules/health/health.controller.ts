@@ -54,3 +54,12 @@ export function getReadinessController(
     }
   };
 }
+
+export function getDetailedHealthController(
+  env: BackendEnv,
+  runtime: BackendRuntime,
+): RequestHandler {
+  return (_request, response) => {
+    success(response, buildDetailedHealthPayload(env, runtime));
+  };
+}

@@ -15,29 +15,50 @@ import type {
 export class TransactionsService {
   constructor(private readonly persistence: ProposalActivityPersistence) {}
 
+  private static readDataString(
+    data: unknown,
+    key: "executor" | "recipient" | "token" | "amount",
+  ): string {
+    if (!data || typeof data !== "object") {
+      return "";
+    }
+
+    const value = (data as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : "";
+  }
+
   /**
    * Returns paginated executed transactions for a contract with optional filters.
    */
   async getTransactions(
     params: GetTransactionsParams,
   ): Promise<GetTransactionsResult> {
-    const allRecords = await this.persistence.getByContractId(params.contractId);
+    const allRecords = await this.persistence.getByContractId(
+      params.contractId,
+    );
     const executed = allRecords
       .filter((record) => record.type === ProposalActivityType.EXECUTED)
-      .map((record): Transaction => ({
-        proposalId: record.proposalId,
-        contractId: record.metadata.contractId,
-        transactionHash: record.metadata.transactionHash,
-        ledger: record.metadata.ledger,
-        timestamp: record.timestamp,
-        executor: "executor" in record.data ? record.data.executor : "",
-        recipient: "recipient" in record.data ? record.data.recipient : "",
-        token: "token" in record.data ? record.data.token : "",
-        amount: "amount" in record.data ? record.data.amount : "",
-      }))
+      .map((record): Transaction => {
+        const data = record.data ?? {};
+        return {
+          proposalId: record.proposalId,
+          contractId: record.metadata.contractId,
+          transactionHash: record.metadata.transactionHash,
+          ledger: record.metadata.ledger,
+          timestamp: record.timestamp,
+          executor: TransactionsService.readDataString(data, "executor"),
+          recipient: TransactionsService.readDataString(data, "recipient"),
+          token: TransactionsService.readDataString(data, "token"),
+          amount: TransactionsService.readDataString(data, "amount"),
+        };
+      })
       .filter((tx) => (params.token ? tx.token === params.token : true))
-      .filter((tx) => (params.recipient ? tx.recipient === params.recipient : true))
-      .filter((tx) => (params.from !== undefined ? tx.ledger >= params.from : true))
+      .filter((tx) =>
+        params.recipient ? tx.recipient === params.recipient : true,
+      )
+      .filter((tx) =>
+        params.from !== undefined ? tx.ledger >= params.from : true,
+      )
       .filter((tx) => (params.to !== undefined ? tx.ledger <= params.to : true))
       .sort((a, b) => b.ledger - a.ledger);
 
@@ -58,7 +79,11 @@ export class TransactionsService {
     contractId: string,
     txHash: string,
   ): Promise<Transaction | null> {
-    const result = await this.getTransactions({ contractId, offset: 0, limit: Number.MAX_SAFE_INTEGER });
+    const result = await this.getTransactions({
+      contractId,
+      offset: 0,
+      limit: Number.MAX_SAFE_INTEGER,
+    });
     return result.data.find((tx) => tx.transactionHash === txHash) ?? null;
   }
 }

@@ -12,7 +12,11 @@ import {
   type ProposalActivityRecord,
 } from "./types.js";
 
-function makeRecord(i: number, contractId = "contract-1", proposalId = "proposal-1"): ProposalActivityRecord {
+function makeRecord(
+  i: number,
+  contractId = "contract-1",
+  proposalId = "proposal-1",
+): ProposalActivityRecord {
   return {
     activityId: `activity-${i}`,
     proposalId,
@@ -38,7 +42,11 @@ function makeRecord(i: number, contractId = "contract-1", proposalId = "proposal
 }
 
 function createMockResponse() {
-  const state: { statusCode: number; body: unknown; headers: Record<string, string> } = {
+  const state: {
+    statusCode: number;
+    body: unknown;
+    headers: Record<string, string>;
+  } = {
     statusCode: 200,
     body: undefined,
     headers: {},
@@ -62,7 +70,9 @@ function createMockResponse() {
   return { res, state };
 }
 
-function createPersistence(records: ProposalActivityRecord[]): ProposalActivityPersistence {
+function createPersistence(
+  records: ProposalActivityRecord[],
+): ProposalActivityPersistence {
   return {
     save: async () => {},
     saveBatch: async () => {},
@@ -71,7 +81,9 @@ function createPersistence(records: ProposalActivityRecord[]): ProposalActivityP
     getByContractId: async (contractId: string) =>
       records.filter((record) => record.metadata.contractId === contractId),
     getSummary: async (proposalId: string) => {
-      const proposalRecords = records.filter((record) => record.proposalId === proposalId);
+      const proposalRecords = records.filter(
+        (record) => record.proposalId === proposalId,
+      );
       if (proposalRecords.length === 0) {
         return null;
       }
@@ -98,12 +110,14 @@ test("getAllProposalsController returns 400 when contractId is missing", async (
   const body = state.body as any;
   assert.equal(state.statusCode, 400);
   assert.equal(body.success, false);
-  assert.equal(body.error.message, "contractId is required");
+  assert.equal(body.error.message, "Missing required parameter: contractId");
   assert.equal(body.error.code, ErrorCode.BAD_REQUEST);
 });
 
 test("getAllProposalsController returns paginated data and clamps limit to 100", async () => {
-  const records = Array.from({ length: 150 }, (_, i) => makeRecord(i, "contract-1", `proposal-${i}`));
+  const records = Array.from({ length: 150 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
   const persistence = createPersistence(records);
   const handler = getAllProposalsController(persistence);
   const { res, state } = createMockResponse();
@@ -128,7 +142,11 @@ test("getProposalByIdController returns 404 for unknown proposal", async () => {
   const handler = getProposalByIdController(persistence);
   const { res, state } = createMockResponse();
 
-  await handler({ params: { proposalId: "missing" } } as any, res as any, (() => {}) as any);
+  await handler(
+    { params: { proposalId: "missing" } } as any,
+    res as any,
+    (() => {}) as any,
+  );
 
   const body = state.body as any;
   assert.equal(state.statusCode, 404);
@@ -137,12 +155,19 @@ test("getProposalByIdController returns 404 for unknown proposal", async () => {
 });
 
 test("getProposalActivityController returns full event history for a proposal", async () => {
-  const records = [makeRecord(1, "contract-1", "proposal-42"), makeRecord(2, "contract-1", "proposal-42")];
+  const records = [
+    makeRecord(1, "contract-1", "proposal-42"),
+    makeRecord(2, "contract-1", "proposal-42"),
+  ];
   const persistence = createPersistence(records);
   const handler = getProposalActivityController(persistence);
   const { res, state } = createMockResponse();
 
-  await handler({ params: { proposalId: "proposal-42" } } as any, res as any, (() => {}) as any);
+  await handler(
+    { params: { proposalId: "proposal-42" } } as any,
+    res as any,
+    (() => {}) as any,
+  );
 
   const body = state.body as any;
   assert.equal(state.statusCode, 200);

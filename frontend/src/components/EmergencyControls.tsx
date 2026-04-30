@@ -4,8 +4,12 @@ import { useVaultContract } from '../hooks/useVaultContract';
 import { useToast } from '../context/ToastContext';
 
 type Action = 'cancel_all' | 'freeze' | 'recovery' | null;
+interface EmergencyControlsProps {
+  isAdmin?: boolean;
+  isSigner?: boolean;
+}
 
-const EmergencyControls: React.FC = () => {
+const EmergencyControls: React.FC<EmergencyControlsProps> = () => {
   const { getVaultConfig, getProposals, rejectProposal, updateSpendingLimits } = useVaultContract();
   const { showToast } = useToast();
 

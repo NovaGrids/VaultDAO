@@ -15,6 +15,7 @@ import {
   DatabaseCursorAdapter,
 } from "./modules/events/cursor/index.js";
 import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
+import { registerDuePaymentsJob } from "./modules/jobs/recurring/due-payments-job.js";
 import { SqliteStorageAdapter } from "./shared/storage/index.js";
 import { randomUUID } from "node:crypto";
 
@@ -89,12 +90,12 @@ if (env.cursorCleanupJobEnabled) {
   );
 }
 
-realtimeServer.start();
-jobRunner.start();
-
 // Start server and integrate with lifecycle management
 const { server, runtime } = startServer(env, notificationQueue);
 const lifecycle = new LifecycleManager(server, 10_000); // 10s shutdown timeout
+
+realtimeServer.start(server);
+jobRunner.start();
 
 registerDuePaymentsJob(
   jobRunner,

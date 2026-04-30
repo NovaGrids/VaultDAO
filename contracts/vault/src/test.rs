@@ -9920,48 +9920,47 @@ fn test_price_below_condition_not_satisfied() {
 
 #[test]
 fn test_update_template() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let token_addr = Address::random(&env);
-    let recipient = Address::random(&env);
-    let new_recipient = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_addr = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let new_recipient = Address::generate(&env);
 
     let signers = soroban_sdk::vec![&env, admin.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
 
     // Create template
-    let template_id = client
-        .create_template(
-            &admin,
-            &Symbol::new(&env, "test_template"),
-            &Symbol::new(&env, "Test Template"),
-            &recipient,
-            &token_addr,
-            &1000,
-            &Symbol::new(&env, "memo"),
-            &100,
-            &5000,
-        )
-        .unwrap();
+    let template_id = client.create_template(
+        &admin,
+        &Symbol::new(&env, "test_template"),
+        &Symbol::new(&env, "test_template_v1"),
+        &recipient,
+        &token_addr,
+        &1000,
+        &Symbol::new(&env, "memo"),
+        &100,
+        &5000,
+    );
 
     // Update template
-    let result = client.update_template(
+    client.update_template(
         &admin,
         &template_id,
-        &Symbol::new(&env, "Updated Template"),
+        &Symbol::new(&env, "updated_template"),
         &new_recipient,
         &2000,
         &Symbol::new(&env, "new_memo"),
         &200,
         &6000,
     );
-    assert!(result.is_ok(), "Update should succeed");
 
     // Verify update
-    let updated = client.get_template(&template_id).unwrap();
+    let updated = client.get_template(&template_id);
     assert_eq!(updated.amount, 2000);
     assert_eq!(updated.recipient, new_recipient);
     assert_eq!(updated.version, 2);
@@ -9969,45 +9968,40 @@ fn test_update_template() {
 
 #[test]
 fn test_deactivate_template() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let token_addr = Address::random(&env);
-    let recipient = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_addr = Address::generate(&env);
+    let recipient = Address::generate(&env);
 
     let signers = soroban_sdk::vec![&env, admin.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
 
-    // Create template
-    let template_id = client
-        .create_template(
-            &admin,
-            &Symbol::new(&env, "test_template"),
-            &Symbol::new(&env, "Test Template"),
-            &recipient,
-            &token_addr,
-            &1000,
-            &Symbol::new(&env, "memo"),
-            &100,
-            &5000,
-        )
-        .unwrap();
+    let template_id = client.create_template(
+        &admin,
+        &Symbol::new(&env, "test_template"),
+        &Symbol::new(&env, "test_template_v1"),
+        &recipient,
+        &token_addr,
+        &1000,
+        &Symbol::new(&env, "memo"),
+        &100,
+        &5000,
+    );
 
-    // Deactivate template
-    let result = client.deactivate_template(&admin, &template_id);
-    assert!(result.is_ok(), "Deactivate should succeed");
+    client.deactivate_template(&admin, &template_id);
 
-    // Verify deactivation
-    let deactivated = client.get_template(&template_id).unwrap();
+    let deactivated = client.get_template(&template_id);
     assert!(!deactivated.is_active);
 
-    // Try to create proposal from inactive template
-    let proposer = Address::random(&env);
+    let proposer = Address::generate(&env);
     let overrides = TemplateOverrides {
         override_recipient: false,
-        recipient: Address::random(&env),
+        recipient: Address::generate(&env),
         override_amount: false,
         amount: 0,
         override_memo: false,
@@ -10022,39 +10016,38 @@ fn test_deactivate_template() {
 
 #[test]
 fn test_propose_from_template_validation() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let proposer = Address::random(&env);
-    let token_addr = Address::random(&env);
-    let recipient = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_addr = Address::generate(&env);
+    let recipient = Address::generate(&env);
 
     let signers = soroban_sdk::vec![&env, admin.clone(), proposer.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
 
-    // Create template with min/max bounds
-    let template_id = client
-        .create_template(
-            &admin,
-            &Symbol::new(&env, "bounded_template"),
-            &Symbol::new(&env, "Bounded Template"),
-            &recipient,
-            &token_addr,
-            &1000,
-            &Symbol::new(&env, "memo"),
-            &500,  // min_amount
-            &2000, // max_amount
-        )
-        .unwrap();
+    let template_id = client.create_template(
+        &admin,
+        &Symbol::new(&env, "bounded"),
+        &Symbol::new(&env, "bounded_template"),
+        &recipient,
+        &token_addr,
+        &1000,
+        &Symbol::new(&env, "memo"),
+        &500,
+        &2000,
+    );
 
-    // Override amount outside bounds
     let overrides = TemplateOverrides {
         override_recipient: false,
-        recipient: Address::random(&env),
+        recipient: Address::generate(&env),
         override_amount: true,
-        amount: 3000, // exceeds max_amount
+        amount: 3000,
         override_memo: false,
         memo: Symbol::new(&env, ""),
         override_priority: false,
@@ -10062,290 +10055,262 @@ fn test_propose_from_template_validation() {
     };
 
     let result = client.try_create_from_template(&proposer, &template_id, &overrides);
-    assert!(
-        result.is_err(),
-        "Should reject override amount outside bounds"
-    );
+    assert!(result.is_err(), "Should reject override amount outside bounds");
 }
 
 // ============================================================================
-// Veto Mechanism Tests (Issue #832)
+// Veto Mechanism Tests
 // ============================================================================
 
 #[test]
 fn test_add_remove_veto_address() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let vetoer = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let vetoer = Address::generate(&env);
 
     let signers = soroban_sdk::vec![&env, admin.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
 
-    // Add veto address
-    let result = client.add_veto_address(&admin, &vetoer);
-    assert!(result.is_ok(), "Add veto address should succeed");
+    client.add_veto_address(&admin, &vetoer);
 
-    // Try to add duplicate
     let result = client.try_add_veto_address(&admin, &vetoer);
     assert!(result.is_err(), "Should reject duplicate veto address");
 
-    // Remove veto address
-    let result = client.remove_veto_address(&admin, &vetoer);
-    assert!(result.is_ok(), "Remove veto address should succeed");
+    client.remove_veto_address(&admin, &vetoer);
 
-    // Try to remove non-existent
     let result = client.try_remove_veto_address(&admin, &vetoer);
     assert!(result.is_err(), "Should reject removing non-existent veto address");
 }
 
 #[test]
 fn test_veto_proposal_refunds() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let signer1 = Address::random(&env);
-    let vetoer = Address::random(&env);
-    let recipient = Address::random(&env);
-    let token_addr = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let vetoer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
 
     let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Add vetoer
-    client.add_veto_address(&admin, &vetoer).unwrap();
+    client.add_veto_address(&admin, &vetoer);
 
-    // Create proposal
-    let proposal_id = client
-        .create_proposal(
-            &signer1,
-            &recipient,
-            &token_addr,
-            &100,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &soroban_sdk::Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-        .unwrap();
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
 
-    // Approve proposal
-    client.approve_proposal(&signer1, &proposal_id).unwrap();
+    client.approve_proposal(&signer1, &proposal_id);
+    client.veto_proposal(&vetoer, &proposal_id);
 
-    // Veto proposal
-    let result = client.veto_proposal(&vetoer, &proposal_id);
-    assert!(result.is_ok(), "Veto should succeed");
-
-    // Verify proposal is vetoed
-    let proposal = client.get_proposal(&proposal_id).unwrap();
+    let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Vetoed);
 }
 
 #[test]
 fn test_veto_unauthorized() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let signer1 = Address::random(&env);
-    let non_vetoer = Address::random(&env);
-    let recipient = Address::random(&env);
-    let token_addr = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let non_vetoer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
 
     let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Create proposal
-    let proposal_id = client
-        .create_proposal(
-            &signer1,
-            &recipient,
-            &token_addr,
-            &100,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &soroban_sdk::Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-        .unwrap();
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
 
-    // Try to veto without authorization
     let result = client.try_veto_proposal(&non_vetoer, &proposal_id);
     assert!(result.is_err(), "Non-vetoer should not be able to veto");
 }
 
 // ============================================================================
-// Abstain and Quorum Tests (Issue #833)
+// Abstain and Quorum Tests
 // ============================================================================
 
 #[test]
 fn test_abstain_counts_toward_quorum() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let signer1 = Address::random(&env);
-    let signer2 = Address::random(&env);
-    let recipient = Address::random(&env);
-    let token_addr = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
 
     let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone(), signer2.clone()];
     let mut config = default_init_config(&env, signers, 2);
-    config.quorum = 2; // Require 2 votes (approvals + abstentions)
+    config.quorum = 2;
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
 
-    // Create proposal
-    let proposal_id = client
-        .create_proposal(
-            &signer1,
-            &recipient,
-            &token_addr,
-            &100,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &soroban_sdk::Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-        .unwrap();
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
 
-    // Approve from signer1
-    client.approve_proposal(&signer1, &proposal_id).unwrap();
+    client.approve_proposal(&signer1, &proposal_id);
+    client.abstain_proposal(&signer2, &proposal_id);
 
-    // Abstain from signer2
-    client.abstain_proposal(&signer2, &proposal_id).unwrap();
-
-    // Verify proposal is approved (threshold met + quorum satisfied)
-    let proposal = client.get_proposal(&proposal_id).unwrap();
+    let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
 #[test]
 fn test_quorum_percentage() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let signer1 = Address::random(&env);
-    let signer2 = Address::random(&env);
-    let signer3 = Address::random(&env);
-    let recipient = Address::random(&env);
-    let token_addr = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
 
     let signers = soroban_sdk::vec![
-        &env,
-        admin.clone(),
-        signer1.clone(),
-        signer2.clone(),
-        signer3.clone()
+        &env, admin.clone(), signer1.clone(), signer2.clone(), signer3.clone()
     ];
     let mut config = default_init_config(&env, signers, 1);
-    config.quorum_percentage = 50; // Require 50% of signers
+    config.quorum_percentage = 50;
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
 
-    // Create proposal
-    let proposal_id = client
-        .create_proposal(
-            &signer1,
-            &recipient,
-            &token_addr,
-            &100,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &soroban_sdk::Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-        .unwrap();
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
 
-    // Approve from signer1
-    client.approve_proposal(&signer1, &proposal_id).unwrap();
+    client.approve_proposal(&signer1, &proposal_id);
+    client.abstain_proposal(&signer2, &proposal_id);
 
-    // Abstain from signer2
-    client.abstain_proposal(&signer2, &proposal_id).unwrap();
-
-    // Verify proposal is approved (2 votes out of 4 = 50%)
-    let proposal = client.get_proposal(&proposal_id).unwrap();
+    let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
 #[test]
 fn test_double_abstain_prevented() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let signer1 = Address::random(&env);
-    let recipient = Address::random(&env);
-    let token_addr = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
 
     let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Create proposal
-    let proposal_id = client
-        .create_proposal(
-            &signer1,
-            &recipient,
-            &token_addr,
-            &100,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &soroban_sdk::Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-        .unwrap();
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
 
-    // Abstain
-    client.abstain_proposal(&signer1, &proposal_id).unwrap();
+    client.abstain_proposal(&signer1, &proposal_id);
 
-    // Try to abstain again
     let result = client.try_abstain_proposal(&signer1, &proposal_id);
     assert!(result.is_err(), "Double abstain should be prevented");
 }
 
 #[test]
 fn test_abstain_after_approve_prevented() {
-    let env = Env::new();
-    let admin = Address::random(&env);
-    let signer1 = Address::random(&env);
-    let recipient = Address::random(&env);
-    let token_addr = Address::random(&env);
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
 
     let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
     let config = default_init_config(&env, signers, 1);
 
-    let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO {}));
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
     client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Create proposal
-    let proposal_id = client
-        .create_proposal(
-            &signer1,
-            &recipient,
-            &token_addr,
-            &100,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &soroban_sdk::Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-        .unwrap();
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
 
-    // Approve
-    client.approve_proposal(&signer1, &proposal_id).unwrap();
+    client.approve_proposal(&signer1, &proposal_id);
 
-    // Try to abstain after approving
     let result = client.try_abstain_proposal(&signer1, &proposal_id);
     assert!(result.is_err(), "Abstain after approve should be prevented");
 }

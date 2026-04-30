@@ -269,7 +269,7 @@ export function aggregateProposalOutcomes(
     { name: 'Executed', value: executed },
     { name: 'Rejected', value: rejected },
     { name: 'Pending', value: pending },
-  ].filter((o) => o.value > 0);
+  ].filter((o) => o.value > 0) as ProposalOutcome[];
 }
 
 export function aggregateTopRecipients(

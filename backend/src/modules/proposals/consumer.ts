@@ -16,17 +16,7 @@ import {
   ProposalActivityType,
   ProposalActivityData,
   ProposalAmendedActivityData,
-  ProposalCreatedActivityData,
-  ProposalApprovedActivityData,
-  ProposalAbstainedActivityData,
-  ProposalReadyActivityData,
   ProposalExecutedActivityData,
-  ProposalExpiredActivityData,
-  ProposalCancelledActivityData,
-  ProposalRejectedActivityData,
-  ProposalScheduledActivityData,
-  ProposalDeadlineRejectedActivityData,
-  ProposalVetoedActivityData,
 } from "./types.js";
 import type { MetricsRegistry } from "../health/metrics.registry.js";
 import type { NotificationPublisher } from "../notifications/notification.types.js";

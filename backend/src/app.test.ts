@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createApp } from "./app.js";
 import { Server } from "node:http";
+import { once } from "node:events";
 
 const mockEnv = {
   port: 0, // Random port
@@ -65,16 +66,13 @@ test("App Integration Tests", async (t) => {
   let baseUrl: string;
 
   // Setup server once for this test suite
-  await new Promise<void>((resolve) => {
-    const app = createApp(mockEnv as any, mockRuntime as any);
-    server = app.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (typeof address === "object" && address !== null) {
-        baseUrl = `http://127.0.0.1:${address.port}`;
-      }
-      resolve(undefined);
-    });
-  });
+  const app = createApp(mockEnv as any, mockRuntime as any);
+  server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (typeof address === "object" && address !== null) {
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  }
 
   // Teardown server
   t.after(() => {
@@ -133,29 +131,27 @@ test("Readiness Failure", async (t) => {
     const envWithNoRpc = { ...mockEnv, sorobanRpcUrl: "" };
     const app = createApp(envWithNoRpc as any, mockRuntime as any);
 
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address();
-        const port = (address as any).port;
+    const server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    const port =
+      typeof address === "object" && address !== null ? address.port : 0;
 
-        try {
-          const response = await fetch(`http://127.0.0.1:${port}/ready`);
-          assert.strictEqual(response.status, 503);
-          const body = (await response.json()) as any;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/ready`);
+      assert.strictEqual(response.status, 503);
+      const body = (await response.json()) as any;
 
-          assert.strictEqual(body.success, false);
-          assert.strictEqual(body.error.message, "Service not ready");
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
-          }
-          await new Promise<void>((closeResolve) =>
-            server.close(() => closeResolve()),
-          );
-          resolve();
-        }
-      });
-    });
+      assert.strictEqual(body.success, false);
+      assert.strictEqual(body.error.message, "Service not ready");
+    } finally {
+      if (typeof (server as any).closeAllConnections === "function") {
+        (server as any).closeAllConnections();
+      }
+      await new Promise<void>((closeResolve) =>
+        server.close(() => closeResolve()),
+      );
+    }
   });
 });
 
@@ -167,38 +163,36 @@ test("GET /api/v1/proposals/stats route ordering", async (t) => {
     async () => {
       const app = createApp(mockEnv as any, mockRuntime as any);
 
-      await new Promise<void>((resolve) => {
-        const server = app.listen(0, "127.0.0.1", async () => {
-          const address = server.address();
-          const port = (address as any).port;
+      const server = app.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const address = server.address();
+      const port =
+        typeof address === "object" && address !== null ? address.port : 0;
 
-          try {
-            const response = await fetch(
-              `http://127.0.0.1:${port}/api/v1/proposals/stats`,
-              {
-                headers: {
-                  Authorization: `Bearer ${mockEnv.apiKey}`,
-                },
-              },
-            );
-            assert.strictEqual(response.status, 200);
-            const body = (await response.json()) as any;
-            assert.strictEqual(body.success, true);
-            assert.ok(
-              typeof body.data.totalProposals === "number",
-              "totalProposals should be a number",
-            );
-          } finally {
-            if (typeof (server as any).closeAllConnections === "function") {
-              (server as any).closeAllConnections();
-            }
-            await new Promise<void>((closeResolve) =>
-              server.close(() => closeResolve()),
-            );
-            resolve();
-          }
-        });
-      });
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${port}/api/v1/proposals/stats`,
+          {
+            headers: {
+              Authorization: `Bearer ${mockEnv.apiKey}`,
+            },
+          },
+        );
+        assert.strictEqual(response.status, 200);
+        const body = (await response.json()) as any;
+        assert.strictEqual(body.success, true);
+        assert.ok(
+          typeof body.data.totalProposals === "number",
+          "totalProposals should be a number",
+        );
+      } finally {
+        if (typeof (server as any).closeAllConnections === "function") {
+          (server as any).closeAllConnections();
+        }
+        await new Promise<void>((closeResolve) =>
+          server.close(() => closeResolve()),
+        );
+      }
     },
   );
 });

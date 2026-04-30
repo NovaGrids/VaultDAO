@@ -2,8 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, X, ChevronDown } from 'lucide-react';
 import ForecastChart from './ForecastChart';
 import AnomalyDetector from './AnomalyDetector';
-import { forecastSpending, calculateBurnRate, calculateRunway } from '../utils/forecasting';
-import { analyzeAnomalies } from '../utils/anomalyDetection';
 import { filterTransactionsByDateRange } from '../utils/analyticsAggregation';
 
 interface Transaction {
@@ -84,17 +82,23 @@ const SpendingAnalytics = ({
         return Math.max(1, Math.ceil(diff / (24 * 60 * 60 * 1000)));
     })();
 
-    const forecast = forecastSpending(historicalData, forecastPeriod);
     const totalSpent = filtered.reduce((sum, t) => sum + t.amount, 0);
-    const burnRate = calculateBurnRate(filtered.map(t => t.amount), rangeDurationDays);
-    const runway = calculateRunway(currentBalance, burnRate);
-    const anomalies = analyzeAnomalies(filtered);
+    const burnRate = rangeDurationDays > 0 ? totalSpent / rangeDurationDays : 0;
+    const runway = burnRate > 0 ? currentBalance / burnRate : Infinity;
+    const anomalies = filtered
+      .filter((transaction) => transaction.amount > monthlyBudget * 0.5)
+      .map((transaction, index) => ({
+        id: `${transaction.recipient}-${index}`,
+        amount: transaction.amount,
+        timestamp: new Date(transaction.timestamp).getTime(),
+        recipient: transaction.recipient,
+      }));
 
     const budgetUsed = (totalSpent / monthlyBudget) * 100;
     const velocity = filtered.length > 0 ? totalSpent / rangeDurationDays : 0;
 
     return {
-      forecast,
+      historicalData,
       totalSpent,
       burnRate,
       runway,
@@ -281,12 +285,15 @@ const SpendingAnalytics = ({
             <option value={90}>90 days</option>
           </select>
         </div>
-        <ForecastChart data={analytics.forecast} height={300} />
+        <ForecastChart historicalData={analytics.historicalData} forecastDays={forecastPeriod} />
       </div>
 
       {/* Anomaly Detection */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <AnomalyDetector anomalies={analytics.anomalies} />
+        <AnomalyDetector
+          proposals={analytics.anomalies}
+          historicalRecipients={new Set(transactions.map((transaction) => transaction.recipient))}
+        />
       </div>
 
       {/* Insights */}

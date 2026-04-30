@@ -1720,6 +1720,7 @@ pub fn get_proposal_funding_rounds(env: &Env, proposal_id: u64) -> Vec<u64> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+#[allow(dead_code)]
 pub fn add_proposal_funding_round(env: &Env, proposal_id: u64, round_id: u64) {
     let mut rounds = get_proposal_funding_rounds(env, proposal_id);
     rounds.push_back(round_id);

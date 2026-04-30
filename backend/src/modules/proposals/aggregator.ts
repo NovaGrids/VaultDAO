@@ -61,7 +61,7 @@ export interface ActivityBucket {
 
 /**
  * ProposalAggregator
- * 
+ *
  * Static utility for building ProposalActivitySummary from activity records.
  * Implements status priority and aggregation logic.
  */
@@ -83,21 +83,26 @@ export class ProposalAggregator {
 
   /**
    * Aggregates a list of records into a single ProposalActivitySummary.
-   * 
+   *
    * @param records List of activity records for a single proposal
    * @throws Error if records array is empty
    */
-  public static aggregate(records: ProposalActivityRecord[]): ProposalActivitySummary {
+  public static aggregate(
+    records: ProposalActivityRecord[],
+  ): ProposalActivitySummary {
     if (!records || records.length === 0) {
       throw new Error("Cannot aggregate empty records array");
     }
 
     // Sort by timestamp for sequential processing
     const sortedRecords = [...records].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
 
-    const firstCreated = sortedRecords.find(r => r.type === ProposalActivityType.CREATED);
+    const firstCreated = sortedRecords.find(
+      (r) => r.type === ProposalActivityType.CREATED,
+    );
     const lastActivity = sortedRecords[sortedRecords.length - 1];
 
     // Determine current status based on priority
@@ -130,10 +135,12 @@ export class ProposalAggregator {
 
   /**
    * Aggregates multiple groups of records in bulk.
-   * 
+   *
    * @param groups Map of proposalId to activity records
    */
-  public static aggregateBatch(groups: Map<string, ProposalActivityRecord[]>): ProposalActivitySummary[] {
+  public static aggregateBatch(
+    groups: Map<string, ProposalActivityRecord[]>,
+  ): ProposalActivitySummary[] {
     const summaries: ProposalActivitySummary[] = [];
     for (const records of groups.values()) {
       if (records.length > 0) {
@@ -486,6 +493,10 @@ export class ProposalActivityAggregator {
       [ProposalActivityType.CANCELLED]: 0,
       [ProposalActivityType.REJECTED]: 0,
       [ProposalActivityType.AMENDED]: 0,
+      [ProposalActivityType.VETOED]: 0,
+      [ProposalActivityType.PENDING]: 0,
+      [ProposalActivityType.SCHEDULED]: 0,
+      [ProposalActivityType.DEADLINE_REJECTED]: 0,
     };
   }
 

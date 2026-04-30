@@ -82,6 +82,8 @@ export function useChangeTracking(draftId: string) {
     changes,
     trackChange,
     getChanges,
+    getChangesByUser: (userId: string) => changes.filter((change) => change.userId === userId),
+    getChangesByField: (field: string) => changes.filter((change) => change.field === field),
     clearChanges,
   };
 }

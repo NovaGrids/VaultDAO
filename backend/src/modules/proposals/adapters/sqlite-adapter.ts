@@ -1,9 +1,9 @@
 import Database from "better-sqlite3";
 import type {
-  ProposalActivityPersistence,
+  SyncProposalActivityPersistence,
   ProposalActivity,
-  ProposalActivitySummary,
-} from "../types";
+  ProposalActivitySyncSummary,
+} from "../types.js";
 
 // ─── Schema ───────────────────────────────────────────────────────────────
 
@@ -68,16 +68,14 @@ function rowToActivity(row: ActivityRow): ProposalActivity {
  * @example
  * const adapter = new SqliteProposalActivityAdapter("/data/vault.db");
  */
-export class SqliteProposalActivityAdapter
-  implements ProposalActivityPersistence
-{
-  private readonly db: Database.Database;
+export class SqliteProposalActivityAdapter implements SyncProposalActivityPersistence {
+  private readonly db: any;
 
   // Prepared statements — compiled once, reused on every call
-  private readonly stmtInsert: Database.Statement;
-  private readonly stmtGetByProposalId: Database.Statement;
-  private readonly stmtGetByContractId: Database.Statement;
-  private readonly stmtSummary: Database.Statement;
+  private readonly stmtInsert: any;
+  private readonly stmtGetByProposalId: any;
+  private readonly stmtGetByContractId: any;
+  private readonly stmtSummary: any;
 
   constructor(databasePath: string) {
     this.db = new Database(databasePath);
@@ -159,7 +157,7 @@ export class SqliteProposalActivityAdapter
 
     const insertMany = this.db.transaction(
       (items: Omit<ProposalActivity, "id">[]) =>
-        items.map((activity) => this.save(activity))
+        items.map((activity) => this.save(activity)),
     );
 
     return insertMany(activities);
@@ -191,9 +189,9 @@ export class SqliteProposalActivityAdapter
    * Return an aggregated summary for a given proposal.
    * Returns `null` when no activity has been recorded for the proposal.
    */
-  getSummary(proposalId: string): ProposalActivitySummary | null {
+  getSummary(proposalId: string): ProposalActivitySyncSummary | null {
     const row = this.stmtSummary.get(proposalId) as
-      | ProposalActivitySummary
+      | ProposalActivitySyncSummary
       | undefined;
     return row ?? null;
   }

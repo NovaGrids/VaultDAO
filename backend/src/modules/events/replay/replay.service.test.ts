@@ -33,6 +33,7 @@ test("EventReplayService uses SorobanRpcClient.getLatestLedger", async () => {
     batchSize: 100,
     dryRun: true,
     verbose: false,
+    clear: false,
   });
 
   let latestLedgerCalls = 0;
@@ -65,6 +66,7 @@ test("EventReplayService forwards normalized events to registered consumers", as
     batchSize: 10,
     dryRun: true,
     verbose: false,
+    clear: false,
   });
 
   (service as any).rpc = {

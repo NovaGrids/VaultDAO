@@ -2,31 +2,53 @@ import React, { useState } from 'react';
 import { AlertTriangle, Eye, CheckCircle } from 'lucide-react';
 import { findSimilarProposals } from '../utils/similarityDetection';
 
-interface SimilarityDetectorProps {
-  newProposal: any;
-  existingProposals: any[];
+type ProposalLike = {
+  id: string;
+  recipient?: string;
+  amount?: string | number;
+  memo?: string;
+};
+
+type CreateModeProps = {
+  newProposal: ProposalLike;
+  existingProposals: ProposalLike[];
   onDismiss: () => void;
   onProceed: () => void;
-}
+};
 
-const SimilarityDetector: React.FC<SimilarityDetectorProps> = ({
-  newProposal,
-  existingProposals,
-  onDismiss,
-  onProceed,
-}) => {
+type CompareModeProps = {
+  proposals: ProposalLike[];
+  onDuplicateClick: (id1: string, id2: string) => void;
+};
+
+type SimilarityResult = {
+  proposal: ProposalLike;
+  score: number;
+  reasons: string[];
+  duplicateId?: string;
+};
+
+type SimilarityDetectorProps = CreateModeProps | CompareModeProps;
+
+const SimilarityDetector: React.FC<SimilarityDetectorProps> = (props) => {
   const [dismissed, setDismissed] = useState(false);
-  const [selectedProposal, setSelectedProposal] = useState<any | null>(null);
+  const [selectedProposal, setSelectedProposal] = useState<ProposalLike | null>(null);
 
-  const similarProposals = findSimilarProposals(newProposal, existingProposals, 0.7);
+  const compareMode = 'proposals' in props;
+  const similarProposals: SimilarityResult[] = compareMode
+    ? findIntraProposalSimilarities(props.proposals)
+    : findSimilarProposals(props.newProposal, props.existingProposals, 0.7);
 
   if (dismissed || similarProposals.length === 0) {
     return null;
   }
 
   const handleProceedAnyway = () => {
+    if (compareMode) {
+      return;
+    }
     setDismissed(true);
-    onProceed();
+    props.onProceed();
   };
 
   return (
@@ -47,11 +69,16 @@ const SimilarityDetector: React.FC<SimilarityDetectorProps> = ({
               <div
                 key={idx}
                 className="bg-gray-800/50 rounded p-3 border border-gray-700 hover:border-yellow-600/50 transition-colors cursor-pointer"
-                onClick={() => setSelectedProposal(item.proposal)}
+                onClick={() => {
+                  setSelectedProposal(item.proposal);
+                  if (compareMode && item.duplicateId) {
+                    props.onDuplicateClick(item.proposal.id, item.duplicateId);
+                  }
+                }}
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-medium text-white">
-                    {item.proposal.recipient?.slice(0, 12)}...
+                    {(item.proposal.recipient ?? 'Unknown').slice(0, 12)}...
                   </span>
                   <span className="text-sm font-bold text-yellow-400">
                     {(item.score * 100).toFixed(0)}% match
@@ -68,19 +95,21 @@ const SimilarityDetector: React.FC<SimilarityDetectorProps> = ({
 
           <div className="flex gap-2">
             <button
-              onClick={() => setSelectedProposal(null)}
+              onClick={() => setSelectedProposal(similarProposals[0]?.proposal ?? null)}
               className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium text-gray-300 transition-colors"
             >
               <Eye size={16} />
               View Similar
             </button>
-            <button
-              onClick={handleProceedAnyway}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-sm font-medium text-white transition-colors"
-            >
-              <CheckCircle size={16} />
-              Proceed Anyway
-            </button>
+            {!compareMode && (
+              <button
+                onClick={handleProceedAnyway}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-sm font-medium text-white transition-colors"
+              >
+                <CheckCircle size={16} />
+                Proceed Anyway
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -96,5 +125,37 @@ const SimilarityDetector: React.FC<SimilarityDetectorProps> = ({
     </div>
   );
 };
+
+function findIntraProposalSimilarities(proposals: ProposalLike[]): SimilarityResult[] {
+  const results: SimilarityResult[] = [];
+
+  proposals.forEach((proposal, index) => {
+    for (let otherIndex = index + 1; otherIndex < proposals.length; otherIndex += 1) {
+      const other = proposals[otherIndex];
+      const reasons: string[] = [];
+
+      if (proposal.recipient && proposal.recipient === other.recipient) {
+        reasons.push('Same recipient');
+      }
+      if (proposal.amount && String(proposal.amount) === String(other.amount)) {
+        reasons.push('Same amount');
+      }
+      if (proposal.memo && proposal.memo === other.memo) {
+        reasons.push('Same memo');
+      }
+
+      if (reasons.length > 0) {
+        results.push({
+          proposal,
+          duplicateId: other.id,
+          score: Math.min(1, reasons.length / 3),
+          reasons,
+        });
+      }
+    }
+  });
+
+  return results;
+}
 
 export default SimilarityDetector;

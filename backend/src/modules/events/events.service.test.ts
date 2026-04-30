@@ -53,6 +53,15 @@ class MemoryCursorStorage implements CursorStorage {
     }
     this.cursor = cursor;
   }
+
+  async listCursors(): Promise<Array<{ id: string; cursor: EventCursor }>> {
+    if (this.cursor === null) return [];
+    return [{ id: "default", cursor: this.cursor }];
+  }
+
+  async deleteCursor(_id: string): Promise<void> {
+    this.cursor = null;
+  }
 }
 
 function delay(ms: number): Promise<void> {
@@ -109,7 +118,9 @@ function createNoOpRpcClient(latestLedger = 100): SorobanRpcClient {
 }
 
 /** Build a minimal valid {@link RawContractEvent}. */
-function makeRawEvent(overrides: Partial<RawContractEvent> = {}): RawContractEvent {
+function makeRawEvent(
+  overrides: Partial<RawContractEvent> = {},
+): RawContractEvent {
   return {
     id: "event-1",
     type: "contract",
@@ -553,7 +564,10 @@ test("RPC Polling", async (t) => {
       await delay(25);
       svc.stop();
 
-      assert.ok(latestLedgerCalled, "getLatestLedger should be called on first poll");
+      assert.ok(
+        latestLedgerCalled,
+        "getLatestLedger should be called on first poll",
+      );
       assert.equal(
         svc.getStatus().lastLedgerPolled,
         777,
@@ -569,13 +583,15 @@ test("RPC Polling", async (t) => {
       const storage = new MemoryCursorStorage();
       storage.cursor = { lastLedger: 100, updatedAt: new Date().toISOString() };
 
-      let capturedStartLedger: number | undefined;
+      const capturedStartLedgers: number[] = [];
       const rpc = new SorobanRpcClient(
         { url: "https://soroban-testnet.stellar.org" },
         buildMockFetch({
           getEvents: (params) => {
             const p = params as { startLedger?: number };
-            capturedStartLedger = p.startLedger;
+            if (typeof p.startLedger === "number") {
+              capturedStartLedgers.push(p.startLedger);
+            }
             return { events: [], latestLedger: 110 };
           },
         }),
@@ -587,7 +603,7 @@ test("RPC Polling", async (t) => {
       svc.stop();
 
       assert.equal(
-        capturedStartLedger,
+        capturedStartLedgers[0],
         101,
         "startLedger should be lastLedgerPolled + 1",
       );
@@ -616,45 +632,51 @@ test("RPC Polling", async (t) => {
     },
   );
 
-  await t.test("poll() processes returned events through handleBatch", async () => {
-    const storage = new MemoryCursorStorage();
-    storage.cursor = { lastLedger: 300, updatedAt: new Date().toISOString() };
+  await t.test(
+    "poll() processes returned events through handleBatch",
+    async () => {
+      const storage = new MemoryCursorStorage();
+      storage.cursor = { lastLedger: 300, updatedAt: new Date().toISOString() };
 
-    const event = makeRawEvent({ id: "evt-abc", ledger: 301 });
-    const rpc = new SorobanRpcClient(
-      { url: "https://soroban-testnet.stellar.org" },
-      buildMockFetch({
-        getEvents: () => ({ events: [event], latestLedger: 310 }),
-      }),
-    );
-    const svc = createSvc(storage, {}, rpc);
-    await svc.start();
+      const event = makeRawEvent({ id: "evt-abc", ledger: 301 });
+      const rpc = new SorobanRpcClient(
+        { url: "https://soroban-testnet.stellar.org" },
+        buildMockFetch({
+          getEvents: () => ({ events: [event], latestLedger: 310 }),
+        }),
+      );
+      const svc = createSvc(storage, {}, rpc);
+      await svc.start();
 
-    await delay(25);
-    svc.stop();
+      await delay(25);
+      svc.stop();
 
-    // The event should have been added to processedEventIds
-    const serviceAny = svc as any;
-    assert.ok(
-      serviceAny.processedEventIds.has("evt-abc"),
-      "event id should be tracked after processing",
-    );
-  });
+      // The event should have been added to processedEventIds
+      const serviceAny = svc as any;
+      assert.ok(
+        serviceAny.processedEventIds.has("evt-abc"),
+        "event id should be tracked after processing",
+      );
+    },
+  );
 
-  await t.test("poll() handles empty events response without error", async () => {
-    const storage = new MemoryCursorStorage();
-    storage.cursor = { lastLedger: 400, updatedAt: new Date().toISOString() };
+  await t.test(
+    "poll() handles empty events response without error",
+    async () => {
+      const storage = new MemoryCursorStorage();
+      storage.cursor = { lastLedger: 400, updatedAt: new Date().toISOString() };
 
-    const rpc = createNoOpRpcClient(410);
-    const svc = createSvc(storage, {}, rpc);
-    await svc.start();
+      const rpc = createNoOpRpcClient(410);
+      const svc = createSvc(storage, {}, rpc);
+      await svc.start();
 
-    await delay(25);
-    svc.stop();
+      await delay(25);
+      svc.stop();
 
-    assert.equal(svc.getStatus().errors, 0, "no errors on empty page");
-    assert.equal(svc.getStatus().lastLedgerPolled, 410);
-  });
+      assert.equal(svc.getStatus().errors, 0, "no errors on empty page");
+      assert.equal(svc.getStatus().lastLedgerPolled, 410);
+    },
+  );
 
   await t.test("poll() paginates when a full page is returned", async () => {
     const storage = new MemoryCursorStorage();
@@ -691,7 +713,10 @@ test("RPC Polling", async (t) => {
     await delay(35);
     svc.stop();
 
-    assert.ok(callCount >= 2, `expected at least 2 getEvents calls for pagination, got ${callCount}`);
+    assert.ok(
+      callCount >= 2,
+      `expected at least 2 getEvents calls for pagination, got ${callCount}`,
+    );
     assert.equal(svc.getStatus().lastLedgerPolled, 550);
   });
 
@@ -724,7 +749,9 @@ test("RPC Polling", async (t) => {
       serviceAny.processedEventIds.has("shared-event"),
       "event should be in processedEventIds",
     );
-    assert.ok(pollCount >= 2, "should have polled at least twice to test deduplication");
+    assert.ok(
+      pollCount >= 2,
+      "should have polled at least twice to test deduplication",
+    );
   });
 });
-

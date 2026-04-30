@@ -61,7 +61,6 @@ export function useCollaboration({
       // Initialize WebSocket provider
       const provider = new WebsocketProvider(WEBSOCKET_URL, `draft-${draftId}`, ydoc, {
         connect: true,
-        awareness: true,
       });
       providerRef.current = provider;
 

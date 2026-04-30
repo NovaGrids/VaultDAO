@@ -1,6 +1,6 @@
 /**
  * Proposal Activity Indexing Types
- * 
+ *
  * Defines the normalized types for proposal lifecycle events,
  * designed for efficient indexing and downstream consumption.
  */
@@ -22,22 +22,29 @@ export enum ProposalActivityType {
   AMENDED = "PROPOSAL_AMENDED",
   VETOED = "PROPOSAL_VETOED",
   PENDING = "PROPOSAL_PENDING",
+  SCHEDULED = "PROPOSAL_SCHEDULED",
+  DEADLINE_REJECTED = "PROPOSAL_DEADLINE_REJECTED",
 }
 
 /**
  * Maps EventType to ProposalActivityType for consistent indexing.
  */
-export const PROPOSAL_ACTIVITY_TYPE_MAP: Record<string, ProposalActivityType> = {
-  [EventType.PROPOSAL_CREATED]: ProposalActivityType.CREATED,
-  [EventType.PROPOSAL_APPROVED]: ProposalActivityType.APPROVED,
-  [EventType.PROPOSAL_ABSTAINED]: ProposalActivityType.ABSTAINED,
-  [EventType.PROPOSAL_READY]: ProposalActivityType.READY,
-  [EventType.PROPOSAL_EXECUTED]: ProposalActivityType.EXECUTED,
-  [EventType.PROPOSAL_EXPIRED]: ProposalActivityType.EXPIRED,
-  [EventType.PROPOSAL_CANCELLED]: ProposalActivityType.CANCELLED,
-  [EventType.PROPOSAL_REJECTED]: ProposalActivityType.REJECTED,
-  [EventType.PROPOSAL_VETOED]: ProposalActivityType.VETOED,
-};
+export const PROPOSAL_ACTIVITY_TYPE_MAP: Record<string, ProposalActivityType> =
+  {
+    [EventType.PROPOSAL_CREATED]: ProposalActivityType.CREATED,
+    [EventType.PROPOSAL_APPROVED]: ProposalActivityType.APPROVED,
+    [EventType.PROPOSAL_ABSTAINED]: ProposalActivityType.ABSTAINED,
+    [EventType.PROPOSAL_READY]: ProposalActivityType.READY,
+    [EventType.PROPOSAL_EXECUTED]: ProposalActivityType.EXECUTED,
+    [EventType.PROPOSAL_EXPIRED]: ProposalActivityType.EXPIRED,
+    [EventType.PROPOSAL_CANCELLED]: ProposalActivityType.CANCELLED,
+    [EventType.PROPOSAL_REJECTED]: ProposalActivityType.REJECTED,
+    [EventType.PROPOSAL_AMENDED]: ProposalActivityType.AMENDED,
+    [EventType.PROPOSAL_SCHEDULED]: ProposalActivityType.SCHEDULED,
+    [EventType.PROPOSAL_DEADLINE_REJECTED]:
+      ProposalActivityType.DEADLINE_REJECTED,
+    [EventType.PROPOSAL_VETOED]: ProposalActivityType.VETOED,
+  };
 
 /**
  * Metadata shared across all proposal activity records.
@@ -232,14 +239,14 @@ export interface ProposalIndexerConfig {
  * Consumer callback type for processed proposal events.
  */
 export type ProposalEventConsumer = (
-  record: ProposalActivityRecord
+  record: ProposalActivityRecord,
 ) => Promise<void> | void;
 
 /**
  * Batch consumer callback for processing multiple records.
  */
 export type ProposalBatchConsumer = (
-  records: ProposalActivityRecord[]
+  records: ProposalActivityRecord[],
 ) => Promise<void> | void;
 
 /**
@@ -260,38 +267,21 @@ export interface PersistenceAdapterFactory {
   create(): ProposalActivityPersistence;
 }
 
-// ─── Core entity ─────────────────────────────────────────────────────────
+// ─── Legacy sync persistence types (used by SQLite and in-memory adapters) ───
 
 export interface ProposalActivity {
-  /** Auto-incremented primary key (undefined before first save). */
   id?: number;
-  /** On-chain proposal ID (e.g. UUID or incremented integer as string). */
   proposalId: string;
-  /** Soroban contract address that owns this proposal. */
   contractId: string;
-  /**
-   * Activity type tag.
-   *
-   * Standard values: `"created"` | `"vote_cast"` | `"vote_approved"` |
-   * `"vote_rejected"` | `"executed"` | `"cancelled"` | `"timelock_started"` |
-   * `"timelock_expired"` | `"spending_limit_exceeded"`
-   */
   activityType: string;
-  /** Stellar public key of the actor (signer, executor, etc.). */
   actor?: string;
-  /** Arbitrary JSON payload — stored as a serialized string in SQLite. */
   data?: Record<string, unknown>;
-  /** Unix timestamp in milliseconds when the event occurred. */
   timestamp: number;
-  /** Stellar ledger sequence number when the event was recorded. */
   ledgerSequence?: number;
-  /** On-chain transaction hash. */
   txHash?: string;
 }
 
-// ─── Summary ──────────────────────────────────────────────────────────────
-
-export interface ProposalActivitySummary {
+export interface ProposalActivitySyncSummary {
   proposalId: string;
   contractId: string;
   totalEvents: number;
@@ -304,34 +294,10 @@ export interface ProposalActivitySummary {
   cancellationCount: number;
 }
 
-// ─── Persistence interface ─────────────────────────────────────────────────
-
-export interface ProposalActivityPersistence {
-  /**
-   * Persist a single activity record.
-   * Returns the saved record with its assigned `id`.
-   */
+export interface SyncProposalActivityPersistence {
   save(activity: Omit<ProposalActivity, "id">): ProposalActivity;
-
-  /**
-   * Persist multiple activity records atomically.
-   * Implementations should use a transaction for batch inserts.
-   */
   saveBatch(activities: Omit<ProposalActivity, "id">[]): ProposalActivity[];
-
-  /**
-   * Return all activity records for a proposal in chronological order.
-   */
   getByProposalId(proposalId: string): ProposalActivity[];
-
-  /**
-   * Return all activity records for a contract in chronological order.
-   */
   getByContractId(contractId: string): ProposalActivity[];
-
-  /**
-   * Return an aggregated summary for a proposal.
-   * Returns `null` when no activity exists.
-   */
-  getSummary(proposalId: string): ProposalActivitySummary | null;
+  getSummary(proposalId: string): ProposalActivitySyncSummary | null;
 }

@@ -3,11 +3,14 @@ import { createLogger } from "../../../shared/logging/logger.js";
 import type { BackendEnv } from "../../../config/env.js";
 import type { RecurringIndexerService } from "../../recurring/recurring.service.js";
 import type { NotificationQueue } from "../../notifications/notification.types.js";
-import type { ScheduledJob, ScheduledJobRunner } from "../scheduled-job-runner.js";
+import type {
+  ScheduledJob,
+  ScheduledJobRunner,
+} from "../scheduled-job-runner.js";
 
 const logger = createLogger("due-payments-job");
 
-interface DuePaymentsNotificationPayload {
+interface DuePaymentsNotificationPayload extends Record<string, unknown> {
   type: "DUE_PAYMENT_FOUND";
   paymentId: string;
   recipient: string;
@@ -74,7 +77,10 @@ export function registerDuePaymentsJob(
     return;
   }
 
-  const job = createDuePaymentsScheduledJob(recurringService, notificationQueue);
+  const job = createDuePaymentsScheduledJob(
+    recurringService,
+    notificationQueue,
+  );
   runner.register({
     ...job,
     intervalMs: env.duePaymentsJobIntervalMs,

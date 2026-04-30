@@ -93,6 +93,35 @@ export function useVersionHistory(draftId: string) {
   return {
     versions,
     push,
+    saveVersion: (
+      snapshot: Partial<ProposalDraft>,
+      changedBy: string,
+      _userName?: string,
+      changeDescription = 'Version saved',
+    ) => {
+      const normalizedSnapshot = { ...snapshot };
+      try {
+        const newVersion: DraftVersion = {
+          id: `${draftId}_v${Date.now()}`,
+          draftId,
+          version: versions.length + 1,
+          recipient: normalizedSnapshot.recipient || '',
+          token: normalizedSnapshot.token || '',
+          amount: normalizedSnapshot.amount || '',
+          memo: normalizedSnapshot.memo || '',
+          changedBy,
+          changedAt: Date.now(),
+          changeDescription,
+        };
+
+        const updatedVersions = [newVersion, ...versions].slice(0, MAX_VERSIONS);
+        setVersions(updatedVersions);
+        setCurrentIndex(0);
+        localStorage.setItem(`${STORAGE_KEY_PREFIX}${draftId}`, JSON.stringify(updatedVersions));
+      } catch (error) {
+        console.error('Failed to save version:', error);
+      }
+    },
     undo,
     redo,
     restoreVersion,

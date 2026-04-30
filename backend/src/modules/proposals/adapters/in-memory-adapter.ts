@@ -1,8 +1,8 @@
 import type {
-  ProposalActivityPersistence,
+  SyncProposalActivityPersistence,
   ProposalActivity,
-  ProposalActivitySummary,
-} from "../types";
+  ProposalActivitySyncSummary,
+} from "../types.js";
 
 /**
  * Lightweight in-memory implementation of `ProposalActivityPersistence`.
@@ -10,9 +10,7 @@ import type {
  * Used when `cursorStorageType` is `"file"` or in test environments.
  * Data is lost on process restart — not suitable for production.
  */
-export class InMemoryProposalActivityAdapter
-  implements ProposalActivityPersistence
-{
+export class InMemoryProposalActivityAdapter implements SyncProposalActivityPersistence {
   private readonly store = new Map<string, ProposalActivity>();
   private nextId = 1;
 
@@ -38,7 +36,7 @@ export class InMemoryProposalActivityAdapter
       .sort((a, b) => a.timestamp - b.timestamp);
   }
 
-  getSummary(proposalId: string): ProposalActivitySummary | null {
+  getSummary(proposalId: string): ProposalActivitySyncSummary | null {
     const records = this.getByProposalId(proposalId);
     if (records.length === 0) return null;
 
@@ -51,10 +49,14 @@ export class InMemoryProposalActivityAdapter
       firstEventAt: Math.min(...timestamps),
       lastEventAt: Math.max(...timestamps),
       voteCount: records.filter((r) => r.activityType === "vote_cast").length,
-      approvalCount: records.filter((r) => r.activityType === "vote_approved").length,
-      rejectionCount: records.filter((r) => r.activityType === "vote_rejected").length,
-      executionCount: records.filter((r) => r.activityType === "executed").length,
-      cancellationCount: records.filter((r) => r.activityType === "cancelled").length,
+      approvalCount: records.filter((r) => r.activityType === "vote_approved")
+        .length,
+      rejectionCount: records.filter((r) => r.activityType === "vote_rejected")
+        .length,
+      executionCount: records.filter((r) => r.activityType === "executed")
+        .length,
+      cancellationCount: records.filter((r) => r.activityType === "cancelled")
+        .length,
     };
   }
 

@@ -150,6 +150,12 @@ interface SorobanGetEventsResponse {
   cursor?: string;
 }
 
+interface GetEventsParams {
+  startLedger?: string;
+  filters: Array<{ type: string; contractIds: string[] }>;
+  pagination: { limit: number; cursor?: string };
+}
+
 interface SorobanSimulationResult {
   result?: {
     retval: xdr.ScVal;
@@ -181,10 +187,12 @@ interface ProposalEventData {
   proposer?: string;
   recipient?: string;
   amount?: string;
+  memo?: string;
   approval_count?: unknown;
   threshold?: unknown;
   total_signers?: unknown;
   role?: unknown;
+  parseError?: boolean;
   raw?: unknown;
 }
 
@@ -545,7 +553,7 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
         ]);
 
         const configRaw = configRawPrimary ?? configRawLegacy;
-        const configObject = (configRaw && typeof configRaw === 'object') ? configRaw as VaultConfig : {};
+        const configObject = ((configRaw && typeof configRaw === 'object') ? configRaw : {}) as Record<string, unknown>;
 
         const signers = parseSignerAddresses(configObject.signers);
         const threshold = parseNumericValue(configObject.threshold);
@@ -603,7 +611,7 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
                                 nativeToScVal(BigInt(amount)),
                                 xdr.ScVal.scvSymbol(memo),
                                 nativeToScVal(priority, { type: "u32" }),
-                                xdr.ScVal.scvVec(conditions),
+                                nativeToScVal(conditions),
                                 nativeToScVal(conditionLogic, { type: "u32" }),
                                 nativeToScVal(insuranceAmount),
                             ],
@@ -879,17 +887,12 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
             const latestLedger = latestLedgerData?.result?.sequence ?? '0';
             const startLedger = cursor ? undefined : Math.max(1, parseInt(latestLedger, 10) - 50000);
 
-interface GetEventsParams {
-    filters: Array<{ type: string; contractIds: string[] }>;
-    pagination: { limit: number };
-}
-
             const params: GetEventsParams = {
                 filters: [{ type: 'contract', contractIds: [env.contractId] }],
                 pagination: { limit: Math.min(limit, 200) },
             };
             if (!cursor) params.startLedger = String(startLedger);
-            else params.pagination = { ...(params.pagination as object), cursor };
+            else params.pagination = { ...params.pagination, cursor };
 
             const res = await fetch(env.sorobanRpcUrl, {
                 method: 'POST',
@@ -956,7 +959,7 @@ interface GetEventsParams {
     const simulateTransaction = async (
         functionName: string,
         args: xdr.ScVal[],
-        params?: GetEventsParams
+        params?: Record<string, unknown>
     ): Promise<SimulationResult> => {
         if (!address) throw new Error("Wallet not connected");
 
@@ -1016,7 +1019,7 @@ interface GetEventsParams {
             new Address(address).toScVal(), new Address(recipient).toScVal(),
             new Address(token).toScVal(), nativeToScVal(BigInt(amount)), xdr.ScVal.scvSymbol(memo),
             nativeToScVal(priority, { type: "u32" }),
-            xdr.ScVal.scvVec(conditions),
+            nativeToScVal(conditions),
             nativeToScVal(conditionLogic, { type: "u32" }),
             nativeToScVal(insuranceAmount),
         ], { recipient, amount, memo });
@@ -1045,7 +1048,7 @@ const [configPrimary, configLegacy] = await Promise.all([
     readContractValue('get_vault_config').catch(() => null),
 ]);
 const configRaw = configPrimary ?? configLegacy;
-const configObject = (configRaw && typeof configRaw === 'object') ? configRaw as VaultConfig : {};
+const configObject = ((configRaw && typeof configRaw === 'object') ? configRaw : {}) as Record<string, unknown>;
 const allSigners = parseSignerAddresses(configObject.signers);
 
 // Fetch events to find approvals for this specific proposal

@@ -1,11 +1,10 @@
 export * from "./memory.adapter.js";
-import { env } from "../../../config/env";
-import type { ProposalActivityPersistence } from "../types";
-import { SqliteProposalActivityAdapter } from "./sqlite-adapter";
-import { InMemoryProposalActivityAdapter } from "./in-memory-adapter";
+import { loadEnv } from "../../../config/env.js";
+import type { SyncProposalActivityPersistence } from "../types.js";
+import { InMemoryProposalActivityAdapter } from "./in-memory-adapter.js";
+import { createRequire } from "node:module";
 
-export { SqliteProposalActivityAdapter } from "./sqlite-adapter";
-export { InMemoryProposalActivityAdapter } from "./in-memory-adapter";
+export { InMemoryProposalActivityAdapter } from "./in-memory-adapter.js";
 
 /**
  * Factory — returns the correct `ProposalActivityPersistence` implementation
@@ -20,15 +19,29 @@ export { InMemoryProposalActivityAdapter } from "./in-memory-adapter";
  * // In app/index.ts
  * const persistence = createProposalActivityAdapter();
  */
-export function createProposalActivityAdapter(): ProposalActivityPersistence {
+export function createProposalActivityAdapter(): SyncProposalActivityPersistence {
+  const env = loadEnv();
   if (env.cursorStorageType === "database") {
     if (!env.databasePath) {
       throw new Error(
         "[ProposalActivityAdapter] cursorStorageType is 'database' but " +
-          "DATABASE_PATH env variable is not set."
+          "DATABASE_PATH env variable is not set.",
       );
     }
-    return new SqliteProposalActivityAdapter(env.databasePath);
+    const require = createRequire(import.meta.url);
+    try {
+      const module = require("./sqlite-adapter.js") as {
+        SqliteProposalActivityAdapter: new (
+          databasePath: string,
+        ) => SyncProposalActivityPersistence;
+      };
+      return new module.SqliteProposalActivityAdapter(env.databasePath);
+    } catch (error) {
+      throw new Error(
+        "Database proposal activity storage requires the optional better-sqlite3 dependency to be installed.",
+        { cause: error },
+      );
+    }
   }
 
   return new InMemoryProposalActivityAdapter();

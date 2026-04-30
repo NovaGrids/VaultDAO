@@ -9,8 +9,14 @@ import type { ReplayOptions } from "./replay.types.js";
 import { EventReplayService } from "./replay.service.js";
 import { loadEnv } from "../../../config/env.js";
 import { fileURLToPath } from "node:url";
-import { createMemoryPersistence, ProposalActivityConsumer } from "../../proposals/index.js";
-import { SnapshotService, MemorySnapshotAdapter } from "../../snapshots/index.js";
+import {
+  createMemoryPersistence,
+  ProposalActivityConsumer,
+} from "../../proposals/index.js";
+import {
+  SnapshotService,
+  MemorySnapshotAdapter,
+} from "../../snapshots/index.js";
 
 /**
  * Parses command line arguments into ReplayOptions.
@@ -251,8 +257,12 @@ export async function executeReplay(args: string[]): Promise<void> {
   }
 
   // Wire consumers to replay service
-  service.registerBatchConsumer((events) => proposalConsumer.processBatch(events));
-  service.registerConsumer((event) => snapshotService.processEvent(event));
+  service.registerBatchConsumer((events) =>
+    proposalConsumer.processBatch(events),
+  );
+  service.registerConsumer(async (event) => {
+    await snapshotService.processEvent(event);
+  });
 
   // Check for existing cursor
   const hasCursor = await service.hasExistingCursor();
@@ -277,12 +287,13 @@ export async function executeReplay(args: string[]): Promise<void> {
       const progressLedger = Math.floor(currentLedger / 1000) * 1000;
       if (progressLedger > lastReportedLedger) {
         lastReportedLedger = progressLedger;
-        const target = currentStats.endLedger > 0 ? currentStats.endLedger : "?";
+        const target =
+          currentStats.endLedger > 0 ? currentStats.endLedger : "?";
         console.log(
-          `Replayed ledger ${currentLedger}/${target} (${currentStats.totalEventsProcessed} events)`
+          `Replayed ledger ${currentLedger}/${target} (${currentStats.totalEventsProcessed} events)`,
         );
       }
-      
+
       if (options.verbose) {
         console.log(
           `[replay-cli] Progress: ledger ${currentLedger}, processed: ${currentStats.totalEventsProcessed}`,

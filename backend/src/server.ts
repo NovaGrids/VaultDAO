@@ -6,13 +6,6 @@ import {
   FileCursorAdapter,
   DatabaseCursorAdapter,
 } from "./modules/events/index.js";
-import {
-  getHealthController,
-  getReadinessController,
-  getStatusController,
-  getDetailedHealthController,
-} from "./modules/health/health.controller.js";
-import { getMetricsController } from "./modules/health/metrics.controller.js";
 import { MetricsRegistry } from "./modules/health/metrics.registry.js";
 import {
   RecurringIndexerService,
@@ -44,7 +37,9 @@ export interface BackendRuntime {
   readonly snapshotService: SnapshotService;
   readonly proposalActivityAggregator: ProposalActivityAggregator;
   readonly proposalActivityConsumer: ProposalActivityConsumer;
-  readonly proposalActivityPersistence: ReturnType<typeof createMemoryPersistence>;
+  readonly proposalActivityPersistence: ReturnType<
+    typeof createMemoryPersistence
+  >;
   readonly transactionsService: TransactionsService;
   readonly jobManager: JobManager;
   readonly wsServer?: EventWebSocketServer;
@@ -63,13 +58,33 @@ export function startServer(
   notificationQueue?: NotificationQueue,
 ): BackendServer {
   const metricsRegistry = new MetricsRegistry();
-  
+
   // Register metrics
-  metricsRegistry.register("vaultdao_uptime_seconds", "Backend uptime in seconds", "gauge");
-  metricsRegistry.register("vaultdao_events_processed_total", "Total contract events processed", "counter");
-  metricsRegistry.register("vaultdao_proposals_total", "Total proposal lifecycle events", "counter");
-  metricsRegistry.register("vaultdao_polling_lag_ledgers", "Polling lag in ledgers", "gauge");
-  metricsRegistry.register("vaultdao_job_executions_total", "Total background job executions", "counter");
+  metricsRegistry.register(
+    "vaultdao_uptime_seconds",
+    "Backend uptime in seconds",
+    "gauge",
+  );
+  metricsRegistry.register(
+    "vaultdao_events_processed_total",
+    "Total contract events processed",
+    "counter",
+  );
+  metricsRegistry.register(
+    "vaultdao_proposals_total",
+    "Total proposal lifecycle events",
+    "counter",
+  );
+  metricsRegistry.register(
+    "vaultdao_polling_lag_ledgers",
+    "Polling lag in ledgers",
+    "gauge",
+  );
+  metricsRegistry.register(
+    "vaultdao_job_executions_total",
+    "Total background job executions",
+    "counter",
+  );
 
   const jobManager = new JobManager(metricsRegistry);
 
@@ -81,7 +96,10 @@ export function startServer(
 
   // Initialize proposal activity components
   const proposalActivityAggregator = new ProposalActivityAggregator();
-  const proposalActivityConsumer = new ProposalActivityConsumer({ metricsRegistry, notificationQueue });
+  const proposalActivityConsumer = new ProposalActivityConsumer({
+    metricsRegistry,
+    notificationQueue,
+  });
   const proposalActivityPersistence = createMemoryPersistence();
   proposalActivityConsumer.setPersistence(proposalActivityPersistence);
   proposalActivityConsumer.registerBatchConsumer((records) => {
@@ -94,7 +112,9 @@ export function startServer(
   );
   const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
 
-  const transactionsService = new TransactionsService(proposalActivityPersistence);
+  const transactionsService = new TransactionsService(
+    proposalActivityPersistence,
+  );
 
   const runtime: any = {
     startedAt: new Date().toISOString(),

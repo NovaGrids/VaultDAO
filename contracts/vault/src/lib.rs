@@ -30,10 +30,10 @@ use types::{
     InitConfig, InsuranceConfig, ListMode, Milestone, NotificationPreferences,
     OptionalVaultOracleConfig, Priority, Proposal, ProposalAmendment, ProposalStatus,
     ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus, RecurringPayment,
-    Reputation, RetryConfig, RetryState, Role, RoleAssignment, StreamStatus, StreamingPayment,
-    Subscription, SubscriptionStatus, SubscriptionTier, SwapProposal, SwapResult,
-    TemplateOverrides, ThresholdStrategy, TransferDetails, VaultAction, VaultMetrics,
-    VaultOracleConfig, VaultPriceData, VotingStrategy,
+    Reputation, RetryConfig, RetryState, Role, RoleAssignment, StakingConfig, StreamStatus,
+    StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier, SwapProposal,
+    SwapResult, TemplateOverrides, ThresholdStrategy, TransferDetails, VaultAction, VaultMetrics,
+    VaultOracleConfig, VaultPriceData, VelocityConfig, VotingStrategy,
 };
 
 /// The main contract structure for VaultDAO.
@@ -2130,8 +2130,8 @@ impl VaultDAO {
                 timelock_threshold: 0,
                 timelock_delay: 0,
                 velocity_limit: VelocityConfig {
-                    max_transfers_per_ledger: 0,
-                    cooldown_ledgers: 0,
+                    limit: 0,
+                    window: 0,
                 },
                 threshold_strategy: ThresholdStrategy::Fixed,
                 pre_execution_hooks: Vec::new(&env),
@@ -2141,16 +2141,20 @@ impl VaultDAO {
                 retry_config: RetryConfig {
                     enabled: false,
                     max_retries: 0,
-                    backoff_ledgers: 0,
+                    initial_backoff_ledgers: 0,
                 },
                 recovery_config: RecoveryConfig {
-                    enabled: false,
-                    recovery_delay: 0,
-                    recovery_threshold: 0,
+                    guardians: Vec::new(&env),
+                    threshold: 0,
+                    delay: 0,
                 },
                 staking_config: StakingConfig {
                     enabled: false,
-                    min_stake: 0,
+                    min_amount: 0,
+                    base_stake_bps: 0,
+                    max_stake_amount: 0,
+                    reputation_discount_threshold: 0,
+                    reputation_discount_percentage: 0,
                     slash_percentage: 0,
                 },
             }
@@ -5127,7 +5131,7 @@ impl VaultDAO {
         swap_proposal: &SwapProposal,
     ) -> Result<SwapResult, VaultError> {
         match swap_proposal {
-            SwapProposal::Swap(dex, token_in, token_out, amount_in, min_amount_out) => {
+            SwapProposal::Swap(dex, _token_in, _token_out, amount_in, min_amount_out) => {
                 // Check if DEX is enabled
                 if !dex_config.enabled_dexs.contains(dex) {
                     return Err(VaultError::DexError);

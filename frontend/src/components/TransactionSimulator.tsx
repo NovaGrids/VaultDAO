@@ -18,14 +18,20 @@ export default function TransactionSimulator(props: TransactionSimulatorProps) {
     const [simulating, setSimulating] = useState(false);
     const [result, setResult] = useState<SimulationResult | null>(null);
     const [usage, setUsage] = useState({ cpuInsns: '0', memBytes: '0' });
+    const rpcProps: NextProps | null = 'functionName' in props ? (props as NextProps) : null;
 
     const simulateFromRpc = async (): Promise<SimulationResult> => {
-        const cacheKey = generateCacheKey(props.functionName, props.args.map((arg) => arg.toXDR('base64')));
+        if (!rpcProps) {
+            throw new Error('RPC simulation requires a contract function');
+        }
+        const functionName = rpcProps.functionName;
+        const args = rpcProps.args;
+        const cacheKey = generateCacheKey(functionName, args.map((arg) => arg.toXDR('base64')));
         const cached = getCachedSimulation(cacheKey);
         if (cached) return cached;
         const account = await server.getAccount(address ?? env.feesAccount);
         const tx = new TransactionBuilder(account, { fee: '100' }).setNetworkPassphrase(env.networkPassphrase).setTimeout(30).addOperation(Operation.invokeHostFunction({
-            func: xdr.HostFunction.hostFunctionTypeInvokeContract(new xdr.InvokeContractArgs({ contractAddress: Address.fromString(env.contractId).toScAddress(), functionName: props.functionName, args: props.args })),
+            func: xdr.HostFunction.hostFunctionTypeInvokeContract(new xdr.InvokeContractArgs({ contractAddress: Address.fromString(env.contractId).toScAddress(), functionName, args })),
             auth: [],
         })).build();
         const simulation = await server.simulateTransaction(tx);
@@ -36,7 +42,7 @@ export default function TransactionSimulator(props: TransactionSimulatorProps) {
             return failed;
         }
         const fee = formatFeeBreakdown(simulation);
-        const changes = extractStateChanges(simulation, props.functionName, { proposalId: props.proposalId });
+        const changes = extractStateChanges(simulation, functionName, { proposalId: rpcProps.proposalId });
         const cost = simulation.cost as { cpuInsns?: string; memBytes?: string } | undefined;
         setUsage({ cpuInsns: cost?.cpuInsns ?? '0', memBytes: cost?.memBytes ?? '0' });
         const success: SimulationResult = { success: true, fee: fee.totalFee, feeXLM: fee.totalFeeXLM, resourceFee: fee.resourceFee, stateChanges: changes, timestamp: Date.now() };
@@ -47,9 +53,11 @@ export default function TransactionSimulator(props: TransactionSimulatorProps) {
     const handleSimulate = async () => {
         setSimulating(true);
         try {
-            const simulated = 'onSimulate' in props ? await props.onSimulate() : await simulateFromRpc();
+            const simulated = 'onSimulate' in props
+                ? await (props as LegacyProps).onSimulate()
+                : await simulateFromRpc();
             setResult(simulated);
-            if ('onSimulationComplete' in props) props.onSimulationComplete?.(simulated);
+            if (rpcProps?.onSimulationComplete) rpcProps.onSimulationComplete(simulated);
         } catch (error: unknown) {
             const parsed = parseSimulationError(error);
             setResult({ success: false, fee: '0', feeXLM: '0', resourceFee: '0', error: parsed.message, errorCode: parsed.code, timestamp: Date.now() });

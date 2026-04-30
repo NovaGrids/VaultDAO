@@ -1,7 +1,10 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
-import { validatePagination, validateRequiredString } from "../../shared/http/validateQuery.js";
+import {
+  validatePagination,
+  validateRequiredString,
+} from "../../shared/http/validateQuery.js";
 import type { ProposalActivityAggregator } from "./aggregator.js";
 import type { ProposalActivityPersistence } from "./types.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
@@ -68,7 +71,8 @@ export function getProposalByIdController(
 ): RequestHandler {
   return async (req, res) => {
     try {
-      const summary = await persistence.getSummary(req.params.proposalId);
+      const proposalId = String(req.params.proposalId ?? "");
+      const summary = await persistence.getSummary(proposalId);
       if (!summary) {
         error(res, {
           message: "Proposal not found",
@@ -93,7 +97,8 @@ export function getProposalActivityController(
 ): RequestHandler {
   return async (req, res) => {
     try {
-      const records = await persistence.getByProposalId(req.params.proposalId);
+      const proposalId = String(req.params.proposalId ?? "");
+      const records = await persistence.getByProposalId(proposalId);
       if (records.length === 0) {
         error(res, {
           message: "Proposal not found",

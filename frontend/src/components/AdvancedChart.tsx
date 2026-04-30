@@ -135,7 +135,7 @@ export function AdvancedChart({
     const el = containerRef.current;
     Promise.all([
       import('html2canvas').then(({ default: h }) => h(el, { useCORS: true, scale: 2 })),
-      import('jspdf').then((m) => m.jsPDF),
+      import('jspdf').then((m) => m.default),
     ]).then(([canvas, JsPDF]) => {
       const imgData = canvas.toDataURL('image/png');
       const pdf = new JsPDF({ orientation: 'landscape', unit: 'mm' });

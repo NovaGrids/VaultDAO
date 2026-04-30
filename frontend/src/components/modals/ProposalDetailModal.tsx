@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare, RefreshCw, Loader2 } from 'lucide-react';
 import SignatureStatus, { type Signer } from '../SignatureStatus';
-import SignatureFlow, { type FlowStep } from '../SignatureFlow';
+import SignatureFlow from '../SignatureFlow';
 import QRSignature from '../QRSignature';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
@@ -111,13 +111,6 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
         }
     };
 
-    const flowSteps: FlowStep[] = [
-        { label: 'Proposal Created', status: 'completed', timestamp: proposal.createdAt },
-        { label: `Collecting Signatures (${signedCount}/${threshold})`, status: signedCount >= threshold ? 'completed' : 'active' },
-        { label: 'Timelock Period', status: proposal.status === 'Timelocked' ? 'active' : proposal.status === 'Executed' ? 'completed' : 'pending' },
-        { label: 'Execution', status: proposal.status === 'Executed' ? 'completed' : 'pending' },
-    ];
-
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
             <div className="bg-secondary w-full max-w-2xl h-fit max-h-[90vh] flex flex-col rounded-2xl border border-gray-800 shadow-2xl overflow-hidden">
@@ -161,7 +154,20 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                     {/* Signing Progress */}
                     <div>
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Signing Progress</h3>
-                        <SignatureFlow steps={flowSteps} />
+                        <SignatureFlow
+                            proposal={{
+                                id: parseInt(proposal.id, 10),
+                                recipient: proposal.recipient,
+                                amount: proposal.amount ?? '0',
+                                token: proposal.token ?? 'NATIVE',
+                                memo: proposal.memo ?? '',
+                                approvalCount: signedCount,
+                                threshold,
+                                alreadyApproved: Boolean(address && approvedBy.includes(address)),
+                            }}
+                            onComplete={onClose}
+                            onCancel={onClose}
+                        />
                     </div>
 
                     {/* Signatures */}
@@ -199,7 +205,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         </button>
                         {showQR && (
                             <div className="mt-4">
-                                <QRSignature transactionXDR={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
+                                <QRSignature proposalId={proposal.id} contractAddress={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
                             </div>
                         )}
                     </div>
@@ -207,7 +213,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                     {/* QR Code — Desktop */}
                     <div className="hidden lg:block">
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Mobile Signing</h3>
-                        <QRSignature transactionXDR={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
+                        <QRSignature proposalId={proposal.id} contractAddress={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
                     </div>
 
                     {/* Timeline */}
