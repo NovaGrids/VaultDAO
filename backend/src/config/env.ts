@@ -6,6 +6,8 @@ export interface BackendEnv {
   readonly sorobanRpcUrl: string;
   readonly horizonUrl: string;
   readonly contractId: string;
+  readonly contractIds: string[];
+  readonly indexingParallelism: number;
   readonly websocketUrl: string;
   readonly eventPollingIntervalMs: number;
   readonly eventPollingEnabled: boolean;
@@ -156,6 +158,8 @@ export function loadEnv(): BackendEnv {
     "https://horizon-testnet.stellar.org",
   );
   const contractId = readString("CONTRACT_ID", DEFAULT_CONTRACT_ID);
+  const contractIds = readCommaSeparatedString("CONTRACT_IDS", []);
+  const indexingParallelism = readPort("INDEXING_PARALLELISM", 4, issues);
   const websocketUrl = readString("VITE_WS_URL", "ws://localhost:8080");
   const eventPollingIntervalMs = readPort(
     "EVENT_POLLING_INTERVAL_MS",
@@ -251,6 +255,8 @@ export function loadEnv(): BackendEnv {
     sorobanRpcUrl,
     horizonUrl,
     contractId,
+    contractIds,
+    indexingParallelism,
     websocketUrl,
     eventPollingIntervalMs,
     eventPollingEnabled,

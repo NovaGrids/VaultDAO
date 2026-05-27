@@ -32,7 +32,8 @@ import type { Server } from "node:http";
 
 export interface BackendRuntime {
   readonly startedAt: string;
-  readonly eventPollingService: EventPollingService;
+  readonly eventPollingService: EventPollingService | EventPollingService[];
+  readonly eventPollingServices?: EventPollingService[];
   readonly recurringIndexerService: RecurringIndexerService;
   readonly snapshotService: SnapshotService;
   readonly proposalActivityAggregator: ProposalActivityAggregator;
@@ -149,16 +150,41 @@ export function startServer(
         )
       : new FileCursorAdapter();
 
-  const eventPollingService = new EventPollingService(
-    env,
-    cursorStorage,
-    proposalActivityConsumer,
-    wsServer,
-    snapshotService,
-    undefined, // rpcClient
-    metricsRegistry,
-  );
-  runtime.eventPollingService = eventPollingService;
+  // Multi-contract indexing: determine contract IDs to index
+  const contractIds =
+    env.contractIds && env.contractIds.length > 0
+      ? env.contractIds
+      : [env.contractId];
+
+  const pollers: EventPollingService[] = [];
+  for (const cid of contractIds) {
+    // Create an env copy with contractId set per poller
+    const envCopy: BackendEnv = { ...env, contractId: cid };
+
+    // Per-contract cursor storage instance
+    const perCursorStorage =
+      env.cursorStorageType === "database"
+        ? new DatabaseCursorAdapter(
+            new SqliteStorageAdapter(env.databasePath, `event_cursors_${cid}`),
+          )
+        : new FileCursorAdapter(`./.cursors-${cid}`);
+
+    const poller = new EventPollingService(
+      envCopy,
+      perCursorStorage,
+      proposalActivityConsumer,
+      wsServer,
+      snapshotService,
+      undefined, // rpcClient
+      metricsRegistry,
+    );
+
+    pollers.push(poller);
+  }
+
+  // Expose pollers on runtime for observability; keep first for compatibility
+  runtime.eventPollingServices = pollers;
+  runtime.eventPollingService = pollers[0];
 
   jobManager.registerJob(
     {
@@ -173,9 +199,13 @@ export function startServer(
   jobManager.registerJob(
     {
       name: "event-polling",
-      start: () => eventPollingService.start(),
-      stop: () => eventPollingService.stop(),
-      isRunning: () => eventPollingService.getStatus().isPolling,
+      start: () => {
+        for (const p of pollers) p.start();
+      },
+      stop: () => {
+        for (const p of pollers) p.stop();
+      },
+      isRunning: () => pollers.some((p) => p.getStatus().isPolling),
     },
     { replace: true },
   );

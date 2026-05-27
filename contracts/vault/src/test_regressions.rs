@@ -399,6 +399,265 @@ fn test_reinit_fails_with_already_initialized() {
     assert_eq!(result, Err(Ok(VaultError::AlreadyInitialized)));
 }
 
+#[test]
+fn test_validate_dependencies_direct_cycle_detected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Prepare two addresses for proposer/recipient
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Create proposal B (id = 2) that depends on 1 (which does not yet exist in storage)
+    // This simulates an existing proposal that references the future id 1.
+    let mut depends_on_b = Vec::new(&env);
+    depends_on_b.push_back(1u64);
+
+    let proposal_b = crate::types::Proposal {
+        id: 2u64,
+        proposer: proposer.clone(),
+        recipient: recipient.clone(),
+        token: Address::random(&env),
+        amount: 1,
+        memo: Symbol::new(&env, "b"),
+        metadata: Map::new(&env),
+        tags: Vec::new(&env),
+        approvals: Vec::new(&env),
+        abstentions: Vec::new(&env),
+        attachments: Vec::new(&env),
+        status: ProposalStatus::Pending,
+        priority: Priority::Normal,
+        conditions: Vec::new(&env),
+        condition_logic: ConditionLogic::And,
+        created_at: env.ledger().sequence() as u64,
+        expires_at: 0,
+        unlock_ledger: 0,
+        execution_time: None,
+        insurance_amount: 0,
+        stake_amount: 0,
+        gas_limit: 0,
+        gas_used: 0,
+        snapshot_ledger: env.ledger().sequence() as u64,
+        snapshot_signers: Vec::new(&env),
+        depends_on: depends_on_b,
+        is_swap: false,
+        voting_deadline: 0,
+    };
+
+    // Persist proposal B
+    crate::storage::set_proposal(&env, &proposal_b);
+
+    // Now attempt to validate dependencies for a new proposal with id=1 that depends on 2.
+    let mut deps = Vec::new(&env);
+    deps.push_back(2u64);
+
+    let res = VaultDAO::validate_dependencies(&env, 1u64, &deps);
+    assert_eq!(res, Err(VaultError::CircularDependency));
+}
+
+#[test]
+fn test_validate_dependencies_indirect_cycle_detected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Create chain: 3 -> 1 (proposal 3 depends on 1)
+    let mut d3 = Vec::new(&env);
+    d3.push_back(1u64);
+    let proposal_3 = crate::types::Proposal {
+        id: 3u64,
+        proposer: proposer.clone(),
+        recipient: recipient.clone(),
+        token: Address::random(&env),
+        amount: 1,
+        memo: Symbol::new(&env, "3"),
+        metadata: Map::new(&env),
+        tags: Vec::new(&env),
+        approvals: Vec::new(&env),
+        abstentions: Vec::new(&env),
+        attachments: Vec::new(&env),
+        status: ProposalStatus::Pending,
+        priority: Priority::Normal,
+        conditions: Vec::new(&env),
+        condition_logic: ConditionLogic::And,
+        created_at: env.ledger().sequence() as u64,
+        expires_at: 0,
+        unlock_ledger: 0,
+        execution_time: None,
+        insurance_amount: 0,
+        stake_amount: 0,
+        gas_limit: 0,
+        gas_used: 0,
+        snapshot_ledger: env.ledger().sequence() as u64,
+        snapshot_signers: Vec::new(&env),
+        depends_on: d3,
+        is_swap: false,
+        voting_deadline: 0,
+    };
+    crate::storage::set_proposal(&env, &proposal_3);
+
+    // Create proposal 2 -> 3
+    let mut d2 = Vec::new(&env);
+    d2.push_back(3u64);
+    let proposal_2 = crate::types::Proposal {
+        id: 2u64,
+        proposer: proposer.clone(),
+        recipient: recipient.clone(),
+        token: Address::random(&env),
+        amount: 1,
+        memo: Symbol::new(&env, "2"),
+        metadata: Map::new(&env),
+        tags: Vec::new(&env),
+        approvals: Vec::new(&env),
+        abstentions: Vec::new(&env),
+        attachments: Vec::new(&env),
+        status: ProposalStatus::Pending,
+        priority: Priority::Normal,
+        conditions: Vec::new(&env),
+        condition_logic: ConditionLogic::And,
+        created_at: env.ledger().sequence() as u64,
+        expires_at: 0,
+        unlock_ledger: 0,
+        execution_time: None,
+        insurance_amount: 0,
+        stake_amount: 0,
+        gas_limit: 0,
+        gas_used: 0,
+        snapshot_ledger: env.ledger().sequence() as u64,
+        snapshot_signers: Vec::new(&env),
+        depends_on: d2,
+        is_swap: false,
+        voting_deadline: 0,
+    };
+    crate::storage::set_proposal(&env, &proposal_2);
+
+    // Now B (2) -> 3 -> 1; validating creation of proposal id=1 depending on 2 should detect indirect cycle
+    let mut deps = Vec::new(&env);
+    deps.push_back(2u64);
+    let res = VaultDAO::validate_dependencies(&env, 1u64, &deps);
+    assert_eq!(res, Err(VaultError::CircularDependency));
+}
+
+#[test]
+fn test_validate_dependencies_diamond_dag_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Create A (1)
+    let proposal_1 = crate::types::Proposal {
+        id: 1u64,
+        proposer: proposer.clone(),
+        recipient: recipient.clone(),
+        token: Address::random(&env),
+        amount: 1,
+        memo: Symbol::new(&env, "1"),
+        metadata: Map::new(&env),
+        tags: Vec::new(&env),
+        approvals: Vec::new(&env),
+        abstentions: Vec::new(&env),
+        attachments: Vec::new(&env),
+        status: ProposalStatus::Pending,
+        priority: Priority::Normal,
+        conditions: Vec::new(&env),
+        condition_logic: ConditionLogic::And,
+        created_at: env.ledger().sequence() as u64,
+        expires_at: 0,
+        unlock_ledger: 0,
+        execution_time: None,
+        insurance_amount: 0,
+        stake_amount: 0,
+        gas_limit: 0,
+        gas_used: 0,
+        snapshot_ledger: env.ledger().sequence() as u64,
+        snapshot_signers: Vec::new(&env),
+        depends_on: Vec::new(&env),
+        is_swap: false,
+        voting_deadline: 0,
+    };
+    crate::storage::set_proposal(&env, &proposal_1);
+
+    // B (2) -> 1
+    let mut d2 = Vec::new(&env);
+    d2.push_back(1u64);
+    let proposal_2 = crate::types::Proposal { id: 2u64, depends_on: d2, ..proposal_1.clone() };
+    crate::storage::set_proposal(&env, &proposal_2);
+
+    // C (3) -> 1
+    let mut d3 = Vec::new(&env);
+    d3.push_back(1u64);
+    let proposal_3 = crate::types::Proposal { id: 3u64, depends_on: d3, ..proposal_1.clone() };
+    crate::storage::set_proposal(&env, &proposal_3);
+
+    // Validate creating D (4) that depends on [2,3] should be OK (diamond DAG)
+    let mut deps = Vec::new(&env);
+    deps.push_back(2u64);
+    deps.push_back(3u64);
+    let res = VaultDAO::validate_dependencies(&env, 4u64, &deps);
+    assert_eq!(res, Ok(()));
+}
+
+#[test]
+fn test_validate_dependencies_max_depth_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Build a long chain: 20 -> 19 -> 18 -> ... -> 2 -> 1
+    let max = 20u64;
+    for id in 2..=max {
+        let mut deps = Vec::new(&env);
+        if id == 2 {
+            deps.push_back(1u64);
+        } else {
+            deps.push_back(id - 1);
+        }
+        let proposal = crate::types::Proposal {
+            id,
+            proposer: proposer.clone(),
+            recipient: recipient.clone(),
+            token: Address::random(&env),
+            amount: 1,
+            memo: Symbol::new(&env, "chain"),
+            metadata: Map::new(&env),
+            tags: Vec::new(&env),
+            approvals: Vec::new(&env),
+            abstentions: Vec::new(&env),
+            attachments: Vec::new(&env),
+            status: ProposalStatus::Pending,
+            priority: Priority::Normal,
+            conditions: Vec::new(&env),
+            condition_logic: ConditionLogic::And,
+            created_at: env.ledger().sequence() as u64,
+            expires_at: 0,
+            unlock_ledger: 0,
+            execution_time: None,
+            insurance_amount: 0,
+            stake_amount: 0,
+            gas_limit: 0,
+            gas_used: 0,
+            snapshot_ledger: env.ledger().sequence() as u64,
+            snapshot_signers: Vec::new(&env),
+            depends_on: deps,
+            is_swap: false,
+            voting_deadline: 0,
+        };
+        crate::storage::set_proposal(&env, &proposal);
+    }
+
+    // Now trying to create proposal id=1 depending on 20 should traverse depth > 16
+    let mut deps = Vec::new(&env);
+    deps.push_back(max);
+    let res = VaultDAO::validate_dependencies(&env, 1u64, &deps);
+    assert_eq!(res, Err(VaultError::DependencyDepthExceeded));
+}
+
 /// Regression: the same signer approving a proposal twice must fail with
 /// `VaultError::AlreadyApproved` on the second attempt.
 #[test]

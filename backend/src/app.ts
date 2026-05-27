@@ -7,6 +7,7 @@ import {
   createMetricsRouter,
   createDetailedHealthRouter,
 } from "./modules/health/health.routes.js";
+import { createContractsRouter } from "./modules/contracts/contracts.controller.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
@@ -133,11 +134,25 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   app.use(createHealthRouter(env, runtime));
 
+  // Public Prometheus scrape endpoint
+  app.get("/metrics", (_req, res) => {
+    res
+      .status(200)
+      .set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+      .send(runtime.metricsRegistry.render());
+  });
+
   const v1Router = express.Router();
 
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime, adminAuthMiddleware));
   v1Router.use("/health", createDetailedHealthRouter(env, runtime));
+
+  // Contracts listing
+  const registry = new (
+    await import("./modules/contracts/contract-registry.js")
+  ).default(env);
+  v1Router.use("/contracts", createContractsRouter(registry));
 
   v1Router.use(
     "/snapshots",
@@ -166,11 +181,7 @@ export function createApp(env: BackendEnv, runtime: BackendRuntime) {
     createTransactionsRouter(runtime.transactionsService, env.contractId),
   );
 
-  v1Router.use(
-    "/audit",
-    authMiddleware,
-    createAuditRouter(env.sorobanRpcUrl),
-  );
+  v1Router.use("/audit", authMiddleware, createAuditRouter(env.sorobanRpcUrl));
 
   if (runtime.notificationQueue) {
     v1Router.use(

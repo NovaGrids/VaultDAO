@@ -35,3 +35,12 @@ pub fn transfer_to_vault(env: &Env, token_addr: &Address, from: &Address, amount
     let vault_address = env.current_contract_address();
     client.transfer(from, &vault_address, &amount);
 }
+
+/// Alias to transfer tokens from a holder back into the vault (used for rollback).
+pub fn transfer_from_vault(env: &Env, token_addr: &Address, from: &Address, amount: i128) {
+    // This will attempt to move `amount` from `from` into the vault.
+    // Caller must ensure proper authorization or that the token contract allows this operation.
+    let client = token::Client::new(env, token_addr);
+    let vault_address = env.current_contract_address();
+    client.transfer(from, &vault_address, &amount);
+}
