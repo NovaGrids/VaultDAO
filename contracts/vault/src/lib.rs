@@ -18,6 +18,7 @@ mod events;
 mod storage;
 mod token;
 mod types;
+mod types_balance_snapshot;
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, Map, String, Symbol, Vec};
@@ -1266,6 +1267,7 @@ impl VaultDAO {
                 storage::refund_spending_limits(&env, proposal.amount);
             }
             proposal.status = ProposalStatus::Expired;
+            storage::tag_index_prune_proposal(&env, &proposal.tags, proposal_id);
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_expiry(&env);
             events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
@@ -1344,10 +1346,9 @@ impl VaultDAO {
 
                 // Update proposal status
                 proposal.status = ProposalStatus::Executed;
+                storage::tag_index_prune_proposal(&env, &proposal.tags, proposal_id);
                 storage::set_proposal(&env, &proposal);
                 storage::extend_instance_ttl(&env);
-
-                // Emit execution event (rich: includes token and ledger)
                 events::emit_proposal_executed(
                     &env,
                     proposal_id,
@@ -4478,8 +4479,9 @@ impl VaultDAO {
             return Err(VaultError::TooManyTags);
         }
 
-        proposal.tags.push_back(tag);
+        proposal.tags.push_back(tag.clone());
         storage::set_proposal(&env, &proposal);
+        storage::tag_index_add(&env, &tag, proposal_id);
         storage::extend_instance_ttl(&env);
 
         Ok(())
@@ -4513,10 +4515,11 @@ impl VaultDAO {
         }
 
         if !found {
-            return Err(VaultError::ProposalNotFound); // tag not found
+            return Err(VaultError::TagNotFound);
         }
 
         storage::set_proposal(&env, &proposal);
+        storage::tag_index_remove(&env, &tag, proposal_id);
         storage::extend_instance_ttl(&env);
 
         Ok(())
@@ -4528,20 +4531,70 @@ impl VaultDAO {
         Ok(proposal.tags)
     }
 
-    /// Get proposal IDs that include a specific tag.
-    pub fn get_proposals_by_tag(env: Env, tag: Symbol) -> Vec<u64> {
-        let mut proposal_ids = Vec::new(&env);
-        let next_id = storage::get_next_proposal_id(&env);
+    /// Get proposal IDs tagged with `tag`, with pagination.
+    ///
+    /// Results are capped at 50. Pass `offset` and `limit` (max 50) to paginate.
+    pub fn get_proposals_by_tag(env: Env, tag: Symbol, offset: u32, limit: u32) -> Vec<u64> {
+        const MAX_RESULTS: u32 = 50;
+        let cap = if limit == 0 || limit > MAX_RESULTS { MAX_RESULTS } else { limit };
 
-        for proposal_id in 1..next_id {
-            if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
-                if proposal.tags.contains(&tag) {
-                    proposal_ids.push_back(proposal_id);
-                }
+        let ids = storage::get_tag_index(&env, &tag);
+        let mut result = Vec::new(&env);
+        let mut count: u32 = 0;
+        let mut skipped: u32 = 0;
+
+        for id in ids.iter() {
+            if skipped < offset {
+                skipped += 1;
+                continue;
             }
+            if count >= cap {
+                break;
+            }
+            result.push_back(id);
+            count += 1;
         }
 
-        proposal_ids
+        result
+    }
+
+    /// Batch-add multiple tags to a proposal.
+    ///
+    /// Only Admin or the original proposer can add tags.
+    /// Stops and returns `TooManyTags` if the limit would be exceeded.
+    pub fn bulk_add_tags(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+        tags: Vec<Symbol>,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && caller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        for tag in tags.iter() {
+            if tag == Symbol::new(&env, "") {
+                return Err(VaultError::MetadataValueInvalid);
+            }
+            if proposal.tags.contains(&tag) {
+                continue;
+            }
+            if proposal.tags.len() >= MAX_TAGS {
+                return Err(VaultError::TooManyTags);
+            }
+            proposal.tags.push_back(tag.clone());
+            storage::tag_index_add(&env, &tag, proposal_id);
+        }
+
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
     }
 
     // ========================================================================

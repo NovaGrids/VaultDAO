@@ -2945,12 +2945,12 @@ fn test_get_proposals_by_tag() {
     client.add_proposal_tag(&signer1, &payroll_id, &payroll_tag);
     client.add_proposal_tag(&signer1, &second_ops_id, &ops_tag);
 
-    let ops_results = client.get_proposals_by_tag(&ops_tag);
+    let ops_results = client.get_proposals_by_tag(&ops_tag, &0, &50);
     assert!(ops_results.contains(ops_id));
     assert!(ops_results.contains(second_ops_id));
     assert!(!ops_results.contains(payroll_id));
 
-    let payroll_results = client.get_proposals_by_tag(&payroll_tag);
+    let payroll_results = client.get_proposals_by_tag(&payroll_tag, &0, &50);
     assert!(payroll_results.contains(payroll_id));
     assert!(!payroll_results.contains(ops_id));
 }
@@ -4184,7 +4184,6 @@ fn test_execute_swap_proposal() {
     assert_eq!(swap_result.amount_in, 1000);
     assert_eq!(swap_result.amount_out, 990); // Mock: 1% slippage
     assert!(swap_result.price_impact_bps <= 500); // Within max_price_impact_bps
-}
 }
 
 #[test]

@@ -92,13 +92,17 @@ pub enum VaultError {
     UpgradeUnauthorized = 920,
     /// Contract upgrade timelock is still active
     UpgradeTimelockActive = 921,
+    /// Tag was not found on the proposal
+    TagNotFound = 830,
+    /// Proposal has reached the maximum number of tags
+    TooManyTags = 831,
+    /// Metadata value is empty or exceeds the allowed length
+    MetadataValueInvalid = 832,
 }
 
 // Additional error types that exceed contracterror limits - use generic errors above
 // AttachmentHashInvalid -> InvalidAmount
-// TooManyAttachments -> BatchTooLarge  
-// TooManyTags -> BatchTooLarge
-// MetadataValueInvalid -> InvalidAmount
+// TooManyAttachments -> BatchTooLarge
 // SubscriptionNotFound -> TemplateNotFound
 // SubscriptionAlreadyCancelled -> ProposalAlreadyCancelled
 // RenewalNotDue -> TimelockNotExpired

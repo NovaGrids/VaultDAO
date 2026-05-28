@@ -107,6 +107,8 @@ pub enum DataKey {
     NextDelegationId,
     /// Reverse delegation index: delegate -> Vec<delegators>
     DelegatorsFor(Address),
+    /// Tag index: tag Symbol -> Vec<u64> of proposal IDs
+    TagIndex(soroban_sdk::Symbol),
 }
 
 #[contracttype]
@@ -2249,4 +2251,55 @@ pub fn get_metrics_for_period(env: &Env, from_week: u64, to_week: u64) -> VaultM
         }
     }
     agg
+}
+
+// ============================================================================
+// Tag Index
+// ============================================================================
+
+pub fn get_tag_index(env: &Env, tag: &soroban_sdk::Symbol) -> soroban_sdk::Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TagIndex(tag.clone()))
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+fn set_tag_index(env: &Env, tag: &soroban_sdk::Symbol, ids: &soroban_sdk::Vec<u64>) {
+    let key = DataKey::TagIndex(tag.clone());
+    if ids.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, ids);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    }
+}
+
+/// Add `proposal_id` to the index for `tag` (idempotent).
+pub fn tag_index_add(env: &Env, tag: &soroban_sdk::Symbol, proposal_id: u64) {
+    let mut ids = get_tag_index(env, tag);
+    if !ids.contains(proposal_id) {
+        ids.push_back(proposal_id);
+        set_tag_index(env, tag, &ids);
+    }
+}
+
+/// Remove `proposal_id` from the index for `tag`.
+pub fn tag_index_remove(env: &Env, tag: &soroban_sdk::Symbol, proposal_id: u64) {
+    let mut ids = get_tag_index(env, tag);
+    for i in 0..ids.len() {
+        if ids.get(i).unwrap() == proposal_id {
+            ids.remove(i);
+            break;
+        }
+    }
+    set_tag_index(env, tag, &ids);
+}
+
+/// Remove `proposal_id` from every tag index entry listed in `tags`.
+pub fn tag_index_prune_proposal(env: &Env, tags: &soroban_sdk::Vec<soroban_sdk::Symbol>, proposal_id: u64) {
+    for tag in tags.iter() {
+        tag_index_remove(env, &tag, proposal_id);
+    }
 }
