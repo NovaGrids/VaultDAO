@@ -3821,7 +3821,7 @@ fn test_dex_not_enabled_error() {
 }
 
 #[test]
-fn test_execute_swap() {
+fn test_execute_swap_proposal() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -3896,7 +3896,7 @@ fn test_execute_swap() {
     client.approve_proposal(&executor, &proposal_id);
 
     // Execute the swap
-    client.execute_swap(&executor, &proposal_id);
+    client.execute_swap_proposal(&executor, &proposal_id);
 
     // Check that proposal is executed
     let proposal = client.get_proposal(&proposal_id);
@@ -10403,4 +10403,256 @@ fn test_abstain_after_approve_prevented() {
 
     let result = client.try_abstain_proposal(&signer1, &proposal_id);
     assert!(result.is_err(), "Abstain after approve should be prevented");
+}
+
+// ============================================================================
+// Task 2: Dynamic Threshold Strategy Tests
+// ============================================================================
+
+#[cfg(test)]
+mod threshold_strategy_tests {
+    use super::*;
+    use crate::types::{AmountTier, ConditionLogic, Priority, Role, ThresholdStrategy};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Address;
+
+    fn setup_vault(env: &Env) -> (VaultDAOClient<'static>, Address) {
+        let contract_id = env.register(VaultDAO, ());
+        let client = VaultDAOClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        let mut signers = Vec::new(env);
+        signers.push_back(admin.clone());
+        client.initialize(&admin, &default_init_config(env, signers, 1));
+        (client, admin)
+    }
+
+    #[test]
+    fn test_set_threshold_strategy_amount_based_single_tier() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+
+        let mut tiers = Vec::new(&env);
+        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
+
+        client.set_threshold_strategy(&admin, &ThresholdStrategy::AmountBased(tiers));
+
+        let config = client.get_config();
+        assert!(matches!(config.threshold_strategy, ThresholdStrategy::AmountBased(_)));
+    }
+
+    #[test]
+    fn test_set_threshold_strategy_multiple_tiers_descending() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+
+        let mut tiers = Vec::new(&env);
+        // Descending order: 1000 > 500
+        tiers.push_back(AmountTier { amount: 1000, approvals: 1 });
+        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
+
+        client.set_threshold_strategy(&admin, &ThresholdStrategy::AmountBased(tiers));
+
+        let config = client.get_config();
+        if let ThresholdStrategy::AmountBased(stored_tiers) = config.threshold_strategy {
+            assert_eq!(stored_tiers.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_set_threshold_strategy_invalid_not_descending() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+
+        let mut tiers = Vec::new(&env);
+        // Ascending order — invalid
+        tiers.push_back(AmountTier { amount: 100, approvals: 1 });
+        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
+
+        let result = client.try_set_threshold_strategy(
+            &admin,
+            &ThresholdStrategy::AmountBased(tiers),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_threshold_strategy_too_many_tiers() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+
+        let mut tiers = Vec::new(&env);
+        // 11 tiers — exceeds cap of 10
+        for i in (0u32..11).rev() {
+            tiers.push_back(AmountTier { amount: (i as i128 + 1) * 100, approvals: 1 });
+        }
+
+        let result = client.try_set_threshold_strategy(
+            &admin,
+            &ThresholdStrategy::AmountBased(tiers),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_amount_below_all_tiers_falls_back_to_config_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+
+        let mut tiers = Vec::new(&env);
+        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
+
+        client.set_threshold_strategy(&admin, &ThresholdStrategy::AmountBased(tiers));
+
+        // Propose with amount below all tiers (100 < 500) — should use config.threshold (1)
+        let token_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract_v2(token_admin).address();
+        let recipient = Address::generate(&env);
+        client.set_role(&admin, &admin, &Role::Treasurer);
+        let proposal_id = client.propose_transfer(
+            &admin, &recipient, &token, &100i128,
+            &Symbol::new(&env, "m"), &Priority::Normal,
+            &Vec::new(&env), &ConditionLogic::And, &0i128,
+        );
+        // Approve with 1 signer — should meet threshold
+        client.approve_proposal(&admin, &proposal_id);
+        let proposal = client.get_proposal(&proposal_id);
+        assert_eq!(proposal.approvals.len(), 1);
+    }
+}
+
+// ============================================================================
+// Task 3: Template Version History Tests
+// ============================================================================
+
+#[cfg(test)]
+mod template_version_tests {
+    use super::*;
+    use crate::types::Role;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Address;
+
+    fn setup_vault(env: &Env) -> (VaultDAOClient<'static>, Address) {
+        let contract_id = env.register(VaultDAO, ());
+        let client = VaultDAOClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        let mut signers = Vec::new(env);
+        signers.push_back(admin.clone());
+        client.initialize(&admin, &default_init_config(env, signers, 1));
+        client.set_role(&admin, &admin, &Role::Admin);
+        (client, admin)
+    }
+
+    fn create_template(env: &Env, client: &VaultDAOClient, admin: &Address) -> u64 {
+        let token = env
+            .register_stellar_asset_contract_v2(Address::generate(env))
+            .address();
+        let recipient = Address::generate(env);
+        client.create_template(
+            admin,
+            &Symbol::new(env, "tmpl"),
+            &Symbol::new(env, "desc"),
+            &recipient,
+            &token,
+            &100i128,
+            &Symbol::new(env, "memo"),
+            &0i128,
+            &0i128,
+        )
+    }
+
+    #[test]
+    fn test_update_template_stores_version_history() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+        let template_id = create_template(&env, &client, &admin);
+
+        let recipient2 = Address::generate(&env);
+        let token2 = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+
+        // Update once — v1 should be stored
+        client.update_template(
+            &admin, &template_id,
+            &Symbol::new(&env, "d2"), &recipient2, &200i128,
+            &Symbol::new(&env, "m2"), &0i128, &0i128,
+        );
+        let _ = token2;
+
+        let v1 = client.get_template_version(&template_id, &1u32);
+        assert_eq!(v1.version, 1);
+        assert_eq!(v1.amount, 100);
+    }
+
+    #[test]
+    fn test_update_template_three_times_all_versions_accessible() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+        let template_id = create_template(&env, &client, &admin);
+
+        let r = Address::generate(&env);
+
+        client.update_template(&admin, &template_id, &Symbol::new(&env, "d2"), &r, &200i128, &Symbol::new(&env, "m"), &0i128, &0i128);
+        client.update_template(&admin, &template_id, &Symbol::new(&env, "d3"), &r, &300i128, &Symbol::new(&env, "m"), &0i128, &0i128);
+
+        // v1 and v2 should both be accessible
+        let v1 = client.get_template_version(&template_id, &1u32);
+        let v2 = client.get_template_version(&template_id, &2u32);
+        assert_eq!(v1.amount, 100);
+        assert_eq!(v2.amount, 200);
+
+        // Current template should be v3
+        let current = client.get_template(&template_id);
+        assert_eq!(current.version, 3);
+        assert_eq!(current.amount, 300);
+    }
+
+    #[test]
+    fn test_rollback_template_restores_previous_version() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+        let template_id = create_template(&env, &client, &admin);
+
+        let r = Address::generate(&env);
+
+        // Update to v2
+        client.update_template(&admin, &template_id, &Symbol::new(&env, "d2"), &r, &200i128, &Symbol::new(&env, "m"), &0i128, &0i128);
+        // Update to v3
+        client.update_template(&admin, &template_id, &Symbol::new(&env, "d3"), &r, &300i128, &Symbol::new(&env, "m"), &0i128, &0i128);
+
+        // Rollback to v1
+        client.rollback_template(&admin, &template_id, &1u32);
+
+        let current = client.get_template(&template_id);
+        // Version counter incremented, but content from v1
+        assert_eq!(current.amount, 100);
+        assert!(current.version > 3);
+    }
+
+    #[test]
+    fn test_rollback_v2_still_accessible_after_rollback_to_v1() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup_vault(&env);
+        let template_id = create_template(&env, &client, &admin);
+
+        let r = Address::generate(&env);
+
+        client.update_template(&admin, &template_id, &Symbol::new(&env, "d2"), &r, &200i128, &Symbol::new(&env, "m"), &0i128, &0i128);
+        client.update_template(&admin, &template_id, &Symbol::new(&env, "d3"), &r, &300i128, &Symbol::new(&env, "m"), &0i128, &0i128);
+
+        client.rollback_template(&admin, &template_id, &1u32);
+
+        // v2 should still be accessible
+        let v2 = client.get_template_version(&template_id, &2u32);
+        assert_eq!(v2.amount, 200);
+    }
 }

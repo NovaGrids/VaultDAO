@@ -564,6 +564,14 @@ pub fn emit_template_updated(
     );
 }
 
+/// Emit when the oldest stored template version is pruned due to the 10-version cap
+pub fn emit_template_version_pruned(env: &Env, template_id: u64, pruned_version: u32) {
+    env.events().publish(
+        (Symbol::new(env, "template_ver_pruned"), template_id),
+        pruned_version,
+    );
+}
+
 /// Emit when a template's active status changes
 #[allow(dead_code)]
 pub fn emit_template_status_changed(
@@ -991,8 +999,8 @@ pub fn emit_swap_executed(
     amount_out: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "swap_executed"), proposal_id),
-        (dex.clone(), token_in.clone(), token_out.clone(), amount_in, amount_out),
+        (Symbol::new(env, "swap_executed"),),
+        (proposal_id, dex.clone(), token_in.clone(), token_out.clone(), amount_in, amount_out),
     );
 }
 
@@ -1008,17 +1016,15 @@ pub fn emit_liquidity_added(
     lp_tokens: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "liquidity_added"), proposal_id),
-        (dex.clone(), token_a.clone(), token_b.clone(), amount_a, amount_b, lp_tokens),
+        (Symbol::new(env, "liquidity_added"),),
+        (proposal_id, dex.clone(), token_a.clone(), token_b.clone(), amount_a, amount_b, lp_tokens),
     );
 }
 
 /// Emit event when LP tokens are unstaked
 pub fn emit_lp_unstaked(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
-    env.events().publish(
-        (Symbol::new(env, "lp_unstaked"), proposal_id),
-        (farm.clone(), amount),
-    );
+    env.events()
+        .publish((Symbol::new(env, "lp_unstaked"),), (proposal_id, farm.clone(), amount));
 }
 
 pub fn emit_stream_created(
