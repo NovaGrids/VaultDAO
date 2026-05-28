@@ -241,6 +241,14 @@ pub fn emit_quorum_reached(env: &Env, proposal_id: u64, quorum_votes: u32, requi
     );
 }
 
+/// Emit when a proposal's threshold is reduced due to time-based strategy
+pub fn emit_threshold_reduced(env: &Env, proposal_id: u64, old_threshold: u32, new_threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "threshold_reduced"), proposal_id),
+        (old_threshold, new_threshold),
+    );
+}
+
 /// Emit when a signer is added
 #[allow(dead_code)]
 pub fn emit_signer_added(env: &Env, signer: &Address, total_signers: u32) {
@@ -1048,6 +1056,14 @@ pub fn emit_stream_created(
     );
 }
 
+/// Emit when a stream rate is adjusted
+pub fn emit_stream_rate_adjusted(env: &Env, stream_id: u64, old_rate: i128, new_rate: i128, adjusted_by: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "stream_rate_adj"), stream_id),
+        (old_rate, new_rate, adjusted_by.clone()),
+    );
+}
+
 /// Emit when a stream status is updated (paused, resumed, or cancelled)
 #[allow(dead_code)]
 pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, updated_by: &Address) {
@@ -1165,4 +1181,26 @@ pub fn emit_bridge_config_updated(env: &Env, admin: &Address) {
 pub fn emit_reputation_config_updated(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "rep_config_updated"),), admin.clone());
+}
+
+/// Emit when a comment is deleted (soft delete)
+pub fn emit_comment_deleted(env: &Env, comment_id: u64, caller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "comment_deleted"), comment_id),
+        caller.clone(),
+    );
+}
+
+/// Emit when metrics bucket is updated with current week stats
+pub fn emit_metrics_bucket_updated(
+    env: &Env,
+    week: u64,
+    executed: u64,
+    rejected: u64,
+    expired: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "metrics_bucket_upd"), week),
+        (executed, rejected, expired),
+    );
 }

@@ -9,7 +9,6 @@ use soroban_sdk::{
     Address, Env, String, Vec,
 };
 
-/// Returns (client, admin, token, vault_contract_id)
 fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
@@ -37,8 +36,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             timelock_delay: 0,
             velocity_limit: VelocityConfig {
                 limit: 100,
-                window: 3600,
-            },
+                window: 3600, per_token_limit: 0 },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -50,14 +48,13 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: crate::types::StakingConfig::default(),
+        proposal_id_prefix: 0,
         },
     );
 
     (client, admin, token, contract_id)
 }
 
-/// Create a proposal and return its ID. The vault is funded so the proposal
-/// can be created without hitting balance errors.
 fn create_proposal(
     env: &Env,
     client: &VaultDAOClient<'_>,
@@ -80,26 +77,32 @@ fn create_proposal(
     )
 }
 
-/// Valid 46-character CID (CIDv0 minimum length).
-fn cid_min(env: &Env) -> String {
+/// Valid CIDv0 (46 chars, starts with "Qm").
+fn cid_v0(env: &Env) -> String {
     String::from_str(env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
 }
 
-/// Valid 59-character CID (CIDv1 base32 minimum).
+/// Valid CIDv1 base32 (59 chars, starts with "bafy").
 fn cid_v1(env: &Env) -> String {
     String::from_str(env, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
 }
 
-/// CID that is too short (45 chars — one under MIN_ATTACHMENT_LEN=46).
+/// CID with invalid prefix (starts with "Zz" — neither "Qm" nor "bafy").
+fn cid_bad_prefix(env: &Env) -> String {
+    // 46 chars, valid length but wrong prefix
+    String::from_str(env, "ZzYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+}
+
+/// CID that is too short (45 chars).
 fn cid_too_short(env: &Env) -> String {
     String::from_str(env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbd")
 }
 
-/// CID that is too long (129 chars — one over MAX_ATTACHMENT_LEN=128).
+/// CID that is too long (129 chars).
 fn cid_too_long(env: &Env) -> String {
     String::from_str(
         env,
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
 }
 
@@ -107,208 +110,208 @@ fn cid_too_long(env: &Env) -> String {
 // add_attachment
 // ============================================================================
 
+/// Add a valid CIDv0 attachment succeeds.
 #[test]
-fn test_add_attachment_success() {
+fn test_add_valid_cidv0() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    client.add_attachment(&admin, &proposal_id, &cid_min(&env));
+    client.add_attachment(&admin, &pid, &cid_v0(&env));
 
-    let attachments = client.get_attachments(&proposal_id);
+    let attachments = client.get_attachments(&pid);
     assert_eq!(attachments.len(), 1);
-    assert_eq!(attachments.get(0).unwrap(), cid_min(&env));
+    assert_eq!(attachments.get(0).unwrap(), cid_v0(&env));
 }
 
+/// Add a valid CIDv1 attachment succeeds.
 #[test]
-fn test_add_attachment_cid_too_short_fails() {
+fn test_add_valid_cidv1() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    let res = client.try_add_attachment(&admin, &proposal_id, &cid_too_short(&env));
+    client.add_attachment(&admin, &pid, &cid_v1(&env));
+
+    let attachments = client.get_attachments(&pid);
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments.get(0).unwrap(), cid_v1(&env));
+}
+
+/// Adding a duplicate CID returns AttachmentAlreadyExists.
+#[test]
+fn test_add_duplicate_cid_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, vault) = setup(&env);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
+
+    client.add_attachment(&admin, &pid, &cid_v0(&env));
+    let res = client.try_add_attachment(&admin, &pid, &cid_v0(&env));
+    assert_eq!(res, Err(Ok(VaultError::AttachmentAlreadyExists)));
+}
+
+/// CID with invalid prefix returns AttachmentHashInvalid.
+#[test]
+fn test_add_invalid_prefix_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, vault) = setup(&env);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
+
+    let res = client.try_add_attachment(&admin, &pid, &cid_bad_prefix(&env));
     assert_eq!(res, Err(Ok(VaultError::AttachmentHashInvalid)));
 }
 
+/// CID too short returns AttachmentHashInvalid.
 #[test]
-fn test_add_attachment_cid_too_long_fails() {
+fn test_add_cid_too_short_fails() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    let res = client.try_add_attachment(&admin, &proposal_id, &cid_too_long(&env));
+    let res = client.try_add_attachment(&admin, &pid, &cid_too_short(&env));
     assert_eq!(res, Err(Ok(VaultError::AttachmentHashInvalid)));
 }
 
+/// CID too long returns AttachmentHashInvalid.
 #[test]
-fn test_add_attachment_max_exceeded_fails() {
+fn test_add_cid_too_long_fails() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    // Add 10 unique valid 46-char CIDs (MAX_ATTACHMENTS = 10).
-    // Each literal is exactly 46 characters.
-    let cids = [
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb0",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb1",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb2",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb3",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb4",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb5",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb6",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb7",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb8",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb9",
-    ];
-    for cid_str in cids.iter() {
-        let cid = String::from_str(&env, cid_str);
-        client.add_attachment(&admin, &proposal_id, &cid);
-    }
-
-    // 11th attachment should fail
-    let eleventh = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbXX");
-    let res = client.try_add_attachment(&admin, &proposal_id, &eleventh);
-    assert_eq!(res, Err(Ok(VaultError::TooManyAttachments)));
-}
-
-#[test]
-fn test_add_duplicate_attachment_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
-
-    let cid = cid_min(&env);
-    client.add_attachment(&admin, &proposal_id, &cid);
-
-    // Adding the same CID again should fail
-    let res = client.try_add_attachment(&admin, &proposal_id, &cid);
+    let res = client.try_add_attachment(&admin, &pid, &cid_too_long(&env));
     assert_eq!(res, Err(Ok(VaultError::AttachmentHashInvalid)));
 }
 
+/// Non-proposer/non-admin cannot add attachments.
 #[test]
 fn test_add_attachment_unauthorized_fails() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
     let stranger = Address::generate(&env);
-    let res = client.try_add_attachment(&stranger, &proposal_id, &cid_min(&env));
+    let res = client.try_add_attachment(&stranger, &pid, &cid_v0(&env));
     assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
+}
+
+/// Adding more than MAX_ATTACHMENTS (10) returns TooManyAttachments.
+#[test]
+fn test_add_attachment_max_exceeded_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, vault) = setup(&env);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
+
+    let cids = [
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb0A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb1A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb2A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb3A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb4A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb5A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb6A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb7A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb8A",
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPb9A",
+    ];
+    for s in cids.iter() {
+        client.add_attachment(&admin, &pid, &String::from_str(&env, s));
+    }
+    let eleventh = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbXXA");
+    let res = client.try_add_attachment(&admin, &pid, &eleventh);
+    assert_eq!(res, Err(Ok(VaultError::TooManyAttachments)));
 }
 
 // ============================================================================
 // remove_attachment
 // ============================================================================
 
+/// Remove an existing attachment by CID succeeds.
 #[test]
 fn test_remove_attachment_success() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    client.add_attachment(&admin, &proposal_id, &cid_min(&env));
-    assert_eq!(client.get_attachments(&proposal_id).len(), 1);
+    client.add_attachment(&admin, &pid, &cid_v0(&env));
+    assert_eq!(client.get_attachments(&pid).len(), 1);
 
-    client.remove_attachment(&admin, &proposal_id, &0u32);
-    assert_eq!(client.get_attachments(&proposal_id).len(), 0);
+    client.remove_attachment(&admin, &pid, &cid_v0(&env));
+    assert_eq!(client.get_attachments(&pid).len(), 0);
 }
 
+/// Removing a CID that doesn't exist returns ProposalNotFound.
 #[test]
-fn test_remove_attachment_out_of_range_fails() {
+fn test_remove_attachment_not_found_fails() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    // No attachments yet — index 0 is out of range
-    let res = client.try_remove_attachment(&admin, &proposal_id, &0u32);
+    let res = client.try_remove_attachment(&admin, &pid, &cid_v0(&env));
     assert_eq!(res, Err(Ok(VaultError::ProposalNotFound)));
 }
 
+/// Non-proposer/non-admin cannot remove attachments.
 #[test]
 fn test_remove_attachment_unauthorized_fails() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    client.add_attachment(&admin, &proposal_id, &cid_min(&env));
+    client.add_attachment(&admin, &pid, &cid_v0(&env));
 
     let stranger = Address::generate(&env);
-    let res = client.try_remove_attachment(&stranger, &proposal_id, &0u32);
+    let res = client.try_remove_attachment(&stranger, &pid, &cid_v0(&env));
     assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
 }
 
-// ============================================================================
-// get_attachments
-// ============================================================================
-
+/// After removal, the remaining CIDs are intact.
 #[test]
-fn test_get_attachments_empty_by_default() {
+fn test_remove_attachment_preserves_others() {
     let env = Env::default();
     env.mock_all_auths();
-
     let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
 
-    let attachments = client.get_attachments(&proposal_id);
-    assert_eq!(attachments.len(), 0);
-}
+    client.add_attachment(&admin, &pid, &cid_v0(&env));
+    client.add_attachment(&admin, &pid, &cid_v1(&env));
 
-#[test]
-fn test_get_attachments_multiple() {
-    let env = Env::default();
-    env.mock_all_auths();
+    client.remove_attachment(&admin, &pid, &cid_v0(&env));
 
-    let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
-
-    let cid1 = cid_min(&env);
-    let cid2 = cid_v1(&env);
-
-    client.add_attachment(&admin, &proposal_id, &cid1);
-    client.add_attachment(&admin, &proposal_id, &cid2);
-
-    let attachments = client.get_attachments(&proposal_id);
-    assert_eq!(attachments.len(), 2);
-    assert_eq!(attachments.get(0).unwrap(), cid1);
-    assert_eq!(attachments.get(1).unwrap(), cid2);
-}
-
-#[test]
-fn test_get_attachments_after_remove() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
-
-    let cid1 = cid_min(&env);
-    let cid2 = cid_v1(&env);
-
-    client.add_attachment(&admin, &proposal_id, &cid1);
-    client.add_attachment(&admin, &proposal_id, &cid2);
-
-    // Remove index 0 (cid1); cid2 shifts to index 0
-    client.remove_attachment(&admin, &proposal_id, &0u32);
-
-    let attachments = client.get_attachments(&proposal_id);
+    let attachments = client.get_attachments(&pid);
     assert_eq!(attachments.len(), 1);
-    assert_eq!(attachments.get(0).unwrap(), cid2);
+    assert_eq!(attachments.get(0).unwrap(), cid_v1(&env));
+}
+
+// ============================================================================
+// Attachment list cleared on execution
+// ============================================================================
+
+/// Attachments are cleared from storage after proposal execution.
+#[test]
+fn test_attachments_cleared_on_execution() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, vault) = setup(&env);
+    let pid = create_proposal(&env, &client, &admin, &token, &vault);
+
+    client.add_attachment(&admin, &pid, &cid_v0(&env));
+    assert_eq!(client.get_attachments(&pid).len(), 1);
+
+    // Approve and execute
+    client.approve_proposal(&admin, &pid);
+    client.execute_proposal(&admin, &pid);
+
+    assert_eq!(client.get_attachments(&pid).len(), 0);
 }

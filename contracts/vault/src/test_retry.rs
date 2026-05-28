@@ -32,8 +32,7 @@ mod tests {
             timelock_delay: 100,
             velocity_limit: types::VelocityConfig {
                 limit: 10,
-                window: 1000,
-            },
+                window: 1000, per_token_limit: 0 },
             threshold_strategy: types::ThresholdStrategy::Fixed,
             pre_execution_hooks: soroban_sdk::vec![&env],
             post_execution_hooks: soroban_sdk::vec![&env],
@@ -58,6 +57,7 @@ mod tests {
                 reputation_discount_percentage: 0,
                 slash_percentage: 0,
             },
+        proposal_id_prefix: 0,
         };
 
         client.initialize(&admin, &init_config);

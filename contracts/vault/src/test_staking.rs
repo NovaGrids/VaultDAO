@@ -41,7 +41,7 @@ fn setup_with_staking(
             weekly_limit: 100_000_000,
             timelock_threshold: 9_999_999,
             timelock_delay: 0,
-            velocity_limit: VelocityConfig { limit: 1000, window: 3600 },
+            velocity_limit: VelocityConfig { limit: 1000, window: 3600, per_token_limit: 0 },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -61,6 +61,7 @@ fn setup_with_staking(
                 reputation_discount_percentage: 0,
                 slash_percentage: slash_pct,
             },
+            proposal_id_prefix: 0,
         },
     );
 

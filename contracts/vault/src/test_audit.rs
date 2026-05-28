@@ -37,8 +37,7 @@ fn test_audit_chain_integrity_after_5_entries() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -47,6 +46,7 @@ fn test_audit_chain_integrity_after_5_entries() {
         },
         recovery_config: RecoveryConfig::default(&env),
         staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
         pre_execution_hooks: soroban_sdk::Vec::new(&env),
         post_execution_hooks: soroban_sdk::Vec::new(&env),
         veto_addresses: soroban_sdk::Vec::new(&env),
@@ -121,8 +121,7 @@ fn test_audit_chain_tamper_detection() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -131,6 +130,7 @@ fn test_audit_chain_tamper_detection() {
         },
         recovery_config: RecoveryConfig::default(&env),
         staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
         pre_execution_hooks: soroban_sdk::Vec::new(&env),
         post_execution_hooks: soroban_sdk::Vec::new(&env),
         veto_addresses: soroban_sdk::Vec::new(&env),
@@ -200,8 +200,7 @@ fn test_audit_hash_deterministic() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -210,6 +209,7 @@ fn test_audit_hash_deterministic() {
         },
         recovery_config: RecoveryConfig::default(&env),
         staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
         pre_execution_hooks: soroban_sdk::Vec::new(&env),
         post_execution_hooks: soroban_sdk::Vec::new(&env),
         veto_addresses: soroban_sdk::Vec::new(&env),
@@ -262,8 +262,7 @@ fn test_performance_100_entry_chain() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -272,6 +271,7 @@ fn test_performance_100_entry_chain() {
         },
         recovery_config: RecoveryConfig::default(&env),
         staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
         pre_execution_hooks: soroban_sdk::Vec::new(&env),
         post_execution_hooks: soroban_sdk::Vec::new(&env),
         veto_addresses: soroban_sdk::Vec::new(&env),
@@ -331,8 +331,7 @@ fn test_audit_chain_edge_cases() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -341,6 +340,7 @@ fn test_audit_chain_edge_cases() {
         },
         recovery_config: RecoveryConfig::default(&env),
         staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
         pre_execution_hooks: soroban_sdk::Vec::new(&env),
         post_execution_hooks: soroban_sdk::Vec::new(&env),
         veto_addresses: soroban_sdk::Vec::new(&env),

@@ -24,8 +24,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         pre_execution_hooks: Vec::new(env),
         post_execution_hooks: Vec::new(env),
@@ -37,6 +36,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: types::StakingConfig::default(),
+        proposal_id_prefix: 0,
     }
 }
 
@@ -185,8 +185,7 @@ fn test_hooks_with_initialization() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         pre_execution_hooks: pre_hooks,
         post_execution_hooks: post_hooks,
@@ -198,6 +197,7 @@ fn test_hooks_with_initialization() {
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
         staking_config: types::StakingConfig::default(),
+        proposal_id_prefix: 0,
     };
 
     client.initialize(&admin, &config);
@@ -272,8 +272,7 @@ fn setup_execution_test(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Add
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600,
-        },
+            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
         pre_execution_hooks: Vec::new(env),
         post_execution_hooks: Vec::new(env),
@@ -285,6 +284,7 @@ fn setup_execution_test(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Add
         },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: crate::types::StakingConfig::default(),
+        proposal_id_prefix: 0,
     };
 
     client.initialize(&admin, &config);

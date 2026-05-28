@@ -40,8 +40,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address) {
             timelock_delay: 0,
             velocity_limit: VelocityConfig {
                 limit: 100,
-                window: 3600,
-            },
+                window: 3600, per_token_limit: 0 },
             threshold_strategy: ThresholdStrategy::Fixed,
             default_voting_deadline: 0,
             veto_addresses: Vec::new(env),
@@ -52,6 +51,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address) {
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: crate::types::StakingConfig::default(),
+        proposal_id_prefix: 0,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
         },
@@ -448,4 +448,102 @@ fn test_claim_after_cancel_fails() {
 
     // Claiming from a cancelled stream must panic
     client.claim_stream(&recipient, &stream_id);
+}
+
+// ---------------------------------------------------------------------------
+// adjust_stream_rate (#936)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_adjust_stream_rate_up() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, treasurer, recipient) = setup(&env);
+
+    let rate: i128 = 10;
+    let total_amount: i128 = 1000;
+    let token = mint_token(&env, &treasurer, &treasurer, total_amount);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    let stream_id = client.create_stream(&treasurer, &recipient, &token, &rate, &total_amount, &100);
+
+    // Advance 20 seconds (200 tokens earned)
+    env.ledger().with_mut(|l| l.timestamp = 1020);
+
+    // Adjust rate up to 20 tokens/sec
+    client.adjust_stream_rate(&treasurer, &stream_id, &20);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.rate, 20);
+    // accumulated_seconds should be snapshotted at 20
+    assert_eq!(stream.accumulated_seconds, 20);
+    // end_timestamp recalculated: remaining = 1000 - 0 = 1000, new_duration = 1000/20 = 50
+    assert_eq!(stream.end_timestamp, 1020 + 50);
+}
+
+#[test]
+fn test_adjust_stream_rate_down() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, treasurer, recipient) = setup(&env);
+
+    let rate: i128 = 20;
+    let total_amount: i128 = 1000;
+    let token = mint_token(&env, &treasurer, &treasurer, total_amount);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    let stream_id = client.create_stream(&treasurer, &recipient, &token, &rate, &total_amount, &50);
+
+    env.ledger().with_mut(|l| l.timestamp = 1010);
+
+    // Adjust rate down to 5 tokens/sec
+    client.adjust_stream_rate(&treasurer, &stream_id, &5);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.rate, 5);
+    // remaining = 1000 - 0 = 1000, new_duration = 1000/5 = 200
+    assert_eq!(stream.end_timestamp, 1010 + 200);
+}
+
+#[test]
+fn test_adjust_stream_rate_on_paused_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, treasurer, recipient) = setup(&env);
+
+    let rate: i128 = 10;
+    let total_amount: i128 = 1000;
+    let token = mint_token(&env, &treasurer, &treasurer, total_amount);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    let stream_id = client.create_stream(&treasurer, &recipient, &token, &rate, &total_amount, &100);
+
+    env.ledger().with_mut(|l| l.timestamp = 1020);
+    client.pause_stream(&treasurer, &stream_id);
+
+    // Adjust rate while paused — should succeed
+    client.adjust_stream_rate(&treasurer, &stream_id, &15);
+
+    let stream = client.get_stream(&stream_id);
+    assert_eq!(stream.rate, 15);
+    assert_eq!(stream.status, crate::types::StreamStatus::Paused);
+}
+
+#[test]
+#[should_panic]
+fn test_adjust_stream_rate_to_zero_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, treasurer, recipient) = setup(&env);
+
+    let token = mint_token(&env, &treasurer, &treasurer, 1000);
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    let stream_id = client.create_stream(&treasurer, &recipient, &token, &10, &1000, &100);
+
+    // rate = 0 must be rejected
+    client.adjust_stream_rate(&treasurer, &stream_id, &0);
 }

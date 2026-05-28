@@ -20,8 +20,7 @@ fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold
             timelock_delay: 0,
             velocity_limit: crate::types::VelocityConfig {
                 limit: 1_000_000,
-                window: 3600,
-            },
+                window: 3600, per_token_limit: 0 },
             threshold_strategy: crate::types::ThresholdStrategy::Fixed,
             default_voting_deadline: 0,
             veto_addresses: Vec::new(env),
@@ -32,6 +31,7 @@ fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: crate::types::StakingConfig::default(),
+        proposal_id_prefix: 0,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
         },
