@@ -8,6 +8,7 @@
 export { SnapshotService } from "./snapshot.service.js";
 export { SnapshotNormalizer } from "./normalizer.js";
 export { MemorySnapshotAdapter } from "./adapters/index.js";
+export { SnapshotDiffService, InMemorySnapshotDiffAdapter } from "./snapshot-diff.service.js";
 
 export type {
   Role,
@@ -22,6 +23,9 @@ export type {
   SignerAddedData,
   SnapshotUpdateResult,
   SnapshotStorageAdapter,
+  SnapshotDiff,
+  SnapshotFieldChange,
+  SnapshotDiffStorageAdapter,
 } from "./types.js";
 
 export { Role as RoleEnum } from "./types.js";

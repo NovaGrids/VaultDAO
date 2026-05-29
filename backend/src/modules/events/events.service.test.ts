@@ -777,3 +777,98 @@ test("RPC Polling", async (t) => {
     );
   });
 });
+
+// ─── Issue 2: Cursor persistence and cleanup tests ───────────────────────────
+
+test("Cursor Persistence — cursor survives simulated restart", async () => {
+  // Simulate a service run that advances the cursor, then a restart that
+  // loads the persisted cursor from the same storage instance.
+  const storage = new MemoryCursorStorage();
+
+  // First run: start from ledger 0, advance to 500
+  const rpc1 = createNoOpRpcClient(500);
+  const svc1 = createSvc(storage, {}, rpc1);
+  await svc1.start();
+
+  for (let i = 0; i < 100 && (storage.cursor?.lastLedger ?? 0) < 500; i++) {
+    await delay(10);
+  }
+  svc1.stop();
+
+  assert.equal(storage.cursor?.lastLedger, 500, "cursor should be persisted after first run");
+
+  // Simulated restart: new service instance, same storage
+  const rpc2 = createNoOpRpcClient(600);
+  const svc2 = createSvc(storage, {}, rpc2);
+  await svc2.start();
+
+  // Should resume from 500, not 0
+  assert.equal(svc2.getStatus().lastLedgerPolled, 500, "service should resume from persisted cursor");
+
+  for (let i = 0; i < 100 && svc2.getStatus().lastLedgerPolled < 600; i++) {
+    await delay(10);
+  }
+  svc2.stop();
+
+  assert.ok(
+    svc2.getStatus().lastLedgerPolled >= 600,
+    "service should advance cursor after restart",
+  );
+  assert.ok(
+    (storage.cursor?.lastLedger ?? 0) >= 600,
+    "cursor should be updated in storage after restart",
+  );
+});
+
+test("Cursor Cleanup Job — removes old entries and preserves newest", async () => {
+  const { CursorStorageCleanupJob } = await import(
+    "../jobs/recurring/cursor-storage-cleanup.job.js"
+  );
+
+  // Build a storage with one fresh cursor and two stale ones
+  const storage = new MemoryCursorStorage();
+
+  const now = new Date();
+  const daysAgo = (d: number) => {
+    const dt = new Date(now);
+    dt.setDate(dt.getDate() - d);
+    return dt.toISOString();
+  };
+
+  // Seed multiple cursors by directly manipulating the storage
+  const multiStorage = {
+    cursors: new Map<string, EventCursor>([
+      ["newest", { lastLedger: 100, updatedAt: daysAgo(0) }],
+      ["stale-1", { lastLedger: 50, updatedAt: daysAgo(40) }],
+      ["stale-2", { lastLedger: 20, updatedAt: daysAgo(60) }],
+    ]),
+    async getCursor() {
+      return this.cursors.get("newest") ?? null;
+    },
+    async saveCursor(c: EventCursor) {
+      this.cursors.set("newest", c);
+    },
+    async listCursors() {
+      return Array.from(this.cursors.entries()).map(([id, cursor]) => ({ id, cursor }));
+    },
+    async deleteCursor(id: string) {
+      this.cursors.delete(id);
+    },
+  };
+
+  const job = new CursorStorageCleanupJob(
+    60_000,
+    false,
+    multiStorage,
+    30, // retentionDays
+  );
+
+  await job.run({ now: () => now });
+
+  // Stale cursors should be deleted
+  assert.ok(!multiStorage.cursors.has("stale-1"), "stale-1 should be deleted");
+  assert.ok(!multiStorage.cursors.has("stale-2"), "stale-2 should be deleted");
+  // Newest cursor must be preserved
+  assert.ok(multiStorage.cursors.has("newest"), "newest cursor must be preserved");
+  assert.equal(multiStorage.cursors.size, 1, "only one cursor should remain");
+});

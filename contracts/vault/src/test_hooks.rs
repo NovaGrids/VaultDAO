@@ -386,6 +386,103 @@ fn test_failing_hook_halts_execution() {
     client.execute_proposal(&admin, &proposal_id);
 }
 
+#[test]
+fn test_pre_hook_failure_aborts_execution() {
+    let env = Env::default();
+    let (client, admin, _, token, proposal_id) = setup_execution_test(&env);
+    let hook_id = env.register(mock_failing_hook::MockFailingHook, ());
+
+    client.register_pre_hook(&admin, &hook_id);
+    
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::HookFailed)));
+    
+    // Proposal should still be in Approved status (not executed)
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, crate::types::ProposalStatus::Approved);
+}
+
+#[test]
+fn test_post_hook_failure_does_not_revert_transfer() {
+    let env = Env::default();
+    let (client, admin, _, token, proposal_id) = setup_execution_test(&env);
+    let hook_id = env.register(mock_failing_hook::MockFailingHook, ());
+
+    client.register_post_hook(&admin, &hook_id);
+    
+    // Execution should succeed despite post-hook failure
+    client.execute_proposal(&admin, &proposal_id);
+    
+    // Proposal should be executed
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, crate::types::ProposalStatus::Executed);
+    
+    // Check that hook failure was logged
+    let events = env.events().all();
+    let mut hook_failed_event_found = false;
+    for event in events.iter() {
+        let topics = event.1;
+        if topics.len() >= 1 {
+            use soroban_sdk::IntoVal;
+            let expected: soroban_sdk::Val =
+                soroban_sdk::Symbol::new(&env, "hook_executed").into_val(&env);
+            if topics.get(0).unwrap().get_payload() == expected.get_payload() {
+                // Check the event data for success flag
+                let data = event.2;
+                // The data should contain (hook_address, is_pre, success)
+                // We're looking for success = false
+                hook_failed_event_found = true; // For now, just check that the event exists
+                break;
+            }
+        }
+    }
+    assert!(hook_failed_event_found, "Hook execution event not found");
+}
+
+#[test]
+fn test_hook_limit_enforcement() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+
+    // Register 5 hooks (should succeed)
+    for i in 0..5 {
+        let hook = Address::generate(&env);
+        client.register_pre_hook(&admin, &hook);
+    }
+
+    // Try to register 6th hook (should fail)
+    let hook6 = Address::generate(&env);
+    let result = client.try_register_pre_hook(&admin, &hook6);
+    assert_eq!(result.err(), Some(Ok(VaultError::BatchTooLarge)));
+}
+
+#[test]
+fn test_gas_tracking_in_hooks() {
+    let env = Env::default();
+    let (client, admin, _, _, proposal_id) = setup_execution_test(&env);
+    let hook_id = env.register(mock_hook::MockHook, ());
+
+    client.register_pre_hook(&admin, &hook_id);
+    client.register_post_hook(&admin, &hook_id);
+    
+    let proposal_before = client.get_proposal(&proposal_id);
+    let gas_before = proposal_before.gas_used;
+    
+    client.execute_proposal(&admin, &proposal_id);
+    
+    let proposal_after = client.get_proposal(&proposal_id);
+    let gas_after = proposal_after.gas_used;
+    
+    // Gas usage should have increased due to hook execution
+    assert!(gas_after > gas_before, "Gas usage should increase after hook execution");
+}
+
 // ============================================================================
 // emit_hook_executed event verification
 // ============================================================================

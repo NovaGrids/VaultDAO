@@ -7233,6 +7233,9 @@ impl VaultDAO {
         if config.pre_execution_hooks.contains(&hook) {
             return Err(VaultError::SignerAlreadyExists);
         }
+        if config.pre_execution_hooks.len() >= 5 {
+            return Err(VaultError::BatchTooLarge);
+        }
 
         config.pre_execution_hooks.push_back(hook.clone());
         storage::set_config(&env, &config);
@@ -7251,6 +7254,9 @@ impl VaultDAO {
         let mut config = storage::get_config(&env)?;
         if config.post_execution_hooks.contains(&hook) {
             return Err(VaultError::SignerAlreadyExists);
+        }
+        if config.post_execution_hooks.len() >= 5 {
+            return Err(VaultError::BatchTooLarge);
         }
 
         config.post_execution_hooks.push_back(hook.clone());
@@ -7318,8 +7324,14 @@ impl VaultDAO {
         Ok(storage::get_config(&env)?.post_execution_hooks)
     }
 
+    /// Get hook failure log for a proposal (simplified - returns bool for now)
+    pub fn has_hook_failure(env: Env, proposal_id: u64) -> bool {
+        // Simplified implementation - just return false for now
+        false
+    }
+
     fn call_hook(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {
-        let _ = env.invoke_contract::<()>(
+        let result = env.try_invoke_contract::<(), soroban_sdk::Error>(
             hook,
             &Symbol::new(
                 env,
@@ -7332,7 +7344,19 @@ impl VaultDAO {
             (proposal_id,).into_val(env),
         );
 
-        events::emit_hook_executed(env, hook, proposal_id, is_pre);
+        match result {
+            Ok(_) => {
+                events::emit_hook_executed(env, hook, proposal_id, is_pre, true);
+            }
+            Err(_) => {
+                events::emit_hook_executed(env, hook, proposal_id, is_pre, false);
+                
+                if is_pre {
+                    panic!("Pre-hook failed");
+                }
+                // Post-hook failures are logged but don't abort execution
+            }
+        }
     }
 
     pub fn get_swap_result(env: Env, proposal_id: u64) -> Option<SwapResult> {
@@ -9664,13 +9688,35 @@ impl VaultDAO {
 
         // Must be submitted, not already verified
         if milestone.status != FundingMilestoneStatus::Submitted {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::InvalidStatusTransition);
         }
-
-        let amount = milestone.amount;
-
-        let mut updated = milestone.clone();
-        updated.status = FundingMilestoneStatus::Verified;
+        
+        // Prevent duplicate verification
+        if milestone.verifications.contains(&verifier) {
+            return Err(VaultError::AlreadyVerified);
+        }
+        
+        // Role check (Admin or Treasurer only)
+        let role = storage::get_role(&env, &verifier)?;
+        if role != Role::Admin && role != Role::Treasurer {
+            return Err(VaultError::InsufficientRole);
+        }
+        
+        // First verification timestamp
+        if milestone.verifications.is_empty() {
+            milestone.verified_at = env.ledger().sequence();
+        }
+        
+        // Add verifier
+        milestone.verifications.push(verifier.clone());
+        
+        // Check quorum
+        if (milestone.verifications.len() as u32) >= milestone.required_verifiers {
+            milestone.status = FundingMilestoneStatus::Verified;
+        
+            // Optional: trigger fund release logic
+            storage::release_milestone_funds(&env, round_id, milestone_index)?;
+        }
         updated.verified_at = env.ledger().timestamp();
         updated.verified_by = Some(verifier.clone());
 

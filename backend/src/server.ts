@@ -5,6 +5,7 @@ import {
   EventPollingService,
   FileCursorAdapter,
   DatabaseCursorAdapter,
+  migrateFileCursorToDatabase,
 } from "./modules/events/index.js";
 import { MetricsRegistry } from "./modules/health/metrics.registry.js";
 import {
@@ -14,6 +15,8 @@ import {
 import {
   SnapshotService,
   MemorySnapshotAdapter,
+  SnapshotDiffService,
+  InMemorySnapshotDiffAdapter,
 } from "./modules/snapshots/index.js";
 import {
   ProposalActivityConsumer,
@@ -24,6 +27,7 @@ import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import type { NotificationQueue } from "./modules/notifications/notification.types.js";
 import { PriorityNotificationQueue } from "./modules/notifications/priority-queue.js";
+import { WebhookDeliveryService } from "./modules/notifications/webhook.service.js";
 import { CacheManager } from "./shared/cache/cache-manager.js";
 import { createLogger } from "./shared/logging/logger.js";
 import { SqliteStorageAdapter } from "./shared/storage/index.js";
@@ -47,6 +51,9 @@ export interface BackendRuntime {
   readonly metricsRegistry: MetricsRegistry;
   readonly notificationQueue?: PriorityNotificationQueue;
   readonly cacheManager?: CacheManager;
+  readonly dbCursorAdapter?: DatabaseCursorAdapter;
+  readonly snapshotDiffService?: SnapshotDiffService;
+  readonly webhookDeliveryService?: WebhookDeliveryService;
 }
 
 export interface BackendServer {
@@ -92,6 +99,9 @@ export async function startServer(
   // Priority notification queue (replaces basic InMemoryNotificationQueue)
   const priorityNotificationQueue = new PriorityNotificationQueue();
 
+  // Webhook delivery service
+  const webhookDeliveryService = new WebhookDeliveryService();
+
   // Cache manager (in-memory by default; swap primary for RedisCacheAdapter when Redis is available)
   const cacheManager = new CacheManager();
 
@@ -112,6 +122,7 @@ export async function startServer(
     new MemoryRecurringStorageAdapter(),
   );
   const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
+  const snapshotDiffService = new SnapshotDiffService(new InMemorySnapshotDiffAdapter());
 
   const transactionsService = new TransactionsService(
     proposalActivityPersistence,
@@ -121,6 +132,7 @@ export async function startServer(
     startedAt: new Date().toISOString(),
     recurringIndexerService,
     snapshotService,
+    snapshotDiffService,
     proposalActivityAggregator,
     proposalActivityConsumer,
     proposalActivityPersistence,
@@ -128,6 +140,7 @@ export async function startServer(
     jobManager,
     metricsRegistry,
     notificationQueue: priorityNotificationQueue,
+    webhookDeliveryService,
     cacheManager,
   };
 
@@ -143,12 +156,21 @@ export async function startServer(
   const wsServer = new EventWebSocketServer(server);
   runtime.wsServer = wsServer;
 
+  // Determine cursor storage and run one-time file→database migration if needed
+  let dbCursorAdapter: DatabaseCursorAdapter | undefined;
   const cursorStorage =
     env.cursorStorageType === "database"
-      ? new DatabaseCursorAdapter(
-          new SqliteStorageAdapter(env.databasePath, "event_cursors"),
-        )
+      ? (() => {
+          dbCursorAdapter = new DatabaseCursorAdapter(
+            new SqliteStorageAdapter(env.databasePath, "event_cursors"),
+          );
+          // One-time idempotent migration from file cursor (kept as backup)
+          void migrateFileCursorToDatabase(new FileCursorAdapter(), dbCursorAdapter);
+          return dbCursorAdapter;
+        })()
       : new FileCursorAdapter();
+
+  runtime.dbCursorAdapter = dbCursorAdapter;
 
   // Multi-contract indexing: determine contract IDs to index
   const contractIds =

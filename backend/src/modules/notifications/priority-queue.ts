@@ -1,4 +1,5 @@
 import { createLogger } from "../../shared/logging/logger.js";
+import { requestIdStorage } from "../../shared/http/requestId.js";
 import type {
   NotificationConsumer,
   NotificationEvent,
@@ -125,8 +126,15 @@ export class PriorityNotificationQueue {
   ): Promise<void> {
     const priority = options.priority ?? NotificationPriority.NORMAL;
     const targets = options.targets ?? [NotificationTarget.WEBSOCKET];
-    this.buckets[priority].push({ event, options: { priority, targets } });
-    logger.debug("event queued", { eventId: event.id, priority, targets });
+
+    // Auto-attach correlationId from AsyncLocalStorage if not already set
+    const correlationId = event.correlationId ?? requestIdStorage.getStore();
+    const enrichedEvent: NotificationEvent = correlationId
+      ? { ...event, correlationId }
+      : event;
+
+    this.buckets[priority].push({ event: enrichedEvent, options: { priority, targets } });
+    logger.debug("event queued", { eventId: event.id, priority, targets, correlationId });
     void this.drain();
   }
 

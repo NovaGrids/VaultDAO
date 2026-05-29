@@ -372,4 +372,48 @@ test("Middleware Chain Integration Tests", async (t) => {
       );
     },
   );
+
+  // ── Scenario 8: Request ID propagated to response header ─────────────────
+  await t.test(
+    "8. Request Tracing — generated UUID v4 request ID is propagated to response header",
+    async () => {
+      const res = await fetch(`${baseUrl}/api/v1/status`);
+      assert.strictEqual(res.status, 200);
+      const returnedId = res.headers.get(REQUEST_ID_HEADER);
+      assert.ok(returnedId, `Expected ${REQUEST_ID_HEADER} header to be present`);
+      // UUID v4 pattern
+      const uuidV4Re = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      assert.ok(
+        uuidV4Re.test(returnedId!),
+        `Expected ${REQUEST_ID_HEADER} to be a UUID v4, got "${returnedId}"`,
+      );
+    },
+  );
+
+  // ── Scenario 9: Request ID present in error response body ────────────────
+  await t.test(
+    "9. Request Tracing — requestId is included in error response body under meta.requestId",
+    async () => {
+      const sentId = "trace-error-test-id";
+      const res = await fetch(`${baseUrl}/nonexistent`, {
+        headers: { [REQUEST_ID_HEADER]: sentId },
+      });
+      assert.strictEqual(res.status, 404);
+      const body = (await res.json()) as any;
+      assert.strictEqual(body.success, false);
+      // requestId must appear in error object
+      assert.strictEqual(
+        body.error.requestId,
+        sentId,
+        `Expected error.requestId to be "${sentId}", got "${body.error.requestId}"`,
+      );
+      // requestId must also appear in meta.requestId
+      assert.ok(body.meta, "Expected meta field to be present in error response");
+      assert.strictEqual(
+        body.meta.requestId,
+        sentId,
+        `Expected meta.requestId to be "${sentId}", got "${body.meta?.requestId}"`,
+      );
+    },
+  );
 });

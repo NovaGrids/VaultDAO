@@ -1536,16 +1536,25 @@ pub enum FundingMilestoneStatus {
 pub struct FundingMilestone {
     /// Milestone description
     pub description: String,
+
     /// Amount to release upon completion (in stroops)
     pub amount: i128,
+
     /// Current status
     pub status: FundingMilestoneStatus,
+
     /// Ledger when milestone was submitted
     pub submitted_at: u64,
-    /// Ledger when milestone was verified
+
+    /// Ledger when milestone was first verified/submitted for verification
     pub verified_at: u64,
-    /// Address that verified the milestone
-    pub verified_by: Option<Address>,
+
+    /// Number of required approvals for quorum
+    pub required_verifiers: u32,
+
+    /// All addresses that have verified this milestone
+    pub verifications: Vec<Address>,
+
     /// Rejection reason, if rejected
     pub rejection_reason: Option<String>,
 }

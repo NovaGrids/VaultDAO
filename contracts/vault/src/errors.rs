@@ -113,6 +113,16 @@ pub enum VaultError {
     RecurringPaymentStopped = 1001,
     /// A config change proposal is already pending
     ConfigChangeInProgress = 1010,
+
+    // =========================================================
+    // Milestone quorum verification errors (NEW)
+    // =========================================================
+
+    /// Milestone has already been verified by this address
+    AlreadyVerified = 510,
+
+    /// Milestone does not have enough verifications to proceed
+    InsufficientVerifications = 511,
 }
 
 // Additional error types that exceed contracterror limits - use generic errors above

@@ -14,8 +14,10 @@ import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
 import { createAuditRouter } from "./modules/audit/audit.routes.js";
 import { createNotificationsRouter } from "./modules/notifications/notifications.routes.js";
+import { createWebhookRouter } from "./modules/notifications/webhook.routes.js";
 import { createCacheRouter } from "./shared/cache/cache.routes.js";
 import { createVaultRouter } from "./modules/vault/vault.routes.js";
+import { createCursorsRouter } from "./modules/events/cursor/cursors.routes.js";
 import { error } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
@@ -172,7 +174,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/snapshots",
     authMiddleware,
-    createSnapshotRouter(runtime.snapshotService, adminAuthMiddleware),
+    createSnapshotRouter(runtime.snapshotService, adminAuthMiddleware, runtime.snapshotDiffService),
   );
 
   v1Router.use(
@@ -206,11 +208,26 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     );
   }
 
+  if (runtime.webhookDeliveryService) {
+    v1Router.use(
+      "/webhooks",
+      authMiddleware,
+      createWebhookRouter(runtime.webhookDeliveryService),
+    );
+  }
+
   if (runtime.cacheManager) {
     v1Router.use(
       "/cache",
       authMiddleware,
       createCacheRouter(runtime.cacheManager),
+    );
+  }
+
+  if (runtime.dbCursorAdapter) {
+    v1Router.use(
+      "/cursors",
+      createCursorsRouter(runtime.dbCursorAdapter, adminAuthMiddleware),
     );
   }
 

@@ -3,6 +3,7 @@ export interface NotificationEvent<TPayload = Record<string, unknown>> {
   readonly topic: string;
   readonly source: string;
   readonly createdAt: string;
+  readonly correlationId?: string;
   readonly payload: TPayload;
 }
 

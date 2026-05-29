@@ -1,4 +1,6 @@
 import { createLogger } from "../../shared/logging/logger.js";
+import { requestIdStorage } from "../../shared/http/requestId.js";
+import { randomUUID } from "node:crypto";
 
 export interface ScheduledJobContext {
   readonly now: () => Date;
@@ -85,20 +87,25 @@ export class ScheduledJobRunner {
   }
 
   private async runJobSafely(job: ScheduledJob): Promise<void> {
+    const jobRunId = `job::${job.name}::${randomUUID()}`;
     const startedAt = Date.now();
 
-    try {
-      await Promise.resolve(job.run({ now: () => new Date() }));
-      this.logger.info("scheduled job completed", {
-        job: job.name,
-        durationMs: Date.now() - startedAt,
-      });
-    } catch (err) {
-      this.logger.warn("scheduled job failed", {
-        job: job.name,
-        durationMs: Date.now() - startedAt,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    await requestIdStorage.run(jobRunId, async () => {
+      try {
+        await Promise.resolve(job.run({ now: () => new Date() }));
+        this.logger.info("scheduled job completed", {
+          job: job.name,
+          jobRunId,
+          durationMs: Date.now() - startedAt,
+        });
+      } catch (err) {
+        this.logger.warn("scheduled job failed", {
+          job: job.name,
+          jobRunId,
+          durationMs: Date.now() - startedAt,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
   }
 }
