@@ -431,10 +431,10 @@ pub fn emit_hook_removed(env: &Env, hook: &Address, is_pre: bool) {
 }
 
 /// Emit when a hook is executed
-pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {
+pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool, success: bool) {
     env.events().publish(
         (Symbol::new(env, "hook_executed"), proposal_id),
-        (hook.clone(), is_pre),
+        (hook.clone(), is_pre, success),
     );
 }
 

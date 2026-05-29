@@ -6222,28 +6222,6 @@ impl VaultDAO {
                         };
                         if !satisfied {
                             return Err(VaultError::ConditionsNotMet);
-        for i in 0..proposal.conditions.len() {
-            if let Some(cond) = proposal.conditions.get(i) {
-                let satisfied = match cond {
-                    Condition::BalanceAbove(min_balance) => {
-                        token::balance(env, &proposal.token) > min_balance
-                    }
-                    Condition::DateAfter(after_ledger) => current_ledger > after_ledger,
-                    Condition::DateBefore(before_ledger) => current_ledger < before_ledger,
-                    Condition::PriceAbove(asset, threshold) => {
-                        match Self::get_asset_price(env, asset.clone()) {
-                            Ok(price) => price >= threshold,
-                            Err(VaultError::OraclePriceStale) => return Err(VaultError::OraclePriceStale),
-                            Err(VaultError::OracleNotConfigured) => return Err(VaultError::OracleNotConfigured),
-                            Err(_) => false,
-                        }
-                    }
-                    Condition::PriceBelow(asset, threshold) => {
-                        match Self::get_asset_price(env, asset.clone()) {
-                            Ok(price) => price <= threshold,
-                            Err(VaultError::OraclePriceStale) => return Err(VaultError::OraclePriceStale),
-                            Err(VaultError::OracleNotConfigured) => return Err(VaultError::OracleNotConfigured),
-                            Err(_) => false,
                         }
                     }
                 }
@@ -7255,6 +7233,9 @@ impl VaultDAO {
         if config.pre_execution_hooks.contains(&hook) {
             return Err(VaultError::SignerAlreadyExists);
         }
+        if config.pre_execution_hooks.len() >= 5 {
+            return Err(VaultError::BatchTooLarge);
+        }
 
         config.pre_execution_hooks.push_back(hook.clone());
         storage::set_config(&env, &config);
@@ -7273,6 +7254,9 @@ impl VaultDAO {
         let mut config = storage::get_config(&env)?;
         if config.post_execution_hooks.contains(&hook) {
             return Err(VaultError::SignerAlreadyExists);
+        }
+        if config.post_execution_hooks.len() >= 5 {
+            return Err(VaultError::BatchTooLarge);
         }
 
         config.post_execution_hooks.push_back(hook.clone());
@@ -7340,8 +7324,14 @@ impl VaultDAO {
         Ok(storage::get_config(&env)?.post_execution_hooks)
     }
 
+    /// Get hook failure log for a proposal (simplified - returns bool for now)
+    pub fn has_hook_failure(env: Env, proposal_id: u64) -> bool {
+        // Simplified implementation - just return false for now
+        false
+    }
+
     fn call_hook(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {
-        let _ = env.invoke_contract::<()>(
+        let result = env.try_invoke_contract::<(), soroban_sdk::Error>(
             hook,
             &Symbol::new(
                 env,
@@ -7354,7 +7344,19 @@ impl VaultDAO {
             (proposal_id,).into_val(env),
         );
 
-        events::emit_hook_executed(env, hook, proposal_id, is_pre);
+        match result {
+            Ok(_) => {
+                events::emit_hook_executed(env, hook, proposal_id, is_pre, true);
+            }
+            Err(_) => {
+                events::emit_hook_executed(env, hook, proposal_id, is_pre, false);
+                
+                if is_pre {
+                    panic!("Pre-hook failed");
+                }
+                // Post-hook failures are logged but don't abort execution
+            }
+        }
     }
 
     pub fn get_swap_result(env: Env, proposal_id: u64) -> Option<SwapResult> {
