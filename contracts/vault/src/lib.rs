@@ -1801,6 +1801,120 @@ impl VaultDAO {
         Ok(())
     }
 
+        // ============================================================
+    // Delegation: Cycle-safe vote delegation
+    // ============================================================
+
+    const MAX_DELEGATION_DEPTH: u32 = 5;
+
+    pub fn delegate_vote(
+        env: Env,
+        delegator: Address,
+        delegate: Address,
+        expiry_ledger: u64,
+    ) -> Result<(), VaultError> {
+        delegator.require_auth();
+
+        // Basic self-delegation protection
+        if delegator == delegate {
+            return Err(VaultError::CircularDelegation);
+        }
+
+        // Check cycle BEFORE writing state
+        Self::check_delegation_cycle(&env, &delegate, &delegator, 0)?;
+
+        // Load existing delegation (if any)
+        let mut delegation = storage::get_delegation(&env, &delegator);
+
+        // Update reverse index: remove old delegate mapping if exists
+        if delegation.is_active {
+            storage::remove_delegator_index(&env, &delegation.delegate, &delegator);
+        }
+
+        // Create new delegation
+        delegation.delegator = delegator.clone();
+        delegation.delegate = delegate.clone();
+        delegation.created_at = env.ledger().sequence() as u64;
+        delegation.expiry_ledger = expiry_ledger;
+        delegation.is_active = true;
+
+        storage::set_delegation(&env, &delegation);
+
+        // Reverse index: delegate -> delegators
+        storage::add_delegator_index(&env, &delegate, &delegator);
+
+        // Audit history
+        storage::push_delegation_history(&env, DelegationHistory {
+            id: storage::next_delegation_id(&env),
+            delegator,
+            previous_delegate: delegation.delegate.clone(),
+            new_delegate: delegate,
+            changed_at: env.ledger().sequence() as u64,
+        });
+
+        Ok(())
+    }
+
+
+    fn check_delegation_cycle(
+        env: &Env,
+        current: &Address,
+        target: &Address,
+        depth: u32,
+    ) -> Result<(), VaultError> {
+        if depth >= MAX_DELEGATION_DEPTH {
+            return Err(VaultError::DelegationChainTooLong);
+        }
+    
+        if current == target {
+            return Err(VaultError::CircularDelegation);
+        }
+    
+        let delegation = storage::get_delegation(env, current);
+    
+        if !delegation.is_active {
+            return Ok(());
+        }
+    
+        Self::check_delegation_cycle(
+            env,
+            &delegation.delegate,
+            target,
+            depth + 1,
+        )
+    }
+
+
+    fn resolve_delegation_chain(
+        env: &Env,
+        current: &Address,
+        output: &mut Vec<Address>,
+        depth: u32,
+    ) {
+        if depth >= MAX_DELEGATION_DEPTH {
+            return;
+        }
+    
+        let delegation = storage::get_delegation(env, current);
+    
+        if !delegation.is_active {
+            return;
+        }
+    
+        let current_ledger = env.ledger().sequence() as u64;
+        if delegation.expiry_ledger != 0 && current_ledger > delegation.expiry_ledger {
+            return;
+        }
+    
+        let delegate = delegation.delegate.clone();
+    
+        if !output.contains(&delegate) {
+            output.push_back(delegate.clone());
+    
+            Self::resolve_delegation_chain(env, &delegate, output, depth + 1);
+        }
+    }
+
     fn get_all_represented_voters(
         env: &Env,
         signer: &Address,
@@ -1812,15 +1926,25 @@ impl VaultDAO {
         }
 
         let delegators = storage::get_delegators_for(env, signer);
+
         for delegator in delegators.iter() {
-            if !voters.contains(&delegator) {
+            if !represented_voters.contains(&delegator) {
                 let delegation = storage::get_delegation(env, &delegator);
-                if let Some(d) = delegation {
-                    let current_ledger = env.ledger().sequence() as u64;
-                    if d.is_active && (d.expiry_ledger == 0 || current_ledger <= d.expiry_ledger) {
-                        voters.push_back(delegator.clone());
-                        Self::get_all_represented_voters(env, &delegator, voters, depth + 1);
-                    }
+        
+                let current_ledger = env.ledger().sequence() as u64;
+        
+                if delegation.is_active
+                    && (delegation.expiry_ledger == 0 || current_ledger <= delegation.expiry_ledger)
+                {
+                    represented_voters.push_back(delegator.clone());
+        
+                    // Continue forward chain safely
+                    Self::resolve_delegation_chain(
+                        env,
+                        &delegator,
+                        &mut represented_voters,
+                        0,
+                    );
                 }
             }
         }
