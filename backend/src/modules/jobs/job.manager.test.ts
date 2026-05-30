@@ -477,3 +477,91 @@ test("JobManager.stopAll - can be called multiple times safely", async () => {
   // Stop should be called 3 times (once per stopAll call)
   assert.equal(stopCount, 3);
 });
+
+test("JobManager.stopAll respects dependencies and stops dependents before dependencies", async () => {
+  const manager = new JobManager();
+  const stopped: string[] = [];
+
+  const poller: Job = {
+    name: "event-polling",
+    start: () => {},
+    stop: async () => {
+      stopped.push("event-polling");
+    },
+    isRunning: () => true,
+  };
+
+  const consumer: Job = {
+    name: "proposal-consumer",
+    start: () => {},
+    stop: async () => {
+      stopped.push("proposal-consumer");
+    },
+    isRunning: () => true,
+  };
+
+  manager.registerJob(poller);
+  manager.registerJob(consumer, { dependencies: ["event-polling"] });
+
+  await manager.stopAll(500);
+
+  // consumer should be stopped before poller
+  assert.deepEqual(stopped, ["proposal-consumer", "event-polling"]);
+});
+
+test("JobManager.registerJob throws JobDependencyCycle on cycles", () => {
+  const manager = new JobManager();
+  const a: Job = {
+    name: "a",
+    start: () => {},
+    stop: () => {},
+    isRunning: () => true,
+  };
+  const b: Job = {
+    name: "b",
+    start: () => {},
+    stop: () => {},
+    isRunning: () => true,
+  };
+
+  manager.registerJob(a, { dependencies: ["b"] });
+  assert.throws(
+    () => manager.registerJob(b, { dependencies: ["a"] }),
+    /JobDependencyCycle/,
+  );
+});
+
+test("JobManager.stopAll - independent jobs stop concurrently (no deps)", async () => {
+  const manager = new JobManager();
+  const events: string[] = [];
+
+  const j1: Job = {
+    name: "j1",
+    start: () => {},
+    stop: async () => {
+      events.push("j1");
+      await new Promise((r) => setTimeout(r, 20));
+    },
+    isRunning: () => true,
+  };
+  const j2: Job = {
+    name: "j2",
+    start: () => {},
+    stop: async () => {
+      events.push("j2");
+      await new Promise((r) => setTimeout(r, 20));
+    },
+    isRunning: () => true,
+  };
+
+  manager.registerJob(j1);
+  manager.registerJob(j2);
+
+  const start = Date.now();
+  await manager.stopAll(1000);
+  const duration = Date.now() - start;
+
+  // Both should be stopped within total timeout (concurrent)
+  assert.ok(duration < 1000);
+  assert.ok(events.includes("j1") && events.includes("j2"));
+});

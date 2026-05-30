@@ -14,6 +14,7 @@ import {
 export function createTransactionsRouter(
   service: TransactionsService,
   defaultContractId: string,
+  cache?: any,
 ) {
   const router = Router();
 
@@ -27,8 +28,15 @@ export function createTransactionsRouter(
    * - limit:      number (optional, default: 20, max: 200)
    * - order:      "asc" | "desc" (optional, default: "desc")
    */
-  router.get("/", getTransactionsController(service, defaultContractId));
-  router.get("/:txHash", getTransactionByHashController(service, defaultContractId));
+  router.get("/", getTransactionsController(service, defaultContractId, cache));
+  router.get(
+    "/by-proposal/:proposalId",
+    getTransactionsByProposalController(service, defaultContractId, cache),
+  );
+  router.get(
+    "/:txHash",
+    getTransactionByHashController(service, defaultContractId),
+  );
 
   return router;
 }

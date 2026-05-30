@@ -12,6 +12,8 @@ export interface Transaction {
   readonly recipient: string;
   readonly token: string;
   readonly amount: string;
+  readonly decodedProposalId?: number | null;
+  readonly decodedMemo?: string | null;
 }
 
 export interface GetTransactionsParams {
