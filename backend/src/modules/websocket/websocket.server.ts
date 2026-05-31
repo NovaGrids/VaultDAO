@@ -9,8 +9,7 @@ const logger = createLogger("websocket-server");
 
 interface ClientSubscription {
   connectionId: string;
-  eventTypes?: string[];
-  proposalId?: string;
+  subscriptions: Set<string>;
   /** room IDs this connection has joined (e.g. "proposal:123", "contract:ABC") */
   rooms: Set<string>;
 }
@@ -113,7 +112,11 @@ export class EventWebSocketServer {
       logger.info("client connected", { connectionId });
 
       (ws as any).isAlive = true;
-      this.clients.set(ws, { connectionId, rooms: new Set() });
+      this.clients.set(ws, {
+        connectionId,
+        subscriptions: new Set(),
+        rooms: new Set(),
+      });
 
       ws.on("pong", () => {
         (ws as any).isAlive = true;
@@ -123,7 +126,17 @@ export class EventWebSocketServer {
         try {
           const message = JSON.parse(data.toString());
           if (message.type === "subscribe") {
-            this.handleSubscription(ws, message, connectionId);
+            this.handleSubscribe(ws, message, connectionId);
+          } else if (message.type === "unsubscribe") {
+            this.handleUnsubscribe(ws, message, connectionId);
+          } else if (message.type === "subscriptions") {
+            const sub = this.clients.get(ws);
+            ws.send(
+              JSON.stringify({
+                type: "subscriptions",
+                topics: Array.from(sub?.subscriptions ?? []),
+              }),
+            );
           } else if (message.type === "join") {
             const roomId: string = message.room;
             if (roomId) {
@@ -185,30 +198,83 @@ export class EventWebSocketServer {
     });
   }
 
-  private handleSubscription(
-    ws: WebSocket,
-    message: any,
-    connectionId: string,
-  ) {
+  private handleSubscribe(ws: WebSocket, message: any, connectionId: string) {
     const topics: string[] | undefined = Array.isArray(message.topics)
       ? message.topics
       : Array.isArray(message.payload?.eventTypes)
         ? message.payload.eventTypes
         : undefined;
 
-    const proposalId: string | undefined =
-      message.proposalId ?? message.payload?.proposalId;
+    const sub = this.clients.get(ws);
+    if (!sub) return;
 
-    const sub: ClientSubscription = {
-      connectionId,
-      eventTypes: topics,
-      proposalId,
-      rooms: this.clients.get(ws)?.rooms ?? new Set(),
-    };
+    if (!topics || topics.length === 0) {
+      ws.send(
+        JSON.stringify({ type: "error", message: "Invalid topic format" }),
+      );
+      return;
+    }
 
-    logger.info("client subscribed", { connectionId, topics, proposalId });
+    for (const t of topics) {
+      // normalize: accept legacy short names like 'proposal_executed' and full 'notification:events:FOO'
+      let norm = t;
+      if (!t.includes(":")) {
+        norm = `notification:events:${t.toUpperCase()}`;
+      }
+
+      if (sub.subscriptions.size >= 20) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Maximum 20 topic subscriptions per connection",
+          }),
+        );
+        break;
+      }
+
+      // validate pattern
+      if (!/^notification:events:([A-Z0-9_*]+)$/.test(norm)) {
+        ws.send(
+          JSON.stringify({ type: "error", message: "Invalid topic format" }),
+        );
+        continue;
+      }
+
+      sub.subscriptions.add(norm);
+    }
+
+    logger.info("client subscribed", { connectionId, topics });
     this.clients.set(ws, sub);
-    ws.send(JSON.stringify({ type: "subscribed", topics, proposalId }));
+    ws.send(JSON.stringify({ type: "subscribed", topics: topics }));
+  }
+
+  private handleUnsubscribe(ws: WebSocket, message: any, connectionId: string) {
+    const topics: string[] | undefined = Array.isArray(message.topics)
+      ? message.topics
+      : undefined;
+    const sub = this.clients.get(ws);
+    if (!sub || !topics) {
+      ws.send(
+        JSON.stringify({ type: "error", message: "Invalid topic format" }),
+      );
+      return;
+    }
+
+    for (const t of topics) {
+      let norm = t;
+      if (!t.includes(":")) {
+        norm = `notification:events:${t.toUpperCase()}`;
+      }
+      sub.subscriptions.delete(norm);
+    }
+
+    this.clients.set(ws, sub);
+    ws.send(
+      JSON.stringify({
+        type: "unsubscribed",
+        topics: Array.from(sub.subscriptions),
+      }),
+    );
   }
 
   private findWs(connectionId: string): WebSocket | undefined {
@@ -226,6 +292,7 @@ export class EventWebSocketServer {
     const eventType = event.topic[0];
     const proposalId =
       event.topic[1] || (event.value && (event.value as any).proposal_id);
+    const notificationTopic = `notification:events:${String(eventType).toUpperCase()}`;
 
     let message: string;
     try {
@@ -242,12 +309,8 @@ export class EventWebSocketServer {
     this.clients.forEach((sub, ws) => {
       if (ws.readyState !== WebSocket.OPEN) return;
 
-      const matchesEventType =
-        !sub.eventTypes || sub.eventTypes.includes(eventType);
-      const matchesProposalId =
-        !sub.proposalId || sub.proposalId === proposalId;
-
-      if (matchesEventType && matchesProposalId) {
+      // If no subscriptions, deliver all events (backward compatible)
+      if (!sub.subscriptions || sub.subscriptions.size === 0) {
         try {
           ws.send(message);
           broadcastCount++;
@@ -258,6 +321,32 @@ export class EventWebSocketServer {
             error,
           });
         }
+        return;
+      }
+
+      // Otherwise, check if any subscription matches notificationTopic
+      let matched = false;
+      for (const pattern of sub.subscriptions) {
+        if (pattern.endsWith("*")) {
+          const prefix = pattern.slice(0, -1);
+          if (notificationTopic.startsWith(prefix)) matched = true;
+        } else if (pattern === notificationTopic) {
+          matched = true;
+        }
+        if (matched) break;
+      }
+
+      if (!matched) return;
+
+      try {
+        ws.send(message);
+        broadcastCount++;
+      } catch (error) {
+        logger.warn("failed to send event to client", {
+          connectionId: sub.connectionId,
+          eventId: event.id,
+          error,
+        });
       }
     });
 

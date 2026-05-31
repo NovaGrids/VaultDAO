@@ -11,9 +11,13 @@ import type {
   GetTransactionsResult,
   Transaction,
 } from "./transactions.types.js";
+import { decodeMemo } from "../../shared/utils/memo.js";
 
 export class TransactionsService {
-  constructor(private readonly persistence: ProposalActivityPersistence) {}
+  constructor(
+    private readonly persistence: ProposalActivityPersistence,
+    private readonly horizonUrl?: string,
+  ) {}
 
   private static readDataString(
     data: unknown,
@@ -40,7 +44,7 @@ export class TransactionsService {
       .filter((record) => record.type === ProposalActivityType.EXECUTED)
       .map((record): Transaction => {
         const data = record.data ?? {};
-        return {
+        const base: Transaction = {
           proposalId: record.proposalId,
           contractId: record.metadata.contractId,
           transactionHash: record.metadata.transactionHash,
@@ -51,6 +55,15 @@ export class TransactionsService {
           token: TransactionsService.readDataString(data, "token"),
           amount: TransactionsService.readDataString(data, "amount"),
         };
+
+        // best-effort: try to decode memo if horizonUrl provided
+        if (this.horizonUrl && record.metadata.transactionHash) {
+          void this.attachMemoInfo(record.metadata.transactionHash, base).catch(
+            () => {},
+          );
+        }
+
+        return base;
       })
       .filter((tx) => (params.token ? tx.token === params.token : true))
       .filter((tx) =>
@@ -102,6 +115,78 @@ export class TransactionsService {
       nextCursor,
       hasMore: endIndex < executed.length,
     };
+  }
+
+  /**
+   * Returns all transactions linked to a proposal via memo decoding.
+   */
+  async getTransactionsByProposal(
+    proposalId: string,
+    contractId: string,
+    cache?: {
+      get: (k: string) => any;
+      set: (k: string, v: any, ttl?: number) => void;
+    },
+  ): Promise<Transaction[]> {
+    const key = `proposal_txns:${contractId}:${proposalId}`;
+    const ttl = 5 * 60 * 1000; // 5 minutes
+    if (cache) {
+      const cached = cache.get(key);
+      if (cached) return cached;
+    }
+
+    const records = await this.persistence.getByProposalId(proposalId);
+    const txs: Transaction[] = [];
+    for (const record of records) {
+      if (record.type !== ProposalActivityType.EXECUTED) continue;
+      const data = record.data ?? {};
+      const tx: Transaction = {
+        proposalId: record.proposalId,
+        contractId: record.metadata.contractId,
+        transactionHash: record.metadata.transactionHash,
+        ledger: record.metadata.ledger,
+        timestamp: record.timestamp,
+        executor: TransactionsService.readDataString(data, "executor"),
+        recipient: TransactionsService.readDataString(data, "recipient"),
+        token: TransactionsService.readDataString(data, "token"),
+        amount: TransactionsService.readDataString(data, "amount"),
+      };
+
+      if (this.horizonUrl && tx.transactionHash) {
+        try {
+          await this.attachMemoInfo(tx.transactionHash, tx);
+        } catch {
+          // ignore
+        }
+      }
+
+      txs.push(tx);
+    }
+
+    // reverse chronological
+    txs.sort((a, b) => b.ledger - a.ledger);
+
+    if (cache) cache.set(key, txs, ttl);
+    return txs;
+  }
+
+  private async attachMemoInfo(txHash: string, tx: Transaction): Promise<void> {
+    try {
+      const res = await fetch(
+        `${this.horizonUrl}/transactions/${encodeURIComponent(txHash)}`,
+      );
+      if (!res.ok) return;
+      const json = await res.json();
+      const memoType = json.memo_type as string | undefined;
+      const memo = json.memo as string | undefined;
+      const decoded = decodeMemo(memoType, memo);
+      (tx as any).decodedProposalId = decoded.decodedProposalId;
+      (tx as any).decodedMemo = decoded.decodedMemo;
+    } catch {
+      // ignore decoding errors
+      (tx as any).decodedProposalId = null;
+      (tx as any).decodedMemo = null;
+    }
   }
 
   /**

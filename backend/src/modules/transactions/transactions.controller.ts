@@ -41,15 +41,26 @@ export function getTransactionsController(
     try {
       const contractId =
         typeof request.query.contractId === "string" &&
-          request.query.contractId.trim()
+        request.query.contractId.trim()
           ? request.query.contractId.trim()
           : defaultContractId;
 
       const cacheKey = `txns:${contractId}:${token ?? ""}:${recipient ?? ""}:${cursor ?? ""}:${from ?? ""}:${to ?? ""}:${minAmount ?? ""}:${maxAmount ?? ""}:${pagination.limit}`;
 
       if (cache) {
-        const cached = cache.get(cacheKey);
+        const cached = cache.get(cacheKey) as any;
         if (cached !== null) {
+          // set cache headers when we stored timestamped entries
+          if (cached && cached.cachedAt) {
+            response.set("X-Cache", "HIT");
+            response.set(
+              "X-Cache-Age",
+              String(Math.floor((Date.now() - cached.cachedAt) / 1000)),
+            );
+            response.json(cached.value);
+            return;
+          }
+          response.set("X-Cache", "HIT");
           response.json(cached);
           return;
         }
@@ -70,15 +81,88 @@ export function getTransactionsController(
       if (cache) {
         cache.set(
           cacheKey,
-          { ok: true, data: result },
+          { value: result, cachedAt: Date.now() },
           TRANSACTIONS_CACHE_TTL_MS,
         );
+        response.set("X-Cache", "MISS");
       }
 
       success(response, result);
     } catch (err) {
       error(response, {
         message: "Failed to fetch transaction history",
+        status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
+        details: err instanceof Error ? err.message : undefined,
+      });
+    }
+  };
+}
+
+/**
+ * GET /api/v1/transactions/by-proposal/:proposalId
+ */
+export function getTransactionsByProposalController(
+  service: TransactionsService,
+  defaultContractId: string,
+  cache?: CacheAdapter<unknown>,
+): RequestHandler {
+  return async (request, response) => {
+    try {
+      const contractId =
+        typeof request.query.contractId === "string" &&
+        request.query.contractId.trim()
+          ? request.query.contractId.trim()
+          : defaultContractId;
+
+      const proposalId = String(request.params.proposalId ?? "");
+      if (!proposalId) {
+        error(response, {
+          message: "proposalId required",
+          status: 400,
+          code: ErrorCode.VALIDATION_ERROR,
+        });
+        return;
+      }
+
+      const cacheKey = `proposal_txns:${contractId}:${proposalId}`;
+      if (cache) {
+        const cached = cache.get(cacheKey) as any;
+        if (cached) {
+          if (cached.cachedAt) {
+            response.set("X-Cache", "HIT");
+            response.set(
+              "X-Cache-Age",
+              String(Math.floor((Date.now() - cached.cachedAt) / 1000)),
+            );
+            response.json(cached.value);
+            return;
+          }
+          response.set("X-Cache", "HIT");
+          response.json(cached);
+          return;
+        }
+      }
+
+      const result = await service.getTransactionsByProposal(
+        proposalId,
+        contractId,
+        cache as any,
+      );
+
+      if (cache) {
+        cache.set(
+          cacheKey,
+          { value: result, cachedAt: Date.now() },
+          5 * 60 * 1000,
+        );
+        response.set("X-Cache", "MISS");
+      }
+
+      success(response, { data: result, total: result.length });
+    } catch (err) {
+      error(response, {
+        message: "Failed to fetch transactions by proposal",
         status: 500,
         code: ErrorCode.INTERNAL_ERROR,
         details: err instanceof Error ? err.message : undefined,
@@ -98,7 +182,7 @@ export function getTransactionByHashController(
     try {
       const contractId =
         typeof request.query.contractId === "string" &&
-          request.query.contractId.trim()
+        request.query.contractId.trim()
           ? request.query.contractId.trim()
           : defaultContractId;
       const txHash = String(request.params.txHash);

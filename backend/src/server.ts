@@ -35,6 +35,8 @@ import { CacheManager } from "./shared/cache/cache-manager.js";
 import { createLogger } from "./shared/logging/logger.js";
 import { SqliteStorageAdapter } from "./shared/storage/index.js";
 import { TransactionsService } from "./modules/transactions/transactions.service.js";
+import { SorobanRpcClient } from "./shared/rpc/soroban-rpc.client.js";
+import SorobanRpcCache from "./shared/rpc/soroban-rpc.cache.js";
 import type { Server } from "node:http";
 import { CircuitBreaker } from "./shared/http/circuit-breaker.js";
 
@@ -152,7 +154,8 @@ export async function startServer(
 
   // Priority notification queue (replaces basic InMemoryNotificationQueue)
   const priorityNotificationQueue = new PriorityNotificationQueue();
-  const jobNotificationPublisher = notificationQueue ?? priorityNotificationQueue;
+  const jobNotificationPublisher =
+    notificationQueue ?? priorityNotificationQueue;
   const scheduledJobRunner = new ScheduledJobRunner({
     notificationPublisher: jobNotificationPublisher,
   });
@@ -180,7 +183,9 @@ export async function startServer(
     new MemoryRecurringStorageAdapter(),
   );
   const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
-  const snapshotDiffService = new SnapshotDiffService(new InMemorySnapshotDiffAdapter());
+  const snapshotDiffService = new SnapshotDiffService(
+    new InMemorySnapshotDiffAdapter(),
+  );
 
   const transactionsService = new TransactionsService(
     proposalActivityPersistence,
@@ -189,7 +194,7 @@ export async function startServer(
   // Create LifecycleManager if not provided
   if (!lifecycleManager) {
     lifecycleManager = new LifecycleManager(server, 10_000); // 10s shutdown timeout
-    
+
     // Register shutdown hooks
     lifecycleManager.onShutdown({
       // "job-manager" hook stops all background jobs (EventPollingService,
@@ -201,21 +206,21 @@ export async function startServer(
         await jobManager.stopAll();
       },
     });
-    
+
     lifecycleManager.onShutdown({
       name: "scheduled-job-runner",
       handler: () => {
         // No scheduled job runner in server.ts context
       },
     });
-    
+
     lifecycleManager.onShutdown({
       name: "notification-queue",
       handler: () => {
         // No notification queue in server.ts context
       },
     });
-    
+
     lifecycleManager.onShutdown({
       name: "realtime-server",
       handler: () => {
@@ -223,7 +228,7 @@ export async function startServer(
       },
     });
   }
-  
+
   const runtime: any = {
     startedAt: new Date().toISOString(),
     recurringIndexerService,
@@ -254,7 +259,7 @@ export async function startServer(
   // Create LifecycleManager if not provided
   if (!lifecycleManager) {
     lifecycleManager = new LifecycleManager(server, 10_000); // 10s shutdown timeout
-    
+
     // Register shutdown hooks
     lifecycleManager.onShutdown({
       // "job-manager" hook stops all background jobs (EventPollingService,
@@ -280,7 +285,10 @@ export async function startServer(
             new SqliteStorageAdapter(env.databasePath, "event_cursors"),
           );
           // One-time idempotent migration from file cursor (kept as backup)
-          void migrateFileCursorToDatabase(new FileCursorAdapter(), dbCursorAdapter);
+          void migrateFileCursorToDatabase(
+            new FileCursorAdapter(),
+            dbCursorAdapter,
+          );
           return dbCursorAdapter;
         })()
       : new FileCursorAdapter();
@@ -324,13 +332,16 @@ export async function startServer(
           )
         : new FileCursorAdapter(`./.cursors-${cid}`);
 
+    const baseClient = new SorobanRpcClient({ url: envCopy.sorobanRpcUrl });
+    const cachedClient = new SorobanRpcCache(baseClient, cacheManager as any);
+
     const poller = new EventPollingService(
       envCopy,
       perCursorStorage,
       proposalActivityConsumer,
       wsServer,
       snapshotService,
-      undefined, // rpcClient
+      cachedClient as any,
       metricsRegistry,
       new CircuitBreaker({
         failureThreshold: 5,
@@ -352,7 +363,7 @@ export async function startServer(
       stop: () => proposalActivityConsumer.stop(),
       isRunning: () => proposalActivityConsumer.getIsRunning(),
     },
-    { replace: true },
+    { replace: true, dependencies: ["event-polling"] },
   );
 
   jobManager.registerJob(

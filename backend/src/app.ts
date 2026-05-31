@@ -309,6 +309,19 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     });
   });
 
+  v1Router.get("/admin/jobs/graph", adminAuthMiddleware, (_req, res) => {
+    try {
+      const graph = (runtime as any).jobManager?.getDependencyGraph?.() ?? {};
+      success(res, graph);
+    } catch (err) {
+      error(res, {
+        message: "Failed to fetch job graph",
+        status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
+      });
+    }
+  });
+
   v1Router.use(
     "/contracts",
     createContractsRouter(registry, adminAuthMiddleware),
@@ -357,13 +370,21 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/recurring",
     authMiddleware,
-    createRecurringRouter(runtime.recurringIndexerService, authMiddleware, runtime.cacheManager),
+    createRecurringRouter(
+      runtime.recurringIndexerService,
+      authMiddleware,
+      runtime.cacheManager,
+    ),
   );
 
   v1Router.use(
     "/transactions",
     authMiddleware,
-    createTransactionsRouter(runtime.transactionsService, env.contractId),
+    createTransactionsRouter(
+      runtime.transactionsService,
+      env.contractId,
+      runtime.cacheManager,
+    ),
   );
 
   v1Router.use(
