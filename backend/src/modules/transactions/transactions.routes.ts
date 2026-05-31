@@ -25,7 +25,11 @@ export function createTransactionsRouter(
    * - contractId: string (optional, defaults to env CONTRACT_ID)
    * - cursor:     string (optional) — paging token for next page
    * - limit:      number (optional, default: 20, max: 200)
-   * - order:      "asc" | "desc" (optional, default: "desc")
+   * - token:      string (optional) — filter by token address
+   * - from:       ISO8601 date (optional) — filter by start date
+   * - to:         ISO8601 date (optional) — filter by end date
+   * - minAmount:  number (optional) — filter by minimum amount
+   * - maxAmount:  number (optional) — filter by maximum amount
    */
   router.get("/", getTransactionsController(service, defaultContractId));
   router.get("/:txHash", getTransactionByHashController(service, defaultContractId));

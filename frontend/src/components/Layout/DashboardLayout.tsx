@@ -140,13 +140,18 @@ const DashboardLayout: React.FC = () => {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="bg-white/80 dark:bg-gray-800/30 backdrop-blur-md border-b border-slate-200 dark:border-gray-700/50 h-20 flex items-center justify-between px-6 z-30 transition-colors">
           <div className="flex items-center gap-4">
-            <button className="md:hidden text-slate-600 dark:text-gray-400 p-2 hover:bg-slate-100 dark:hover:bg-gray-700/50 rounded-lg" onClick={() => setIsSidebarOpen(true)}>
+            <button className="md:hidden text-slate-600 dark:text-gray-400 p-2 hover:bg-slate-100 dark:hover:bg-gray-700/50 rounded-lg" onClick={() => setIsSidebarOpen(true)} aria-label="Open navigation menu">
               <Menu size={24} />
             </button>
             <div className="hidden md:block">
               <p className="text-slate-500 dark:text-gray-400 text-sm font-medium">{t('navigation.welcomeBack')}</p>
             </div>
           </div>
+
+          {/* Accessibility descriptions */}
+          <div className="sr-only" id="theme-description">Switch between light, dark, and high contrast themes</div>
+          <div className="sr-only" id="notifications-description">Open notifications center to view and manage alerts</div>
+          <div className="sr-only" id="help-description">Access help documentation and support resources</div>
 
           <div className="flex items-center space-x-4">
             {/* Language Switcher */}
@@ -158,6 +163,7 @@ const DashboardLayout: React.FC = () => {
               className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white"
               aria-label={`Switch theme (current: ${theme})`}
               title={`Theme: ${theme}`}
+              aria-describedby="theme-description"
             >
               {theme === 'dark' && <Moon size={20} />}
               {theme === 'light' && <Sun size={20} />}
@@ -169,6 +175,7 @@ const DashboardLayout: React.FC = () => {
               onClick={() => setIsNotificationCenterOpen(true)}
               className="relative p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors"
               aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+              aria-describedby="notifications-description"
             >
               <Bell size={20} className="text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white transition-colors" />
               {unreadCount > 0 && (
@@ -184,6 +191,7 @@ const DashboardLayout: React.FC = () => {
               className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white"
               aria-label={t('navigation.help')}
               title={t('navigation.help')}
+              aria-describedby="help-description"
             >
               <HelpCircle size={20} />
             </button>

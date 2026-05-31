@@ -156,6 +156,79 @@ export function validateOptionalString(
 }
 
 /**
+ * Validates an optional ISO8601 date query param.
+ * Omits → `undefined`. Invalid → **400** and `null`.
+ */
+export function validateOptionalDate(
+  req: Request,
+  res: Response,
+  param: string
+): Date | undefined | null {
+  const raw = getFirstQueryString(req.query, param);
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+  
+  const date = new Date(raw);
+  if (isNaN(date.getTime())) {
+    error(res, {
+      message: `Invalid ${param}: expected ISO8601 date format, received "${raw}"`,
+      status: 400,
+      code: ErrorCode.BAD_REQUEST,
+    });
+    return null;
+  }
+  
+  return date;
+}
+
+/**
+ * Validates an optional numeric query param with range constraints.
+ * Omits → `undefined`. Invalid → **400** and `null`.
+ */
+export function validateOptionalNumber(
+  req: Request,
+  res: Response,
+  param: string,
+  options: { min?: number; max?: number } = {}
+): number | undefined | null {
+  const raw = getFirstQueryString(req.query, param);
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    error(res, {
+      message: `Invalid ${param}: expected a number, received "${raw}"`,
+      status: 400,
+      code: ErrorCode.BAD_REQUEST,
+    });
+    return null;
+  }
+
+  if (options.min !== undefined && n < options.min) {
+    error(res, {
+      message: `Invalid ${param}: must be at least ${options.min}`,
+      status: 400,
+      code: ErrorCode.BAD_REQUEST,
+    });
+    return null;
+  }
+
+  if (options.max !== undefined && n > options.max) {
+    error(res, {
+      message: `Invalid ${param}: must be at most ${options.max}`,
+      status: 400,
+      code: ErrorCode.BAD_REQUEST,
+    });
+    return null;
+  }
+
+  return n;
+}
+
+/**
  * Validates an optional integer query param with range constraints.
  * Omits → `undefined`. Invalid → **400** and `null`.
  */

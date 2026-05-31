@@ -19,19 +19,21 @@ function makeExecutedRecord(
     recipient?: string;
     ledger?: number;
     txHash?: string;
+    timestamp?: string;
   },
 ): ProposalActivityRecord {
   const ledger = options?.ledger ?? id;
+  const timestamp = options?.timestamp ?? new Date(1_700_000_000_000 + id * 1_000).toISOString();
   return {
     activityId: `activity-${id}`,
     proposalId: `proposal-${id}`,
     type: ProposalActivityType.EXECUTED,
-    timestamp: new Date(1_700_000_000_000 + id * 1_000).toISOString(),
+    timestamp,
     metadata: {
       id: `meta-${id}`,
       contractId: options?.contractId ?? "contract-1",
       ledger,
-      ledgerClosedAt: new Date(1_700_000_000_000 + id * 1_000).toISOString(),
+      ledgerClosedAt: timestamp,
       transactionHash: options?.txHash ?? `tx-${id}`,
       eventIndex: id,
     },
@@ -87,12 +89,12 @@ function createMockResponse() {
   return { res, state };
 }
 
-test("TransactionsService filters by token and ledger range with pagination metadata", async () => {
+test("TransactionsService filters by token and date range with cursor-based pagination", async () => {
   const records = [
-    makeExecutedRecord(1, { token: "TOKEN-1", ledger: 10, recipient: "A" }),
-    makeExecutedRecord(2, { token: "TOKEN-2", ledger: 20, recipient: "A" }),
-    makeExecutedRecord(3, { token: "TOKEN-1", ledger: 30, recipient: "B" }),
-    makeExecutedRecord(4, { token: "TOKEN-1", ledger: 40, recipient: "A" }),
+    makeExecutedRecord(1, { token: "TOKEN-1", recipient: "A", timestamp: "2026-01-01T00:00:00Z" }),
+    makeExecutedRecord(2, { token: "TOKEN-2", recipient: "A", timestamp: "2026-01-02T00:00:00Z" }),
+    makeExecutedRecord(3, { token: "TOKEN-1", recipient: "B", timestamp: "2026-01-03T00:00:00Z" }),
+    makeExecutedRecord(4, { token: "TOKEN-1", recipient: "A", timestamp: "2026-01-04T00:00:00Z" }),
   ];
   const service = new TransactionsService(createPersistence(records));
 
@@ -100,19 +102,17 @@ test("TransactionsService filters by token and ledger range with pagination meta
     contractId: "contract-1",
     token: "TOKEN-1",
     recipient: "A",
-    from: 15,
-    to: 45,
-    offset: 0,
+    from: new Date("2026-01-02T00:00:00Z"),
+    to: new Date("2026-01-05T00:00:00Z"),
     limit: 10,
   });
 
-  assert.equal(result.total, 1);
-  assert.equal(result.offset, 0);
-  assert.equal(result.limit, 10);
   assert.equal(result.data.length, 1);
   assert.equal(result.data[0]?.token, "TOKEN-1");
   assert.equal(result.data[0]?.recipient, "A");
-  assert.equal(result.data[0]?.ledger, 40);
+  assert.equal(result.data[0]?.timestamp, "2026-01-04T00:00:00Z");
+  assert.equal(result.nextCursor, null);
+  assert.equal(result.hasMore, false);
 });
 
 test("TransactionsService getTransactionByHash returns matching transaction", async () => {
@@ -125,7 +125,7 @@ test("TransactionsService getTransactionByHash returns matching transaction", as
 });
 
 test("getTransactionsController returns filtered response shape", async () => {
-  const records = [makeExecutedRecord(1, { token: "TOKEN-1", recipient: "RECIPIENT-1", ledger: 22 })];
+  const records = [makeExecutedRecord(1, { token: "TOKEN-1", recipient: "RECIPIENT-1", timestamp: "2026-01-01T00:00:00Z" })];
   const service = new TransactionsService(createPersistence(records));
   const handler = getTransactionsController(service, "contract-1");
   const { res, state } = createMockResponse();
@@ -135,10 +135,9 @@ test("getTransactionsController returns filtered response shape", async () => {
       query: {
         token: "TOKEN-1",
         recipient: "RECIPIENT-1",
-        from: "20",
-        to: "25",
+        from: "2026-01-01T00:00:00Z",
+        to: "2026-01-02T00:00:00Z",
         limit: "20",
-        offset: "0",
       },
     } as any,
     res as any,
@@ -148,9 +147,8 @@ test("getTransactionsController returns filtered response shape", async () => {
   const body = state.body as any;
   assert.equal(state.statusCode, 200);
   assert.equal(body.success, true);
-  assert.equal(body.data.total, 1);
   assert.equal(body.data.data[0].transactionHash, "tx-1");
-  assert.equal(body.data.data[0].ledger, 22);
+  assert.equal(body.data.data[0].timestamp, "2026-01-01T00:00:00Z");
 });
 
 test("getTransactionByHashController returns 404 for unknown tx hash", async () => {

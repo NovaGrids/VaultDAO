@@ -5,6 +5,8 @@ import {
   validatePagination,
   validateOptionalString,
   validateLedgerRange,
+  validateOptionalDate,
+  validateOptionalNumber,
 } from "../../shared/http/validateQuery.js";
 import type { TransactionsService } from "./transactions.service.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
@@ -26,11 +28,15 @@ export function getTransactionsController(
 
     const token = validateOptionalString(request, "token");
     const recipient = validateOptionalString(request, "recipient");
-
-    const ledgerRange = validateLedgerRange(request, response);
-    if (!ledgerRange) return;
-
-    const { from, to } = ledgerRange;
+    const cursor = validateOptionalString(request, "cursor");
+    const from = validateOptionalDate(request, response, "from");
+    if (from === null) return;
+    const to = validateOptionalDate(request, response, "to");
+    if (to === null) return;
+    const minAmount = validateOptionalNumber(request, response, "minAmount");
+    if (minAmount === null) return;
+    const maxAmount = validateOptionalNumber(request, response, "maxAmount");
+    if (maxAmount === null) return;
 
     try {
       const contractId =
@@ -39,7 +45,7 @@ export function getTransactionsController(
           ? request.query.contractId.trim()
           : defaultContractId;
 
-      const cacheKey = `txns:${contractId}:${token ?? ""}:${recipient ?? ""}:${from ?? ""}:${to ?? ""}:${pagination.offset}:${pagination.limit}`;
+      const cacheKey = `txns:${contractId}:${token ?? ""}:${recipient ?? ""}:${cursor ?? ""}:${from ?? ""}:${to ?? ""}:${minAmount ?? ""}:${maxAmount ?? ""}:${pagination.limit}`;
 
       if (cache) {
         const cached = cache.get(cacheKey);
@@ -51,12 +57,14 @@ export function getTransactionsController(
 
       const result = await service.getTransactions({
         contractId,
+        cursor,
         token,
         recipient,
         from,
         to,
+        minAmount,
+        maxAmount,
         limit: pagination.limit,
-        offset: pagination.offset,
       });
 
       if (cache) {

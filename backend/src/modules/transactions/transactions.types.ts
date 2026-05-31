@@ -16,17 +16,18 @@ export interface Transaction {
 
 export interface GetTransactionsParams {
   readonly contractId: string;
+  readonly cursor?: string;
   readonly token?: string;
   readonly recipient?: string;
-  readonly from?: number;
-  readonly to?: number;
-  readonly offset?: number;
+  readonly from?: Date;
+  readonly to?: Date;
+  readonly minAmount?: number;
+  readonly maxAmount?: number;
   readonly limit?: number;
 }
 
 export interface GetTransactionsResult {
   readonly data: Transaction[];
-  readonly total: number;
-  readonly offset: number;
-  readonly limit: number;
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
 }

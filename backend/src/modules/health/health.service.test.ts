@@ -31,6 +31,8 @@ const mockEnv = {
   requestBodyLimit: "1mb",
   cursorStorageType: "file" as const,
   databasePath: "./test.sqlite",
+  contractIds: ["CDTEST"],
+  indexingParallelism: 1,
 };
 
 const mockRuntime = {
@@ -353,18 +355,29 @@ test("checkJobRunner returns job counts and statuses", () => {
   assert.equal(result.jobs[1].running, false);
 });
 
-test("buildDetailedHealthPayload returns ok:true when RPC is healthy", async () => {
+test("buildDetailedHealthPayload returns status:healthy when all dependencies are healthy", async () => {
   const originalFetch = (globalThis as any).fetch;
-  (globalThis as any).fetch = async () => ({
-    json: async () => ({ result: { sequence: 9999 } }),
-  });
+  (globalThis as any).fetch = async (url: string) => {
+    if (url.includes("soroban-testnet")) {
+      return {
+        json: async () => ({ result: { sequence: 9999 } }),
+      };
+    } else if (url.includes("horizon-testnet")) {
+      return {
+        json: async () => ({ horizon_version: "2.0.0" }),
+      };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
 
   try {
     const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
 
-    assert.equal(payload.ok, true);
-    assert.equal(payload.rpc.status, "healthy");
-    assert.equal(payload.rpc.ledger, 9999);
+    assert.equal(payload.status, "healthy");
+    assert.equal(payload.dependencies.sorobanRpc.status, "healthy");
+    assert.equal(payload.dependencies.horizon.status, "healthy");
+    assert.equal(payload.dependencies.database.status, "healthy");
+    assert.equal(payload.dependencies.notificationQueue.status, "healthy");
     assert.ok(typeof payload.version === "string");
     assert.ok(typeof payload.uptime === "number");
     assert.ok(typeof payload.eventPolling === "object");
@@ -374,18 +387,55 @@ test("buildDetailedHealthPayload returns ok:true when RPC is healthy", async () 
   }
 });
 
-test("buildDetailedHealthPayload returns ok:false when RPC is unreachable", async () => {
+test("buildDetailedHealthPayload returns status:degraded when one dependency is degraded", async () => {
   const originalFetch = (globalThis as any).fetch;
-  (globalThis as any).fetch = async () => {
-    throw new Error("ECONNREFUSED");
+  (globalThis as any).fetch = async (url: string) => {
+    if (url.includes("soroban-testnet")) {
+      throw new Error("ECONNREFUSED");
+    } else if (url.includes("horizon-testnet")) {
+      return {
+        json: async () => ({ horizon_version: "2.0.0" }),
+      };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
   };
 
   try {
     const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
 
-    assert.equal(payload.ok, false);
-    assert.equal(payload.rpc.status, "degraded");
-    assert.ok(payload.rpc.error?.includes("ECONNREFUSED"));
+    assert.equal(payload.status, "degraded");
+    assert.equal(payload.dependencies.sorobanRpc.status, "degraded");
+    assert.equal(payload.dependencies.horizon.status, "healthy");
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("buildDetailedHealthPayload returns status:unhealthy when one dependency is unhealthy", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = async (url: string) => {
+    if (url.includes("soroban-testnet")) {
+      return {
+        json: async () => ({ result: { sequence: 9999 } }),
+      };
+    } else if (url.includes("horizon-testnet")) {
+      // Return 500 error for horizon
+      return {
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: async () => ({}),
+      };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+
+    assert.equal(payload.status, "unhealthy");
+    assert.equal(payload.dependencies.sorobanRpc.status, "healthy");
+    assert.equal(payload.dependencies.horizon.status, "unhealthy");
   } finally {
     (globalThis as any).fetch = originalFetch;
   }
@@ -393,21 +443,34 @@ test("buildDetailedHealthPayload returns ok:false when RPC is unreachable", asyn
 
 test("buildDetailedHealthPayload response includes all required fields", async () => {
   const originalFetch = (globalThis as any).fetch;
-  (globalThis as any).fetch = async () => ({
-    json: async () => ({ result: { sequence: 1 } }),
-  });
+  (globalThis as any).fetch = async (url: string) => {
+    if (url.includes("soroban-testnet")) {
+      return {
+        json: async () => ({ result: { sequence: 1 } }),
+      };
+    } else if (url.includes("horizon-testnet")) {
+      return {
+        json: async () => ({ horizon_version: "2.0.0" }),
+      };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
 
   try {
     const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
 
-    assert.ok("ok" in payload);
+    assert.ok("status" in payload);
     assert.ok("version" in payload);
     assert.ok("uptime" in payload);
-    assert.ok("rpc" in payload);
+    assert.ok("dependencies" in payload);
     assert.ok("eventPolling" in payload);
     assert.ok("jobRunner" in payload);
-    assert.ok("status" in payload.rpc);
-    assert.ok("latencyMs" in payload.rpc);
+    assert.ok("sorobanRpc" in payload.dependencies);
+    assert.ok("horizon" in payload.dependencies);
+    assert.ok("database" in payload.dependencies);
+    assert.ok("notificationQueue" in payload.dependencies);
+    assert.ok("status" in payload.dependencies.sorobanRpc);
+    assert.ok("latencyMs" in payload.dependencies.sorobanRpc);
     assert.ok("total" in payload.jobRunner);
     assert.ok("running" in payload.jobRunner);
     assert.ok("jobs" in payload.jobRunner);

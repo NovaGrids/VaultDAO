@@ -1,11 +1,18 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 import type { BackendEnv } from "../../config/env.js";
 import type { BackendRuntime } from "../../server.js";
 import { publicContractIdForApi } from "../../shared/utils/mask.js";
 import { fetchWithTimeout } from "../../shared/http/fetchWithTimeout.js";
+import { SqliteStorageAdapter } from "../../shared/storage/index.js";
+import { PriorityNotificationQueue } from "../../modules/notifications/priority-queue.js";
+
+// Simple in-memory cache for health check results
+const healthCheckCache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_TTL_MS = 10_000; // 10 seconds
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = join(__filename, "..");
@@ -151,13 +158,29 @@ function buildDependencyChecks(env: BackendEnv): ReadinessPayload["checks"] {
 
 // ── Detailed health check types ───────────────────────────────────────────────
 
-export type CheckStatus = "healthy" | "degraded";
+export type CheckStatus = "healthy" | "degraded" | "unhealthy";
 
-export interface RpcCheckResult {
+export interface DependencyCheckResult {
   readonly status: CheckStatus;
   readonly latencyMs: number;
-  readonly ledger?: number;
   readonly error?: string;
+}
+
+export interface RpcCheckResult extends DependencyCheckResult {
+  readonly ledger?: number;
+  readonly circuitState?: string;
+}
+
+export interface HorizonCheckResult extends DependencyCheckResult {
+  readonly version?: string;
+}
+
+export interface DatabaseCheckResult extends DependencyCheckResult {
+  readonly version?: string;
+}
+
+export interface NotificationQueueCheckResult extends DependencyCheckResult {
+  readonly size?: number;
 }
 
 export interface JobRunnerCheck {
@@ -167,15 +190,33 @@ export interface JobRunnerCheck {
 }
 
 export interface DetailedHealthPayload {
-  readonly ok: boolean;
+  readonly status: "healthy" | "degraded" | "unhealthy";
   readonly version: string;
   readonly uptime: number;
-  readonly rpc: RpcCheckResult;
-  readonly eventPolling: { lastLedgerPolled: number; isPolling: boolean; errors: number };
+  readonly dependencies: {
+    readonly sorobanRpc: RpcCheckResult & { circuitState?: string };
+    readonly horizon: HorizonCheckResult;
+    readonly database: DatabaseCheckResult;
+    readonly notificationQueue: NotificationQueueCheckResult;
+  };
+  readonly eventPolling: { lastLedgerPolled: number; isPolling: boolean; errors: number } | {
+    lastLedgerPolled: number;
+    isPolling: boolean;
+    errors: number;
+    pollers: Array<{ lastLedgerPolled: number; isPolling: boolean; errors: number }>;
+  };
   readonly jobRunner: JobRunnerCheck;
 }
 
-export async function checkRpc(rpcUrl: string, timeoutMs = 5000): Promise<RpcCheckResult> {
+import { CircuitBreaker } from "../../shared/http/circuit-breaker.js";
+
+export async function checkRpc(rpcUrl: string, timeoutMs = 5000, circuitBreaker?: CircuitBreaker): Promise<RpcCheckResult> {
+  const cacheKey = `rpc:${rpcUrl}`;
+  const cached = healthCheckCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  
   const start = Date.now();
   try {
     const response = await fetchWithTimeout(
@@ -190,14 +231,137 @@ export async function checkRpc(rpcUrl: string, timeoutMs = 5000): Promise<RpcChe
     const latencyMs = Date.now() - start;
     const json = await response.json() as any;
     const ledger: number | undefined = json?.result?.sequence ?? json?.result?.ledger;
-    return { status: "healthy", latencyMs, ledger };
+    let result: RpcCheckResult = { status: "healthy", latencyMs, ledger };
+    if (circuitBreaker) {
+      result = { ...result, circuitState: circuitBreaker.getState() };
+    }
+    healthCheckCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
   } catch (error) {
-    return { status: "degraded", latencyMs: Date.now() - start, error: String(error) };
+    let result: RpcCheckResult = { status: "degraded", latencyMs: Date.now() - start, error: String(error) };
+    if (circuitBreaker) {
+      result = { ...result, circuitState: circuitBreaker.getState() };
+    }
+    healthCheckCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  }
+}
+
+export async function checkHorizon(horizonUrl: string, timeoutMs = 3000): Promise<HorizonCheckResult> {
+  const cacheKey = `horizon:${horizonUrl}`;
+  const cached = healthCheckCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  
+  const start = Date.now();
+  try {
+    const response = await fetchWithTimeout(
+      `${horizonUrl}/`,
+      {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+      },
+      timeoutMs,
+    );
+    const latencyMs = Date.now() - start;
+    if (!response.ok) {
+      const result: HorizonCheckResult = { status: "unhealthy", latencyMs, error: `HTTP ${response.status} ${response.statusText}` };
+      healthCheckCache.set(cacheKey, { data: result, timestamp: Date.now() });
+      return result;
+    }
+    const json = await response.json() as any;
+    const result: HorizonCheckResult = { status: "healthy", latencyMs, version: json.horizon_version };
+    healthCheckCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  } catch (error) {
+    const result: HorizonCheckResult = { status: "degraded", latencyMs: Date.now() - start, error: String(error) };
+    healthCheckCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  }
+}
+
+export async function checkDatabase(env: BackendEnv, runtime: BackendRuntime, timeoutMs = 3000): Promise<DatabaseCheckResult> {
+  const cacheKey = `database:${env.databasePath || 'default'}`;
+  const cached = healthCheckCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  
+  const start = Date.now();
+  try {
+    // Check if database is available via dbCursorAdapter
+    if (runtime.dbCursorAdapter) {
+      // Try to get a cursor - this will test database connectivity
+      const result = await runtime.dbCursorAdapter.get('health-check');
+      const latencyMs = Date.now() - start;
+      const resultData: DatabaseCheckResult = { status: "healthy", latencyMs, version: "SQLite" };
+      healthCheckCache.set(cacheKey, { data: resultData, timestamp: Date.now() });
+      return resultData;
+    }
+    
+    // Fallback: try to get database path from env and create a test connection
+    if (env.databasePath) {
+      const db = new DatabaseSync(env.databasePath);
+      const result = db.prepare("SELECT 1").get() as { [key: string]: any };
+      db.close();
+      const latencyMs = Date.now() - start;
+      const resultData: DatabaseCheckResult = { status: "healthy", latencyMs, version: "SQLite" };
+      healthCheckCache.set(cacheKey, { data: resultData, timestamp: Date.now() });
+      return resultData;
+    }
+    
+    const resultData: DatabaseCheckResult = { status: "unhealthy", latencyMs: Date.now() - start, error: "No database configuration found" };
+    healthCheckCache.set(cacheKey, { data: resultData, timestamp: Date.now() });
+    return resultData;
+  } catch (error) {
+    const resultData: DatabaseCheckResult = { status: "degraded", latencyMs: Date.now() - start, error: String(error) };
+    healthCheckCache.set(cacheKey, { data: resultData, timestamp: Date.now() });
+    return resultData;
+  }
+}
+
+export async function checkNotificationQueue(runtime: BackendRuntime, timeoutMs = 3000): Promise<NotificationQueueCheckResult> {
+  const cacheKey = `notification-queue:${runtime.notificationQueue ? 'configured' : 'not-configured'}`;
+  const cached = healthCheckCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  
+  const start = Date.now();
+  try {
+    if (runtime.notificationQueue) {
+      const size = runtime.notificationQueue.size();
+      const latencyMs = Date.now() - start;
+      const resultData: NotificationQueueCheckResult = { status: "healthy", latencyMs, size };
+      healthCheckCache.set(cacheKey, { data: resultData, timestamp: Date.now() });
+      return resultData;
+    }
+    
+    const resultData: NotificationQueueCheckResult = { status: "unhealthy", latencyMs: Date.now() - start, error: "Notification queue not configured" };
+    healthCheckCache.set(cacheKey, { data: resultData, timestamp: Date.now() });
+    return resultData;
+  } catch (error) {
+    const resultData: NotificationQueueCheckResult = { status: "degraded", latencyMs: Date.now() - start, error: String(error) };
+    healthCheckCache.set(cacheKey, { data: resultData, timestamp: Date.now() });
+    return resultData;
   }
 }
 
 export function checkEventPolling(runtime: BackendRuntime) {
-  return runtime.eventPollingService.getStatus();
+  if (Array.isArray(runtime.eventPollingService)) {
+    // Handle array of pollers
+    const statuses = runtime.eventPollingService.map(poller => poller.getStatus());
+    return {
+      lastLedgerPolled: Math.max(...statuses.map(s => s.lastLedgerPolled)),
+      isPolling: statuses.some(s => s.isPolling),
+      errors: statuses.reduce((sum, s) => sum + s.errors, 0),
+      pollers: statuses,
+    };
+  } else {
+    // Handle single poller
+    return runtime.eventPollingService.getStatus();
+  }
 }
 
 export function checkJobRunner(runtime: BackendRuntime): JobRunnerCheck {
@@ -216,19 +380,50 @@ export async function buildDetailedHealthPayload(
   env: BackendEnv,
   runtime: BackendRuntime,
 ): Promise<DetailedHealthPayload> {
-  const [rpc, eventPolling, jobRunner] = await Promise.all([
-    checkRpc(env.sorobanRpcUrl),
+  // Get circuit breaker from event polling service if available
+  let circuitBreaker;
+  if (runtime.eventPollingService) {
+    if (Array.isArray(runtime.eventPollingService)) {
+      circuitBreaker = runtime.eventPollingService[0]?.getCircuitBreaker();
+    } else {
+      circuitBreaker = runtime.eventPollingService.getCircuitBreaker();
+    }
+  }
+
+  const [rpc, horizon, database, notificationQueue, eventPolling, jobRunner] = await Promise.all([
+    checkRpc(env.sorobanRpcUrl, 5000, circuitBreaker),
+    checkHorizon(env.horizonUrl),
+    checkDatabase(env, runtime),
+    checkNotificationQueue(runtime),
     Promise.resolve(checkEventPolling(runtime)),
     Promise.resolve(checkJobRunner(runtime)),
   ]);
 
-  const ok = rpc.status === "healthy";
+  // Determine overall status based on all dependencies
+  const dependencyStatuses = [
+    rpc.status,
+    horizon.status,
+    database.status,
+    notificationQueue.status,
+  ];
+  
+  let status: "healthy" | "degraded" | "unhealthy" = "healthy";
+  if (dependencyStatuses.some(s => s === "unhealthy")) {
+    status = "unhealthy";
+  } else if (dependencyStatuses.some(s => s === "degraded")) {
+    status = "degraded";
+  }
 
   return {
-    ok,
+    status,
     version: VERSION,
     uptime: getUptimeSeconds(runtime.startedAt),
-    rpc,
+    dependencies: {
+      sorobanRpc: rpc,
+      horizon,
+      database,
+      notificationQueue,
+    },
     eventPolling,
     jobRunner,
   };

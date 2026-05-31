@@ -56,19 +56,51 @@ export class TransactionsService {
       .filter((tx) =>
         params.recipient ? tx.recipient === params.recipient : true,
       )
-      .filter((tx) =>
-        params.from !== undefined ? tx.ledger >= params.from : true,
-      )
-      .filter((tx) => (params.to !== undefined ? tx.ledger <= params.to : true))
-      .sort((a, b) => b.ledger - a.ledger);
+      // Filter by date range using timestamp field
+      .filter((tx) => {
+        if (!params.from && !params.to) return true;
+        const txDate = new Date(tx.timestamp);
+        if (isNaN(txDate.getTime())) return false;
+        
+        if (params.from && txDate < params.from) return false;
+        if (params.to && txDate > params.to) return false;
+        return true;
+      })
+      // Filter by amount range
+      .filter((tx) => {
+        if (params.minAmount === undefined && params.maxAmount === undefined) return true;
+        const amount = parseFloat(tx.amount);
+        if (isNaN(amount)) return false;
+        
+        if (params.minAmount !== undefined && amount < params.minAmount) return false;
+        if (params.maxAmount !== undefined && amount > params.maxAmount) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    const offset = params.offset ?? 0;
+    // Apply cursor-based pagination
+    let startIndex = 0;
+    let endIndex = executed.length;
+    
+    if (params.cursor) {
+      // Find the index of the cursor item
+      const cursorIndex = executed.findIndex(tx => tx.transactionHash === params.cursor);
+      if (cursorIndex !== -1) {
+        startIndex = cursorIndex + 1;
+      }
+    }
+    
     const limit = params.limit ?? 20;
+    const maxLimit = Math.min(limit, 200); // Cap at 200 per page
+    endIndex = Math.min(startIndex + maxLimit, executed.length);
+    
+    const data = executed.slice(startIndex, endIndex);
+    const nextCursor = endIndex < executed.length ? executed[endIndex]?.transactionHash : null;
+    
     return {
-      data: executed.slice(offset, offset + limit),
-      total: executed.length,
-      offset,
-      limit,
+      data,
+      nextCursor,
+      hasMore: endIndex < executed.length,
     };
   }
 
@@ -81,7 +113,6 @@ export class TransactionsService {
   ): Promise<Transaction | null> {
     const result = await this.getTransactions({
       contractId,
-      offset: 0,
       limit: Number.MAX_SAFE_INTEGER,
     });
     return result.data.find((tx) => tx.transactionHash === txHash) ?? null;

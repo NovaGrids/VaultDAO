@@ -10,6 +10,7 @@ import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 import { TimeoutError } from "../../shared/http/fetchWithTimeout.js";
 import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
 import type { MetricsRegistry } from "../health/metrics.registry.js";
+import { CircuitBreaker } from "../../shared/http/circuit-breaker.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
@@ -55,6 +56,8 @@ export class EventPollingService {
   private readonly MAX_PROCESSED_IDS = 1000;
   private readonly rpcClient: SorobanRpcClient;
 
+  private readonly circuitBreaker: CircuitBreaker;
+
   constructor(
     private readonly env: BackendEnv,
     private readonly storage: CursorStorage,
@@ -63,8 +66,10 @@ export class EventPollingService {
     private readonly snapshotService?: SnapshotService,
     rpcClient?: SorobanRpcClient,
     private readonly metrics?: MetricsRegistry,
+    circuitBreaker?: CircuitBreaker,
   ) {
     this.rpcClient = rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
+    this.circuitBreaker = circuitBreaker ?? new CircuitBreaker();
   }
 
   /**
@@ -180,7 +185,15 @@ export class EventPollingService {
   private async poll(): Promise<void> {
     // ── First-run initialisation ─────────────────────────────────────────────
     if (this.lastLedgerPolled === 0) {
-      const latestLedger = await this.rpcClient.getLatestLedger();
+      const result = await this.circuitBreaker.execute(() => this.rpcClient.getLatestLedger());
+      if (!result.success) {
+        this.logger.warn("circuit breaker prevented getLatestLedger call", {
+          state: result.state,
+          error: result.error?.message,
+        });
+        throw result.error;
+      }
+      const latestLedger = result.data;
       this.logger.info(`initializing polling cursor at ledger ${latestLedger}`);
       await this.storage.saveCursor({
         lastLedger: latestLedger,
@@ -197,7 +210,7 @@ export class EventPollingService {
     let latestLedger = this.lastLedgerPolled;
 
     do {
-      const result = await this.rpcClient.getEventsPage({
+      const result = await this.circuitBreaker.execute(() => this.rpcClient.getEventsPage({
         startLedger,
         filters: [
           {
@@ -209,12 +222,23 @@ export class EventPollingService {
           limit: EVENTS_PAGE_LIMIT,
           ...(cursor !== undefined ? { cursor } : {}),
         },
-      });
+      }));
+      if (!result.success) {
+        this.logger.warn("circuit breaker prevented getEventsPage call", {
+          state: result.state,
+          error: result.error?.message,
+        });
+        throw result.error;
+      }
+      const pageResult = result.data;
+      if (!pageResult) {
+        throw new Error("getEventsPage returned null result");
+      }
 
-      latestLedger = result.latestLedger;
+      latestLedger = pageResult.latestLedger;
 
       allEvents.push(
-        ...result.events.map((raw) => ({
+        ...pageResult.events.map((raw) => ({
           id: raw.id,
           contractId: raw.contractId,
           topic: raw.topic,
@@ -226,8 +250,8 @@ export class EventPollingService {
 
       // Continue paginating when the page was full — there may be more events.
       cursor =
-        result.events.length === EVENTS_PAGE_LIMIT
-          ? result.events[result.events.length - 1].pagingToken
+        pageResult.events.length === EVENTS_PAGE_LIMIT
+          ? pageResult.events[pageResult.events.length - 1].pagingToken
           : undefined;
     } while (cursor !== undefined);
 
@@ -361,5 +385,12 @@ export class EventPollingService {
       isPolling: this.isRunning,
       errors: this.consecutiveErrors,
     };
+  }
+
+  /**
+   * Returns the circuit breaker instance used by this service.
+   */
+  public getCircuitBreaker(): CircuitBreaker | undefined {
+    return this.circuitBreaker;
   }
 }

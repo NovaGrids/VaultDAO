@@ -1,28 +1,15 @@
 ## Description
 
-This pull request consolidates the implementation of several key backend enhancements, focusing on scalability, security, standardizing API responses, and safe lifecycle management.
+This PR consolidates several critical backend and UI/UX improvements to enhance the stability, performance, and accessibility of VaultDAO. It introduces essential circuit breakers, upgrades health monitoring, improves data querying capabilities, and makes the application more accessible to all users.
 
-### Key Features Implemented:
-* **Rate Limiter with Redis Backend for Horizontal Scaling:**
-  * Implemented `RedisRateLimitStore` using `ioredis` with an `INCR` + `EXPIRE` pattern for atomic counter increments.
-  * Added fallback logic to use the in-memory store if Redis is unavailable or `REDIS_URL` is not configured.
-  * Added environment variables (`REDIS_URL`, `REDIS_TLS`) and exposed Redis connection status in the detailed health endpoint (`GET /api/v1/health/detailed`).
-* **Secure Logging with PII Redaction:**
-  * Integrated a fast JSON logger (`pino`) replacing `console.log`.
-  * Implemented a custom log serializer to recursively redact sensitive fields (e.g., `password`, `token`, `ssn`, `credit_card`) with `[REDACTED]`.
-  * Created an Express middleware to log all HTTP requests (method, url, status, duration) and structured application logs with `traceId` and `userId` where applicable.
-* **Standardized API Error Response Schema:**
-  * Standardized the API error response shape to ensure consistency (`{ error: { code, message, details, meta } }`).
-  * Updated the `error()` helper and `createErrorMiddleware` to enforce the new structure.
-  * Introduced request body validation middleware using TypeScript type guards.
-* **Graceful Shutdown with In-Flight Request Draining:**
-  * Enhanced `LifecycleManager` to wait for in-flight HTTP requests to complete before terminating the server.
-  * Implemented a thread-safe middleware counter to track in-flight requests.
-  * Added `GET /health/drain` for load balancer health checks and configured `GET /ready` to return 503 during shutdown to stop routing.
+### Changes Included
+* **Health Check Deep Probe with Dependency Status**: Upgraded the `/api/v1/health/detailed` endpoint to actively probe external dependencies (Soroban RPC, Horizon, SQLite) and return their accurate, real-time status.
+* **Transaction History Pagination and Filtering**: Enhanced the `GET /api/v1/transactions` endpoint to fully support server-side pagination and filtering, ensuring efficient data retrieval and reducing load for large vaults.
+* **Soroban RPC Circuit Breaker**: Implemented a circuit breaker in the `EventPollingService` to pause retries during Soroban RPC node downtime or rate-limiting, preventing resource waste and cascading failures.
+* **Keyboard Navigation and Screen Reader Accessibility**: Significantly improved interface accessibility by ensuring all interactive elements are fully navigable via keyboard and state changes are properly announced to screen reader users.
 
----
-
-Closes #986
-Closes #984
-Closes #983
-Closes #978
+## Related Issues
+Closes #985
+Closes #982
+Closes #981
+Closes #966
