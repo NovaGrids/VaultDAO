@@ -3,8 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare, FileText, Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
-import NewProposalModal from '../../components/modals/NewProposalModal';
+import { ProposalWizard } from '../../components/modals/ProposalWizard';
 import ProposalDetailModal from '../../components/modals/ProposalDetailModal';
 import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
@@ -65,14 +64,14 @@ const Proposals: React.FC = () => {
   const { rejectProposal, approveProposal, executeProposal, getUserRole, getTokenBalances } = useVaultContract();
   const { address } = useWallet();
   const { isReady, checkReady } = useActionReadiness();
-  const { subscribe, updatePresence, connectionStatus, trackEvent } = useRealtime();
+  const { subscribe, updatePresence, connectionStatus } = useRealtime();
 
   const {
     proposals,
     loading,
     error: proposalsError,
     refetch: refetchProposals,
-  } = useProposals();
+  } = useProposals(address);
 
   const [localProposals, setLocalProposals] = useState<Proposal[]>([]);
   const [approvingIds, setApprovingIds] = useState<Set<string>>(new Set());
@@ -122,12 +121,7 @@ const Proposals: React.FC = () => {
     }
   }, [searchParams]);
 
-  const [newProposalForm, setNewProposalForm] = useState<NewProposalFormData>({
-    recipient: '',
-    token: 'NATIVE',
-    amount: '',
-    memo: '',
-  });
+  // selectedToken kept for future token-filter UI
   const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
 
   // Fetch token balances
@@ -174,27 +168,6 @@ const Proposals: React.FC = () => {
         setLocalProposals((prev) =>
           prev.map((p) => (p.id === data.id ? { ...p, ...data.updates } : p))
         );
-      }),
-      subscribe('proposal_approved', (data: { id: string; approver: string; eventId?: string }) => {
-        const eventId = data.eventId ?? `approved-${data.id}-${data.approver}`;
-        if (!trackEvent(eventId)) return;
-        setLocalProposals((prev) =>
-          prev.map((p) => {
-            if (p.id === data.id) {
-              if (p.approvedBy.includes(data.approver)) return p;
-              const newApprovals = p.approvals + 1;
-              const newApprovedBy = [...p.approvedBy, data.approver];
-              return {
-                ...p,
-                approvals: newApprovals,
-                approvedBy: newApprovedBy,
-                status: newApprovals >= p.threshold ? 'Approved' : p.status,
-              };
-            }
-            return p;
-          })
-        );
-        notify('proposal_approved', `Proposal #${data.id} approved`, 'success');
       }),
       subscribe('proposal_rejected', (data: { id: string; eventId?: string }) => {
         const eventId = data.eventId ?? `rejected-${data.id}`;
@@ -604,16 +577,14 @@ const Proposals: React.FC = () => {
           )}
         </div>
 
-        <NewProposalModal
+        <ProposalWizard
           isOpen={showNewProposalModal}
-          loading={loading}
-          selectedTemplateName={null}
-          formData={newProposalForm}
-          onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
-          onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
-          onOpenTemplateSelector={() => { }}
-          onSaveAsTemplate={() => { }}
+          walletAddress={address}
           onClose={() => setShowNewProposalModal(false)}
+          onSuccess={(txHash) => {
+            notify('new_proposal', `Proposal submitted! Tx: ${txHash.slice(0, 8)}…`, 'success');
+            void refetchProposals();
+          }}
         />
         <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} />
         <ConfirmationModal isOpen={showRejectModal} title="Reject Proposal" message="Are you sure you want to reject this?" onConfirm={handleRejectConfirm} onCancel={() => setShowRejectModal(false)} showReasonInput={true} isDestructive={true} />
