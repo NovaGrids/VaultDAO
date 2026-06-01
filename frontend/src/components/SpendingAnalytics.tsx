@@ -1,331 +1,340 @@
-import React, { useMemo, useState } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, X, ChevronDown } from 'lucide-react';
-import ForecastChart from './ForecastChart';
-import AnomalyDetector from './AnomalyDetector';
-import { filterTransactionsByDateRange } from '../utils/analyticsAggregation';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  ReferenceLine,
+} from 'recharts';
+import { TrendingUp, DollarSign, AlertCircle } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
+import { linearRegression, forecastNext, calculateStdError } from '../utils/forecasting';
 
-interface Transaction {
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface TokenSlice {
+  token: string;
   amount: number;
-  timestamp: string;
-  recipient: string;
 }
+
+interface SpendingHistory {
+  date: string;
+  amount: number;
+  dailyLimit: number;
+}
+
+interface SpendingData {
+  dailyUsed: number;
+  weeklyUsed: number;
+  dailyLimit: number;
+  weeklyLimit: number;
+  history: SpendingHistory[];
+  byToken: TokenSlice[];
+}
+
+const CACHE_TTL_MS = 60_000; // 60 seconds
+
+const PIE_COLORS = ['#8b5cf6', '#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#06b6d4'];
+
+// ---------------------------------------------------------------------------
+// Gauge component
+// ---------------------------------------------------------------------------
+
+interface UtilizationGaugeProps {
+  label: string;
+  used: number;
+  limit: number;
+}
+
+const UtilizationGauge: React.FC<UtilizationGaugeProps> = ({ label, used, limit }) => {
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  const color = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-green-500';
+  const textColor = pct >= 80 ? 'text-red-400' : pct >= 60 ? 'text-amber-400' : 'text-green-400';
+
+  return (
+    <div className="bg-gray-800/80 rounded-xl border border-gray-700 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-medium text-gray-300">{label}</span>
+        <span className={`text-sm font-bold ${textColor}`}>{pct.toFixed(1)}%</span>
+      </div>
+      <div className="relative h-3 bg-gray-700 rounded-full overflow-hidden">
+        <div
+          className={`h-full transition-all duration-500 ${color}`}
+          style={{ width: `${pct}%` }}
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${label} utilization: ${pct.toFixed(1)}%`}
+        />
+      </div>
+      <div className="flex justify-between mt-2 text-xs text-gray-500">
+        <span>{used.toLocaleString()} used</span>
+        <span>{limit.toLocaleString()} limit</span>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+
+/** Resolve the backend base URL from optional env var, falling back to same-origin */
+function getApiBase(): string {
+  return (import.meta.env.VITE_API_URL as string | undefined) ?? '';
+}
+
+/** Resolve the API key from optional env var */
+function getApiKey(): string {
+  return (import.meta.env.VITE_API_KEY as string | undefined) ?? '';
+}
+
+async function fetchSpending(): Promise<{ dailyUsed: number; weeklyUsed: number; dailyLimit: number; weeklyLimit: number }> {
+  const res = await fetch(`${getApiBase()}/api/v1/analytics/spending`, {
+    headers: { 'X-API-Key': getApiKey() },
+  });
+  if (!res.ok) throw new Error(`Spending fetch failed: ${res.status}`);
+  const json = await res.json() as { data?: { dailyUsed?: number; weeklyUsed?: number; dailyLimit?: number; weeklyLimit?: number } };
+  const d = json.data ?? {};
+  return {
+    dailyUsed: Number(d.dailyUsed ?? 0),
+    weeklyUsed: Number(d.weeklyUsed ?? 0),
+    dailyLimit: Number(d.dailyLimit ?? 0),
+    weeklyLimit: Number(d.weeklyLimit ?? 0),
+  };
+}
+
+async function fetchSpendingHistory(): Promise<SpendingHistory[]> {
+  const res = await fetch(`${getApiBase()}/api/v1/analytics/spending/history?days=30`, {
+    headers: { 'X-API-Key': getApiKey() },
+  });
+  if (!res.ok) throw new Error(`History fetch failed: ${res.status}`);
+  const json = await res.json() as { data?: SpendingHistory[] };
+  return json.data ?? [];
+}
+
+async function fetchSpendingByToken(): Promise<TokenSlice[]> {
+  const res = await fetch(`${getApiBase()}/api/v1/analytics/spending/by-token`, {
+    headers: { 'X-API-Key': getApiKey() },
+  });
+  if (!res.ok) throw new Error(`By-token fetch failed: ${res.status}`);
+  const json = await res.json() as { data?: TokenSlice[] };
+  return json.data ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 interface SpendingAnalyticsProps {
-  transactions: Transaction[];
-  currentBalance: number;
-  monthlyBudget?: number;
+  /** Optional override for testing — bypasses API fetch */
+  mockData?: SpendingData;
 }
 
-type DatePreset = '7d' | '30d' | 'thisMonth' | 'allTime' | 'custom';
+const SpendingAnalytics: React.FC<SpendingAnalyticsProps> = ({ mockData }) => {
+  const { showToast } = useToast();
 
-const SpendingAnalytics = ({
-  transactions,
-  currentBalance,
-  monthlyBudget = 10000
-}: SpendingAnalyticsProps) => {
-  const [forecastPeriod, setForecastPeriod] = useState<30 | 90>(30);
-  const [currentTime] = useState(() => Date.now());
-  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
-  const [activePreset, setActivePreset] = useState<DatePreset>('allTime');
+  const [data, setData] = useState<SpendingData | null>(mockData ?? null);
+  const [loading, setLoading] = useState(!mockData);
+  const [error, setError] = useState<string | null>(null);
+  const cacheRef = useRef<{ data: SpendingData; fetchedAt: number } | null>(null);
+  const warnedRef = useRef(false);
 
-  const handlePresetChange = (preset: DatePreset) => {
-    setActivePreset(preset);
-    const now = new Date();
-    let from = '';
-    let to = '';
+  // ---------------------------------------------------------------------------
+  // Fetch
+  // ---------------------------------------------------------------------------
 
-    const formatDate = (date: Date) => date.toISOString().split('T')[0];
+  const fetchData = useCallback(async () => {
+    if (mockData) return; // skip fetch when mock provided
 
-    switch (preset) {
-      case '7d':
-        from = formatDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
-        to = formatDate(now);
-        break;
-      case '30d':
-        from = formatDate(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
-        to = formatDate(now);
-        break;
-      case 'thisMonth':
-        from = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
-        to = formatDate(now);
-        break;
-      case 'allTime':
-        from = '';
-        to = '';
-        break;
-      default:
-        return;
+    // Cache check
+    if (cacheRef.current && Date.now() - cacheRef.current.fetchedAt < CACHE_TTL_MS) {
+      setData(cacheRef.current.data);
+      return;
     }
-    setDateRange({ from, to });
-  };
 
-  const analytics = useMemo(() => {
-    const filtered = filterTransactionsByDateRange<Transaction>(transactions, dateRange.from, dateRange.to);
+    setLoading(true);
+    setError(null);
+    try {
+      const [spending, history, byToken] = await Promise.all([
+        fetchSpending(),
+        fetchSpendingHistory(),
+        fetchSpendingByToken(),
+      ]);
+      const result: SpendingData = { ...spending, history, byToken };
+      cacheRef.current = { data: result, fetchedAt: Date.now() };
+      setData(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load spending data';
+      setError(msg);
+      // Fall back to empty data so charts still render
+      setData({ dailyUsed: 0, weeklyUsed: 0, dailyLimit: 0, weeklyLimit: 0, history: [], byToken: [] });
+    } finally {
+      setLoading(false);
+    }
+  }, [mockData]);
 
-    const dailySpending = filtered.reduce((acc, t) => {
-      const date = t.timestamp.slice(0, 10);
-      acc[date] = (acc[date] || 0) + t.amount;
-      return acc;
-    }, {} as Record<string, number>);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-    const historicalData = Object.entries(dailySpending)
-      .map(([date, amount]) => ({ date, amount }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+  // ---------------------------------------------------------------------------
+  // Utilization warning toast (once per session when > 80%)
+  // ---------------------------------------------------------------------------
 
-    // For metrics calculation, we use the filtered range duration
-    const rangeDurationDays = (() => {
-        if (!dateRange.from || !dateRange.to) {
-            // Default to 30 days for metrics baseline if no range specified
-            return 30;
-        }
-        const diff = new Date(dateRange.to).getTime() - new Date(dateRange.from).getTime();
-        return Math.max(1, Math.ceil(diff / (24 * 60 * 60 * 1000)));
-    })();
+  useEffect(() => {
+    if (!data || warnedRef.current) return;
+    const dailyPct = data.dailyLimit > 0 ? (data.dailyUsed / data.dailyLimit) * 100 : 0;
+    const weeklyPct = data.weeklyLimit > 0 ? (data.weeklyUsed / data.weeklyLimit) * 100 : 0;
+    if (dailyPct > 80 || weeklyPct > 80) {
+      const which = dailyPct > weeklyPct ? 'Daily' : 'Weekly';
+      const pct = Math.max(dailyPct, weeklyPct).toFixed(1);
+      showToast(`⚠️ ${which} spending limit at ${pct}% utilization`, 'warning');
+      warnedRef.current = true;
+    }
+  }, [data, showToast]);
 
-    const totalSpent = filtered.reduce((sum, t) => sum + t.amount, 0);
-    const burnRate = rangeDurationDays > 0 ? totalSpent / rangeDurationDays : 0;
-    const runway = burnRate > 0 ? currentBalance / burnRate : Infinity;
-    const anomalies = filtered
-      .filter((transaction) => transaction.amount > monthlyBudget * 0.5)
-      .map((transaction, index) => ({
-        id: `${transaction.recipient}-${index}`,
-        amount: transaction.amount,
-        timestamp: new Date(transaction.timestamp).getTime(),
-        recipient: transaction.recipient,
-      }));
+  // ---------------------------------------------------------------------------
+  // Chart data: historical + 7-day forecast
+  // ---------------------------------------------------------------------------
 
-    const budgetUsed = (totalSpent / monthlyBudget) * 100;
-    const velocity = filtered.length > 0 ? totalSpent / rangeDurationDays : 0;
+  const chartData = useMemo(() => {
+    if (!data || data.history.length < 3) return [];
 
-    return {
-      historicalData,
-      totalSpent,
-      burnRate,
-      runway,
-      anomalies,
-      budgetUsed,
-      velocity,
-      transactionCount: filtered.length,
-      days: rangeDurationDays
-    };
-  }, [transactions, currentBalance, monthlyBudget, forecastPeriod, dateRange, currentTime]);
+    const sorted = [...data.history].sort((a, b) => a.date.localeCompare(b.date));
+    const points = sorted.map((d, i) => ({ x: i, y: d.amount }));
+    const { slope, intercept } = linearRegression(points);
+    const stdError = calculateStdError(points, slope, intercept);
+    const lastX = points.length - 1;
 
-  const getBudgetColor = (percent: number) => {
-    if (percent >= 100) return 'bg-red-500';
-    if (percent >= 90) return 'bg-amber-500';
-    if (percent >= 80) return 'bg-yellow-500';
-    return 'bg-green-500';
-  };
+    const historical: Record<string, unknown>[] = sorted.map((d, i) => ({
+      name: d.date.slice(5), // MM-DD
+      actual: d.amount,
+      limit: d.dailyLimit,
+      forecast: i === lastX ? d.amount : null,
+    }));
+
+    const forecast: Record<string, unknown>[] = forecastNext(7, slope, intercept, lastX).map((p, i) => ({
+      name: `+${i + 1}d`,
+      forecast: Math.round(p.y),
+      upper: Math.round(p.y + 1.96 * stdError),
+      lower: Math.round(Math.max(0, p.y - 1.96 * stdError)),
+      limit: data.dailyLimit,
+    }));
+
+    return [...historical, ...forecast];
+  }, [data]);
+
+  // ---------------------------------------------------------------------------
+  // Pie chart data
+  // ---------------------------------------------------------------------------
+
+  const pieData = useMemo(() => {
+    if (!data?.byToken?.length) return [];
+    return data.byToken.map(t => ({ name: t.token, value: t.amount }));
+  }, [data]);
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-gray-800/60 border border-gray-700/60 rounded-xl p-4 animate-pulse h-40" />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Date Range Picker */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 bg-gray-800/50 p-6 rounded-2xl border border-gray-700">
-        <div className="space-y-3">
-          <label className="text-xs text-gray-400 uppercase tracking-widest font-bold flex items-center gap-2">
-            <Calendar size={14} className="text-purple-400" />
-            Time Range Scoping
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { id: 'allTime', label: 'All Time' },
-              { id: 'thisMonth', label: 'This Month' },
-              { id: '30d', label: 'Last 30 Days' },
-              { id: '7d', label: 'Last 7 Days' },
-            ].map((preset) => (
-              <button
-                key={preset.id}
-                onClick={() => handlePresetChange(preset.id as DatePreset)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
-                  activePreset === preset.id
-                    ? 'bg-purple-600 border-purple-500 text-white shadow-lg shadow-purple-900/20'
-                    : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200'
-                }`}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
+      {error && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-amber-400 text-sm flex items-center gap-2">
+          <AlertCircle size={16} />
+          {error} — showing cached or empty data.
         </div>
+      )}
 
-        <div className="flex items-center gap-3">
-          <div className="space-y-1.5 flex-1 md:flex-none">
-            <p className="text-[10px] text-gray-500 font-bold uppercase ml-1">From</p>
-            <input
-              type="date"
-              value={dateRange.from}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                const value = e.target.value;
-                setDateRange((prev: { from: string; to: string }) => ({ ...prev, from: value }));
-                setActivePreset('custom');
-              }}
-              className="w-full md:w-40 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white focus:ring-2 focus:ring-purple-500/50 outline-none transition-all"
-            />
-          </div>
-          <div className="mt-6 text-gray-600">
-            <ChevronDown size={20} className="-rotate-90" />
-          </div>
-          <div className="space-y-1.5 flex-1 md:flex-none">
-            <p className="text-[10px] text-gray-500 font-bold uppercase ml-1">To</p>
-            <input
-              type="date"
-              value={dateRange.to}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                const value = e.target.value;
-                setDateRange((prev: { from: string; to: string }) => ({ ...prev, to: value }));
-                setActivePreset('custom');
-              }}
-              className="w-full md:w-40 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white focus:ring-2 focus:ring-purple-500/50 outline-none transition-all"
-            />
-          </div>
-          {(dateRange.from || dateRange.to) && (
-             <button 
-                onClick={() => handlePresetChange('allTime')}
-                className="mt-6 p-2 text-gray-500 hover:text-white transition-colors"
-                title="Clear Filters"
-             >
-                <X size={20} />
-             </button>
-          )}
-        </div>
+      {/* Utilization Gauges */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <UtilizationGauge label="Daily Limit" used={data?.dailyUsed ?? 0} limit={data?.dailyLimit ?? 0} />
+        <UtilizationGauge label="Weekly Limit" used={data?.weeklyUsed ?? 0} limit={data?.weeklyLimit ?? 0} />
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-700 p-6 flex flex-col justify-between hover:border-purple-500/30 transition-colors group">
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400 group-hover:bg-purple-500 group-hover:text-white transition-colors">
-                <DollarSign size={20} />
-              </div>
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Burn Rate</span>
-            </div>
-            <p className="text-3xl font-black text-white">{analytics.burnRate.toFixed(0)}</p>
-          </div>
-          <p className="text-[10px] text-gray-500 mt-4 font-bold uppercase">XLM / day ({analytics.days}d avg)</p>
-        </div>
-
-        <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-700 p-6 flex flex-col justify-between hover:border-blue-500/30 transition-colors group">
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
-                <Calendar size={20} />
-              </div>
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Runway</span>
-            </div>
-            <p className="text-3xl font-black text-white">
-              {analytics.runway === Infinity ? '∞' : Math.floor(analytics.runway)}
-            </p>
-          </div>
-          <p className="text-[10px] text-gray-500 mt-4 font-bold uppercase">Days remaining</p>
-        </div>
-
-        <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-700 p-6 flex flex-col justify-between hover:border-green-500/30 transition-colors group">
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-green-500/10 rounded-lg text-green-400 group-hover:bg-green-500 group-hover:text-white transition-colors">
-                <TrendingUp size={20} />
-              </div>
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Velocity</span>
-            </div>
-            <p className="text-3xl font-black text-white">{analytics.velocity.toFixed(0)}</p>
-          </div>
-          <p className="text-[10px] text-gray-500 mt-4 font-bold uppercase">XLM / day average</p>
-        </div>
-
-        <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-700 p-6 flex flex-col justify-between hover:border-amber-500/30 transition-colors group">
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400 group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                <TrendingDown size={20} />
-              </div>
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Period</span>
-            </div>
-            <p className="text-3xl font-black text-white">{analytics.totalSpent.toLocaleString()}</p>
-          </div>
-          <p className="text-[10px] text-gray-500 mt-4 font-bold uppercase">{analytics.transactionCount} transactions</p>
-        </div>
-      </div>
-
-      {/* Budget Tracking */}
+      {/* Daily Spend vs Limit Area Chart + Forecast */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="font-semibold text-white">Monthly Budget</h4>
-          <span className="text-sm text-gray-400">
-            {analytics.totalSpent.toLocaleString()} / {monthlyBudget.toLocaleString()} XLM
-          </span>
-        </div>
-        <div className="relative h-4 bg-gray-700 rounded-full overflow-hidden">
-          <div
-            className={`h-full transition-all duration-500 ${getBudgetColor(analytics.budgetUsed)}`}
-            style={{ width: `${Math.min(analytics.budgetUsed, 100)}%` }}
-          />
-        </div>
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-xs text-gray-500">{analytics.budgetUsed.toFixed(1)}% used</span>
-          {analytics.budgetUsed >= 80 && (
-            <div className="flex items-center gap-1 text-xs text-amber-400">
-              <AlertCircle size={14} />
-              <span>Approaching limit</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Forecast Chart */}
-      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="font-semibold text-white">Spending Forecast</h4>
-          <select
-            value={forecastPeriod}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setForecastPeriod(Number(e.target.value) as 30 | 90)}
-            className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
+          <h4 className="font-semibold text-white flex items-center gap-2">
+            <TrendingUp size={18} className="text-purple-400" />
+            Daily Spend vs Limit (30d + 7d forecast)
+          </h4>
+          <button
+            onClick={fetchData}
+            className="text-xs text-gray-400 hover:text-white transition-colors px-3 py-1.5 bg-gray-700 rounded-lg"
           >
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
-          </select>
+            Refresh
+          </button>
         </div>
-        <ForecastChart historicalData={analytics.historicalData} forecastDays={forecastPeriod} />
+        {chartData.length < 3 ? (
+          <p className="text-center text-gray-500 py-12">Insufficient data for chart</p>
+        ) : (
+          <div className="h-64 w-full" data-testid="spending-area-chart">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="spendGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                <XAxis dataKey="name" stroke="#4b5563" fontSize={10} tickLine={false} />
+                <YAxis stroke="#4b5563" fontSize={10} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', fontSize: '12px' }}
+                />
+                {(data?.dailyLimit ?? 0) > 0 && (
+                  <ReferenceLine y={data!.dailyLimit} stroke="#ef4444" strokeDasharray="4 4"
+                    label={{ position: 'right', value: 'Limit', fill: '#ef4444', fontSize: 10 }} />
+                )}
+                <Area type="monotone" dataKey="actual" stroke="#8b5cf6" strokeWidth={2} fill="url(#spendGradient)" name="Actual" />
+                <Line type="monotone" dataKey="forecast" stroke="#22c55e" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Forecast" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        {/* Legend */}
+        <div className="flex justify-center gap-6 mt-4">
+          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span className="text-xs text-gray-500 uppercase font-bold">Actual</span></div>
+          <div className="flex items-center gap-2"><div className="w-3 h-0.5 bg-green-500" style={{ borderTop: '2px dashed' }} /><span className="text-xs text-gray-500 uppercase font-bold">Forecast</span></div>
+          <div className="flex items-center gap-2"><div className="w-3 h-0.5 bg-red-500" style={{ borderTop: '2px dashed' }} /><span className="text-xs text-gray-500 uppercase font-bold">Limit</span></div>
+        </div>
       </div>
 
-      {/* Anomaly Detection */}
-      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <AnomalyDetector
-          proposals={analytics.anomalies}
-          historicalRecipients={new Set(transactions.map((transaction) => transaction.recipient))}
-        />
-      </div>
-
-      {/* Insights */}
-      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <h4 className="font-semibold text-white mb-4">Automated Insights</h4>
-        <ul className="space-y-2">
-          {analytics.budgetUsed > 100 && (
-            <li className="flex items-start gap-2 text-sm text-red-400">
-              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-              <span>Monthly budget exceeded by {(analytics.budgetUsed - 100).toFixed(1)}%</span>
-            </li>
-          )}
-          {analytics.runway < 30 && analytics.runway !== Infinity && (
-            <li className="flex items-start gap-2 text-sm text-amber-400">
-              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-              <span>Low runway: Only {Math.floor(analytics.runway)} days remaining at current burn rate</span>
-            </li>
-          )}
-          {analytics.anomalies.length > 0 && (
-            <li className="flex items-start gap-2 text-sm text-blue-400">
-              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-              <span>{analytics.anomalies.length} anomal{analytics.anomalies.length === 1 ? 'y' : 'ies'} detected in recent transactions</span>
-            </li>
-          )}
-          {analytics.budgetUsed < 50 && (
-            <li className="flex items-start gap-2 text-sm text-green-400">
-              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-              <span>Spending is well within budget ({analytics.budgetUsed.toFixed(1)}% used)</span>
-            </li>
-          )}
-        </ul>
-      </div>
+      {/* By-Token Pie Chart */}
+      {pieData.length > 0 && (
+        <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+          <h4 className="font-semibold text-white flex items-center gap-2 mb-4">
+            <DollarSign size={18} className="text-amber-400" />
+            Spending by Token
+          </h4>
+          <div className="h-64 w-full" data-testid="spending-pie-chart">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={pieData} cx="50%" cy="50%" outerRadius={90} dataKey="value" nameKey="name" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                  {pieData.map((_, i) => (
+                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(v: number) => v.toLocaleString()} contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', fontSize: '12px' }} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
