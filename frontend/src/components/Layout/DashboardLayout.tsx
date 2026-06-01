@@ -23,7 +23,8 @@ import {
   Sun,
   Moon,
   Contrast,
-  Zap,
+  Lock,
+  Vote,
 } from "lucide-react";
 import { useTheme } from "../../context/useTheme";
 import { useWallet } from "../../hooks/useWallet";
@@ -43,6 +44,8 @@ import { useWalletProviderInfo } from "../WalletProviders";
 import { useKeyboardShortcut } from "../../hooks/useKeyboardShortcut";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { KeyboardShortcuts } from "../KeyboardShortcuts";
+import { CommandPalette, modKey } from "../CommandPalette";
+import type { PaletteAction } from "../CommandPalette";
 
 const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
@@ -59,11 +62,45 @@ const DashboardLayout: React.FC = () => {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
   // Keyboard shortcuts: Alt+P → Proposals, Alt+S → Settings, Alt+N → Notifications
   useKeyboardShortcut({ key: 'p', altKey: true }, () => navigate('/dashboard/proposals'));
   useKeyboardShortcut({ key: 's', altKey: true }, () => navigate('/dashboard/settings'));
   useKeyboardShortcut({ key: 'n', altKey: true }, () => setIsNotificationCenterOpen(true));
+
+  // Sequential shortcuts: G P = go to proposals, G A = go to analytics, N = new proposal
+  const pendingGRef = React.useRef(false);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) return;
+
+      if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        pendingGRef.current = true;
+        setTimeout(() => { pendingGRef.current = false; }, 1000);
+        return;
+      }
+
+      if (pendingGRef.current) {
+        pendingGRef.current = false;
+        if (e.key.toLowerCase() === 'p') { e.preventDefault(); navigate('/dashboard/proposals'); }
+        else if (e.key.toLowerCase() === 'a') { e.preventDefault(); navigate('/dashboard/analytics'); }
+        return;
+      }
+
+      if (e.key.toLowerCase() === 'n' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        navigate('/dashboard/proposals');
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigate]);
 
   // Focus trap for wallet modal
   const walletModalRef = useFocusTrap<HTMLDivElement>(isWalletModalOpen);
@@ -87,7 +124,8 @@ const DashboardLayout: React.FC = () => {
     { label: t('nav.overview'), path: '/dashboard', icon: LayoutDashboard, id: 'overview-nav' },
     { label: t('nav.proposals'), path: '/dashboard/proposals', icon: FileText, id: 'proposals-nav' },
     { label: t('nav.recurringPayments'), path: '/dashboard/recurring-payments', icon: RefreshCw, id: 'recurring-nav' },
-    { label: 'Streaming', path: '/dashboard/streaming', icon: Zap, id: 'streaming-nav' },
+    { label: t('nav.escrow'), path: '/dashboard/escrow', icon: Lock, id: 'escrow-nav' },
+    { label: t('nav.governance'), path: '/dashboard/governance', icon: Vote, id: 'governance-nav' },
     { label: t('nav.activity'), path: '/dashboard/activity', icon: ActivityIcon, id: 'activity-nav' },
     { label: t('nav.templates'), path: '/dashboard/templates', icon: Files, id: 'templates-nav' },
     { label: t('nav.analytics'), path: '/dashboard/analytics', icon: BarChart3, id: 'analytics-nav' },
@@ -277,11 +315,129 @@ const DashboardLayout: React.FC = () => {
       {/* Keyboard Shortcuts Modal — ? key toggles it */}
       <KeyboardShortcuts
         shortcuts={[
+          { key: 'G+P', description: 'Go to Proposals', category: 'navigation', action: () => navigate('/dashboard/proposals') },
+          { key: 'G+A', description: 'Go to Analytics', category: 'navigation', action: () => navigate('/dashboard/analytics') },
           { key: 'Alt+P', description: 'Go to Proposals', category: 'navigation', action: () => navigate('/dashboard/proposals') },
           { key: 'Alt+S', description: 'Go to Settings', category: 'navigation', action: () => navigate('/dashboard/settings') },
           { key: 'Alt+N', description: 'Open Notifications', category: 'navigation', action: () => setIsNotificationCenterOpen(true) },
+          { key: 'N', description: 'New Proposal', category: 'actions', action: () => navigate('/dashboard/proposals') },
+          { key: `${modKey()}+K`, description: 'Open Command Palette', category: 'actions', action: () => {} },
           { key: '?', description: 'Show keyboard shortcuts', category: 'accessibility', action: () => {} },
         ]}
+      />
+
+      {/* Command Palette — Cmd+K / Ctrl+K */}
+      <CommandPalette
+        actions={[
+          // ── Navigation ──────────────────────────────────────────────────
+          {
+            id: 'nav-overview',
+            label: 'Go to Overview',
+            description: 'Dashboard overview with stats',
+            category: 'navigation',
+            icon: <LayoutDashboard size={16} />,
+            shortcut: 'G+O',
+            action: () => navigate('/dashboard'),
+          },
+          {
+            id: 'nav-proposals',
+            label: 'Go to Proposals',
+            description: 'View and manage proposals',
+            category: 'navigation',
+            icon: <FileText size={16} />,
+            shortcut: 'G+P',
+            action: () => navigate('/dashboard/proposals'),
+          },
+          {
+            id: 'nav-analytics',
+            label: 'Go to Analytics',
+            description: 'Spending and activity analytics',
+            category: 'navigation',
+            icon: <BarChart3 size={16} />,
+            shortcut: 'G+A',
+            action: () => navigate('/dashboard/analytics'),
+          },
+          {
+            id: 'nav-activity',
+            label: 'Go to Activity',
+            description: 'Recent vault activity log',
+            category: 'navigation',
+            icon: <ActivityIcon size={16} />,
+            action: () => navigate('/dashboard/activity'),
+          },
+          {
+            id: 'nav-recurring',
+            label: 'Go to Recurring Payments',
+            description: 'Manage scheduled payments',
+            category: 'navigation',
+            icon: <RefreshCw size={16} />,
+            action: () => navigate('/dashboard/recurring-payments'),
+          },
+          {
+            id: 'nav-templates',
+            label: 'Go to Templates',
+            description: 'Proposal templates library',
+            category: 'navigation',
+            icon: <Files size={16} />,
+            action: () => navigate('/dashboard/templates'),
+          },
+          {
+            id: 'nav-settings',
+            label: 'Go to Settings',
+            description: 'Vault and account settings',
+            category: 'navigation',
+            icon: <Settings size={16} />,
+            shortcut: 'Alt+S',
+            action: () => navigate('/dashboard/settings'),
+          },
+          // ── Actions ──────────────────────────────────────────────────────
+          {
+            id: 'action-new-proposal',
+            label: 'New Proposal',
+            description: 'Create a new transfer proposal',
+            category: 'actions',
+            icon: <FileText size={16} />,
+            shortcut: 'N',
+            action: () => navigate('/dashboard/proposals'),
+          },
+          {
+            id: 'action-notifications',
+            label: 'View Notifications',
+            description: 'Open the notification center',
+            category: 'actions',
+            icon: <Bell size={16} />,
+            shortcut: 'Alt+N',
+            action: () => setIsNotificationCenterOpen(true),
+          },
+          {
+            id: 'action-help',
+            label: 'Open Help Center',
+            description: 'Documentation and support',
+            category: 'actions',
+            icon: <HelpCircle size={16} />,
+            action: () => setIsHelpOpen(true),
+          },
+          // ── Accessibility ─────────────────────────────────────────────────
+          {
+            id: 'a11y-theme',
+            label: 'Switch Theme',
+            description: `Current theme: ${theme}`,
+            category: 'accessibility',
+            icon: theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Contrast size={16} />,
+            action: toggleTheme,
+          },
+          {
+            id: 'a11y-shortcuts',
+            label: 'Show Keyboard Shortcuts',
+            description: 'View all available shortcuts',
+            category: 'accessibility',
+            shortcut: '?',
+            action: () => {
+              // Dispatch a ? keydown to trigger the KeyboardShortcuts modal
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
+            },
+          },
+        ] satisfies import('../CommandPalette').PaletteAction[]}
       />
 
       {isWalletModalOpen && (

@@ -13,7 +13,8 @@ const Analytics = lazy(() => import('./app/dashboard/Analytics'));
 const Settings = lazy(() => import('./app/dashboard/Settings'));
 const Templates = lazy(() => import('./app/dashboard/Templates'));
 const RecurringPayments = lazy(() => import('./app/dashboard/RecurringPayments'));
-const StreamingPayments = lazy(() => import('./app/dashboard/StreamingPayments'));
+const EscrowPage = lazy(() => import('./app/dashboard/Escrow'));
+const GovernancePage = lazy(() => import('./app/dashboard/Governance'));
 const ErrorDashboard = lazy(() => import('./components/ErrorDashboard'));
 
 const PageFallback = () => (
@@ -37,7 +38,8 @@ function App() {
               <Route path="templates" element={<Templates />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="recurring-payments" element={<RecurringPayments />} />
-              <Route path="streaming" element={<StreamingPayments />} />
+              <Route path="escrow" element={<EscrowPage />} />
+              <Route path="governance" element={<GovernancePage />} />
               <Route path="settings" element={<Settings />} />
               <Route path="errors" element={<ErrorDashboard />} />
             </Route>

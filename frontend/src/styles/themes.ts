@@ -6,7 +6,8 @@ export const themeStyles = {
     border: 'border-gray-200',
     muted: 'text-gray-500',
     accent: 'text-purple-600',
-    glass: 'bg-white/70 backdrop-blur-md',
+    /** Glassmorphism panel — light mode uses white with subtle blur */
+    glass: 'bg-white/80 backdrop-blur-md border border-gray-200/80 shadow-sm',
   },
   dark: {
     background: 'bg-gray-900',
@@ -15,7 +16,8 @@ export const themeStyles = {
     border: 'border-gray-700',
     muted: 'text-gray-400',
     accent: 'text-purple-400',
-    glass: 'bg-gray-800/50 backdrop-blur-md',
+    /** Glassmorphism panel — dark mode */
+    glass: 'bg-gray-800/50 backdrop-blur-md border border-gray-700/50',
   },
   'high-contrast': {
     background: 'bg-black',
@@ -25,8 +27,24 @@ export const themeStyles = {
     muted: 'text-yellow-400',
     accent: 'text-yellow-400',
     glass: 'bg-black border-2 border-white',
-  }
+  },
 };
+
+/**
+ * Tailwind utility classes for glassmorphism panels that work in both
+ * light and dark mode. Use these instead of raw bg-gray-800/50 classes.
+ *
+ * Usage:
+ *   <div className={glassPanel}>...</div>
+ */
+export const glassPanel =
+  'bg-white/80 dark:bg-gray-800/50 backdrop-blur-md border border-gray-200/80 dark:border-gray-700/50 shadow-sm dark:shadow-none';
+
+export const glassCard =
+  'bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl';
+
+export const glassModal =
+  'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl';
 
 // CSS Variables to be injected or used in style props if needed
 export const themeVariables = {

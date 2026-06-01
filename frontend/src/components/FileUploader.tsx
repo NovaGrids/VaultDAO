@@ -6,9 +6,9 @@
 import { useCallback, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import imageCompression from 'browser-image-compression';
-import { Upload, Camera, FileText, Loader2, AlertCircle } from 'lucide-react';
+import { Upload, Camera, FileText, Loader2, AlertCircle, Eye } from 'lucide-react';
 import FilePreview, { type PreviewFile } from './FilePreview';
-import { uploadToIPFS, isIPFSConfigured } from './IPFSUploader';
+import { uploadToIPFS, isIPFSConfigured, validateCID, gatewayUrl } from './IPFSUploader';
 
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_TYPES = {
@@ -266,7 +266,21 @@ export function FileUploader({
                 <p className="truncate text-sm font-medium text-white" title={a.name}>
                   {a.name}
                 </p>
-                <p className="text-xs text-gray-500">IPFS: {a.cid.slice(0, 12)}...</p>
+                <p className={`text-xs ${validateCID(a.cid) ? 'text-gray-500' : 'text-red-400'}`}>
+                  {validateCID(a.cid) ? `IPFS: ${a.cid.slice(0, 12)}…` : 'Invalid CID'}
+                </p>
+                {validateCID(a.cid) && (
+                  <a
+                    href={gatewayUrl(a.cid)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                    aria-label={`Preview ${a.name} on IPFS`}
+                  >
+                    <Eye className="h-3 w-3" aria-hidden />
+                    Preview
+                  </a>
+                )}
               </div>
             </div>
           ))}
