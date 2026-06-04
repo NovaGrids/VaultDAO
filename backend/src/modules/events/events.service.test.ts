@@ -1,40 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { BackendEnv } from "../../config/env.js";
+import { createTestEnv, type BackendEnv } from "../../config/env.js";
 import type { CursorStorage } from "./cursor/index.js";
 import type { EventCursor } from "./cursor/cursor.types.js";
 import { EventPollingService } from "./events.service.js";
 import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
 import type { RawContractEvent } from "../../shared/rpc/soroban-rpc.types.js";
-
-function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
-  return {
-    port: 8787,
-    host: "0.0.0.0",
-    nodeEnv: "test",
-    stellarNetwork: "testnet",
-    sorobanRpcUrl: "https://soroban-testnet.stellar.org",
-    horizonUrl: "https://horizon-testnet.stellar.org",
-    contractId: "CDTEST",
-    contractIds: [],
-    indexingParallelism: 4,
-    websocketUrl: "ws://localhost:8080",
-    eventPollingIntervalMs: 10,
-    eventPollingEnabled: true,
-    duePaymentsJobEnabled: false,
-    duePaymentsJobIntervalMs: 60000,
-    cursorCleanupJobEnabled: false,
-    cursorCleanupJobIntervalMs: 86400000,
-    cursorRetentionDays: 30,
-    corsOrigin: ["*"],
-    requestBodyLimit: "1mb",
-    apiKey: "test-api-key",
-    cursorStorageType: "file" as const,
-    databasePath: "./test.sqlite",
-    ...overrides,
-  };
-}
 
 /** In-memory {@link CursorStorage} for tests */
 class MemoryCursorStorage implements CursorStorage {
@@ -146,7 +118,11 @@ function createSvc(
   rpcClient: SorobanRpcClient = createNoOpRpcClient(),
 ): EventPollingService {
   return new EventPollingService(
-    createTestEnv(envOverrides),
+    createTestEnv({
+      eventPollingEnabled: true,
+      eventPollingIntervalMs: 1000,
+      ...envOverrides,
+    }),
     storage,
     undefined,
     undefined,
@@ -632,7 +608,11 @@ test("RPC Polling", async (t) => {
       const svc = createSvc(storage, {}, rpc);
       await svc.start();
 
-      for (let i = 0; i < 100 && svc.getStatus().lastLedgerPolled !== 250; i++) {
+      for (
+        let i = 0;
+        i < 100 && svc.getStatus().lastLedgerPolled !== 250;
+        i++
+      ) {
         await delay(10);
       }
       svc.stop();
@@ -663,7 +643,11 @@ test("RPC Polling", async (t) => {
       await svc.start();
 
       const serviceAny = svc as any;
-      for (let i = 0; i < 100 && !serviceAny.processedEventIds.has("evt-abc"); i++) {
+      for (
+        let i = 0;
+        i < 100 && !serviceAny.processedEventIds.has("evt-abc");
+        i++
+      ) {
         await delay(10);
       }
       svc.stop();
@@ -686,7 +670,11 @@ test("RPC Polling", async (t) => {
       const svc = createSvc(storage, {}, rpc);
       await svc.start();
 
-      for (let i = 0; i < 100 && svc.getStatus().lastLedgerPolled !== 410; i++) {
+      for (
+        let i = 0;
+        i < 100 && svc.getStatus().lastLedgerPolled !== 410;
+        i++
+      ) {
         await delay(10);
       }
       svc.stop();
@@ -795,7 +783,11 @@ test("Cursor Persistence — cursor survives simulated restart", async () => {
   }
   svc1.stop();
 
-  assert.equal(storage.cursor?.lastLedger, 500, "cursor should be persisted after first run");
+  assert.equal(
+    storage.cursor?.lastLedger,
+    500,
+    "cursor should be persisted after first run",
+  );
 
   // Simulated restart: new service instance, same storage
   const rpc2 = createNoOpRpcClient(600);
@@ -803,7 +795,11 @@ test("Cursor Persistence — cursor survives simulated restart", async () => {
   await svc2.start();
 
   // Should resume from 500, not 0
-  assert.equal(svc2.getStatus().lastLedgerPolled, 500, "service should resume from persisted cursor");
+  assert.equal(
+    svc2.getStatus().lastLedgerPolled,
+    500,
+    "service should resume from persisted cursor",
+  );
 
   for (let i = 0; i < 100 && svc2.getStatus().lastLedgerPolled < 600; i++) {
     await delay(10);
@@ -821,12 +817,8 @@ test("Cursor Persistence — cursor survives simulated restart", async () => {
 });
 
 test("Cursor Cleanup Job — removes old entries and preserves newest", async () => {
-  const { CursorStorageCleanupJob } = await import(
-    "../jobs/recurring/cursor-storage-cleanup.job.js"
-  );
-
-  // Build a storage with one fresh cursor and two stale ones
-  const storage = new MemoryCursorStorage();
+  const { CursorStorageCleanupJob } =
+    await import("../jobs/recurring/cursor-storage-cleanup.job.js");
 
   const now = new Date();
   const daysAgo = (d: number) => {
@@ -849,7 +841,10 @@ test("Cursor Cleanup Job — removes old entries and preserves newest", async ()
       this.cursors.set("newest", c);
     },
     async listCursors() {
-      return Array.from(this.cursors.entries()).map(([id, cursor]) => ({ id, cursor }));
+      return Array.from(this.cursors.entries()).map(([id, cursor]) => ({
+        id,
+        cursor,
+      }));
     },
     async deleteCursor(id: string) {
       this.cursors.delete(id);
@@ -869,6 +864,9 @@ test("Cursor Cleanup Job — removes old entries and preserves newest", async ()
   assert.ok(!multiStorage.cursors.has("stale-1"), "stale-1 should be deleted");
   assert.ok(!multiStorage.cursors.has("stale-2"), "stale-2 should be deleted");
   // Newest cursor must be preserved
-  assert.ok(multiStorage.cursors.has("newest"), "newest cursor must be preserved");
+  assert.ok(
+    multiStorage.cursors.has("newest"),
+    "newest cursor must be preserved",
+  );
   assert.equal(multiStorage.cursors.size, 1, "only one cursor should remain");
 });

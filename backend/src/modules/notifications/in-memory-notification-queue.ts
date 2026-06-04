@@ -6,7 +6,7 @@ import type {
   NotificationUnsubscribe,
   PublishOptions,
 } from "./notification.types.js";
-import { NotificationPriority, NotificationTarget } from "./notification.types.js";
+import { NotificationPriority } from "./notification.types.js";
 
 interface QueuedItem {
   event: NotificationEvent;

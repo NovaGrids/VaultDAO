@@ -24,7 +24,7 @@ export function createDuePaymentsScheduledJob(
     name: "due-payments",
     intervalMs: 60_000,
     runOnStart: false,
-    async run() {
+    async run(_context) {
       const currentLedger = getCurrentLedger(recurringService);
       const duePayments =
         await recurringService.getDuePaymentsAtLedger(currentLedger);
@@ -62,10 +62,13 @@ export function createDuePaymentsScheduledJob(
             missedCount,
           };
         } catch (err) {
-          logger.warn("enrichment fetch failed, publishing degraded notification", {
-            paymentId: payment.paymentId,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          logger.warn(
+            "enrichment fetch failed, publishing degraded notification",
+            {
+              paymentId: payment.paymentId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
 
           payload = {
             notificationType: "RECURRING_PAYMENT_DUE",

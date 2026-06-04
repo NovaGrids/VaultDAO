@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { randomUUID } from "node:crypto";
 import { InMemoryNotificationQueue } from "./in-memory-notification-queue.js";
 import { NotificationPriority } from "./notification.types.js";
 import type { NotificationEvent } from "./notification.types.js";
@@ -24,8 +23,12 @@ test("InMemoryNotificationQueue: URGENT event delivered before NORMAL even when 
   });
 
   // Publish NORMAL first, then URGENT
-  await queue.publish(makeEvent("normal-1"), { priority: NotificationPriority.NORMAL });
-  await queue.publish(makeEvent("urgent-1"), { priority: NotificationPriority.URGENT });
+  await queue.publish(makeEvent("normal-1"), {
+    priority: NotificationPriority.NORMAL,
+  });
+  await queue.publish(makeEvent("urgent-1"), {
+    priority: NotificationPriority.URGENT,
+  });
 
   // Both are delivered immediately on publish (consumers called inline)
   // The key requirement: urgent is in the URGENT bucket, normal in NORMAL bucket
@@ -40,9 +43,15 @@ test("InMemoryNotificationQueue: URGENT event delivered before NORMAL even when 
 test("InMemoryNotificationQueue: size(priority) returns count per level", async () => {
   const queue = new InMemoryNotificationQueue();
 
-  await queue.publish(makeEvent("low-1"), { priority: NotificationPriority.LOW });
-  await queue.publish(makeEvent("low-2"), { priority: NotificationPriority.LOW });
-  await queue.publish(makeEvent("high-1"), { priority: NotificationPriority.HIGH });
+  await queue.publish(makeEvent("low-1"), {
+    priority: NotificationPriority.LOW,
+  });
+  await queue.publish(makeEvent("low-2"), {
+    priority: NotificationPriority.LOW,
+  });
+  await queue.publish(makeEvent("high-1"), {
+    priority: NotificationPriority.HIGH,
+  });
 
   assert.strictEqual(queue.size(NotificationPriority.LOW), 2);
   assert.strictEqual(queue.size(NotificationPriority.HIGH), 1);
@@ -58,8 +67,12 @@ test("InMemoryNotificationQueue: defaults to NORMAL priority", async () => {
 
 test("InMemoryNotificationQueue: shutdown drains all priorities", async () => {
   const queue = new InMemoryNotificationQueue();
-  await queue.publish(makeEvent("u1"), { priority: NotificationPriority.URGENT });
-  await queue.publish(makeEvent("n1"), { priority: NotificationPriority.NORMAL });
+  await queue.publish(makeEvent("u1"), {
+    priority: NotificationPriority.URGENT,
+  });
+  await queue.publish(makeEvent("n1"), {
+    priority: NotificationPriority.NORMAL,
+  });
   await queue.publish(makeEvent("l1"), { priority: NotificationPriority.LOW });
 
   queue.shutdown();
@@ -71,7 +84,9 @@ test("InMemoryNotificationQueue: shutdown drains all priorities", async () => {
 
 test("InMemoryNotificationQueue: getStats returns counts per priority", async () => {
   const queue = new InMemoryNotificationQueue();
-  await queue.publish(makeEvent("u1"), { priority: NotificationPriority.URGENT });
+  await queue.publish(makeEvent("u1"), {
+    priority: NotificationPriority.URGENT,
+  });
   await queue.publish(makeEvent("h1"), { priority: NotificationPriority.HIGH });
   await queue.publish(makeEvent("h2"), { priority: NotificationPriority.HIGH });
 
@@ -85,12 +100,20 @@ test("InMemoryNotificationQueue: getStats returns counts per priority", async ()
 
 test("InMemoryNotificationQueue: FIFO preserved within same priority", async () => {
   const queue = new InMemoryNotificationQueue();
-  await queue.publish(makeEvent("n1"), { priority: NotificationPriority.NORMAL });
-  await queue.publish(makeEvent("n2"), { priority: NotificationPriority.NORMAL });
-  await queue.publish(makeEvent("n3"), { priority: NotificationPriority.NORMAL });
+  await queue.publish(makeEvent("n1"), {
+    priority: NotificationPriority.NORMAL,
+  });
+  await queue.publish(makeEvent("n2"), {
+    priority: NotificationPriority.NORMAL,
+  });
+  await queue.publish(makeEvent("n3"), {
+    priority: NotificationPriority.NORMAL,
+  });
 
   // First item in NORMAL bucket should be n1 (FIFO)
-  const bucket = (queue as any).buckets[NotificationPriority.NORMAL] as Array<{ event: { id: string } }>;
+  const bucket = (queue as any).buckets[NotificationPriority.NORMAL] as Array<{
+    event: { id: string };
+  }>;
   assert.strictEqual(bucket[0]!.event.id, "n1");
   assert.strictEqual(bucket[1]!.event.id, "n2");
   assert.strictEqual(bucket[2]!.event.id, "n3");

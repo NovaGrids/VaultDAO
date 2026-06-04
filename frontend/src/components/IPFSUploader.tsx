@@ -316,7 +316,7 @@ export default function IPFSUploader({
     onDrop,
     disabled: uploading || remaining <= 0,
     multiple: true,
-    onDropRejected: (rejections) => {
+    onDropRejected: (rejections: { errors: { message: string }[] }[]) => {
       const msg = rejections[0]?.errors?.[0]?.message ?? 'File rejected';
       handleError(msg);
     },

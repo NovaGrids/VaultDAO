@@ -39,7 +39,19 @@ const ProposalCompareFloat: React.FC<ProposalCompareFloatProps> = ({ proposals, 
 
   const handleExport = useCallback(async () => {
     try {
-      await exportComparisonToPDF(selectedProposals);
+      await exportComparisonToPDF(
+        selectedProposals.map((p) => ({
+          id: String(p.id),
+          status: p.status,
+          proposer: p.proposer,
+          recipient: p.recipient,
+          amount: p.amount,
+          createdAt:
+            typeof p.createdAt === 'number'
+              ? new Date(p.createdAt).toISOString()
+              : String(p.createdAt),
+        })),
+      );
     } catch (e) {
       console.error('Export failed', e);
     }

@@ -10,30 +10,14 @@ import {
   checkJobRunner,
   buildDetailedHealthPayload,
 } from "./health.service.js";
+import { createTestEnv } from "../../config/env.js";
 
-const mockEnv = {
-  port: 8787,
-  host: "0.0.0.0",
-  nodeEnv: "test",
-  stellarNetwork: "testnet",
-  sorobanRpcUrl: "https://soroban-testnet.stellar.org",
-  horizonUrl: "https://horizon-testnet.stellar.org",
+const mockEnv = createTestEnv({
   contractId: "CDTEST",
-  websocketUrl: "ws://localhost:8080",
-  eventPollingIntervalMs: 5000,
-  eventPollingEnabled: false,
-  duePaymentsJobEnabled: false,
-  duePaymentsJobIntervalMs: 60000,
-  cursorCleanupJobEnabled: false,
-  cursorCleanupJobIntervalMs: 86400000,
-  cursorRetentionDays: 30,
-  corsOrigin: ["*"],
-  requestBodyLimit: "1mb",
-  cursorStorageType: "file" as const,
-  databasePath: "./test.sqlite",
   contractIds: ["CDTEST"],
   indexingParallelism: 1,
-};
+  eventPollingIntervalMs: 5000,
+});
 
 const mockRuntime = {
   startedAt: "2026-03-25T00:00:00.000Z",
@@ -371,7 +355,10 @@ test("buildDetailedHealthPayload returns status:healthy when all dependencies ar
   };
 
   try {
-    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+    const payload = await buildDetailedHealthPayload(
+      mockEnv as any,
+      mockRuntime as any,
+    );
 
     assert.equal(payload.status, "healthy");
     assert.equal(payload.dependencies.sorobanRpc.status, "healthy");
@@ -401,7 +388,10 @@ test("buildDetailedHealthPayload returns status:degraded when one dependency is 
   };
 
   try {
-    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+    const payload = await buildDetailedHealthPayload(
+      mockEnv as any,
+      mockRuntime as any,
+    );
 
     assert.equal(payload.status, "degraded");
     assert.equal(payload.dependencies.sorobanRpc.status, "degraded");
@@ -431,7 +421,10 @@ test("buildDetailedHealthPayload returns status:unhealthy when one dependency is
   };
 
   try {
-    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+    const payload = await buildDetailedHealthPayload(
+      mockEnv as any,
+      mockRuntime as any,
+    );
 
     assert.equal(payload.status, "unhealthy");
     assert.equal(payload.dependencies.sorobanRpc.status, "healthy");
@@ -457,7 +450,10 @@ test("buildDetailedHealthPayload response includes all required fields", async (
   };
 
   try {
-    const payload = await buildDetailedHealthPayload(mockEnv as any, mockRuntime as any);
+    const payload = await buildDetailedHealthPayload(
+      mockEnv as any,
+      mockRuntime as any,
+    );
 
     assert.ok("status" in payload);
     assert.ok("version" in payload);

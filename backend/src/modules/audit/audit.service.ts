@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Response } from "express";
+import type { Response as ExpressResponse } from "express";
 import type {
   AuditEntry,
   AuditPage,
@@ -72,7 +72,9 @@ function computeAuditHash(entry: AuditEntry): string {
   return sha.readBigUInt64LE(0).toString();
 }
 
-export function verifyAuditChain(entries: AuditEntry[]): AuditVerificationResult {
+export function verifyAuditChain(
+  entries: AuditEntry[],
+): AuditVerificationResult {
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]!;
     const computed = computeAuditHash(entry);
@@ -94,15 +96,12 @@ export function verifyAuditChain(entries: AuditEntry[]): AuditVerificationResult
  * Avoids buffering all rows in memory.
  */
 export function streamAuditCsv(
-  res: Response,
+  res: ExpressResponse,
   entries: AuditEntry[],
   verificationResult?: AuditVerificationResult,
 ): void {
   res.setHeader("Content-Type", "text/csv");
-  res.setHeader(
-    "Content-Disposition",
-    'attachment; filename="audit-log.csv"',
-  );
+  res.setHeader("Content-Disposition", 'attachment; filename="audit-log.csv"');
 
   res.write("id,action,actor,target,timestamp,hash,verified\n");
 
@@ -146,7 +145,7 @@ export class AuditService {
     limit: number,
     verify = false,
   ): Promise<AuditPage> {
-    let response: Response;
+    let response: globalThis.Response;
     try {
       response = await this.fetchFn(this.rpcUrl, {
         method: "POST",

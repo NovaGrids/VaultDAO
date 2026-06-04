@@ -3,7 +3,6 @@ import { loadEnv } from "./config/env.js";
 import { startServer } from "./server.js";
 import { createLogger } from "./shared/logging/logger.js";
 import { maskContractId } from "./shared/utils/mask.js";
-import { LifecycleManager } from "./app/lifecycle/lifecycle-manager.js";
 import {
   RealtimeServer,
   createRealtimeTopic,
@@ -46,6 +45,7 @@ const unsubscribeNotificationBridge = notificationQueue.subscribe((event) => {
 
 // Start server and integrate with lifecycle management
 const { server, runtime } = await startServer(env, notificationQueue);
+const lifecycle = runtime.lifecycleManager;
 
 realtimeServer.start(server);
 

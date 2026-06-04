@@ -25,10 +25,12 @@ describe("EventNormalizer Property-Based Tests", () => {
   const idArb = fc.string({ minLength: 1 });
   const contractIdArb = fc.string({ minLength: 1 });
   const ledgerArb = fc.nat();
-  const ledgerClosedAtArb = fc.integer({
-    min: 946684800000, // 2000-01-01T00:00:00.000Z
-    max: 1893456000000, // 2030-01-01T00:00:00.000Z
-  }).map((t) => new Date(t).toISOString());
+  const ledgerClosedAtArb = fc
+    .integer({
+      min: 946684800000, // 2000-01-01T00:00:00.000Z
+      max: 1893456000000, // 2030-01-01T00:00:00.000Z
+    })
+    .map((t) => new Date(t).toISOString());
 
   // 1. Universal Event Arbitrary: Generates any structurally valid ContractEvent
   // with highly random, structural variations for the topic list and the value payload
@@ -44,18 +46,9 @@ describe("EventNormalizer Property-Based Tests", () => {
   const knownTopicsList = Object.keys(CONTRACT_EVENT_MAP);
 
   // Safe array value: satisfies array index parsing (e.g. d[0], d[7]) inside normalizers
-  const safeArrayValueArb = fc.array(
-    fc.string({ minLength: 1 }),
-    { minLength: 10, maxLength: 15 }
-  );
-
-  // Safe object value: satisfies object-based parsing configurations for specific snapshot/admin normalizers
-  const safeObjectValueArb = fc.record({
-    admin: fc.string({ minLength: 1 }),
-    address: fc.string({ minLength: 1 }),
-    signer: fc.string({ minLength: 1 }),
-    addr: fc.string({ minLength: 1 }),
-    role: fc.nat(),
+  const safeArrayValueArb = fc.array(fc.string({ minLength: 1 }), {
+    minLength: 10,
+    maxLength: 15,
   });
 
   // 2. Known Topic Event Arbitrary: Generates a ContractEvent with a known/registered topic
@@ -65,7 +58,7 @@ describe("EventNormalizer Property-Based Tests", () => {
     contractId: contractIdArb,
     topic: fc.tuple(
       fc.constantFrom(...knownTopicsList),
-      fc.string({ minLength: 1 })
+      fc.string({ minLength: 1 }),
     ),
     value: safeArrayValueArb,
     ledger: ledgerArb,
@@ -79,7 +72,7 @@ describe("EventNormalizer Property-Based Tests", () => {
     contractId: contractIdArb,
     topic: fc.tuple(
       fc.string().filter((t) => !knownTopicsList.includes(t)),
-      fc.string()
+      fc.string(),
     ),
     value: fc.anything(),
     ledger: ledgerArb,
@@ -100,7 +93,7 @@ describe("EventNormalizer Property-Based Tests", () => {
             EventNormalizer.normalize(event);
           });
         }),
-        { numRuns: 100 }
+        { numRuns: 100 },
       );
     } finally {
       restoreConsole();
@@ -120,34 +113,73 @@ describe("EventNormalizer Property-Based Tests", () => {
           const res = EventNormalizer.normalize(event);
 
           assert.ok(res, "NormalizedEvent must be defined");
-          assert.strictEqual(typeof res, "object", "NormalizedEvent must be an object");
+          assert.strictEqual(
+            typeof res,
+            "object",
+            "NormalizedEvent must be an object",
+          );
           assert.ok(res !== null, "NormalizedEvent must be non-null");
 
           // Root fields
           assert.ok("type" in res, "NormalizedEvent must contain 'type'");
           assert.ok("data" in res, "NormalizedEvent must contain 'data'");
-          assert.ok("metadata" in res, "NormalizedEvent must contain 'metadata'");
+          assert.ok(
+            "metadata" in res,
+            "NormalizedEvent must contain 'metadata'",
+          );
 
           // Types & Enum
           assert.ok(
             Object.values(EventType).includes(res.type),
-            "type must be a valid EventType enum value"
+            "type must be a valid EventType enum value",
           );
-          assert.strictEqual(typeof res.metadata, "object", "metadata must be an object");
+          assert.strictEqual(
+            typeof res.metadata,
+            "object",
+            "metadata must be an object",
+          );
           assert.ok(res.metadata !== null, "metadata must be non-null");
 
           // Metadata completeness
-          assert.strictEqual(typeof res.metadata.id, "string", "metadata.id must be a string");
-          assert.strictEqual(typeof res.metadata.contractId, "string", "metadata.contractId must be a string");
-          assert.strictEqual(typeof res.metadata.ledger, "number", "metadata.ledger must be a number");
-          assert.strictEqual(typeof res.metadata.ledgerClosedAt, "string", "metadata.ledgerClosedAt must be a string");
+          assert.strictEqual(
+            typeof res.metadata.id,
+            "string",
+            "metadata.id must be a string",
+          );
+          assert.strictEqual(
+            typeof res.metadata.contractId,
+            "string",
+            "metadata.contractId must be a string",
+          );
+          assert.strictEqual(
+            typeof res.metadata.ledger,
+            "number",
+            "metadata.ledger must be a number",
+          );
+          assert.strictEqual(
+            typeof res.metadata.ledgerClosedAt,
+            "string",
+            "metadata.ledgerClosedAt must be a string",
+          );
 
           // Metadata integrity mapping
-          assert.strictEqual(res.metadata.contractId, event.contractId, "contractId must match the original event");
-          assert.strictEqual(res.metadata.ledger, event.ledger, "ledger must match the original event");
-          assert.strictEqual(res.metadata.ledgerClosedAt, event.ledgerClosedAt, "ledgerClosedAt must match the original event");
+          assert.strictEqual(
+            res.metadata.contractId,
+            event.contractId,
+            "contractId must match the original event",
+          );
+          assert.strictEqual(
+            res.metadata.ledger,
+            event.ledger,
+            "ledger must match the original event",
+          );
+          assert.strictEqual(
+            res.metadata.ledgerClosedAt,
+            event.ledgerClosedAt,
+            "ledgerClosedAt must match the original event",
+          );
         }),
-        { numRuns: 100 }
+        { numRuns: 100 },
       );
     } finally {
       restoreConsole();
@@ -166,11 +198,22 @@ describe("EventNormalizer Property-Based Tests", () => {
         fc.property(universalEventArb, (event) => {
           const res = EventNormalizer.normalize(event);
 
-          assert.strictEqual(typeof res.metadata.id, "string", "metadata.id must be a string");
-          assert.ok(res.metadata.id.length > 0, "metadata.id must be a non-empty string");
-          assert.strictEqual(res.metadata.id, event.id, "metadata.id must perfectly match original event ID");
+          assert.strictEqual(
+            typeof res.metadata.id,
+            "string",
+            "metadata.id must be a string",
+          );
+          assert.ok(
+            res.metadata.id.length > 0,
+            "metadata.id must be a non-empty string",
+          );
+          assert.strictEqual(
+            res.metadata.id,
+            event.id,
+            "metadata.id must perfectly match original event ID",
+          );
         }),
-        { numRuns: 100 }
+        { numRuns: 100 },
       );
     } finally {
       restoreConsole();
@@ -189,10 +232,17 @@ describe("EventNormalizer Property-Based Tests", () => {
         fc.property(knownTopicEventArb, (event) => {
           const res = EventNormalizer.normalize(event);
 
-          assert.notStrictEqual(res.type, EventType.UNKNOWN, `type should not be UNKNOWN for registered topic "${event.topic[0]}"`);
-          assert.ok(Object.values(EventType).includes(res.type), "type must be a valid EventType");
+          assert.notStrictEqual(
+            res.type,
+            EventType.UNKNOWN,
+            `type should not be UNKNOWN for registered topic "${event.topic[0]}"`,
+          );
+          assert.ok(
+            Object.values(EventType).includes(res.type),
+            "type must be a valid EventType",
+          );
         }),
-        { numRuns: 100 }
+        { numRuns: 100 },
       );
     } finally {
       restoreConsole();
@@ -211,11 +261,23 @@ describe("EventNormalizer Property-Based Tests", () => {
         fc.property(unknownTopicEventArb, (event) => {
           const res = EventNormalizer.normalize(event);
 
-          assert.strictEqual(res.type, EventType.UNKNOWN, "type must always be evaluated as UNKNOWN");
-          assert.strictEqual(res.data.reason, "Unmapped topic", "reason should fallback to 'Unmapped topic'");
-          assert.deepEqual(res.data.rawTopic, event.topic, "rawTopic in data should match the original event topic list");
+          assert.strictEqual(
+            res.type,
+            EventType.UNKNOWN,
+            "type must always be evaluated as UNKNOWN",
+          );
+          assert.strictEqual(
+            res.data.reason,
+            "Unmapped topic",
+            "reason should fallback to 'Unmapped topic'",
+          );
+          assert.deepEqual(
+            res.data.rawTopic,
+            event.topic,
+            "rawTopic in data should match the original event topic list",
+          );
         }),
-        { numRuns: 100 }
+        { numRuns: 100 },
       );
     } finally {
       restoreConsole();

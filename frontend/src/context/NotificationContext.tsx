@@ -221,7 +221,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       },
       onMessage: (message) => {
         try {
-          const payload = message.payload || {};
+          const payload = (message.payload ?? {}) as Partial<
+            Pick<Notification, 'title' | 'message' | 'category' | 'priority' | 'groupKey' | 'metadata' | 'actions'>
+          >;
           if (message.type === 'notification') {
             const notification: Omit<Notification, 'id' | 'timestamp' | 'status'> = {
               title: payload.title || 'New Notification',

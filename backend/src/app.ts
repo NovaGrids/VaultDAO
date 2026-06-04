@@ -299,9 +299,9 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       cursorRetentionDays: env.cursorRetentionDays,
       corsOrigin: env.corsOrigin,
       requestBodyLimit: env.requestBodyLimit,
-      notificationsRequestBodyLimit: env.NOTIFICATIONS_REQUEST_BODY_LIMIT,
-      snapshotsRequestBodyLimit: env.SNAPSHOTS_REQUEST_BODY_LIMIT,
-      webhooksRequestBodyLimit: env.WEBHOOKS_REQUEST_BODY_LIMIT,
+      notificationsRequestBodyLimit: env.notificationsRequestBodyLimit,
+      snapshotsRequestBodyLimit: env.snapshotsRequestBodyLimit,
+      webhooksRequestBodyLimit: env.webhooksRequestBodyLimit,
       rateLimitEnabled: env.rateLimitEnabled,
       rateLimitProposalsPerMin: env.rateLimitProposalsPerMin,
       rateLimitExecutePerMin: env.rateLimitExecutePerMin,
@@ -331,7 +331,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     v1Router.use(
       "/notifications",
       authMiddleware,
-      express.json({ limit: env.NOTIFICATIONS_REQUEST_BODY_LIMIT }),
+      express.json({ limit: env.notificationsRequestBodyLimit }),
       createNotificationsRouter(runtime.notificationQueue),
     );
   }
@@ -340,7 +340,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     v1Router.use(
       "/webhooks",
       authMiddleware,
-      express.json({ limit: env.WEBHOOKS_REQUEST_BODY_LIMIT }),
+      express.json({ limit: env.webhooksRequestBodyLimit }),
       createWebhookRouter(runtime.webhookDeliveryService),
     );
   }
@@ -348,7 +348,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/snapshots",
     authMiddleware,
-    express.json({ limit: env.SNAPSHOTS_REQUEST_BODY_LIMIT }),
+    express.json({ limit: env.snapshotsRequestBodyLimit }),
     createSnapshotRouter(
       runtime.snapshotService,
       adminAuthMiddleware,

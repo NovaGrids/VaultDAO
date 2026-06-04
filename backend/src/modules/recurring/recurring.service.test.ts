@@ -7,6 +7,7 @@ import {
   transformRawRecurringPayment,
 } from "./recurring.service.js";
 import { RecurringStatus, RecurringEvent } from "./types.js";
+import { createTestEnv } from "../../config/env.js";
 
 const baseRaw = {
   id: "r1",
@@ -134,6 +135,9 @@ test("MemoryRecurringStorageAdapter filter by status/proposer/recipient/token/le
       lastUpdatedAt: new Date().toISOString(),
       ledger: 50,
     },
+    computedStatus: "active" as const,
+    ledgersUntilDue: 0,
+    missedPayments: 0,
   };
 
   await adapter.save(item);
@@ -161,34 +165,9 @@ test("MemoryRecurringStorageAdapter filter by status/proposer/recipient/token/le
 
 // --- syncPayment tests ---
 
-function makeTestEnv(): import("../../config/env.js").BackendEnv {
-  return {
-    port: 8787,
-    host: "0.0.0.0",
-    nodeEnv: "test",
-    stellarNetwork: "testnet",
-    sorobanRpcUrl: "https://soroban-testnet.stellar.org",
-    horizonUrl: "https://horizon-testnet.stellar.org",
-    contractId: "CDTEST",
-    websocketUrl: "ws://localhost:8080",
-    eventPollingIntervalMs: 10,
-    eventPollingEnabled: false,
-    duePaymentsJobEnabled: false,
-    duePaymentsJobIntervalMs: 60000,
-    cursorCleanupJobEnabled: false,
-    cursorCleanupJobIntervalMs: 86400000,
-    cursorRetentionDays: 30,
-    corsOrigin: ["*"],
-    requestBodyLimit: "1mb",
-    apiKey: "test-api-key",
-    cursorStorageType: "file" as const,
-    databasePath: "./test.sqlite",
-  };
-}
-
 test("syncPayment returns stored payment when found in storage", async () => {
   const storage = new MemoryRecurringStorageAdapter();
-  const service = new RecurringIndexerService(makeTestEnv(), storage);
+  const service = new RecurringIndexerService(createTestEnv(), storage);
 
   const item = transformRawRecurringPayment(baseRaw, "CDTEST", 1);
   await storage.save(item);
@@ -199,7 +178,7 @@ test("syncPayment returns stored payment when found in storage", async () => {
 
 test("syncPayment throws when payment not in storage (RPC unavailable)", async () => {
   const storage = new MemoryRecurringStorageAdapter();
-  const service = new RecurringIndexerService(makeTestEnv(), storage);
+  const service = new RecurringIndexerService(createTestEnv(), storage);
 
   await assert.rejects(
     () => service.syncPayment("unknown-id"),
@@ -209,7 +188,7 @@ test("syncPayment throws when payment not in storage (RPC unavailable)", async (
 
 test("getPayments supports combined filters and returns pagination metadata", async () => {
   const storage = new MemoryRecurringStorageAdapter();
-  const service = new RecurringIndexerService(makeTestEnv(), storage);
+  const service = new RecurringIndexerService(createTestEnv(), storage);
 
   const now = new Date().toISOString();
   await storage.save({
@@ -300,7 +279,7 @@ test("getPayments supports combined filters and returns pagination metadata", as
 
 test("getDuePaymentsAtLedger returns only payments ready for execution", async () => {
   const storage = new MemoryRecurringStorageAdapter();
-  const service = new RecurringIndexerService(makeTestEnv(), storage);
+  const service = new RecurringIndexerService(createTestEnv(), storage);
   const now = new Date().toISOString();
 
   await storage.save({

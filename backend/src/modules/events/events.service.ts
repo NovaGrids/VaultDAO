@@ -68,7 +68,8 @@ export class EventPollingService {
     private readonly metrics?: MetricsRegistry,
     circuitBreaker?: CircuitBreaker,
   ) {
-    this.rpcClient = rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
+    this.rpcClient =
+      rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
     this.circuitBreaker = circuitBreaker ?? new CircuitBreaker();
   }
 
@@ -185,7 +186,9 @@ export class EventPollingService {
   private async poll(): Promise<void> {
     // ── First-run initialisation ─────────────────────────────────────────────
     if (this.lastLedgerPolled === 0) {
-      const result = await this.circuitBreaker.execute(() => this.rpcClient.getLatestLedger());
+      const result = await this.circuitBreaker.execute(() =>
+        this.rpcClient.getLatestLedger(),
+      );
       if (!result.success) {
         this.logger.warn("circuit breaker prevented getLatestLedger call", {
           state: result.state,
@@ -194,6 +197,9 @@ export class EventPollingService {
         throw result.error;
       }
       const latestLedger = result.data;
+      if (latestLedger === undefined) {
+        throw new Error("getLatestLedger returned no ledger");
+      }
       this.logger.info(`initializing polling cursor at ledger ${latestLedger}`);
       await this.storage.saveCursor({
         lastLedger: latestLedger,
@@ -210,19 +216,21 @@ export class EventPollingService {
     let latestLedger = this.lastLedgerPolled;
 
     do {
-      const result = await this.circuitBreaker.execute(() => this.rpcClient.getEventsPage({
-        startLedger,
-        filters: [
-          {
-            type: "contract",
-            contractIds: [this.env.contractId],
+      const result = await this.circuitBreaker.execute(() =>
+        this.rpcClient.getEventsPage({
+          startLedger,
+          filters: [
+            {
+              type: "contract",
+              contractIds: [this.env.contractId],
+            },
+          ],
+          pagination: {
+            limit: EVENTS_PAGE_LIMIT,
+            ...(cursor !== undefined ? { cursor } : {}),
           },
-        ],
-        pagination: {
-          limit: EVENTS_PAGE_LIMIT,
-          ...(cursor !== undefined ? { cursor } : {}),
-        },
-      }));
+        }),
+      );
       if (!result.success) {
         this.logger.warn("circuit breaker prevented getEventsPage call", {
           state: result.state,
@@ -259,15 +267,17 @@ export class EventPollingService {
       await this.handleBatch(allEvents);
     }
 
-      this.lastLedgerPolled = latestLedger;
-    } finally {
-      if (this.metrics) {
-        this.metrics.observeHistogram(
-          "vaultdao_rpc_latency_ms",
-          Date.now() - pollStartedAt,
-        );
-      }
+    await this.storage.saveCursor({
+      lastLedger: latestLedger,
+      updatedAt: new Date().toISOString(),
+    });
+    if (this.metrics) {
+      this.metrics.setGauge(
+        "vaultdao_polling_lag_ledgers",
+        latestLedger - this.lastLedgerPolled,
+      );
     }
+    this.lastLedgerPolled = latestLedger;
   }
 
   /**

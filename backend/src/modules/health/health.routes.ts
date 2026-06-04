@@ -29,8 +29,8 @@ export function createHealthRouter(env: BackendEnv, runtime: BackendRuntime) {
 export function getDrainController(runtime: BackendRuntime): RequestHandler {
   return (_req, res) => {
     const inFlight = runtime.lifecycleManager?.getInFlightCount() ?? 0;
-    const shuttingDown = runtime.lifecycleManager?.shuttingDown ?? false;
-    
+    const shuttingDown = runtime.lifecycleManager?.isShuttingDown() ?? false;
+
     res.json({
       inFlight,
       shuttingDown,
@@ -46,7 +46,11 @@ export function createStatusRouter(env: BackendEnv, runtime: BackendRuntime) {
 
 export function createMetricsRouter(
   runtime: BackendRuntime,
-  adminAuthMiddleware: (req: Request, res: Response, next: NextFunction) => void,
+  adminAuthMiddleware: (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => void,
 ) {
   const router = Router();
   // Admin-only: Metrics endpoint (requires API key)
@@ -54,7 +58,10 @@ export function createMetricsRouter(
   return router;
 }
 
-export function createDetailedHealthRouter(env: BackendEnv, runtime: BackendRuntime) {
+export function createDetailedHealthRouter(
+  env: BackendEnv,
+  runtime: BackendRuntime,
+) {
   const router = Router();
   router.get("/detailed", getDetailedHealthController(env, runtime));
   return router;

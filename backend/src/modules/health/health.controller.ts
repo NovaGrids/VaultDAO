@@ -3,11 +3,8 @@ import type { RequestHandler } from "express";
 import type { BackendEnv } from "../../config/env.js";
 import type { BackendRuntime } from "../../server.js";
 import {
-  buildHealthPayload,
-  buildReadinessPayload,
   buildStatusPayload,
   buildDetailedHealthPayload,
-  DetailedHealthPayload,
 } from "./health.service.js";
 import { success, error } from "../../shared/http/response.js";
 
@@ -31,7 +28,11 @@ export function getHealthController(
     } catch (err) {
       error(
         response,
-        { message: "Health check failed", status: 500, details: err instanceof Error ? err.message : String(err) },
+        {
+          message: "Health check failed",
+          status: 500,
+          details: err instanceof Error ? err.message : String(err),
+        },
         { exposeDetails: true },
       );
     }
@@ -61,7 +62,7 @@ export function getReadinessController(
       );
       return;
     }
-    
+
     try {
       const payload = await buildDetailedHealthPayload(env, runtime);
       // GET /ready returns 200 only when all dependencies are healthy
@@ -77,7 +78,11 @@ export function getReadinessController(
     } catch (err) {
       error(
         response,
-        { message: "Readiness check failed", status: 500, details: err instanceof Error ? err.message : String(err) },
+        {
+          message: "Readiness check failed",
+          status: 500,
+          details: err instanceof Error ? err.message : String(err),
+        },
         { exposeDetails: true },
       );
     }
@@ -95,7 +100,11 @@ export function getDetailedHealthController(
     } catch (err) {
       error(
         response,
-        { message: "Detailed health check failed", status: 500, details: err instanceof Error ? err.message : String(err) },
+        {
+          message: "Detailed health check failed",
+          status: 500,
+          details: err instanceof Error ? err.message : String(err),
+        },
         { exposeDetails: true },
       );
     }

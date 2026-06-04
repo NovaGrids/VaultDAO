@@ -5,6 +5,7 @@ declare module '@stellar/stellar-base' {
     class ScVal {
       static fromXDR(data: string, encoding: 'base64' | 'hex'): ScVal;
       static scvSymbol(value: string): ScVal;
+      static scvString(value: string): ScVal;
       toXDR(encoding?: 'base64' | 'hex'): string;
     }
     class HostFunction {

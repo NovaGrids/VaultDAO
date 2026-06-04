@@ -248,7 +248,11 @@ export class EventWebSocketServer {
     ws.send(JSON.stringify({ type: "subscribed", topics: topics }));
   }
 
-  private handleUnsubscribe(ws: WebSocket, message: any, connectionId: string) {
+  private handleUnsubscribe(
+    ws: WebSocket,
+    message: any,
+    _connectionId: string,
+  ) {
     const topics: string[] | undefined = Array.isArray(message.topics)
       ? message.topics
       : undefined;
@@ -290,8 +294,9 @@ export class EventWebSocketServer {
 
   public broadcastEvent(event: ContractEvent) {
     const eventType = event.topic[0];
-    const proposalId =
+    const _proposalId =
       event.topic[1] || (event.value && (event.value as any).proposal_id);
+    void _proposalId;
     const notificationTopic = `notification:events:${String(eventType).toUpperCase()}`;
 
     let message: string;

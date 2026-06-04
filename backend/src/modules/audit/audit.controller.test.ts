@@ -10,15 +10,23 @@ function makeRes() {
     body: undefined,
   };
   const res = {
-    status(code: number) { state.statusCode = code; return this; },
-    set(_k: string, _v: string) { return this; },
-    json(body: unknown) { state.body = body; return this; },
+    status(code: number) {
+      state.statusCode = code;
+      return this;
+    },
+    set(_k: string, _v: string) {
+      return this;
+    },
+    json(body: unknown) {
+      state.body = body;
+      return this;
+    },
   };
   return { res, state };
 }
 
 function makeService(override?: Partial<AuditService>): AuditService {
-  const base = new AuditService("http://rpc.test", async () => ({} as any));
+  const base = new AuditService("http://rpc.test", async () => ({}) as any);
   return Object.assign(base, override);
 }
 
@@ -38,9 +46,14 @@ test("getAuditController: returns 200 with paginated AuditPage", async () => {
   const fakePage = {
     data: [
       {
+        id: "entry-1",
         action: AuditAction.ProposalCreated,
         actor: "GABC",
+        target: "proposal:1",
         timestamp: "2026-01-01T00:00:00.000Z",
+        prev_hash:
+          "0000000000000000000000000000000000000000000000000000000000000000",
+        hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ledger: 42,
       },
     ],

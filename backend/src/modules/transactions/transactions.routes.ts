@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { TransactionsService } from "./transactions.service.js";
 import {
   getTransactionByHashController,
+  getTransactionsByProposalController,
   getTransactionsController,
 } from "./transactions.controller.js";
 

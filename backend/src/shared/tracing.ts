@@ -1,6 +1,7 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
+import { ExpressInstrumentation } from "@opentelemetry/instrumentation-express";
 import {
   diag,
   DiagConsoleLogger,
@@ -21,7 +22,10 @@ export function initTracing(
 
     sdk = new NodeSDK({
       traceExporter: exporter,
-      instrumentations: [getNodeAutoInstrumentations()],
+      instrumentations: [
+        new HttpInstrumentation(),
+        new ExpressInstrumentation(),
+      ],
       serviceName,
     });
 

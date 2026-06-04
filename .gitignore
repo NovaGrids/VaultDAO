@@ -49,6 +49,12 @@ backend/*.log
 backend/logs/
 backend/.tsbuildinfo
 
-# Ignore specific files
+# Contribution-wave scratch files (keep out of the repo)
 contract_issues.md
 issue2.md
+PR_BODY.md
+PR_DESCRIPTION.md
+ATOMIC_BATCH_IMPLEMENTATION_SUMMARY.md
+ATOMIC_BATCHING_COMMIT.md
+REPUTATION_SYSTEM_COMMIT.md
+CI_CHECKS_SUMMARY.md

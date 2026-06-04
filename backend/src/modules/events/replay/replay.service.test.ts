@@ -1,30 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { BackendEnv } from "../../../config/env.js";
+import { createTestEnv } from "../../../config/env.js";
 import { EventReplayService } from "./replay.service.js";
 
-const baseEnv: BackendEnv = {
-  port: 8787,
+const baseEnv = createTestEnv({
   host: "127.0.0.1",
-  nodeEnv: "test",
-  stellarNetwork: "testnet",
   sorobanRpcUrl: "https://rpc.test",
   horizonUrl: "https://horizon.test",
-  contractId: "CDTEST",
-  websocketUrl: "ws://localhost:8080",
   eventPollingIntervalMs: 1000,
   eventPollingEnabled: true,
-  duePaymentsJobEnabled: false,
-  duePaymentsJobIntervalMs: 60000,
-  cursorCleanupJobEnabled: false,
-  cursorCleanupJobIntervalMs: 86400000,
-  cursorRetentionDays: 30,
-  corsOrigin: ["*"],
-  requestBodyLimit: "10kb",
-  cursorStorageType: "file",
   databasePath: ":memory:",
-};
+});
 
 test("EventReplayService uses SorobanRpcClient.getLatestLedger", async () => {
   const service = new EventReplayService(baseEnv, {

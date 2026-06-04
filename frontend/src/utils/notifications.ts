@@ -15,6 +15,7 @@ export const NOTIFICATION_EVENTS = [
   'audit_error',
   'audit_tamper',
   'audit_fetch_error',
+  'audit_verify_error',
   'no_data',
   'preview_ready',
   'preview_error',

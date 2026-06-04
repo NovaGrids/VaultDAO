@@ -42,7 +42,7 @@ To optimize for ledger rent and data capabilities, we use a hybrid storage model
 - **100% Logic Coverage**: The multi-signature voting engine, timelock delays, and limit trackers are fully covered by unit tests in `src/test.rs`.
 - **RBAC Verification**: Every sensitive function invokes `require_auth()` and checks the caller's role against the stored registry.
 
-See [docs/TESTING.md](docs/TESTING.md) for the full testing guide.
+See [docs/reference/TESTING.md](docs/reference/TESTING.md) for the full testing guide.
 
 ---
 
@@ -53,7 +53,7 @@ VaultDAO is designed for scale and security.
 - **Smart Contracts**: Built with Rust/Soroban using a hybrid storage model (Instance, Persistent, Temporary) to optimize for ledger rent.
 - **Frontend**: A premium React dashboard integrated with the Freighter wallet.
 
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deep dive into the system design and [STRUCTURE.md](docs/STRUCTURE.md) for folder organization.
+See [ARCHITECTURE.md](docs/reference/ARCHITECTURE.md) for a deep dive into the system design and [STRUCTURE.md](docs/reference/STRUCTURE.md) for folder organization.
 
 ---
 
@@ -98,7 +98,7 @@ npm run dev
 
 Open `http://localhost:5173` to view the dashboard.
 
-For detailed setup and deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+For detailed setup and deployment instructions, see [docs/reference/DEPLOYMENT.md](docs/reference/DEPLOYMENT.md).
 
 ### 3. Backend
 
@@ -140,7 +140,7 @@ Integrate VaultDAO into your own application using the official TypeScript SDK.
 npm install @vaultdao/sdk
 ```
 
-- **API Reference**: [docs/API.md](docs/API.md)
+- **API Reference**: [docs/reference/API.md](docs/reference/API.md)
 - **SDK README**: [sdk/README.md](sdk/README.md)
 - **Usage examples**: [`sdk/examples/`](sdk/examples/)
 ## 🧪 Testing
@@ -194,17 +194,14 @@ npx husky
 
 ---
 
-## 🌊 Stellar Drips Wave
+## 🤝 Contributing
 
-We are actively participating in the **Stellar Community Drips Wave**. We welcome developers to help us build the future of Stellar treasury management!
-
-- Browse [Wave Issues](docs/WAVE_ISSUES.md) for tasks.
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+We welcome bug reports, feature ideas, and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions, and the PR workflow.
 
 ## 🛡️ Security & Conduct
 
-- **Security**: Please read our [SECURITY.md](docs/SECURITY.md) for our vulnerability disclosure policy.
-- **Conduct**: We follow the [Contributor Covenant](CODE_OF_CONDUCT.md).
+- **Security**: Please read our [SECURITY.md](docs/reference/SECURITY.md) for our vulnerability disclosure policy.
+- **Conduct**: We follow the [Contributor Covenant](docs/CODE_OF_CONDUCT.md).
 
 ## 📄 License
 

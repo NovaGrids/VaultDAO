@@ -4,7 +4,6 @@ import { ErrorCode } from "../../shared/http/errorCodes.js";
 import {
   validatePagination,
   validateOptionalString,
-  validateLedgerRange,
   validateOptionalDate,
   validateOptionalNumber,
 } from "../../shared/http/validateQuery.js";

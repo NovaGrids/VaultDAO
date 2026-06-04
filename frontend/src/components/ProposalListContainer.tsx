@@ -1,6 +1,6 @@
 import React, { useMemo, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
-import ProposalCardSkeleton from './ProposalCardSkeleton';
+import { ProposalListSkeleton } from './ProposalCardSkeleton';
 import type { Proposal } from './type';
 
 interface ProposalListContainerProps {
@@ -35,7 +35,7 @@ const ProposalListContainer: React.FC<ProposalListContainerProps> = ({
   if (loading && proposals.length === 0) {
     return (
       <div className={containerClasses}>
-        <ProposalCardSkeleton count={6} />
+        <ProposalListSkeleton count={6} />
       </div>
     );
   }

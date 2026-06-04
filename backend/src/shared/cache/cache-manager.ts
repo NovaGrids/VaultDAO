@@ -1,5 +1,9 @@
 import { createLogger } from "../logging/logger.js";
-import type { CacheStats, TaggedCacheAdapter } from "./cache.adapter.js";
+import type {
+  CacheAdapter,
+  CacheStats,
+  TaggedCacheAdapter,
+} from "./cache.adapter.js";
 import { InMemoryCacheAdapter } from "./cache.adapter.js";
 import { LRUCacheManager, type LRUCacheOptions } from "./lru-cache.manager.js";
 
@@ -22,7 +26,7 @@ export const CacheTags = {
  * - Event-driven invalidation hooks
  * - Graceful fallback to InMemoryCacheAdapter when primary is unavailable
  */
-export class CacheManager {
+export class CacheManager implements CacheAdapter<unknown> {
   private readonly primary: TaggedCacheAdapter;
   private readonly fallback: InMemoryCacheAdapter<unknown>;
 
@@ -39,6 +43,26 @@ export class CacheManager {
     (this.primary as TaggedCacheAdapter<T>).set(key, value, ttlMs);
   }
 
+  delete(key: string): void {
+    this.primary.delete(key);
+  }
+
+  has(key: string): boolean {
+    return this.primary.has(key);
+  }
+
+  clear(): void {
+    this.primary.clear();
+  }
+
+  countByPrefix(prefix: string): number {
+    return this.primary.countByPrefix(prefix);
+  }
+
+  deleteByPrefix(prefix: string): number {
+    return this.primary.deleteByPrefix(prefix);
+  }
+
   invalidate(pattern: string): number {
     return this.invalidatePattern(pattern);
   }
@@ -52,9 +76,17 @@ export class CacheManager {
     tags: string[] = [],
   ): Promise<T> {
     try {
-      return await (this.primary as TaggedCacheAdapter<T>).getOrSet(key, ttlMs, fetchFn, tags);
+      return await (this.primary as TaggedCacheAdapter<T>).getOrSet(
+        key,
+        ttlMs,
+        fetchFn,
+        tags,
+      );
     } catch (err) {
-      logger.warn("primary cache error, using fallback", { key, error: String(err) });
+      logger.warn("primary cache error, using fallback", {
+        key,
+        error: String(err),
+      });
       const cached = this.fallback.get(key) as T | null;
       if (cached !== null) return cached;
       const value = await fetchFn();
@@ -79,7 +111,10 @@ export class CacheManager {
     try {
       deleted = this.primary.invalidatePattern(pattern);
     } catch (err) {
-      logger.warn("pattern invalidation error", { pattern, error: String(err) });
+      logger.warn("pattern invalidation error", {
+        pattern,
+        error: String(err),
+      });
     }
     this.fallback.deleteByPrefix(pattern.replace(/\*/g, ""));
     return deleted;
@@ -113,7 +148,10 @@ export class CacheManager {
   }
 
   destroy(): void {
-    if ("destroy" in this.primary && typeof this.primary.destroy === "function") {
+    if (
+      "destroy" in this.primary &&
+      typeof this.primary.destroy === "function"
+    ) {
       this.primary.destroy();
     }
     this.fallback.destroy();

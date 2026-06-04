@@ -50,7 +50,11 @@ export function createWebhookRouter(service: WebhookDeliveryService) {
       const msg = err instanceof Error ? err.message : String(err);
       // HTTPS validation error → 400
       if (msg.includes("HTTPS")) {
-        error(res, { message: msg, status: 400, code: ErrorCode.VALIDATION_ERROR });
+        error(res, {
+          message: msg,
+          status: 400,
+          code: ErrorCode.VALIDATION_ERROR,
+        });
       } else {
         error(res, { message: msg, status: 400, code: ErrorCode.BAD_REQUEST });
       }
@@ -59,10 +63,14 @@ export function createWebhookRouter(service: WebhookDeliveryService) {
 
   /** DELETE /api/v1/webhooks/:id — unregister a webhook */
   router.delete("/:id", (req: Request, res: Response) => {
-    const { id } = req.params;
+    const id = String(req.params.id ?? "");
     const removed = service.unregister(id);
     if (!removed) {
-      error(res, { message: "Webhook not found", status: 404, code: ErrorCode.NOT_FOUND });
+      error(res, {
+        message: "Webhook not found",
+        status: 404,
+        code: ErrorCode.NOT_FOUND,
+      });
       return;
     }
     success(res, { id, deleted: true });
@@ -70,7 +78,7 @@ export function createWebhookRouter(service: WebhookDeliveryService) {
 
   /** GET /api/v1/webhooks/:id/deliveries — delivery history */
   router.get("/:id/deliveries", async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const id = String(req.params.id ?? "");
     const deliveries = await service.getDeliveries(id);
     success(res, { webhookId: id, deliveries, total: deliveries.length });
   });

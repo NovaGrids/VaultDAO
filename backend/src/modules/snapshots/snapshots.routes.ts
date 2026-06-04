@@ -12,11 +12,9 @@ function validateStellarId(...params: string[]) {
     for (const param of params) {
       const val = req.params[param];
       if (!STELLAR_ID_RE.test(typeof val === "string" ? val : "")) {
-        res
-          .status(400)
-          .json({
-            error: `Invalid Stellar ID format for parameter '${param}'.`,
-          });
+        res.status(400).json({
+          error: `Invalid Stellar ID format for parameter '${param}'.`,
+        });
         return;
       }
     }
@@ -26,7 +24,11 @@ function validateStellarId(...params: string[]) {
 
 export function createSnapshotRouter(
   service: SnapshotService,
-  adminAuthMiddleware: (req: Request, res: Response, next: NextFunction) => void,
+  adminAuthMiddleware: (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => void,
   diffService?: SnapshotDiffService,
 ) {
   const router = Router();
@@ -60,7 +62,7 @@ export function createSnapshotRouter(
      * Returns the incremental diff from the previous snapshot.
      */
     router.get("/:id/diff", async (req: Request, res: Response) => {
-      const { id } = req.params;
+      const id = String(req.params.id ?? "");
       const diff = await diffService.getDiffFromPrevious(id);
       if (!diff) {
         error(res, {

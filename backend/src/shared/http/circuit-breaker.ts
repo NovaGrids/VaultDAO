@@ -1,7 +1,3 @@
-import type { BackendEnv } from "../../config/env.js";
-import type { BackendRuntime } from "../../server.js";
-import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
-
 /**
  * Circuit breaker states
  */
@@ -58,10 +54,8 @@ export class CircuitBreaker {
    */
   async execute<T>(
     fn: () => Promise<T>,
-    options?: { skipIfOpen?: boolean },
+    _options?: { skipIfOpen?: boolean },
   ): Promise<CircuitBreakerResult<T>> {
-    const startTime = this.clock();
-
     // Check if circuit is open
     if (this.state === "Open") {
       const timeSinceLastFailure = this.clock() - this.lastFailureTime;
@@ -80,14 +74,14 @@ export class CircuitBreaker {
 
     try {
       const result = await fn();
-      
+
       // Success case
       if (this.state === "HalfOpen") {
         // Close the circuit on success
         this.state = "Closed";
         this.failureCount = 0;
       }
-      
+
       return {
         success: true,
         data: result,
@@ -96,7 +90,7 @@ export class CircuitBreaker {
     } catch (error) {
       // Failure case
       this.lastFailureTime = this.clock();
-      
+
       if (this.state === "Closed") {
         this.failureCount++;
         if (this.failureCount >= this.failureThreshold) {
@@ -106,7 +100,7 @@ export class CircuitBreaker {
         // Reopen the circuit on half-open failure
         this.state = "Open";
       }
-      
+
       return {
         success: false,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -129,7 +123,7 @@ export class CircuitBreaker {
  * Factory function to create a circuit breaker for a specific RPC endpoint
  */
 export function createRpcCircuitBreaker(
-  rpcUrl: string,
+  _rpcUrl: string,
   config?: CircuitBreakerConfig,
 ): CircuitBreaker {
   return new CircuitBreaker(config);

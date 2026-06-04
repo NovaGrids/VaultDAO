@@ -2,76 +2,16 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import type { AnalyticsTimeRange, ActivityLike } from '../../types/analytics';
-import { aggregateAnalytics } from '../../utils/analyticsAggregation';
-import { exportAnalyticsToCsv, exportChartAsImage } from '../../utils/exportAnalytics';
-import LineChart from '../../components/charts/LineChart';
-import BarChart from '../../components/charts/BarChart';
-import PieChart from '../../components/charts/PieChart';
-import HeatMap from '../../components/charts/HeatMap';
-import SpendingAnalytics from '../../components/SpendingAnalytics';
-import AdvancedChart from '../../components/AdvancedChart';
 import {
-  TrendingUp,
-  PieChart as PieIcon,
-  Users,
-  Wallet,
-  Download,
-  Image,
-  BarChart3,
-  AlertCircle,
-  CheckCircle2,
-  Info,
-  FileSpreadsheet,
-} from 'lucide-react';
-
-/** Generate mock activities for demo when no event source is available. */
-function getMockActivities(): ActivityLike[] {
-  const now = Date.now();
-  const day = 24 * 60 * 60 * 1000;
-  const activities: ActivityLike[] = [];
-  const signers = ['GAAA...1111', 'GBBB...2222', 'GCCC...3333'];
-  const recipients = ['GDEF...ABC1', 'GHIJ...DEF2', 'GKLM...GHI3'];
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(now - (29 - i) * day);
-    if (i % 3 === 0) {
-      activities.push({
-        id: `c-${i}`,
-        type: 'proposal_created',
-        timestamp: d.toISOString(),
-        actor: signers[i % signers.length],
-        details: { ledger: String(i), amount: 100 * (i + 1), recipient: recipients[i % 3] },
-      });
-    }
-    if (i % 2 === 0 && i > 0) {
-      activities.push({
-        id: `a-${i}`,
-        type: 'proposal_approved',
-        timestamp: new Date(d.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-        actor: signers[(i + 1) % signers.length],
-        details: { ledger: String(i - 1), approval_count: 1, threshold: 2 },
-      });
-    }
-    if (i % 4 === 0 && i >= 2) {
-      activities.push({
-        id: `e-${i}`,
-        type: 'proposal_executed',
-        timestamp: new Date(d.getTime() + 5 * 60 * 60 * 1000).toISOString(),
-        actor: signers[0],
-        details: { amount: 500 + i * 10, recipient: recipients[i % 3] },
-      });
-    }
-    if (i === 5 || i === 12) {
-      activities.push({
-        id: `r-${i}`,
-        type: 'proposal_rejected',
-        timestamp: d.toISOString(),
-        actor: signers[2],
-        details: {},
-      });
-    }
-  }
-  return activities;
-}
+  aggregateDailySpending,
+  aggregateProposalOutcomes,
+  aggregateTopRecipients,
+  aggregateSignerParticipation,
+} from '../../utils/analyticsAggregation';
+import SpendingAreaChart from '../../components/charts/SpendingAreaChart';
+import ProposalOutcomesPie from '../../components/charts/ProposalOutcomesPie';
+import TopRecipientsBar from '../../components/charts/TopRecipientsBar';
+import SignerParticipationTable from '../../components/charts/SignerParticipationTable';
 
 const TIME_RANGES: { value: AnalyticsTimeRange; label: string }[] = [
   { value: '7d', label: '7d' },
@@ -81,40 +21,12 @@ const TIME_RANGES: { value: AnalyticsTimeRange; label: string }[] = [
   { value: 'all', label: 'All' },
 ];
 
-const CUSTOM_RANGES = [
-  { label: 'Last 7', value: '7d' as AnalyticsTimeRange },
-  { label: 'Last 30', value: '30d' as AnalyticsTimeRange },
-  { label: 'Last 90', value: '90d' as AnalyticsTimeRange },
-  { label: 'Year', value: '1y' as AnalyticsTimeRange },
-];
-
-/** Convert raw activities into execution-timeline data points. */
-function buildExecutionTimeline(activities: ActivityLike[]): Record<string, unknown>[] {
-  const map = new Map<string, { approved: number; rejected: number; executed: number }>();
-  for (const a of activities) {
-    if (!a.timestamp) continue;
-    const day = a.timestamp.slice(0, 10);
-    const entry = map.get(day) || { approved: 0, rejected: 0, executed: 0 };
-    if (a.type === 'proposal_approved') entry.approved++;
-    else if (a.type === 'proposal_rejected') entry.rejected++;
-    else if (a.type === 'proposal_executed') entry.executed++;
-    map.set(day, entry);
-  }
-  return Array.from(map.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, counts]) => ({ date, ...counts }));
-}
-
-const Analytics: React.FC = () => {
-  const [timeRange, setTimeRange] = useState<AnalyticsTimeRange>('30d');
-  const [loading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'spending' | 'advanced'>('overview');
-  const [exporting, setExporting] = useState(false);
-  const proposalChartRef = useRef<HTMLDivElement>(null);
-  const spendingChartRef = useRef<HTMLDivElement>(null);
-  const treasuryChartRef = useRef<HTMLDivElement>(null);
-  const heatmapRef = useRef<HTMLDivElement>(null);
-  const timelineChartRef = useRef<HTMLDivElement>(null);
+const ChartCard: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="bg-gray-800/60 backdrop-blur-sm border border-gray-700/60 rounded-xl p-4 sm:p-5 shadow-lg">
+    <h3 className="text-sm font-semibold text-gray-300 mb-4">{title}</h3>
+    {children}
+  </div>
+);
 
 const SkeletonCard: React.FC = () => (
   <div className="bg-gray-800/60 border border-gray-700/60 rounded-xl p-4 sm:p-5 animate-pulse">
@@ -150,41 +62,7 @@ const Analytics: React.FC = () => {
   const recipients = useMemo(() => aggregateTopRecipients(activities, timeRange), [activities, timeRange]);
   const signers = useMemo(() => aggregateSignerParticipation(activities, timeRange), [activities, timeRange]);
 
-  const executionTimeline = useMemo(() => buildExecutionTimeline(activities), [activities]);
-
-  const hasData =
-    analytics &&
-    (analytics.proposalTrends.length > 0 ||
-      analytics.spendingByToken.length > 0 ||
-      analytics.signerActivity.length > 0 ||
-      analytics.treasuryBalance.length > 0);
-
-  const handleExportPdf = useCallback(async () => {
-    setExporting(true);
-    try {
-      const { default: html2canvas } = await import('html2canvas');
-      const { default: jsPDF } = await import('jspdf');
-      const pdf = new jsPDF('l', 'mm', 'a4');
-      const charts = [proposalChartRef, spendingChartRef, treasuryChartRef, heatmapRef, timelineChartRef];
-      for (let i = 0; i < charts.length; i++) {
-        const el = charts[i].current;
-        if (!el) continue;
-        const canvas = await html2canvas(el, { useCORS: true, scale: 2 });
-        const imgData = canvas.toDataURL('image/png');
-        if (i > 0) pdf.addPage();
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
-        const margin = 10;
-        const imgWidth = pageWidth - margin * 2;
-        const imgHeight = (canvas.height / canvas.width) * imgWidth;
-        pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, Math.min(imgHeight, pageHeight - margin * 2));
-      }
-      pdf.save('vaultdao-governance-report.pdf');
-    } catch (err) {
-      console.error('PDF export failed:', err);
-    }
-    setExporting(false);
-  }, []);
+  const hasData = spending.length > 0 || outcomes.length > 0 || recipients.length > 0 || signers.length > 0;
 
   return (
     <div className="space-y-6">
@@ -194,30 +72,9 @@ const Analytics: React.FC = () => {
           <h1 className="text-2xl sm:text-3xl font-bold text-white">Analytics</h1>
           <p className="text-gray-400 mt-1">Spending trends, proposal outcomes, and signer activity</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Quick date range toggles */}
-          <div className="flex gap-1 bg-gray-800 rounded-lg p-1 border border-gray-700">
-            {CUSTOM_RANGES.map((r) => (
-              <button
-                key={r.value}
-                onClick={() => setTimeRange(r.value)}
-                className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
-                  timeRange === r.value
-                    ? 'bg-purple-600 text-white'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-
-          <select
-            value={timeRange}
-            onChange={(e) => setTimeRange(e.target.value as AnalyticsTimeRange)}
-            className="bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white"
-            aria-label="Select analytics date range"
-          >
+        <div className="flex items-center gap-3">
+          {/* Time range selector */}
+          <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-lg p-1">
             {TIME_RANGES.map((r) => (
               <button
                 key={r.value}
@@ -231,39 +88,14 @@ const Analytics: React.FC = () => {
                 {r.label}
               </button>
             ))}
-          </select>
-
+          </div>
           <button
-            type="button"
-            onClick={handleExportCsv}
-            disabled={!analytics}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm disabled:opacity-50"
-            aria-label="Export analytics as CSV"
+            onClick={fetchActivities}
+            disabled={loading}
+            className="p-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+            title="Refresh"
           >
-            <Download size={16} />
-            CSV
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleExportChart(proposalChartRef, 'proposal-trends')}
-            disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm disabled:opacity-50"
-            aria-label="Export charts as PNG images"
-          >
-            <Image size={16} />
-            {exporting ? '…' : 'PNG'}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleExportPdf}
-            disabled={exporting || !analytics}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm disabled:opacity-50"
-            aria-label="Export dashboard as PDF report"
-          >
-            <FileSpreadsheet size={16} />
-            PDF
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -293,162 +125,20 @@ const Analytics: React.FC = () => {
         </div>
       )}
 
-      {!loading && analytics && activeTab === 'overview' && (
-        <>
-          {/* Insights */}
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">Insights</h3>
-            <ul className="space-y-2">
-              {insights.map((insight, i) => (
-                <li key={i} className="flex items-center gap-2 text-sm">
-                  {insight.type === 'success' && <CheckCircle2 size={16} className="text-green-400 flex-shrink-0" />}
-                  {insight.type === 'warning' && <AlertCircle size={16} className="text-amber-400 flex-shrink-0" />}
-                  {insight.type === 'info' && <Info size={16} className="text-blue-400 flex-shrink-0" />}
-                  <span className="text-gray-300">{insight.text}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+      {/* Charts */}
+      {!loading && !error && hasData && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <ChartCard title="Spending Over Time">
+            <SpendingAreaChart data={spending} height={240} />
+          </ChartCard>
 
-          {/* Stats cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-purple-500/20">
-                <BarChart3 size={20} className="text-purple-400" />
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Approval rate</p>
-                <p className="text-xl font-bold">{analytics.approvalRate.toFixed(1)}%</p>
-              </div>
-            </div>
-            <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-green-500/20">
-                <TrendingUp size={20} className="text-green-400" />
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Avg approval time</p>
-                <p className="text-xl font-bold">
-                  {analytics.averageApprovalTimeHours < 1
-                    ? `${(analytics.averageApprovalTimeHours * 60).toFixed(0)} min`
-                    : `${analytics.averageApprovalTimeHours.toFixed(1)} h`}
-                </p>
-              </div>
-            </div>
-            <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-500/20">
-                <Users size={20} className="text-blue-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs text-gray-500 uppercase">Most active signer</p>
-                <p className="text-sm font-medium truncate" title={analytics.mostActiveSigner}>
-                  {analytics.mostActiveSigner}
-                </p>
-              </div>
-            </div>
-            <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-amber-500/20">
-                <PieIcon size={20} className="text-amber-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs text-gray-500 uppercase">Top recipient</p>
-                <p className="text-sm font-medium truncate" title={analytics.topRecipient}>
-                  {analytics.topRecipient}
-                </p>
-              </div>
-            </div>
-            <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-gray-500/20">
-                <Wallet size={20} className="text-gray-400" />
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Total volume</p>
-                <p className="text-xl font-bold">{analytics.totalVolume.toLocaleString()}</p>
-              </div>
-            </div>
-          </div>
+          <ChartCard title="Proposal Outcomes">
+            <ProposalOutcomesPie data={outcomes} height={240} />
+          </ChartCard>
 
-          {/* Charts grid: mobile 1 col, tablet 2, desktop 3-4 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            <div
-              ref={proposalChartRef}
-              className="bg-gray-800 rounded-xl border border-gray-700 p-4 md:p-5"
-              role="img"
-              aria-label="Proposal trends chart showing number of proposals created, approved, and executed over time"
-            >
-              <LineChart
-                data={analytics.proposalTrends as unknown as Record<string, unknown>[]}
-                xKey="date"
-                series={[
-                  { dataKey: 'created', name: 'Created', color: '#818cf8' },
-                  { dataKey: 'approved', name: 'Approved', color: '#34d399' },
-                  { dataKey: 'executed', name: 'Executed', color: '#22c55e' },
-                ]}
-                height={280}
-                title="Proposal trends"
-              />
-            </div>
-
-            <div
-              ref={spendingChartRef}
-              className="bg-gray-800 rounded-xl border border-gray-700 p-4 md:p-5"
-              role="img"
-              aria-label="Spending by token pie chart showing distribution of vault spending across different tokens"
-            >
-              <PieChart
-                data={analytics.spendingByToken}
-                height={280}
-                title="Spending by token / recipient"
-                showCount
-              />
-            </div>
-
-            <div
-              ref={treasuryChartRef}
-              className="bg-gray-800 rounded-xl border border-gray-700 p-4 md:p-5 md:col-span-2 xl:col-span-1"
-              role="img"
-              aria-label="Treasury balance chart showing cumulative vault volume over time"
-            >
-              <LineChart
-                data={analytics.treasuryBalance as unknown as Record<string, unknown>[]}
-                xKey="date"
-                series={[{ dataKey: 'total', name: 'Cumulative volume', color: '#8b5cf6' }]}
-                height={280}
-                title="Treasury balance / cumulative volume"
-              />
-            </div>
-
-            <div
-              ref={timelineChartRef}
-              className="bg-gray-800 rounded-xl border border-gray-700 p-4 md:p-5 md:col-span-2 xl:col-span-3"
-              role="img"
-              aria-label="Proposal execution timeline chart showing approved, rejected, and executed proposals over time"
-            >
-              <BarChart
-                data={executionTimeline}
-                xKey="date"
-                series={[
-                  { dataKey: 'approved', name: 'Approved', color: '#34d399' },
-                  { dataKey: 'rejected', name: 'Rejected', color: '#ef4444' },
-                  { dataKey: 'executed', name: 'Executed', color: '#8b5cf6' },
-                ]}
-                height={240}
-                title="Proposal execution timeline"
-              />
-            </div>
-
-            <div
-              ref={heatmapRef}
-              className="bg-gray-800 rounded-xl border border-gray-700 p-4 md:p-5 md:col-span-2 xl:col-span-3"
-              role="img"
-              aria-label="Signer participation heatmap showing which signers were active and when"
-            >
-              <HeatMap
-                data={analytics.signerActivity}
-                height={260}
-                title="Signer activity (approvals by period)"
-              />
-            </div>
-          </div>
+          <ChartCard title="Top Recipients">
+            <TopRecipientsBar data={recipients} height={240} />
+          </ChartCard>
 
           <ChartCard title="Signer Participation">
             <SignerParticipationTable data={signers} />

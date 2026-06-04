@@ -104,14 +104,20 @@ test("due-payments job publishes enriched notification with full payment details
     },
   };
   const queue = {
-    publish: async (event: NotificationEvent) => { published.push(event); },
+    publish: async (event: NotificationEvent) => {
+      published.push(event);
+    },
   };
 
-  const job = createDuePaymentsScheduledJob(recurringService as any, queue as any);
-  await job.run();
+  const job = createDuePaymentsScheduledJob(
+    recurringService as any,
+    queue as any,
+  );
+  await job.run({ now: () => new Date() });
 
   assert.equal(published.length, 1);
-  const payload = published[0]!.payload as RecurringPaymentDueNotification;
+  const payload = published[0]!
+    .payload as unknown as RecurringPaymentDueNotification;
   assert.equal(published[0]!.source, "jobs.due-payments");
   assert.equal(payload.notificationType, "RECURRING_PAYMENT_DUE");
   assert.equal(payload.paymentId, "p-1");
@@ -135,14 +141,20 @@ test("due-payments job publishes degraded notification when enrichment fails", a
     },
   };
   const queue = {
-    publish: async (event: NotificationEvent) => { published.push(event); },
+    publish: async (event: NotificationEvent) => {
+      published.push(event);
+    },
   };
 
-  const job = createDuePaymentsScheduledJob(recurringService as any, queue as any);
-  await job.run();
+  const job = createDuePaymentsScheduledJob(
+    recurringService as any,
+    queue as any,
+  );
+  await job.run({ now: () => new Date() });
 
   assert.equal(published.length, 1);
-  const payload = published[0]!.payload as RecurringPaymentDueNotification;
+  const payload = published[0]!
+    .payload as unknown as RecurringPaymentDueNotification;
   assert.equal(payload.enrichmentFailed, true);
   assert.equal(payload.paymentId, "p-1");
   assert.equal(published[0]!.source, "jobs.due-payments");
@@ -158,14 +170,20 @@ test("due-payments job publishes one notification per due payment", async () => 
   const recurringService = {
     getStatus: () => ({ lastLedgerProcessed: 77 }),
     getDuePaymentsAtLedger: async () => payments,
-    getPayment: async (id: string) => payments.find((p) => p.paymentId === id) ?? null,
+    getPayment: async (id: string) =>
+      payments.find((p) => p.paymentId === id) ?? null,
   };
   const queue = {
-    publish: async (event: NotificationEvent) => { published.push(event); },
+    publish: async (event: NotificationEvent) => {
+      published.push(event);
+    },
   };
 
-  const job = createDuePaymentsScheduledJob(recurringService as any, queue as any);
-  await job.run();
+  const job = createDuePaymentsScheduledJob(
+    recurringService as any,
+    queue as any,
+  );
+  await job.run({ now: () => new Date() });
 
   assert.equal(published.length, 2);
   assert.equal((published[0]!.payload as any).paymentId, "p-1");

@@ -31,6 +31,7 @@ const EVENT_LABELS: Record<NotificationEventKey, string> = {
   audit_error: 'Audit error',
   audit_tamper: 'Audit tampering detected',
   audit_fetch_error: 'Audit fetch error',
+  audit_verify_error: 'Audit verification error',
   no_data: 'No data available',
   preview_ready: 'Preview ready',
   preview_error: 'Preview error',

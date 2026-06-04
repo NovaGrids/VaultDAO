@@ -20,7 +20,7 @@ export class ContractRegistry {
   private readonly logger = createLogger("contract-registry");
   private contracts: ContractInfo[] = [];
 
-  constructor(private readonly env: BackendEnv) {
+  constructor(env: BackendEnv) {
     const ids =
       env.contractIds && env.contractIds.length > 0
         ? env.contractIds
