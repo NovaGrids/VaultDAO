@@ -4,7 +4,7 @@ import { TypingIndicator } from './TypingIndicator';
 import { OnlineUsers } from './OnlineUsers';
 import { useWallet } from '../../hooks/useWallet';
 import { Users, AlertTriangle, Save, Globe } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
+
 import type { ProposalDraft } from '../../types/collaboration';
 
 export const CreateProposalWizard: React.FC = () => {
@@ -12,7 +12,7 @@ export const CreateProposalWizard: React.FC = () => {
   const [draftId] = useState<string>(() => {
     const savedId = localStorage.getItem('vaultdao_current_draft_id');
     if (savedId) return savedId;
-    const newId = uuidv4();
+    const newId = crypto.randomUUID();
     localStorage.setItem('vaultdao_current_draft_id', newId);
     return newId;
   });
