@@ -27,7 +27,7 @@ use types::{
     CancellationRecord, Comment, Condition, ConditionLogic, Config, DexConfig, Escrow,
     EscrowCondition, EscrowStatus, ExecutionFeeEstimate, FeeTier, FundingMilestone,
     FundingMilestoneStatus, FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig,
-    InitConfig, InsuranceConfig, ListMode, Milestone, NotificationPreferences,
+    InitConfig, InsuranceConfig, ListMode, Milestone, NotificationPreferences, NotificationPrefs,
     OptionalVaultOracleConfig, PendingAdminRotation, PriceOracleClient, Priority, Proposal,
     ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal,
     RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, RoleAssignment,
@@ -70,6 +70,12 @@ const MAX_ATTACHMENTS: u32 = 10;
 /// Enforced at both vault initialization and `set_admin_rotation_delay`.
 const MIN_ADMIN_ROTATION_DELAY: u64 = 1_440;
 
+/// Maximum number of event-type subscriptions per signer notification preference.
+const MAX_SUBSCRIBED_EVENTS: u32 = 20;
+
+/// Ledgers in one notification quiet-hours cycle (same as one 24 h day).
+const QUIET_HOURS_CYCLE: u32 = 1_440;
+
 /// Minimum length for an attachment CID (CIDv0 = 46 chars, CIDv1 base32 = 59+ chars)
 const MIN_ATTACHMENT_LEN: u32 = 46;
 
@@ -81,6 +87,49 @@ const REP_EXEC_PROPOSER: u32 = 10;
 const REP_EXEC_APPROVER: u32 = 5;
 const REP_REJECTION_PENALTY: u32 = 20;
 const REP_APPROVAL_BONUS: u32 = 2;
+
+/// Compute which registered addresses have `NotificationPrefs` that match
+/// `event_type` and `amount`, taking quiet hours into account.
+///
+/// Called at emission time so indexers receive a ready-made push list inside
+/// the companion `notif_dispatch` event.
+fn compute_relevant_signers(env: &Env, event_type: &Symbol, amount: i128) -> Vec<Address> {
+    let day_offset = env.ledger().sequence() % QUIET_HOURS_CYCLE;
+    // Use the dedicated prefs index so any address (not just role-holders) can subscribe.
+    let known = storage::get_notification_prefs_index(env);
+    let mut relevant = Vec::new(env);
+
+    for addr in known.iter() {
+        let prefs = match storage::get_notification_prefs(env, &addr) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if !prefs.subscribed_events.contains(event_type) {
+            continue;
+        }
+
+        if amount < prefs.min_amount_threshold {
+            continue;
+        }
+
+        // Quiet-hours check: exclude if the current day-offset falls within
+        // [quiet_hours_start, quiet_hours_end).  Wrapping ranges (start > end)
+        // are handled by splitting into two half-open intervals.
+        let in_quiet = if prefs.quiet_hours_start <= prefs.quiet_hours_end {
+            day_offset >= prefs.quiet_hours_start && day_offset < prefs.quiet_hours_end
+        } else {
+            day_offset >= prefs.quiet_hours_start || day_offset < prefs.quiet_hours_end
+        };
+        if in_quiet {
+            continue;
+        }
+
+        relevant.push_back(addr);
+    }
+
+    relevant
+}
 
 fn calculate_expiration_ledger(config: &Config, priority: &Priority, current_ledger: u64) -> u64 {
     let multiplier = match priority {
@@ -105,6 +154,8 @@ mod test_escrow_oracle;
 mod test_fees;
 #[cfg(test)]
 mod test_hooks;
+#[cfg(test)]
+mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
@@ -580,6 +631,13 @@ impl VaultDAO {
             amount,
             actual_insurance,
         );
+
+        // Emit notification dispatch so indexers know exactly which signers to notify.
+        {
+            let event_type = Symbol::new(&env, "proposal_created");
+            let relevant = compute_relevant_signers(&env, &event_type, amount);
+            events::emit_notification_dispatch(&env, &event_type, proposal_id, amount, &relevant);
+        }
 
         // Update reputation for creating proposal
         Self::update_reputation_on_propose(&env, &proposer);
@@ -1172,6 +1230,19 @@ impl VaultDAO {
                     proposal.amount,
                     current_ledger,
                 );
+
+                // Companion notification dispatch
+                {
+                    let event_type = Symbol::new(&env, "proposal_executed");
+                    let relevant = compute_relevant_signers(&env, &event_type, proposal.amount);
+                    events::emit_notification_dispatch(
+                        &env,
+                        &event_type,
+                        proposal_id,
+                        proposal.amount,
+                        &relevant,
+                    );
+                }
 
                 // Update reputation: proposer +10, each approver +5
                 Self::update_reputation_on_execution(&env, &proposal);
@@ -3258,7 +3329,53 @@ impl VaultDAO {
     // Notification Preferences (Issue: feature/execution-notifications)
     // ========================================================================
 
-    /// Set notification preferences for the caller.
+    /// Store rich notification preferences for the calling signer.
+    ///
+    /// Enforces:
+    /// - Caller must authorize.
+    /// - `subscribed_events` has at most 20 entries.
+    /// - `quiet_hours_start` and `quiet_hours_end` are each in 0..=1440.
+    ///
+    /// # Errors
+    /// - `InvalidAmount` — too many subscribed events or quiet-hours out of range
+    pub fn set_notification_prefs(
+        env: Env,
+        signer: Address,
+        prefs: NotificationPrefs,
+    ) -> Result<(), VaultError> {
+        signer.require_auth();
+
+        if prefs.subscribed_events.len() > MAX_SUBSCRIBED_EVENTS {
+            return Err(VaultError::InvalidAmount);
+        }
+        if prefs.quiet_hours_start > QUIET_HOURS_CYCLE || prefs.quiet_hours_end > QUIET_HOURS_CYCLE
+        {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        storage::set_notification_prefs(&env, &prefs);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_notification_prefs_updated(&env, &signer);
+
+        Ok(())
+    }
+
+    /// Return the rich notification preferences for `signer`, or `None` if not set.
+    pub fn get_notification_prefs(env: Env, signer: Address) -> Option<NotificationPrefs> {
+        storage::get_notification_prefs(&env, &signer)
+    }
+
+    /// Return the addresses that would receive a notification for `event_type` at
+    /// `amount`, given their stored `NotificationPrefs` at the current ledger.
+    ///
+    /// Indexers can call this off-chain to determine their push list, or they can
+    /// read the `notif_dispatch` event emitted alongside proposal lifecycle events.
+    pub fn get_relevant_signers(env: Env, event_type: Symbol, amount: i128) -> Vec<Address> {
+        compute_relevant_signers(&env, &event_type, amount)
+    }
+
+    /// (Legacy) Set boolean notification preferences for the caller.
     pub fn set_notification_preferences(
         env: Env,
         caller: Address,
@@ -3266,7 +3383,7 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         caller.require_auth();
 
-        storage::set_notification_prefs(&env, &caller, &prefs);
+        storage::set_legacy_notification_prefs(&env, &caller, &prefs);
         storage::extend_instance_ttl(&env);
 
         events::emit_notification_prefs_updated(&env, &caller);
@@ -3274,9 +3391,9 @@ impl VaultDAO {
         Ok(())
     }
 
-    /// Get notification preferences for an address.
+    /// (Legacy) Get boolean notification preferences for an address.
     pub fn get_notification_preferences(env: Env, addr: Address) -> NotificationPreferences {
-        storage::get_notification_prefs(&env, &addr)
+        storage::get_legacy_notification_prefs(&env, &addr)
     }
 
     // ========================================================================

@@ -25,10 +25,10 @@ use crate::types::{
     AuditEntry, BatchExecutionResult, BatchTransaction, Comment, Config, CumulativeVolume,
     DelegatedPermission, DexConfig, Escrow, EscrowCondition, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, FeeTier, FundingRound, FundingRoundConfig, GasConfig,
-    InsuranceConfig, ListMode, NotificationPreferences, PendingAdminRotation, PermissionGrant,
-    Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation, RetryState, Role,
-    RoleAssignment, StakeRecord, StakingConfig, SwapProposal, SwapResult, TierFeeConfig,
-    TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig, VotingStrategy,
+    InsuranceConfig, ListMode, NotificationPreferences, NotificationPrefs, PendingAdminRotation,
+    PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate, RecoveryProposal, Reputation,
+    RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, SwapProposal, SwapResult,
+    TierFeeConfig, TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig, VotingStrategy,
 };
 
 /// Core storage key definitions (kept minimal to avoid size limits)
@@ -99,6 +99,8 @@ pub enum DataKey {
     ExecutionSnapshot(u64),
     /// Execution fee estimate
     ExecutionFeeEstimate(u64),
+    /// Index of all addresses that have set NotificationPrefs -> Vec<Address>
+    NotificationPrefsIndex,
 }
 
 /// Feature-specific storage keys (split to avoid enum size limits)
@@ -1069,14 +1071,48 @@ pub fn subtract_from_insurance_pool(env: &Env, token_addr: &Address, amount: i12
 // Notification Preferences (Issue: feature/execution-notifications)
 // ============================================================================
 
-pub fn get_notification_prefs(env: &Env, addr: &Address) -> NotificationPreferences {
+/// Returns the rich notification preferences for `addr`, or `None` if not set.
+/// Uses Instance storage (hot path) — read on every significant event emission.
+pub fn get_notification_prefs(env: &Env, addr: &Address) -> Option<NotificationPrefs> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NotificationPrefs(addr.clone()))
+}
+
+/// Persist rich notification preferences and register the signer in the prefs
+/// index so `compute_relevant_signers` can enumerate all opted-in addresses.
+pub fn set_notification_prefs(env: &Env, prefs: &NotificationPrefs) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NotificationPrefs(prefs.signer.clone()), prefs);
+    // Keep the index up-to-date
+    let mut index = get_notification_prefs_index(env);
+    if !index.contains(&prefs.signer) {
+        index.push_back(prefs.signer.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::NotificationPrefsIndex, &index);
+    }
+}
+
+/// All addresses that have ever called `set_notification_prefs`.
+pub fn get_notification_prefs_index(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::NotificationPrefsIndex)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Legacy boolean-flag prefs getter; kept for backward compatibility only.
+pub fn get_legacy_notification_prefs(env: &Env, addr: &Address) -> NotificationPreferences {
     env.storage()
         .persistent()
         .get(&FeatureKey::NotificationPrefs(addr.clone()))
         .unwrap_or_else(NotificationPreferences::default)
 }
 
-pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPreferences) {
+/// Legacy boolean-flag prefs setter; kept for backward compatibility only.
+pub fn set_legacy_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPreferences) {
     let key = FeatureKey::NotificationPrefs(addr.clone());
     env.storage().persistent().set(&key, prefs);
     env.storage()

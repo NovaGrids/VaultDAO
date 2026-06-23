@@ -3,7 +3,7 @@
 //! Standardized events for proposal lifecycle and admin actions.
 
 use crate::types::ProposalAmendment;
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Emit when contract is initialized
 pub fn emit_initialized(env: &Env, admin: &Address, threshold: u32) {
@@ -366,6 +366,27 @@ pub fn emit_batch_executed(env: &Env, executor: &Address, executed_count: u32, f
 pub fn emit_notification_prefs_updated(env: &Env, addr: &Address) {
     env.events()
         .publish((Symbol::new(env, "notif_prefs_updated"),), addr.clone());
+}
+
+/// Companion event emitted alongside key proposal lifecycle events.
+///
+/// Carries the list of signers whose `NotificationPrefs` match the event
+/// (subscribed, above amount threshold, not in quiet hours) so off-chain
+/// indexers can push targeted notifications without scanning every signer.
+///
+/// Topics: `("notif_dispatch", event_type)`
+/// Data:   `(proposal_id, amount, relevant_signers)`
+pub fn emit_notification_dispatch(
+    env: &Env,
+    event_type: &Symbol,
+    proposal_id: u64,
+    amount: i128,
+    relevant_signers: &Vec<Address>,
+) {
+    env.events().publish(
+        (Symbol::new(env, "notif_dispatch"), event_type.clone()),
+        (proposal_id, amount, relevant_signers.clone()),
+    );
 }
 
 /// Emit when insurance config is updated by admin

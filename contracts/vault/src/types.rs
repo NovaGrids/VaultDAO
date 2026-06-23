@@ -608,6 +608,30 @@ impl Default for NotificationPreferences {
     }
 }
 
+/// Rich per-signer notification preferences for on-chain subscriber filtering.
+///
+/// Stored in Instance storage (hot path) keyed by `signer` address so indexers
+/// can selectively push events without polling every signer off-chain.
+///
+/// Constraints:
+/// - `subscribed_events`: at most 20 Symbol entries (e.g. `"proposal_created"`)
+/// - `quiet_hours_*`: ledger offset 0–1440 (one 24 h cycle at 5 s/ledger)
+///   Signers are excluded from `relevant_signers` while in their quiet window.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct NotificationPrefs {
+    /// Address whose preferences these are; also the storage key.
+    pub signer: Address,
+    /// Event type names the signer subscribes to (max 20).
+    pub subscribed_events: Vec<Symbol>,
+    /// Only notify if proposal amount >= this value (0 = no threshold).
+    pub min_amount_threshold: i128,
+    /// Start of the quiet window (inclusive), as offset 0–1440 within a day.
+    pub quiet_hours_start: u32,
+    /// End of the quiet window (exclusive), as offset 0–1440 within a day.
+    pub quiet_hours_end: u32,
+}
+
 // ============================================================================
 // Gas Limits (Issue: feature/gas-limits)
 // ============================================================================
