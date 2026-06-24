@@ -93,6 +93,10 @@ pub struct InitConfig {
     pub staking_config: StakingConfig,
     /// Proposal ID namespace prefix for multi-vault coordination (must be multiple of 1_000_000)
     pub proposal_id_prefix: u64,
+    /// Grace period in ledgers after voting deadline before auto-expiry (default: 100)
+    pub grace_period_ledgers: u64,
+    /// Vote weight model: Flat, TokenWeighted, or Quadratic
+    pub vote_weight: VoteWeight,
 }
 
 /// Vault configuration
@@ -101,6 +105,11 @@ pub struct InitConfig {
 pub struct Config {
     /// List of authorized signers
     pub signers: Vec<Address>,
+    /// Per-signer unilateral spending authority.
+    pub signer_tiers: Map<Address, SignerTier>,
+    /// Amounts above this threshold require approval from every signer.
+    /// A value of zero disables the override.
+    pub full_quorum_threshold: i128,
     /// Required number of approvals (M in M-of-N)
     pub threshold: u32,
     /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
@@ -138,6 +147,10 @@ pub struct Config {
     pub staking_config: StakingConfig,
     /// Proposal ID namespace prefix for multi-vault coordination
     pub proposal_id_prefix: u64,
+    /// Grace period in ledgers after voting deadline before auto-expiry (default: 100)
+    pub grace_period_ledgers: u64,
+    /// Vote weight model: Flat, TokenWeighted, or Quadratic
+    pub vote_weight: VoteWeight,
 }
 
 /// Audit record for a cancelled proposal
@@ -194,6 +207,19 @@ pub enum VotingStrategy {
     Conviction,
 }
 
+/// Vote weight model for threshold calculations.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum VoteWeight {
+    /// 1 vote per signer regardless of token balance.
+    Flat = 0,
+    /// Vote weight equals raw token balance.
+    TokenWeighted = 1,
+    /// Vote weight equals floor(sqrt(token_balance)). Zero balance counts as 1.
+    Quadratic = 2,
+}
+
 /// Amount-based threshold tier
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -229,13 +255,20 @@ pub enum Role {
     Treasurer = 2,
     /// Full operational control: manages roles, signers, and configuration.
     Admin = 3,
+    /// Can resolve disputes.
+    DisputeArbitrator = 4,
 }
 
 impl Role {
     /// Check whether `actual` satisfies the `required` role.
     /// Hierarchy: Admin >= Treasurer >= Member >= Observer
+    /// Special case: Admin and DisputeArbitrator can resolve disputes
     pub fn role_satisfies(required: Role, actual: Role) -> bool {
-        (actual as u32) >= (required as u32)
+        match (required, actual) {
+            (Role::DisputeArbitrator, Role::Admin) => true,
+            (Role::DisputeArbitrator, Role::DisputeArbitrator) => true,
+            _ => (actual as u32) >= (required as u32),
+        }
     }
 }
 
@@ -297,6 +330,18 @@ pub struct Delegation {
     pub created_at: u64,
     pub expiry_ledger: u64,
     pub is_active: bool,
+    /// Number of delegation hops from this signer to the final delegate.
+    pub chain_depth: u8,
+}
+
+/// Per-signer authority for unilateral treasury transfers.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SignerTier {
+    Junior(i128),
+    Senior(i128),
+    /// Principals deliberately have no unilateral spending authority.
+    Principal,
 }
 
 #[contracttype]
@@ -533,6 +578,21 @@ pub enum RecurringStatus {
     Stopped = 2,
 }
 
+/// How a recurring payment due on a non-business ledger is adjusted.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HolidayBehavior {
+    PayEarly,
+    PayLate,
+}
+
+/// Sorted list of administratively maintained holiday ledgers.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HolidayCalendar {
+    pub holiday_ledgers: Vec<u64>,
+}
+
 /// Recurring payment schedule
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -555,6 +615,25 @@ pub struct RecurringPayment {
     pub max_missed_payments: u32,
     /// Ledger at which the payment was paused (0 = not paused)
     pub paused_at_ledger: u64,
+    /// Whether holiday/weekend adjustment is enabled.
+    pub skip_holidays: bool,
+    /// Direction used when the scheduled ledger is not a business ledger.
+    pub holiday_behavior: HolidayBehavior,
+}
+
+/// On-chain token vesting schedule.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VestingSchedule {
+    pub id: u64,
+    pub beneficiary: Address,
+    pub token: Address,
+    pub total: i128,
+    pub cliff_ledger: u32,
+    pub start_ledger: u32,
+    pub end_ledger: u32,
+    pub claimed: i128,
+    pub cancelled: bool,
 }
 
 // ============================================================================
@@ -786,6 +865,8 @@ pub struct StakingConfig {
     pub reputation_discount_threshold: u32,
     pub reputation_discount_percentage: u32,
     pub slash_percentage: u32,
+    pub compound_lock_period: u64,
+    pub compound_epoch: u64,
 }
 
 impl Default for StakingConfig {
@@ -798,6 +879,8 @@ impl Default for StakingConfig {
             reputation_discount_threshold: 900,
             reputation_discount_percentage: 0,
             slash_percentage: 50,
+            compound_lock_period: 17280, // ~1 day at 5s/ledger
+            compound_epoch: 17280, // ~1 day at 5s/ledger
         }
     }
 }
@@ -814,6 +897,9 @@ pub struct StakeRecord {
     pub slashed: bool,
     pub slashed_amount: i128,
     pub released_at: u64,
+    pub auto_compound: bool,
+    pub reinvestment_lock_until: u64,
+    pub last_compounded: u64,
 }
 
 impl Default for GasConfig {
@@ -1107,6 +1193,8 @@ pub struct RetryConfig {
     pub max_retries: u32,
     /// Initial backoff period in ledgers before first retry (~5 sec/ledger)
     pub initial_backoff_ledgers: u64,
+    /// Maximum backoff delay in ledgers (cap for exponential growth)
+    pub max_retry_delay: u64,
 }
 
 /// Tracks retry state for a specific proposal execution
@@ -1119,6 +1207,18 @@ pub struct RetryState {
     pub next_retry_ledger: u64,
     /// Ledger of the last retry attempt
     pub last_retry_ledger: u64,
+}
+
+/// Record for proposals that exhausted all retry attempts
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DeadLetterRecord {
+    pub id: u64,
+    pub proposal_id: u64,
+    pub retry_count: u32,
+    pub last_error: u32,
+    pub added_at: u64,
+    pub processed: bool,
 }
 
 // ============================================================================
@@ -1145,6 +1245,7 @@ pub enum SubscriptionStatus {
     Cancelled = 1,
     Expired = 2,
     Suspended = 3,
+    Paused = 4,
 }
 
 /// Subscription record
@@ -1166,6 +1267,8 @@ pub struct Subscription {
     pub auto_renew: bool,
     /// Number of ledgers after next_renewal_ledger during which late renewal is still accepted
     pub grace_period_ledgers: u64,
+    /// Ledger at which the subscription was paused (0 = not paused)
+    pub paused_at_ledger: u64,
 }
 
 /// Payment record for subscription tracking
@@ -1194,6 +1297,45 @@ pub enum CrossVaultStatus {
     Executed = 2,
     Failed = 3,
     Cancelled = 4,
+}
+
+/// Status of a cross-vault bridge operation
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BridgeStatus {
+    Initiated = 0,
+    Confirmed = 1,
+    Rejected = 2,
+    Returned = 3,
+}
+
+/// Record of a cross-vault bridge operation
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BridgeRecord {
+    /// Unique bridge ID (hash of source + target + amount + ledger)
+    pub bridge_id: soroban_sdk::BytesN<32>,
+    /// Source vault address
+    pub source_vault: Address,
+    /// Target vault address
+    pub target_vault: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Initiated amount
+    pub amount: i128,
+    /// Minimum amount to receive (slippage protection)
+    pub min_received: i128,
+    /// Deadline ledger
+    pub deadline_ledger: u64,
+    /// Current status
+    pub status: BridgeStatus,
+    /// Actual received amount (only set when Confirmed)
+    pub actual_amount: i128,
+    /// Ledger when bridge was initiated
+    pub initiated_at: u64,
+    /// Ledger when bridge was finalized
+    pub finalized_at: u64,
 }
 
 /// Describes a single action to be executed on a participant vault
@@ -1259,7 +1401,7 @@ pub enum DisputeStatus {
     Dismissed = 3,
 }
 
-/// Outcome of a dispute resolution
+/// Outcome of a dispute resolution (old, kept for compatibility)
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -1272,6 +1414,19 @@ pub enum DisputeResolution {
     Compromise = 2,
     /// Dispute dismissed as invalid
     Dismissed = 3,
+}
+
+/// Outcome of a dispute resolution with bond slashing
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DisputeOutcome {
+    /// Uphold the dispute - release bond to disputer
+    UpholdDispute = 0,
+    /// Dismiss the dispute - slash 50% of bond
+    DismissDispute = 1,
+    /// Draw - return full bond to disputer
+    DrawDispute = 2,
 }
 
 /// On-chain dispute record for a contested proposal
@@ -1292,12 +1447,18 @@ pub struct Dispute {
     pub status: DisputeStatus,
     /// Resolution outcome (only set when status is Resolved or Dismissed)
     pub resolution: DisputeResolution,
+    /// New dispute outcome with bond handling
+    pub outcome: DisputeOutcome,
     /// Arbitrator who resolved the dispute (zero-value until resolved)
     pub arbitrator: Address,
     /// Ledger when dispute was filed
     pub filed_at: u64,
     /// Ledger when dispute was resolved (0 if unresolved)
     pub resolved_at: u64,
+    /// Bond posted by disputer
+    pub dispute_bond: i128,
+    /// Token used for the bond
+    pub bond_token: Address,
 }
 
 // ============================================================================
@@ -1835,31 +1996,6 @@ pub struct TierFeeConfig {
 }
 
 // ============================================================================
-// Admin Key Rotation (Issue: feature/admin-rotation-timelock)
-// ============================================================================
-
-/// Pending admin-rotation request stored during the timelock window.
-///
-/// Created by `initiate_admin_rotation`; consumed (or deleted) by
-/// `execute_admin_rotation` / `cancel_admin_rotation`.
-///
-/// Only one pending rotation is allowed at a time.  Attempting to initiate a
-/// second one while this record exists is rejected with `ConditionsNotMet`.
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct PendingAdminRotation {
-    /// The address that will receive the `Admin` role on execution.
-    pub new_admin: Address,
-    /// The address that initiated the rotation (the current admin at initiation time).
-    pub initiated_by: Address,
-    /// Ledger sequence at which the rotation was initiated.
-    pub initiated_at: u64,
-    /// Earliest ledger at which `execute_admin_rotation` may succeed.
-    /// Equals `initiated_at + Config.admin_rotation_delay`.
-    pub executable_after: u64,
-}
-
-// ============================================================================
 // Execution Snapshot (for rollback support)
 // ============================================================================
 
@@ -1873,8 +2009,6 @@ pub struct ExecutionSnapshot {
     pub was_in_priority_queue: bool,
 }
 
-
-
 /// Details of a transfer
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -1886,5 +2020,3 @@ pub struct TransferDetails {
     /// Amount to transfer
     pub amount: i128,
 }
-
-

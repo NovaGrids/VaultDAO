@@ -242,5 +242,18 @@
     "dateShort": "DD/MM/YYYY",
     "dateLong": "D MMMM YYYY",
     "time": "HH:mm:ss"
+  },
+  "portfolio": {
+    "title": "نظرة عامة على المحفظة",
+    "totalValue": "القيمة الإجمالية",
+    "allocation": "توزيع الرموز",
+    "token": "الرمز",
+    "balance": "الرصيد",
+    "change24h": "التغير خلال 24 ساعة",
+    "lowBalance": "رصيد منخفض",
+    "estimate": "تقدير",
+    "selectToken": "اختر الرمز",
+    "tokenList": "الرموز المتاحة",
+    "noTokens": "لا توجد رموز متاحة"
   }
 }

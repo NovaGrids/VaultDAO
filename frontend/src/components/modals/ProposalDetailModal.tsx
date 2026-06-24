@@ -3,6 +3,7 @@ import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare
 import SignatureStatus, { type Signer } from '../SignatureStatus';
 import SignatureFlow from '../SignatureFlow';
 import QRSignature from '../QRSignature';
+import ProposalPhaseTimeline, { type ProposalPhase } from '../proposals/ProposalPhaseTimeline';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
 
@@ -20,6 +21,8 @@ export interface Proposal {
     createdAt?: string;
     title?: string;
     description?: string;
+    /** Optional multi-phase execution steps */
+    phases?: ProposalPhase[];
 }
 
 interface ProposalDetailModalProps {
@@ -241,9 +244,21 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         </div>
                     </div>
 
+                    {/* Phase Timeline (#1106) */}
+                    {proposal.phases && (
+                        <div>
+                            <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">
+                                Execution Phases
+                            </h3>
+                            <ProposalPhaseTimeline
+                                phases={proposal.phases}
+                                isExecuting={proposal.status === 'Approved'}
+                            />
+                        </div>
+                    )}
+
                     {/* Proposer & Recipient */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {[
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">                        {[
                             { label: 'Proposer', value: proposal.proposer || '—' },
                             { label: 'Recipient', value: proposal.recipient },
                         ].map(({ label, value }) => (

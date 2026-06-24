@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from './components/Layout/DashboardLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ProductTour } from './components/ProductTour';
+import { useDirection } from './hooks/useDirection';
 
 const Overview = lazy(() => import('./app/dashboard/Overview'));
 const Proposals = lazy(() => import('./app/dashboard/Proposals'));
@@ -24,6 +25,8 @@ const PageFallback = () => (
 );
 
 function App() {
+  useDirection();
+
   return (
     <ErrorBoundary>
       <BrowserRouter>

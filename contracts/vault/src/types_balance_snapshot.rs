@@ -16,6 +16,10 @@ pub struct BalanceSnapshot {
     pub timestamp: u64,
     /// Token balances for this vault.
     pub balances: Vec<(Address, i128)>,
+    /// Total staked amount at snapshot time.
+    pub total_staked: i128,
+    /// Pending releases at snapshot time.
+    pub pending_releases: i128,
 }
 
 impl BalanceSnapshot {
@@ -24,6 +28,8 @@ impl BalanceSnapshot {
             ledger,
             timestamp,
             balances,
+            total_staked: 0,
+            pending_releases: 0,
         }
     }
 }

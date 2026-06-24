@@ -242,5 +242,18 @@
     "dateShort": "MM/DD/YYYY",
     "dateLong": "MMMM D, YYYY",
     "time": "HH:mm:ss"
+  },
+  "portfolio": {
+    "title": "Portfolio Overview",
+    "totalValue": "Total Value",
+    "allocation": "Token Allocation",
+    "token": "Token",
+    "balance": "Balance",
+    "change24h": "24h Change",
+    "lowBalance": "Low Balance",
+    "estimate": "estimate",
+    "selectToken": "Select token",
+    "tokenList": "Available tokens",
+    "noTokens": "No tokens available"
   }
 }

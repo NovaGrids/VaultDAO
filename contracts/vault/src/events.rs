@@ -359,6 +359,22 @@ pub fn emit_stake_refunded(env: &Env, proposal_id: u64, proposer: &Address, amou
     );
 }
 
+/// Emit when auto-compound is enabled for a stake
+pub fn emit_auto_compound_enabled(env: &Env, proposal_id: u64, staker: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "auto_compound_enabled"), proposal_id),
+        staker.clone(),
+    );
+}
+
+/// Emit when a stake is compounded
+pub fn emit_stake_compounded(env: &Env, proposal_id: u64, staker: &Address, reward_amount: i128, new_stake_amount: i128, lock_until: u64) {
+    env.events().publish(
+        (Symbol::new(env, "stake_compounded"), proposal_id),
+        (staker.clone(), reward_amount, new_stake_amount, lock_until),
+    );
+}
+
 // ============================================================================
 // Reputation Events (feature/reputation-system)
 // ============================================================================
@@ -678,6 +694,20 @@ pub fn emit_retries_exhausted(env: &Env, proposal_id: u64, total_attempts: u32) 
     );
 }
 
+pub fn emit_dead_letter_added(env: &Env, record_id: u64, proposal_id: u64, retry_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "dead_letter_added"), record_id),
+        (proposal_id, retry_count),
+    );
+}
+
+pub fn emit_dead_letter_processed(env: &Env, record_id: u64, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dead_letter_proc"), record_id),
+        admin.clone(),
+    );
+}
+
 // ============================================================================
 // Subscription Events (feature/subscription-system)
 // ============================================================================
@@ -740,6 +770,20 @@ pub fn emit_subscription_upgraded(
 pub fn emit_subscription_expired(env: &Env, subscription_id: u64) {
     env.events()
         .publish((Symbol::new(env, "subscription_expired"),), subscription_id);
+}
+
+pub fn emit_subscription_paused(env: &Env, subscription_id: u64, paused_by: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "subscription_paused"), subscription_id),
+        paused_by.clone(),
+    );
+}
+
+pub fn emit_subscription_resumed(env: &Env, subscription_id: u64, resumed_by: &Address, pause_duration: u64) {
+    env.events().publish(
+        (Symbol::new(env, "subscription_resumed"), subscription_id),
+        (resumed_by.clone(), pause_duration),
+    );
 }
 
 // ============================================================================
@@ -1186,6 +1230,38 @@ pub fn emit_dispute_resolved(env: &Env, dispute_id: u64, admin: &Address, resolu
     );
 }
 
+/// Emit when a dispute bond is posted
+pub fn emit_dispute_bond_posted(env: &Env, dispute_id: u64, disputer: &Address, token: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_bond_posted"), dispute_id),
+        (disputer.clone(), token.clone(), amount),
+    );
+}
+
+/// Emit when a dispute is resolved with outcome
+pub fn emit_dispute_outcome(env: &Env, dispute_id: u64, arbitrator: &Address, outcome: u32) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_outcome"), dispute_id),
+        (arbitrator.clone(), outcome),
+    );
+}
+
+/// Emit when a dispute bond is slashed
+pub fn emit_dispute_bond_slashed(env: &Env, dispute_id: u64, token: &Address, slashed_amount: i128, treasury_amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_bond_slashed"), dispute_id),
+        (token.clone(), slashed_amount, treasury_amount),
+    );
+}
+
+/// Emit when a dispute bond is returned
+pub fn emit_dispute_bond_returned(env: &Env, dispute_id: u64, token: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_bond_returned"), dispute_id),
+        (token.clone(), amount),
+    );
+}
+
 // ============================================================================
 // Bridge Events (feature/cross-chain-bridge)
 // ============================================================================
@@ -1203,6 +1279,70 @@ pub fn emit_bridge_executed(env: &Env, proposal_id: u64, executor: &Address, suc
     env.events().publish(
         (Symbol::new(env, "bridge_executed"), proposal_id),
         (executor.clone(), success_count),
+    );
+}
+
+/// Emit when a bridge to vault is initiated
+pub fn emit_bridge_to_vault_initiated(
+    env: &Env,
+    bridge_id: &soroban_sdk::BytesN<32>,
+    source_vault: &Address,
+    target_vault: &Address,
+    token: &Address,
+    amount: i128,
+    min_received: i128,
+    deadline_ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_to_vault_initiated"), bridge_id.clone()),
+        (
+            source_vault.clone(),
+            target_vault.clone(),
+            token.clone(),
+            amount,
+            min_received,
+            deadline_ledger,
+        ),
+    );
+}
+
+/// Emit when a bridge receipt is confirmed
+pub fn emit_bridge_receipt_confirmed(
+    env: &Env,
+    bridge_id: &soroban_sdk::BytesN<32>,
+    target_vault: &Address,
+    actual_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_receipt_confirmed"), bridge_id.clone()),
+        (target_vault.clone(), actual_amount),
+    );
+}
+
+/// Emit when a bridge is rejected due to slippage
+pub fn emit_bridge_slippage_rejected(
+    env: &Env,
+    bridge_id: &soroban_sdk::BytesN<32>,
+    target_vault: &Address,
+    actual_amount: i128,
+    min_received: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_slippage_rejected"), bridge_id.clone()),
+        (target_vault.clone(), actual_amount, min_received),
+    );
+}
+
+/// Emit when bridge funds are returned to source vault
+pub fn emit_bridge_funds_returned(
+    env: &Env,
+    bridge_id: &soroban_sdk::BytesN<32>,
+    source_vault: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_funds_returned"), bridge_id.clone()),
+        (source_vault.clone(), amount),
     );
 }
 
@@ -1237,5 +1377,61 @@ pub fn emit_metrics_bucket_updated(
     env.events().publish(
         (Symbol::new(env, "metrics_bucket_upd"), week),
         (executed, rejected, expired),
+    );
+}
+
+// =========================================================================
+// Proposal Expiry Grace Period Events (Issue #1062)
+// =========================================================================
+
+/// Emit when a proposal is auto-expired after grace period
+pub fn emit_proposal_grace_expired(env: &Env, proposal_id: u64, deadline: u64, grace_end: u64) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_grace_exp"), proposal_id),
+        (deadline, grace_end),
+    );
+}
+
+// =========================================================================
+// Comment Moderation Events (Issue #1076)
+// =========================================================================
+
+/// Emit when a moderator is assigned
+pub fn emit_moderator_assigned(env: &Env, admin: &Address, moderator: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "moderator_assigned"),),
+        (admin.clone(), moderator.clone()),
+    );
+}
+
+/// Emit when a moderator is removed
+pub fn emit_moderator_removed(env: &Env, admin: &Address, moderator: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "moderator_removed"),),
+        (admin.clone(), moderator.clone()),
+    );
+}
+
+// =========================================================================
+// Vote Weight Events (Issue #1061)
+// =========================================================================
+
+/// Emit when the vote weight model is changed
+pub fn emit_vote_weight_changed(env: &Env, admin: &Address, old_weight: u32, new_weight: u32) {
+    env.events().publish(
+        (Symbol::new(env, "vote_weight_changed"),),
+        (admin.clone(), old_weight, new_weight),
+    );
+}
+
+// =========================================================================
+// Dependency Graph Events (Issue #1066)
+// =========================================================================
+
+/// Emit when a proposal with dependencies is created
+pub fn emit_proposal_deps_created(env: &Env, proposal_id: u64, dep_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_deps"), proposal_id),
+        dep_count,
     );
 }
