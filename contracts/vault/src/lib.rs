@@ -341,6 +341,7 @@ impl VaultDAO {
             empty_dependencies,
             None,
             0,
+            false,
         )
     }
 
@@ -389,6 +390,7 @@ impl VaultDAO {
             empty_dependencies,
             Some(schedule.execution_time),
             schedule.execution_window_ledgers,
+            false,
         )
     }
 
@@ -424,6 +426,7 @@ impl VaultDAO {
             depends_on,
             None,
             0,
+            false,
         )
     }
 
@@ -442,12 +445,18 @@ impl VaultDAO {
         depends_on: Vec<u64>,
         execution_time: Option<u64>,
         execution_window_ledgers: u64,
+        override_duplicate: bool,
     ) -> Result<u64, VaultError> {
         // 1. Verify identity
         proposer.require_auth();
 
         // 2. Check initialization and load config (single read — gas optimization)
         let config = storage::get_config(&env)?;
+
+        // 2a. Reject if vault is paused (#1084)
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
 
         // 3. Check permission
         let role = storage::get_role(&env, &proposer);
@@ -566,6 +575,19 @@ impl VaultDAO {
             }
         }
 
+        // 10c. Proposal fingerprint deduplication (#1089)
+        // Fingerprint = sha256(amount_le || recipient_bytes || token_bytes)
+        {
+            let mut preimage = soroban_sdk::Bytes::new(&env);
+            preimage.extend_from_array(&amount.to_le_bytes());
+            preimage.extend_from_slice(&recipient.to_bytes());
+            preimage.extend_from_slice(&token_addr.to_bytes());
+            let fingerprint = env.crypto().sha256(&preimage);
+            if !override_duplicate && storage::has_proposal_fingerprint(&env, &fingerprint) {
+                return Err(VaultError::DuplicateProposal);
+            }
+        }
+
         // 11. Reserve spending (confirmed on execution)
         storage::add_daily_spent(&env, today, amount);
         storage::add_weekly_spent(&env, week, amount);
@@ -654,6 +676,16 @@ impl VaultDAO {
         storage::set_proposal(&env, &proposal);
         Self::persist_execution_fee_estimate(&env, &proposal);
         storage::add_to_priority_queue(&env, priority as u32, proposal_id);
+
+        // Store content fingerprint for deduplication (#1089)
+        {
+            let mut preimage = soroban_sdk::Bytes::new(&env);
+            preimage.extend_from_array(&amount.to_le_bytes());
+            preimage.extend_from_slice(&recipient.to_bytes());
+            preimage.extend_from_slice(&token_addr.to_bytes());
+            let fp = env.crypto().sha256(&preimage);
+            storage::set_proposal_fingerprint(&env, &fp);
+        }
 
         // Extend TTL to ensure persistent data stays alive
         storage::extend_instance_ttl(&env);
@@ -776,6 +808,10 @@ impl VaultDAO {
         }
 
         let config = storage::get_config(&env)?;
+        // Reject if vault is paused (#1084)
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
         let role = storage::get_role(&env, &proposer);
         if !Role::role_satisfies(Role::Treasurer, role) {
             return Err(VaultError::InsufficientRole);
@@ -1453,6 +1489,11 @@ impl VaultDAO {
         // Get proposal
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
+        // Reject if vault is paused (#1084)
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
         // Validate state via state machine
         if proposal.status == ProposalStatus::Executed {
             return Err(VaultError::ProposalAlreadyExecuted);
@@ -1544,6 +1585,27 @@ impl VaultDAO {
             ),
         };
         storage::set_execution_snapshot(&env, proposal_id, &snapshot);
+
+        // Circuit breaker check: auto-pause if outflow in current hour exceeds threshold (#1084)
+        let threshold = storage::get_circuit_breaker_threshold(&env);
+        if threshold > 0 {
+            let window = storage::get_hour_window(&env);
+            let outflow = storage::get_circuit_breaker_outflow(&env, window);
+            if outflow + proposal.amount > threshold {
+                // Auto-trigger pause
+                let cb_cause = Symbol::new(&env, "circuit_breaker");
+                let pause_state = PauseState {
+                    is_paused: true,
+                    paused_by: None,
+                    paused_at_ledger: env.ledger().sequence(),
+                    cause: cb_cause.clone(),
+                };
+                storage::set_pause_state(&env, &pause_state);
+                events::emit_vault_paused(&env, &executor, &cb_cause);
+                return Err(VaultError::VaultPaused);
+            }
+            storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
+        }
 
         // Attempt execution — retryable failures are handled below
         let exec_result =
@@ -7121,23 +7183,6 @@ impl VaultDAO {
         proposal.status = ProposalStatus::Executed;
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
-
-        // Emit execution event
-        events::emit_proposal_executed(
-            &env,
-            proposal_id,
-            &executor,
-            &env.current_contract_address(),
-            &env.current_contract_address(),
-            0,
-            current_ledger,
-        );
-
-        // Update reputation and metrics
-        Self::update_reputation_on_execution(&env, &proposal);
-        let execution_time = current_ledger.saturating_sub(proposal.created_at);
-        storage::metrics_on_execution(&env, proposal.gas_used, execution_time);
-
         Ok(())
     }
 

@@ -2339,40 +2339,6 @@ pub fn add_user_volume(env: &Env, user: &Address, token: &Address, amount: i128)
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
-// ============================================================================
-// Delegation (compatibility helpers)
-// ============================================================================
-
-pub fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Delegation(delegator.clone()))
-}
-
-pub fn set_delegation(env: &Env, delegation: &Delegation) {
-    // If there's an existing delegation, remove from old reverse index
-    if let Some(old) = get_delegation(env, &delegation.delegator) {
-        remove_from_delegators_index(env, &old.delegate, &delegation.delegator);
-    }
-
-    let key = DataKey::Delegation(delegation.delegator.clone());
-    env.storage().persistent().set(&key, delegation);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-
-    // Update reverse index
-    add_to_delegators_index(env, &delegation.delegate, &delegation.delegator);
-}
-
-pub fn remove_delegation(env: &Env, delegator: &Address) {
-    if let Some(old) = get_delegation(env, delegator) {
-        remove_from_delegators_index(env, &old.delegate, delegator);
-    }
-    env.storage()
-        .persistent()
-        .remove(&DataKey::Delegation(delegator.clone()));
-}
 
 fn add_to_delegators_index(env: &Env, delegate: &Address, delegator: &Address) {
     let mut delegators = get_delegators_for(env, delegate);
