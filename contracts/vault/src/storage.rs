@@ -30,7 +30,17 @@ use crate::types::{
     ReputationConfig, RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, Subscription,
     SwapProposal, SwapResult, TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig,
     VotingStrategy, WhitelistEntry, BridgeConfig, CrossChainProposal,
+    AuditEntry, BatchExecutionResult, BatchTransaction, Comment, Config, DelegatedPermission,
+    Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot,
+    FeeStructure, FundingRound, FundingRoundConfig, GasConfig, GovernanceProposal, InsuranceConfig,
+    ListMode, NotificationPreferences, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus,
+    ProposalTemplate, RecoveryProposal, Reputation, ReputationConfig, RetryState, Role,
+    HolidayCalendar, RoleAssignment, SignerTier, StakeRecord, StakingConfig, Subscription,
+    SwapProposal, SwapResult, VestingSchedule,
+    TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig, VotingStrategy, BridgeConfig,
+    CrossChainProposal, DeadLetterRecord,
 };
+use crate::types_balance_snapshot::BalanceSnapshot;
 
 /// Core storage key definitions (kept minimal to avoid size limits)
 #[contracttype]
@@ -124,6 +134,22 @@ pub enum CounterKey {
     Recovery = 5,
     FundingRound = 6,
     Batch = 7,
+    ScopedDelegation = 8,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum VestingKey {
+    Schedule(u64),
+    NextId,
+    ActiveCount,
+    Reserved(Address),
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum CalendarKey {
+    Holidays,
 }
 
 /// Feature-specific storage keys (split to avoid enum size limits)
@@ -184,6 +210,8 @@ pub enum FeatureKey {
     CrossVaultProposal(u64),
     /// Cross-vault configuration -> CrossVaultConfig
     CrossVaultConfig,
+    /// Bridge record by bridge ID -> BridgeRecord
+    BridgeRecord(soroban_sdk::BytesN<32>),
     /// Dispute by ID -> Dispute
     Dispute(u64),
     /// Disputes for a proposal -> Vec<u64>
@@ -240,6 +268,10 @@ pub enum FeatureKey {
     MultiPhaseProposal(u64),
     /// Capability token by ID -> CapabilityToken (issue #1097)
     CapabilityToken(BytesN<32>),
+    /// Moderator flag for an address -> bool
+    Moderator(Address),
+    /// Comment rate tracking: (proposal_id, author, day_number) -> u32
+    CommentRateCount(u64, Address, u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -249,6 +281,116 @@ pub const INSTANCE_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
 pub const PERSISTENT_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
+/// Default volume-tracking window for the tiered fee system (~30 days)
+pub const VOLUME_WINDOW_DEFAULT: u64 = DAY_IN_LEDGERS as u64 * 30;
+
+// ============================================================================
+// Signer tiers
+// ============================================================================
+
+pub fn set_signer_tier(env: &Env, signer: &Address, tier: &SignerTier) {
+    if let Some(mut config) = env.storage().instance().get::<_, Config>(&DataKey::Config) {
+        config.signer_tiers.set(signer.clone(), tier.clone());
+        env.storage().instance().set(&DataKey::Config, &config);
+    }
+}
+
+pub fn get_signer_tier(env: &Env, signer: &Address) -> SignerTier {
+    env.storage()
+        .instance()
+        .get::<_, Config>(&DataKey::Config)
+        .and_then(|config| config.signer_tiers.get(signer.clone()))
+        .unwrap_or(SignerTier::Principal)
+}
+
+pub fn set_full_quorum_threshold(env: &Env, threshold: i128) {
+    if let Some(mut config) = env.storage().instance().get::<_, Config>(&DataKey::Config) {
+        config.full_quorum_threshold = threshold;
+        env.storage().instance().set(&DataKey::Config, &config);
+    }
+}
+
+pub fn get_full_quorum_threshold(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get::<_, Config>(&DataKey::Config)
+        .map(|config| config.full_quorum_threshold)
+        .unwrap_or(0)
+}
+
+// ============================================================================
+// Vesting schedules
+// ============================================================================
+
+pub fn next_vesting_id(env: &Env) -> u64 {
+    let id = env
+        .storage()
+        .instance()
+        .get(&VestingKey::NextId)
+        .unwrap_or(1);
+    env.storage().instance().set(&VestingKey::NextId, &(id + 1));
+    id
+}
+
+pub fn set_vesting_schedule(env: &Env, schedule: &VestingSchedule) {
+    let key = VestingKey::Schedule(schedule.id);
+    env.storage().persistent().set(&key, schedule);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_vesting_schedule(env: &Env, id: u64) -> Option<VestingSchedule> {
+    env.storage().persistent().get(&VestingKey::Schedule(id))
+}
+
+pub fn get_active_vesting_count(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&VestingKey::ActiveCount)
+        .unwrap_or(0)
+}
+
+pub fn set_active_vesting_count(env: &Env, count: u32) {
+    env.storage().instance().set(&VestingKey::ActiveCount, &count);
+}
+
+pub fn get_reserved_vesting(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&VestingKey::Reserved(token.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_reserved_vesting(env: &Env, token: &Address, amount: i128) {
+    let key = VestingKey::Reserved(token.clone());
+    env.storage().persistent().set(&key, &amount);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Holiday calendar
+// ============================================================================
+
+pub fn set_holiday_calendar(env: &Env, calendar: &HolidayCalendar) {
+    env.storage().persistent().set(&CalendarKey::Holidays, calendar);
+    env.storage().persistent().extend_ttl(
+        &CalendarKey::Holidays,
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL,
+    );
+}
+
+pub fn get_holiday_calendar(env: &Env) -> HolidayCalendar {
+    env.storage()
+        .persistent()
+        .get(&CalendarKey::Holidays)
+        .unwrap_or(HolidayCalendar {
+            holiday_ledgers: Vec::new(env),
+        })
+}
 
 // ============================================================================
 // Initialization
@@ -1397,14 +1539,48 @@ pub fn subtract_from_insurance_pool(env: &Env, token_addr: &Address, amount: i12
 // Notification Preferences (Issue: feature/execution-notifications)
 // ============================================================================
 
-pub fn get_notification_prefs(env: &Env, addr: &Address) -> NotificationPreferences {
+/// Returns the rich notification preferences for `addr`, or `None` if not set.
+/// Uses Instance storage (hot path) — read on every significant event emission.
+pub fn get_notification_prefs(env: &Env, addr: &Address) -> Option<NotificationPrefs> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NotificationPrefs(addr.clone()))
+}
+
+/// Persist rich notification preferences and register the signer in the prefs
+/// index so `compute_relevant_signers` can enumerate all opted-in addresses.
+pub fn set_notification_prefs(env: &Env, prefs: &NotificationPrefs) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NotificationPrefs(prefs.signer.clone()), prefs);
+    // Keep the index up-to-date
+    let mut index = get_notification_prefs_index(env);
+    if !index.contains(&prefs.signer) {
+        index.push_back(prefs.signer.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::NotificationPrefsIndex, &index);
+    }
+}
+
+/// All addresses that have ever called `set_notification_prefs`.
+pub fn get_notification_prefs_index(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::NotificationPrefsIndex)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Legacy boolean-flag prefs getter; kept for backward compatibility only.
+pub fn get_legacy_notification_prefs(env: &Env, addr: &Address) -> NotificationPreferences {
     env.storage()
         .persistent()
         .get(&FeatureKey::NotificationPrefs(addr.clone()))
         .unwrap_or_else(NotificationPreferences::default)
 }
 
-pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPreferences) {
+/// Legacy boolean-flag prefs setter; kept for backward compatibility only.
+pub fn set_legacy_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPreferences) {
     let key = FeatureKey::NotificationPrefs(addr.clone());
     env.storage().persistent().set(&key, prefs);
     env.storage()
@@ -1680,6 +1856,20 @@ pub fn set_stake_record(env: &Env, record: &StakeRecord) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
 }
 
+pub fn get_bridge_record(env: &Env, bridge_id: soroban_sdk::BytesN<32>) -> Option<crate::types::BridgeRecord> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::BridgeRecord(bridge_id))
+}
+
+pub fn set_bridge_record(env: &Env, record: &crate::types::BridgeRecord) {
+    let key = FeatureKey::BridgeRecord(record.bridge_id.clone());
+    env.storage().persistent().set(&key, record);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
+}
+
 pub fn get_permissions(env: &Env, addr: &Address) -> Vec<PermissionGrant> {
     env.storage()
         .persistent()
@@ -1889,6 +2079,37 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Dead Letter Queue
+// ============================================================================
+
+pub fn get_dead_letter(env: &Env, id: u64) -> Option<DeadLetterRecord> {
+    env.storage().persistent().get(&FeatureKey::DeadLetter(id))
+}
+
+pub fn set_dead_letter(env: &Env, record: &DeadLetterRecord) {
+    let key = FeatureKey::DeadLetter(record.id);
+    env.storage().persistent().set(&key, record);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_dead_letter_count(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::DeadLetterCount)
+        .unwrap_or(0)
+}
+
+pub fn increment_dead_letter_count(env: &Env) -> u64 {
+    let count = get_dead_letter_count(env) + 1;
+    env.storage()
+        .persistent()
+        .set(&FeatureKey::DeadLetterCount, &count);
+    count
 }
 
 // ============================================================================
@@ -2170,40 +2391,6 @@ pub fn add_user_volume(env: &Env, user: &Address, token: &Address, amount: i128)
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
-// ============================================================================
-// Delegation (compatibility helpers)
-// ============================================================================
-
-pub fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Delegation(delegator.clone()))
-}
-
-pub fn set_delegation(env: &Env, delegation: &Delegation) {
-    // If there's an existing delegation, remove from old reverse index
-    if let Some(old) = get_delegation(env, &delegation.delegator) {
-        remove_from_delegators_index(env, &old.delegate, &delegation.delegator);
-    }
-
-    let key = DataKey::Delegation(delegation.delegator.clone());
-    env.storage().persistent().set(&key, delegation);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
-
-    // Update reverse index
-    add_to_delegators_index(env, &delegation.delegate, &delegation.delegator);
-}
-
-pub fn remove_delegation(env: &Env, delegator: &Address) {
-    if let Some(old) = get_delegation(env, delegator) {
-        remove_from_delegators_index(env, &old.delegate, delegator);
-    }
-    env.storage()
-        .persistent()
-        .remove(&DataKey::Delegation(delegator.clone()));
-}
 
 fn add_to_delegators_index(env: &Env, delegate: &Address, delegator: &Address) {
     let mut delegators = get_delegators_for(env, delegate);
@@ -2692,4 +2879,67 @@ pub fn build_signer_snapshot(env: &Env, signers: &Vec<Address>) -> Map<Address, 
         snapshot.set(signer, 1i128);
     }
     snapshot
+// Moderator Management (Issue #1076)
+// ============================================================================
+
+/// Check if an address has the Moderator sub-role.
+pub fn is_moderator(env: &Env, addr: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::Moderator(addr.clone()))
+        .unwrap_or(false)
+}
+
+/// Set or remove the Moderator sub-role for an address.
+pub fn set_moderator(env: &Env, addr: &Address, is_mod: bool) {
+    if is_mod {
+        env.storage()
+            .persistent()
+            .set(&FeatureKey::Moderator(addr.clone()), &true);
+        env.storage().persistent().extend_ttl(
+            &FeatureKey::Moderator(addr.clone()),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL,
+        );
+    } else {
+        env.storage()
+            .persistent()
+            .remove(&FeatureKey::Moderator(addr.clone()));
+    }
+}
+
+// ============================================================================
+// Comment Rate Limiting (Issue #1076)
+// ============================================================================
+
+/// Get the comment count for a signer on a proposal for a given day.
+pub fn get_comment_rate_count(env: &Env, proposal_id: u64, author: &Address, day: u64) -> u32 {
+    env.storage()
+        .temporary()
+        .get(&FeatureKey::CommentRateCount(proposal_id, author.clone(), day))
+        .unwrap_or(0)
+}
+
+/// Increment the comment count for a signer on a proposal for a given day.
+pub fn increment_comment_rate_count(env: &Env, proposal_id: u64, author: &Address, day: u64) {
+    let key = FeatureKey::CommentRateCount(proposal_id, author.clone(), day);
+    let count: u32 = env.storage().temporary().get(&key).unwrap_or(0);
+    env.storage().temporary().set(&key, &(count + 1));
+    // TTL of 2 days to cover edge cases spanning two ledger epochs
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, DAY_IN_LEDGERS, DAY_IN_LEDGERS * 2);
+}
+
+// ============================================================================
+// Expired Proposal TTL Reduction (Issue #1062)
+// ============================================================================
+
+/// Reduce TTL for an expired proposal to reclaim ledger rent sooner.
+pub fn reduce_expired_proposal_ttl(env: &Env, proposal_id: u64) {
+    let key = DataKey::Proposal(proposal_id);
+    // Set a short TTL (1 day) for expired proposals instead of the default 7 days
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, DAY_IN_LEDGERS / 2, DAY_IN_LEDGERS);
 }

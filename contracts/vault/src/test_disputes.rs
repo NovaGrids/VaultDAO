@@ -67,7 +67,7 @@ fn make_proposal(
 }
 
 #[test]
-fn test_raise_dispute_by_signer() {
+fn test_raise_dispute_by_signer_with_bond() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, contract_id) = setup(&env);
@@ -76,17 +76,20 @@ fn test_raise_dispute_by_signer() {
     let token = env
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000); // Mint to admin so they can post bond
     let recipient = Address::generate(&env);
 
     let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
 
+    let bond_amount = 100i128;
     let dispute_id = client.raise_dispute(
         &admin,
         &proposal_id,
         &None,
         &Symbol::new(&env, "fraud"),
         &Vec::new(&env),
+        &token,
+        &bond_amount,
     );
 
     assert_eq!(dispute_id, 1);
@@ -94,10 +97,267 @@ fn test_raise_dispute_by_signer() {
     let dispute = client.get_dispute(&dispute_id);
     assert_eq!(dispute.proposal_id, proposal_id);
     assert_eq!(dispute.status, DisputeStatus::Filed);
+    assert_eq!(dispute.dispute_bond, bond_amount);
+    assert_eq!(dispute.bond_token, token);
 
     let ids = client.get_proposal_disputes(&proposal_id);
     assert_eq!(ids.len(), 1);
     assert_eq!(ids.get(0).unwrap(), dispute_id);
+}
+
+#[test]
+fn test_resolve_dispute_uphold() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+    let recipient = Address::generate(&env);
+
+    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
+
+    let bond_amount = 100i128;
+    let dispute_id = client.raise_dispute(
+        &admin,
+        &proposal_id,
+        &None,
+        &Symbol::new(&env, "fraud"),
+        &Vec::new(&env),
+        &token,
+        &bond_amount,
+    );
+
+    // Create arbitrator
+    let arbitrator = Address::generate(&env);
+    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
+
+    let initial_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
+
+    client.resolve_dispute_with_outcome(
+        &arbitrator,
+        &dispute_id,
+        &crate::types::DisputeOutcome::UpholdDispute,
+    );
+
+    let dispute = client.get_dispute(&dispute_id);
+    assert_eq!(dispute.status, DisputeStatus::Resolved);
+    assert_eq!(dispute.outcome, crate::types::DisputeOutcome::UpholdDispute);
+
+    // Should have bond returned
+    let final_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
+    assert_eq!(final_balance, initial_balance);
+}
+
+#[test]
+fn test_resolve_dispute_dismiss_with_slash() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+    let recipient = Address::generate(&env);
+
+    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
+
+    let bond_amount = 100i128;
+    let dispute_id = client.raise_dispute(
+        &admin,
+        &proposal_id,
+        &None,
+        &Symbol::new(&env, "fraud"),
+        &Vec::new(&env),
+        &token,
+        &bond_amount,
+    );
+
+    // Create arbitrator
+    let arbitrator = Address::generate(&env);
+    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
+
+    let initial_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
+
+    client.resolve_dispute_with_outcome(
+        &arbitrator,
+        &dispute_id,
+        &crate::types::DisputeOutcome::DismissDispute,
+    );
+
+    let dispute = client.get_dispute(&dispute_id);
+    assert_eq!(dispute.status, DisputeStatus::Dismissed);
+    assert_eq!(dispute.outcome, crate::types::DisputeOutcome::DismissDispute);
+
+    // Should have half bond returned
+    let final_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
+    assert_eq!(final_balance, initial_balance - 50); // 100 - 50 = 50 lost
+}
+
+#[test]
+fn test_resolve_dispute_draw() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+    let recipient = Address::generate(&env);
+
+    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
+
+    let bond_amount = 100i128;
+    let dispute_id = client.raise_dispute(
+        &admin,
+        &proposal_id,
+        &None,
+        &Symbol::new(&env, "fraud"),
+        &Vec::new(&env),
+        &token,
+        &bond_amount,
+    );
+
+    // Create arbitrator
+    let arbitrator = Address::generate(&env);
+    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
+
+    let initial_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
+
+    client.resolve_dispute_with_outcome(
+        &arbitrator,
+        &dispute_id,
+        &crate::types::DisputeOutcome::DrawDispute,
+    );
+
+    let dispute = client.get_dispute(&dispute_id);
+    assert_eq!(dispute.status, DisputeStatus::Resolved);
+    assert_eq!(dispute.outcome, crate::types::DisputeOutcome::DrawDispute);
+
+    // Should have full bond returned
+    let final_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
+    assert_eq!(final_balance, initial_balance);
+}
+
+#[test]
+fn test_cannot_raise_dispute_on_already_dismissed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+    let recipient = Address::generate(&env);
+
+    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
+
+    let bond_amount = 100i128;
+    let dispute_id = client.raise_dispute(
+        &admin,
+        &proposal_id,
+        &None,
+        &Symbol::new(&env, "fraud"),
+        &Vec::new(&env),
+        &token,
+        &bond_amount,
+    );
+
+    // Create arbitrator and dismiss
+    let arbitrator = Address::generate(&env);
+    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
+    client.resolve_dispute_with_outcome(
+        &arbitrator,
+        &dispute_id,
+        &crate::types::DisputeOutcome::DismissDispute,
+    );
+
+    // Try to raise another dispute on same proposal
+    let result = client.try_raise_dispute(
+        &admin,
+        &proposal_id,
+        &None,
+        &Symbol::new(&env, "more_fraud"),
+        &Vec::new(&env),
+        &token,
+        &bond_amount,
+    );
+    assert_eq!(result, Err(Ok(VaultError::DisputeAlreadyDismissed)));
+}
+
+#[test]
+fn test_arbitrator_cannot_resolve_own_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+    let recipient = Address::generate(&env);
+
+    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
+
+    let bond_amount = 100i128;
+    let dispute_id = client.raise_dispute(
+        &admin,
+        &proposal_id,
+        &None,
+        &Symbol::new(&env, "fraud"),
+        &Vec::new(&env),
+        &token,
+        &bond_amount,
+    );
+
+    // Make admin the arbitrator too
+    client.set_role(&admin, &admin, &Role::DisputeArbitrator);
+
+    // Try to resolve own dispute
+    let result = client.try_resolve_dispute_with_outcome(
+        &admin,
+        &dispute_id,
+        &crate::types::DisputeOutcome::UpholdDispute,
+    );
+    assert_eq!(result, Err(Ok(VaultError::ArbitratorCannotResolveOwnDispute)));
+}
+
+#[test]
+fn test_dispute_bond_too_small() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+    let recipient = Address::generate(&env);
+
+    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
+
+    // Try 0 bond
+    let result = client.try_raise_dispute(
+        &admin,
+        &proposal_id,
+        &None,
+        &Symbol::new(&env, "fraud"),
+        &Vec::new(&env),
+        &token,
+        &0i128,
+    );
+    assert_eq!(result, Err(Ok(VaultError::DisputeBondTooSmall)));
 }
 
 #[test]

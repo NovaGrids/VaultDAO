@@ -288,3 +288,288 @@ fn test_execute_cross_vault_requires_approved_proposal() {
     let result = coordinator.try_execute_cross_vault(&admin, &proposal_id);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_bridge_to_vault_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(&env, &source_vault_id);
+    let target_client = VaultDAOClient::new(&env, &target_vault_id);
+    let admin = Address::generate(&env);
+
+    init_vault(&env, &source_client, &admin, 1);
+    init_vault(&env, &target_client, &admin, 1);
+    source_client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&source_vault_id, &1000);
+
+    let current_ledger = env.ledger().sequence();
+    let deadline_ledger = current_ledger + 1000;
+
+    let bridge_id = source_client.bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &95,
+        &(deadline_ledger as u64),
+    );
+
+    // Check target vault balance
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&target_vault_id), 100);
+
+    // Check bridge record
+    let bridge_record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(bridge_record.status, crate::types::BridgeStatus::Initiated);
+    assert_eq!(bridge_record.amount, 100);
+    assert_eq!(bridge_record.min_received, 95);
+}
+
+#[test]
+fn test_confirm_bridge_receipt_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(&env, &source_vault_id);
+    let target_client = VaultDAOClient::new(&env, &target_vault_id);
+    let admin = Address::generate(&env);
+
+    init_vault(&env, &source_client, &admin, 1);
+    init_vault(&env, &target_client, &admin, 1);
+    source_client.set_role(&admin, &admin, &Role::Treasurer);
+    target_client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&source_vault_id, &1000);
+
+    let current_ledger = env.ledger().sequence();
+    let deadline_ledger = current_ledger + 1000;
+
+    let bridge_id = source_client.bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &95,
+        &(deadline_ledger as u64),
+    );
+
+    // Confirm receipt
+    target_client.confirm_bridge_receipt(&admin, &bridge_id, &98);
+
+    // Check bridge record
+    let bridge_record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(bridge_record.status, crate::types::BridgeStatus::Confirmed);
+    assert_eq!(bridge_record.actual_amount, 98);
+}
+
+#[test]
+fn test_bridge_slippage_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(&env, &source_vault_id);
+    let target_client = VaultDAOClient::new(&env, &target_vault_id);
+    let admin = Address::generate(&env);
+
+    init_vault(&env, &source_client, &admin, 1);
+    init_vault(&env, &target_client, &admin, 1);
+    source_client.set_role(&admin, &admin, &Role::Treasurer);
+    target_client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&source_vault_id, &1000);
+
+    let current_ledger = env.ledger().sequence();
+    let deadline_ledger = current_ledger + 1000;
+
+    let bridge_id = source_client.bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &95,
+        &(deadline_ledger as u64),
+    );
+
+    // Confirm receipt with too little amount
+    let result = target_client.try_confirm_bridge_receipt(&admin, &bridge_id, &90);
+    assert_eq!(result, Err(Ok(VaultError::BridgeSlippageExceeded)));
+
+    // Check funds were returned
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&source_vault_id), 1000);
+
+    // Check bridge record
+    let bridge_record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(bridge_record.status, crate::types::BridgeStatus::Rejected);
+}
+
+#[test]
+fn test_bridge_deadline_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(&env, &source_vault_id);
+    let target_client = VaultDAOClient::new(&env, &target_vault_id);
+    let admin = Address::generate(&env);
+
+    init_vault(&env, &source_client, &admin, 1);
+    init_vault(&env, &target_client, &admin, 1);
+    source_client.set_role(&admin, &admin, &Role::Treasurer);
+    target_client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&source_vault_id, &1000);
+
+    let current_ledger = env.ledger().sequence();
+    let deadline_ledger = current_ledger + 10;
+
+    let bridge_id = source_client.bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &95,
+        &(deadline_ledger as u64),
+    );
+
+    // Advance ledger past deadline
+    env.ledger().set_sequence(deadline_ledger + 1);
+
+    // Try to confirm receipt
+    let result = target_client.try_confirm_bridge_receipt(&admin, &bridge_id, &98);
+    assert_eq!(result, Err(Ok(VaultError::BridgeDeadlineExceeded)));
+
+    // Check funds were returned
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&source_vault_id), 1000);
+
+    // Check bridge record
+    let bridge_record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(bridge_record.status, crate::types::BridgeStatus::Returned);
+}
+
+#[test]
+fn test_bridge_amount_exceeds_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(&env, &source_vault_id);
+    let admin = Address::generate(&env);
+
+    init_vault(&env, &source_client, &admin, 1);
+    source_client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&source_vault_id, &200000);
+
+    let current_ledger = env.ledger().sequence();
+    let deadline_ledger = current_ledger + 1000;
+
+    // Try to bridge more than spending limit (which is 100_000)
+    let result = source_client.try_bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &150000,
+        &140000,
+        &(deadline_ledger as u64),
+    );
+    assert_eq!(result, Err(Ok(VaultError::BridgeAmountExceedsLimit)));
+}
+
+#[test]
+fn test_bridge_invalid_min_received() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(&env, &source_vault_id);
+    let admin = Address::generate(&env);
+
+    init_vault(&env, &source_client, &admin, 1);
+    source_client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&source_vault_id, &1000);
+
+    let current_ledger = env.ledger().sequence();
+    let deadline_ledger = current_ledger + 1000;
+
+    // Try to bridge with min_received > amount
+    let result = source_client.try_bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &101,
+        &(deadline_ledger as u64),
+    );
+    assert_eq!(result, Err(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_bridge_invalid_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(&env, &source_vault_id);
+    let admin = Address::generate(&env);
+
+    init_vault(&env, &source_client, &admin, 1);
+    source_client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&source_vault_id, &1000);
+
+    let current_ledger = env.ledger().sequence();
+
+    // Try to bridge with deadline <= current ledger
+    let result = source_client.try_bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &95,
+        &(current_ledger as u64),
+    );
+    assert_eq!(result, Err(Ok(VaultError::BridgeDeadlineExceeded)));
+}

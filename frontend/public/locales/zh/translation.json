@@ -242,5 +242,18 @@
     "dateShort": "YYYY/MM/DD",
     "dateLong": "YYYY年M月D日",
     "time": "HH:mm:ss"
+  },
+  "portfolio": {
+    "title": "投资组合概览",
+    "totalValue": "总价值",
+    "allocation": "代币分配",
+    "token": "代币",
+    "balance": "余额",
+    "change24h": "24小时变化",
+    "lowBalance": "余额不足",
+    "estimate": "估算",
+    "selectToken": "选择代币",
+    "tokenList": "可用代币",
+    "noTokens": "没有可用代币"
   }
 }

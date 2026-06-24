@@ -242,5 +242,18 @@
     "dateShort": "DD/MM/YYYY",
     "dateLong": "D MMMM YYYY",
     "time": "HH:mm:ss"
+  },
+  "portfolio": {
+    "title": "Apercu du portefeuille",
+    "totalValue": "Valeur totale",
+    "allocation": "Repartition des jetons",
+    "token": "Jeton",
+    "balance": "Solde",
+    "change24h": "Variation 24h",
+    "lowBalance": "Solde faible",
+    "estimate": "estimation",
+    "selectToken": "Selectionner un jeton",
+    "tokenList": "Jetons disponibles",
+    "noTokens": "Aucun jeton disponible"
   }
 }

@@ -389,3 +389,94 @@ fn test_withdraw_stake_pool_insufficient_balance() {
     let res = client.try_withdraw_stake_pool(&admin, &token, &withdraw_target, &(pool + 1));
     assert_eq!(res, Err(Ok(VaultError::InsufficientBalance)));
 }
+
+#[test]
+fn test_enable_auto_compound() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (proposal_id, _) =
+        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
+
+    // Enable auto-compound
+    client.enable_auto_compound(&proposer, &proposal_id);
+
+    // Check stake record
+    let stake_record = client.get_stake_record(&proposal_id).unwrap();
+    assert_eq!(stake_record.auto_compound, true);
+}
+
+#[test]
+fn test_enable_auto_compound_not_staker() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (proposal_id, _) =
+        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
+
+    let other_addr = Address::generate(&env);
+    let res = client.try_enable_auto_compound(&other_addr, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
+fn test_compound_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (proposal_id, stake_amount) =
+        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
+
+    // Enable auto-compound
+    client.enable_auto_compound(&proposer, &proposal_id);
+
+    // Advance ledger beyond epoch
+    let current_ledger = env.ledger().sequence();
+    env.ledger().set_sequence(current_ledger + 17281);
+
+    // Compound
+    let keeper = Address::generate(&env);
+    client.compound_stake(&keeper, &proposal_id);
+
+    // Check stake record
+    let stake_record = client.get_stake_record(&proposal_id).unwrap();
+    assert_eq!(stake_record.amount, stake_amount * 101 / 100); // 1% reward
+    assert_eq!(stake_record.last_compounded, current_ledger + 17281);
+    assert_eq!(stake_record.reinvestment_lock_until, current_ledger + 17281 + 17280);
+}
+
+#[test]
+fn test_compound_stake_before_epoch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (proposal_id, _) =
+        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
+
+    // Enable auto-compound
+    client.enable_auto_compound(&proposer, &proposal_id);
+
+    // Try compound before epoch
+    let keeper = Address::generate(&env);
+    let res = client.try_compound_stake(&keeper, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::TimelockNotExpired)));
+}
+
+#[test]
+fn test_compound_stake_not_enabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (proposal_id, _) =
+        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
+
+    // Try compound without enabling
+    let keeper = Address::generate(&env);
+    let res = client.try_compound_stake(&keeper, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
+}

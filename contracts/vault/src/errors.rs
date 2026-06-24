@@ -109,6 +109,11 @@ pub enum VaultError {
     RecurringPaymentStopped = 1001,
     /// A config change proposal is already pending
     ConfigChangeInProgress = 1010,
+
+    // =========================================================
+    // Milestone quorum verification errors
+    // =========================================================
+
     /// Milestone has already been verified by this address
     AlreadyVerified = 510,
     /// Milestone does not have enough verifications to proceed
@@ -161,6 +166,38 @@ pub enum VaultError {
 
     /// Requested action not covered by capability
     CapabilityNotGranted = 634,
+
+    PermissionNotFound = 321,
+
+    // =========================================================
+    // Dependency graph errors (Issue #1066)
+    // =========================================================
+
+    /// Circular dependency detected in proposal dependency graph
+    CircularDependency = 960,
+
+    /// Dependency proposal has not been executed yet
+    DependencyNotMet = 961,
+
+    /// Too many dependencies on a single proposal (max 8)
+    TooManyDependencies = 962,
+
+    // =========================================================
+    // Comment moderation errors (Issue #1076)
+    // =========================================================
+
+    /// Comment rate limit exceeded (max 10 per signer per proposal per day)
+    CommentRateLimited = 970,
+
+    /// Thread depth exceeds maximum (5 levels)
+    ThreadDepthExceeded = 971,
+
+    // =========================================================
+    // Vote weight errors (Issue #1061)
+    // =========================================================
+
+    /// Cannot change vote weight model while proposals are active
+    VoteWeightChangeBlocked = 980,
 }
 
 // Additional error types that exceed contracterror limits - use generic errors above
