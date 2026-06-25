@@ -1,4 +1,4 @@
-export type WidgetType = 'line-chart' | 'bar-chart' | 'pie-chart' | 'stat-card' | 'proposal-list' | 'calendar' | 'custom';
+export type WidgetType = 'line-chart' | 'bar-chart' | 'pie-chart' | 'stat-card' | 'proposal-list' | 'calendar' | 'governance-health' | 'custom';
 
 export interface WidgetConfig {
   id: string;

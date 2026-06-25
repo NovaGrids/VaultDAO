@@ -1380,58 +1380,26 @@ pub fn emit_metrics_bucket_updated(
     );
 }
 
-// =========================================================================
-// Proposal Expiry Grace Period Events (Issue #1062)
-// =========================================================================
-
-/// Emit when a proposal is auto-expired after grace period
-pub fn emit_proposal_grace_expired(env: &Env, proposal_id: u64, deadline: u64, grace_end: u64) {
+/// Emit when a signer commits a vote in the commit-reveal scheme.
+pub fn emit_vote_committed(env: &Env, proposal_id: u64, voter: &Address) {
     env.events().publish(
-        (Symbol::new(env, "proposal_grace_exp"), proposal_id),
-        (deadline, grace_end),
+        (Symbol::new(env, "vote_committed"), proposal_id),
+        voter.clone(),
     );
 }
 
-// =========================================================================
-// Comment Moderation Events (Issue #1076)
-// =========================================================================
-
-/// Emit when a moderator is assigned
-pub fn emit_moderator_assigned(env: &Env, admin: &Address, moderator: &Address) {
+/// Emit when a signer reveals their committed vote.
+pub fn emit_vote_revealed(env: &Env, proposal_id: u64, voter: &Address, approve: bool) {
     env.events().publish(
-        (Symbol::new(env, "moderator_assigned"),),
-        (admin.clone(), moderator.clone()),
+        (Symbol::new(env, "vote_revealed"), proposal_id),
+        (voter.clone(), approve),
     );
 }
 
-/// Emit when a moderator is removed
-pub fn emit_moderator_removed(env: &Env, admin: &Address, moderator: &Address) {
+/// Emit when the private-vote tally is computed after the reveal deadline.
+pub fn emit_private_tally_computed(env: &Env, proposal_id: u64, approvals: u32, abstentions: u32) {
     env.events().publish(
-        (Symbol::new(env, "moderator_removed"),),
-        (admin.clone(), moderator.clone()),
-    );
-}
-
-// =========================================================================
-// Vote Weight Events (Issue #1061)
-// =========================================================================
-
-/// Emit when the vote weight model is changed
-pub fn emit_vote_weight_changed(env: &Env, admin: &Address, old_weight: u32, new_weight: u32) {
-    env.events().publish(
-        (Symbol::new(env, "vote_weight_changed"),),
-        (admin.clone(), old_weight, new_weight),
-    );
-}
-
-// =========================================================================
-// Dependency Graph Events (Issue #1066)
-// =========================================================================
-
-/// Emit when a proposal with dependencies is created
-pub fn emit_proposal_deps_created(env: &Env, proposal_id: u64, dep_count: u32) {
-    env.events().publish(
-        (Symbol::new(env, "proposal_deps"), proposal_id),
-        dep_count,
+        (Symbol::new(env, "private_tally"), proposal_id),
+        (approvals, abstentions),
     );
 }

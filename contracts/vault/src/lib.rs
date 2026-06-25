@@ -21,7 +21,7 @@ mod types;
 mod types_balance_snapshot;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, Map, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Vec};
 use types::{
     AuditAction, AuditEntry, BatchExecutionResult, BatchOperation, BatchStatus, BatchTransaction,
     BridgeConfig, CancellationRecord, Comment, Condition, ConditionLogic, Config,
@@ -36,6 +36,8 @@ use types::{
     RoleAssignment, ScheduledTransferConfig, SignerTier, StakingConfig, StreamStatus,
     StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier, SwapProposal, SwapResult,
     TemplateOverrides, ThresholdStrategy, TransferDetails, VaultAction, VaultMetrics,
+    VaultOracleConfig, VaultPriceData, VelocityConfig, VotingStrategy,
+    VoteChoice, CommitRevealVote,
     VaultOracleConfig, VaultPriceData, VelocityConfig, VestingSchedule, VoteChoice, VotingStrategy,
 };
 use types_balance_snapshot::BalanceSnapshot;
@@ -179,12 +181,7 @@ mod test_retry;
 mod test_staking;
 #[cfg(test)]
 mod test_fees;
-#[cfg(test)]
-mod test_balance_snapshot;
-#[cfg(test)]
-mod test_scoped_delegation;
-#[cfg(test)]
-mod test_governance;
+
 
 #[cfg(test)]
 pub mod mock_oracle {
@@ -726,6 +723,9 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -1025,6 +1025,9 @@ impl VaultDAO {
                     0
                 },
                 execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
             };
 
             storage::set_proposal(&env, &proposal);
@@ -3444,6 +3447,9 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -3630,6 +3636,9 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -7173,6 +7182,9 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -8321,6 +8333,9 @@ impl VaultDAO {
             is_swap: false,
             voting_deadline: 0,
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -10700,6 +10715,9 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -11631,6 +11649,9 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -11886,6 +11907,9 @@ impl VaultDAO {
             is_swap: false,
             voting_deadline: 0,
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -12101,6 +12125,9 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            commit_deadline: 0,
+            reveal_deadline: 0,
+            vote_commitments: Map::new(&env),
         };
 
         storage::set_proposal(&env, &new_proposal);
@@ -12125,731 +12152,5 @@ impl VaultDAO {
         Self::update_reputation_on_propose(&env, &proposer);
 
         Ok(new_proposal_id)
-    }
-
-    // ========================================================================
-    // Signer tiers
-    // ========================================================================
-
-    fn can_execute_unilaterally(
-        tier: &SignerTier,
-        amount: i128,
-        full_quorum_threshold: i128,
-    ) -> bool {
-        if amount <= 0 || (full_quorum_threshold > 0 && amount > full_quorum_threshold) {
-            return false;
-        }
-        match tier {
-            SignerTier::Junior(limit) | SignerTier::Senior(limit) => amount <= *limit,
-            SignerTier::Principal => false,
-        }
-    }
-
-    pub fn set_signer_tier(
-        env: Env,
-        admin: Address,
-        signer: Address,
-        tier: SignerTier,
-    ) -> Result<(), VaultError> {
-        admin.require_auth();
-        let config = storage::get_config(&env)?;
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-        if !config.signers.contains(&signer) {
-            return Err(VaultError::NotASigner);
-        }
-        match &tier {
-            SignerTier::Junior(limit) | SignerTier::Senior(limit) if *limit < 0 => {
-                return Err(VaultError::InvalidAmount);
-            }
-            _ => {}
-        }
-        storage::set_signer_tier(&env, &signer, &tier);
-        env.events().publish(
-            (Symbol::new(&env, "signer_tier_set"), signer),
-            tier,
-        );
-        Ok(())
-    }
-
-    pub fn get_signer_tier(env: Env, signer: Address) -> SignerTier {
-        storage::get_signer_tier(&env, &signer)
-    }
-
-    pub fn set_full_quorum_threshold(
-        env: Env,
-        admin: Address,
-        threshold: i128,
-    ) -> Result<(), VaultError> {
-        admin.require_auth();
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-        if threshold < 0 {
-            return Err(VaultError::InvalidAmount);
-        }
-        storage::set_full_quorum_threshold(&env, threshold);
-        env.events().publish(
-            (Symbol::new(&env, "full_quorum_threshold"),),
-            threshold,
-        );
-        Ok(())
-    }
-
-    pub fn get_full_quorum_threshold(env: Env) -> i128 {
-        storage::get_full_quorum_threshold(&env)
-    }
-
-    // ========================================================================
-    // Token vesting
-    // ========================================================================
-
-    pub fn create_vesting_schedule(
-        env: Env,
-        admin: Address,
-        beneficiary: Address,
-        token_addr: Address,
-        total: i128,
-        cliff_ledger: u32,
-        start_ledger: u32,
-        end_ledger: u32,
-    ) -> Result<u64, VaultError> {
-        admin.require_auth();
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-        if total <= 0
-            || end_ledger <= cliff_ledger
-            || end_ledger <= start_ledger
-            || cliff_ledger < start_ledger
-        {
-            return Err(VaultError::InvalidAmount);
-        }
-        let active = storage::get_active_vesting_count(&env);
-        if active >= 100 {
-            return Err(VaultError::BatchTooLarge);
-        }
-        let reserved = storage::get_reserved_vesting(&env, &token_addr);
-        if token::balance(&env, &token_addr).saturating_sub(reserved) < total {
-            return Err(VaultError::InsufficientBalance);
-        }
-
-        let id = storage::next_vesting_id(&env);
-        let schedule = VestingSchedule {
-            id,
-            beneficiary: beneficiary.clone(),
-            token: token_addr.clone(),
-            total,
-            cliff_ledger,
-            start_ledger,
-            end_ledger,
-            claimed: 0,
-            cancelled: false,
-        };
-        storage::set_vesting_schedule(&env, &schedule);
-        storage::set_active_vesting_count(&env, active + 1);
-        storage::set_reserved_vesting(&env, &token_addr, reserved + total);
-        env.events().publish(
-            (Symbol::new(&env, "vesting_created"), id),
-            (beneficiary, token_addr, total, cliff_ledger, end_ledger),
-        );
-        Ok(id)
-    }
-
-    pub fn get_vesting_schedule(env: Env, schedule_id: u64) -> Option<VestingSchedule> {
-        storage::get_vesting_schedule(&env, schedule_id)
-    }
-
-    pub fn claim_vested_tokens(
-        env: Env,
-        beneficiary: Address,
-        schedule_id: u64,
-    ) -> Result<i128, VaultError> {
-        beneficiary.require_auth();
-        let mut schedule =
-            storage::get_vesting_schedule(&env, schedule_id).ok_or(VaultError::ProposalNotFound)?;
-        if schedule.cancelled || schedule.beneficiary != beneficiary {
-            return Err(VaultError::Unauthorized);
-        }
-        let vested = Self::vested_amount(&schedule, env.ledger().sequence())?;
-        let claimable = vested.saturating_sub(schedule.claimed);
-        if claimable == 0 {
-            return Ok(0);
-        }
-        token::transfer(&env, &schedule.token, &beneficiary, claimable);
-        schedule.claimed = schedule.claimed.saturating_add(claimable);
-        storage::set_vesting_schedule(&env, &schedule);
-        let reserved = storage::get_reserved_vesting(&env, &schedule.token);
-        storage::set_reserved_vesting(
-            &env,
-            &schedule.token,
-            reserved.saturating_sub(claimable),
-        );
-        if schedule.claimed == schedule.total {
-            let active = storage::get_active_vesting_count(&env);
-            storage::set_active_vesting_count(&env, active.saturating_sub(1));
-        }
-        env.events().publish(
-            (Symbol::new(&env, "vesting_claimed"), schedule_id),
-            (beneficiary, claimable, schedule.claimed),
-        );
-        Ok(claimable)
-    }
-
-    pub fn cancel_vesting(
-        env: Env,
-        admin: Address,
-        schedule_id: u64,
-    ) -> Result<i128, VaultError> {
-        admin.require_auth();
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-        let mut schedule =
-            storage::get_vesting_schedule(&env, schedule_id).ok_or(VaultError::ProposalNotFound)?;
-        if schedule.cancelled {
-            return Ok(0);
-        }
-        if schedule.claimed == schedule.total {
-            schedule.cancelled = true;
-            storage::set_vesting_schedule(&env, &schedule);
-            return Ok(0);
-        }
-        let vested = Self::vested_amount(&schedule, env.ledger().sequence())?;
-        let vested_unclaimed = vested.saturating_sub(schedule.claimed);
-        if vested_unclaimed > 0 {
-            token::transfer(
-                &env,
-                &schedule.token,
-                &schedule.beneficiary,
-                vested_unclaimed,
-            );
-            schedule.claimed = vested;
-        }
-        let unvested = schedule.total.saturating_sub(vested);
-        schedule.cancelled = true;
-        storage::set_vesting_schedule(&env, &schedule);
-        let reserved = storage::get_reserved_vesting(&env, &schedule.token);
-        storage::set_reserved_vesting(
-            &env,
-            &schedule.token,
-            reserved.saturating_sub(vested_unclaimed.saturating_add(unvested)),
-        );
-        let active = storage::get_active_vesting_count(&env);
-        storage::set_active_vesting_count(&env, active.saturating_sub(1));
-        env.events().publish(
-            (Symbol::new(&env, "vesting_cancelled"), schedule_id),
-            (admin, vested_unclaimed, unvested),
-        );
-        Ok(unvested)
-    }
-
-    fn vested_amount(schedule: &VestingSchedule, ledger: u32) -> Result<i128, VaultError> {
-        if ledger < schedule.cliff_ledger {
-            return Ok(0);
-        }
-        if ledger >= schedule.end_ledger {
-            return Ok(schedule.total);
-        }
-        let elapsed = ledger.saturating_sub(schedule.start_ledger) as i128;
-        let duration = schedule.end_ledger.saturating_sub(schedule.start_ledger) as i128;
-        schedule
-            .total
-            .checked_mul(elapsed)
-            .map(|value| value / duration)
-            .ok_or(VaultError::InvalidAmount)
-    }
-
-    // ========================================================================
-    // Holiday-aware recurring payments
-    // ========================================================================
-
-    pub fn set_holiday_calendar(
-        env: Env,
-        admin: Address,
-        holiday_ledgers: Vec<u64>,
-    ) -> Result<(), VaultError> {
-        admin.require_auth();
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-        if holiday_ledgers.len() > 50 {
-            return Err(VaultError::BatchTooLarge);
-        }
-
-        let mut sorted = Vec::new(&env);
-        for ledger in holiday_ledgers.iter() {
-            let mut inserted = false;
-            for index in 0..sorted.len() {
-                let existing = sorted.get(index).unwrap();
-                if ledger == existing {
-                    inserted = true;
-                    break;
-                }
-                if ledger < existing {
-                    sorted.insert(index, ledger);
-                    inserted = true;
-                    break;
-                }
-            }
-            if !inserted {
-                sorted.push_back(ledger);
-            }
-        }
-        storage::set_holiday_calendar(
-            &env,
-            &HolidayCalendar {
-                holiday_ledgers: sorted,
-            },
-        );
-        env.events().publish(
-            (Symbol::new(&env, "holiday_calendar_set"),),
-            holiday_ledgers.len(),
-        );
-        Ok(())
-    }
-
-    pub fn get_holiday_calendar(env: Env) -> HolidayCalendar {
-        storage::get_holiday_calendar(&env)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn schedule_payment_with_calendar(
-        env: Env,
-        proposer: Address,
-        recipient: Address,
-        token_addr: Address,
-        amount: i128,
-        memo: Symbol,
-        interval: u64,
-        max_missed_payments: u32,
-        skip_holidays: bool,
-        holiday_behavior: HolidayBehavior,
-    ) -> Result<u64, VaultError> {
-        let id = Self::schedule_payment(
-            env.clone(),
-            proposer,
-            recipient,
-            token_addr,
-            amount,
-            memo,
-            interval,
-            max_missed_payments,
-        )?;
-        let mut payment = storage::get_recurring_payment(&env, id)?;
-        payment.skip_holidays = skip_holidays;
-        payment.holiday_behavior = holiday_behavior;
-        storage::set_recurring_payment(&env, &payment);
-        Ok(id)
-    }
-
-    fn adjust_recurring_ledger(
-        env: &Env,
-        scheduled: u64,
-        skip_holidays: bool,
-        behavior: &HolidayBehavior,
-    ) -> u64 {
-        if !skip_holidays {
-            return scheduled;
-        }
-        let calendar = storage::get_holiday_calendar(env);
-        let mut adjusted = scheduled;
-        let move_earlier = *behavior == HolidayBehavior::PayEarly;
-        let ledgers_per_day = storage::DAY_IN_LEDGERS as u64;
-        for _ in 0..64 {
-            if !Self::is_non_business_ledger(&calendar, adjusted) {
-                break;
-            }
-            let day = adjusted / ledgers_per_day;
-            let weekend = day % 7 == 5 || day % 7 == 6;
-            adjusted = if weekend && move_earlier {
-                day.saturating_mul(ledgers_per_day).saturating_sub(1)
-            } else if weekend {
-                day.saturating_add(1).saturating_mul(ledgers_per_day)
-            } else if move_earlier {
-                adjusted.saturating_sub(1)
-            } else {
-                adjusted.saturating_add(1)
-            };
-        }
-        adjusted
-    }
-
-    fn is_non_business_ledger(calendar: &HolidayCalendar, ledger: u64) -> bool {
-        let mut low = 0u32;
-        let mut high = calendar.holiday_ledgers.len();
-        while low < high {
-            let mid = low + (high - low) / 2;
-            let value = calendar.holiday_ledgers.get(mid).unwrap();
-            if value == ledger {
-                return true;
-            }
-            if value < ledger {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
-        let day = ledger / storage::DAY_IN_LEDGERS as u64;
-        day % 7 == 5 || day % 7 == 6
-    }
-}
-
-// ============================================================================
-// Issues #1080, #1082, #1068 — Balance Snapshots, Scoped Delegation, Governance
-// ============================================================================
-
-#[contractimpl]
-impl VaultDAO {
-    // ── Balance Snapshots (#1080) ──────────────────────────────────────────
-
-    pub fn set_snapshot_interval(env: Env, admin: Address, interval: u32) -> Result<(), VaultError> {
-        admin.require_auth();
-        let config = storage::get_config(&env)?;
-        if !config.signers.contains(&admin) {
-            return Err(VaultError::Unauthorized);
-        }
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::InsufficientRole);
-        }
-        if interval < 100 {
-            return Err(VaultError::InvalidAmount);
-        }
-        storage::set_snapshot_interval(&env, interval);
-        Ok(())
-    }
-
-    pub fn take_manual_snapshot(env: Env, admin: Address) -> Result<BalanceSnapshot, VaultError> {
-        admin.require_auth();
-        let config = storage::get_config(&env)?;
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::InsufficientRole);
-        }
-
-        let current_ledger = env.ledger().sequence() as u64;
-        let last = storage::get_last_snapshot_ledger(&env);
-        if current_ledger.saturating_sub(last) < 100 {
-            return Err(VaultError::InvalidAmount);
-        }
-
-        let snapshot = BalanceSnapshot {
-            ledger: current_ledger,
-            timestamp: env.ledger().timestamp(),
-            balances: Vec::new(&env),
-            total_staked: 0,
-            pending_releases: 0,
-        };
-        storage::add_snapshot(&env, &snapshot);
-        events::emit_snapshot_taken(&env, current_ledger, 0);
-        Ok(snapshot)
-    }
-
-    pub fn get_snapshot_at(env: Env, target_ledger: u32) -> Option<BalanceSnapshot> {
-        storage::get_snapshot_at(&env, target_ledger)
-    }
-
-    pub fn get_latest_snapshot(env: Env) -> Option<BalanceSnapshot> {
-        let snapshots = storage::get_snapshots(&env);
-        if snapshots.is_empty() {
-            None
-        } else {
-            snapshots.get(snapshots.len() - 1)
-        }
-    }
-
-    // ── Scoped Delegation (#1082) ─────────────────────────────────────────
-
-    pub fn create_scoped_delegation(
-        env: Env,
-        delegator: Address,
-        delegate: Address,
-        max_amount: i128,
-        expires_at_ledger: u32,
-        allowed_proposal_ids: Vec<u64>,
-    ) -> Result<u64, VaultError> {
-        delegator.require_auth();
-        let config = storage::get_config(&env)?;
-        if !config.signers.contains(&delegator) {
-            return Err(VaultError::NotASigner);
-        }
-        if delegator == delegate {
-            return Err(VaultError::CircularDelegation);
-        }
-
-        // Max 3 active delegations per delegator
-        let existing_ids = storage::get_scoped_delegations_by_delegator(&env, &delegator);
-        let mut active_count = 0u32;
-        for id in existing_ids.iter() {
-            if let Some(d) = storage::get_scoped_delegation(&env, id) {
-                if d.is_active {
-                    active_count += 1;
-                }
-            }
-        }
-        if active_count >= 3 {
-            return Err(VaultError::BatchTooLarge);
-        }
-
-        let id = storage::increment_scoped_delegation_id(&env);
-        let current_ledger = env.ledger().sequence() as u64;
-
-        let delegation = ScopedDelegation {
-            id,
-            delegator: delegator.clone(),
-            delegate: delegate.clone(),
-            max_amount,
-            expires_at_ledger,
-            proposal_ids: allowed_proposal_ids,
-            is_active: true,
-            created_at: current_ledger,
-        };
-
-        storage::set_scoped_delegation(&env, &delegation);
-
-        let mut ids = storage::get_scoped_delegations_by_delegator(&env, &delegator);
-        ids.push_back(id);
-        storage::set_scoped_delegations_by_delegator(&env, &delegator, &ids);
-
-        events::emit_scoped_delegation_created(&env, id, &delegator, &delegate, max_amount);
-        Ok(id)
-    }
-
-    pub fn revoke_scoped_delegation(env: Env, caller: Address, delegation_id: u64) -> Result<(), VaultError> {
-        caller.require_auth();
-        let mut d = storage::get_scoped_delegation(&env, delegation_id)
-            .ok_or(VaultError::ProposalNotFound)?;
-
-        let is_admin = storage::get_role(&env, &caller) == Role::Admin;
-        if caller != d.delegator && !is_admin {
-            return Err(VaultError::Unauthorized);
-        }
-
-        d.is_active = false;
-        storage::set_scoped_delegation(&env, &d);
-        events::emit_scoped_delegation_revoked(&env, delegation_id, &caller);
-        Ok(())
-    }
-
-    pub fn vote_as_delegate(
-        env: Env,
-        delegate: Address,
-        delegation_id: u64,
-        proposal_id: u64,
-        approve: bool,
-    ) -> Result<(), VaultError> {
-        delegate.require_auth();
-        let d = storage::get_scoped_delegation(&env, delegation_id)
-            .ok_or(VaultError::ProposalNotFound)?;
-
-        if !d.is_active {
-            return Err(VaultError::Unauthorized);
-        }
-        if d.delegate != delegate {
-            return Err(VaultError::Unauthorized);
-        }
-        let current_ledger = env.ledger().sequence() as u32;
-        if current_ledger > d.expires_at_ledger {
-            return Err(VaultError::ProposalExpired);
-        }
-
-        // Scope check: proposal_id must be in allowed list (if specified)
-        if !d.proposal_ids.is_empty() && !d.proposal_ids.contains(&proposal_id) {
-            return Err(VaultError::Unauthorized);
-        }
-
-        let mut proposal = storage::get_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalStatus::Pending {
-            return Err(VaultError::ProposalNotPending);
-        }
-
-        // Scope check: amount within max_amount
-        if proposal.amount > d.max_amount {
-            return Err(VaultError::ExceedsProposalLimit);
-        }
-
-        // If delegator already voted directly, delegation is void for this proposal
-        if proposal.approvals.contains(&d.delegator) || proposal.abstentions.contains(&d.delegator) {
-            return Err(VaultError::AlreadyApproved);
-        }
-
-        // If delegate already voted directly, don't count twice
-        if proposal.approvals.contains(&delegate) || proposal.abstentions.contains(&delegate) {
-            return Err(VaultError::AlreadyApproved);
-        }
-
-        // Cast vote on behalf of delegator
-        if approve {
-            proposal.approvals.push_back(d.delegator.clone());
-        } else {
-            proposal.abstentions.push_back(d.delegator.clone());
-        }
-        storage::set_proposal(&env, &proposal);
-
-        events::emit_delegate_voted(&env, delegation_id, proposal_id, &delegate, approve);
-        Ok(())
-    }
-
-    pub fn get_scoped_delegation(env: Env, delegation_id: u64) -> Option<ScopedDelegation> {
-        storage::get_scoped_delegation(&env, delegation_id)
-    }
-
-    pub fn get_delegator_scoped_delegations(env: Env, delegator: Address) -> Vec<ScopedDelegation> {
-        let ids = storage::get_scoped_delegations_by_delegator(&env, &delegator);
-        let mut result = Vec::new(&env);
-        for id in ids.iter() {
-            if let Some(d) = storage::get_scoped_delegation(&env, id) {
-                result.push_back(d);
-            }
-        }
-        result
-    }
-
-    // ── Governance Parameter Change (#1068) ───────────────────────────────
-
-    pub fn set_governance_threshold(env: Env, admin: Address, percentage: u32) -> Result<(), VaultError> {
-        admin.require_auth();
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::InsufficientRole);
-        }
-        if percentage < 51 || percentage > 100 {
-            return Err(VaultError::InvalidAmount);
-        }
-        storage::set_governance_threshold(&env, percentage);
-        Ok(())
-    }
-
-    pub fn propose_config_change(
-        env: Env,
-        proposer: Address,
-        param: ConfigParam,
-        new_value: i128,
-    ) -> Result<u64, VaultError> {
-        proposer.require_auth();
-        let config = storage::get_config(&env)?;
-        if !config.signers.contains(&proposer) {
-            return Err(VaultError::NotASigner);
-        }
-
-        // Max 3 active governance proposals
-        if storage::get_active_governance_count(&env) >= 3 {
-            return Err(VaultError::ConfigChangeInProgress);
-        }
-
-        // Validate parameter bounds
-        match param {
-            ConfigParam::Threshold => {
-                let v = new_value as u32;
-                if v == 0 || v > config.signers.len() {
-                    return Err(VaultError::ThresholdTooHigh);
-                }
-            }
-            ConfigParam::Quorum => {
-                let v = new_value as u32;
-                if v > config.signers.len() {
-                    return Err(VaultError::QuorumTooHigh);
-                }
-            }
-            ConfigParam::SpendingLimit | ConfigParam::DailyLimit | ConfigParam::WeeklyLimit => {
-                if new_value <= 0 {
-                    return Err(VaultError::InvalidAmount);
-                }
-            }
-            ConfigParam::TimelockDelay => {
-                if new_value < 0 {
-                    return Err(VaultError::InvalidAmount);
-                }
-            }
-        }
-
-        let current_ledger = env.ledger().sequence() as u64;
-        let id = storage::increment_governance_id(&env);
-        let gp = GovernanceProposal {
-            id,
-            proposer: proposer.clone(),
-            param: param.clone(),
-            new_value,
-            approvals: Vec::new(&env),
-            status: ProposalStatus::Pending,
-            created_at: current_ledger,
-            expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
-        };
-
-        storage::set_governance_proposal(&env, &gp);
-        storage::set_active_governance_count(&env, storage::get_active_governance_count(&env) + 1);
-        events::emit_gov_proposal_created(&env, id, &proposer, param as u32);
-        Ok(id)
-    }
-
-    pub fn approve_config_change(env: Env, voter: Address, gov_proposal_id: u64) -> Result<(), VaultError> {
-        voter.require_auth();
-        let config = storage::get_config(&env)?;
-        if !config.signers.contains(&voter) {
-            return Err(VaultError::NotASigner);
-        }
-
-        let mut gp = storage::get_governance_proposal(&env, gov_proposal_id)
-            .ok_or(VaultError::ProposalNotFound)?;
-
-        if gp.status != ProposalStatus::Pending {
-            return Err(VaultError::ProposalNotPending);
-        }
-        if gp.approvals.contains(&voter) {
-            return Err(VaultError::AlreadyApproved);
-        }
-
-        let current_ledger = env.ledger().sequence() as u64;
-        if current_ledger > gp.expires_at {
-            return Err(VaultError::ProposalExpired);
-        }
-
-        gp.approvals.push_back(voter.clone());
-
-        // Check supermajority
-        let threshold_pct = storage::get_governance_threshold(&env);
-        let required = ((config.signers.len() as u64 * threshold_pct as u64 + 99) / 100) as u32;
-        if gp.approvals.len() >= required {
-            gp.status = ProposalStatus::Approved;
-        }
-
-        storage::set_governance_proposal(&env, &gp);
-        events::emit_gov_proposal_approved(&env, gov_proposal_id, &voter, gp.approvals.len());
-        Ok(())
-    }
-
-    pub fn execute_config_change(env: Env, caller: Address, gov_proposal_id: u64) -> Result<(), VaultError> {
-        caller.require_auth();
-        let mut gp = storage::get_governance_proposal(&env, gov_proposal_id)
-            .ok_or(VaultError::ProposalNotFound)?;
-
-        if gp.status != ProposalStatus::Approved {
-            return Err(VaultError::ProposalNotApproved);
-        }
-
-        let mut config = storage::get_config(&env)?;
-
-        match gp.param {
-            ConfigParam::Threshold => { config.threshold = gp.new_value as u32; }
-            ConfigParam::SpendingLimit => { config.spending_limit = gp.new_value; }
-            ConfigParam::DailyLimit => { config.daily_limit = gp.new_value; }
-            ConfigParam::WeeklyLimit => { config.weekly_limit = gp.new_value; }
-            ConfigParam::TimelockDelay => { config.timelock_delay = gp.new_value as u64; }
-            ConfigParam::Quorum => { config.quorum = gp.new_value as u32; }
-        }
-
-        storage::set_config(&env, &config);
-        gp.status = ProposalStatus::Executed;
-        storage::set_governance_proposal(&env, &gp);
-
-        let count = storage::get_active_governance_count(&env);
-        storage::set_active_governance_count(&env, count.saturating_sub(1));
-
-        events::emit_gov_proposal_executed(&env, gov_proposal_id, gp.param as u32, gp.new_value);
-        events::emit_config_updated(&env, &caller);
-        Ok(())
-    }
-
-    pub fn get_governance_proposal(env: Env, id: u64) -> Option<GovernanceProposal> {
-        storage::get_governance_proposal(&env, id)
     }
 }

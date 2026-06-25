@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon, Activity, FileText, Calendar } from 'lucide-react';
+import { BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon, Activity, FileText, Calendar, ShieldCheck } from 'lucide-react';
 import type { WidgetType } from '../types/dashboard';
 
 interface WidgetLibraryProps {
@@ -13,6 +13,7 @@ const widgetTypes = [
   { type: 'stat-card' as WidgetType, name: 'Stat Card', icon: Activity, description: 'Key metrics' },
   { type: 'proposal-list' as WidgetType, name: 'Proposals', icon: FileText, description: 'Recent proposals' },
   { type: 'calendar' as WidgetType, name: 'Calendar', icon: Calendar, description: 'Events & deadlines' },
+  { type: 'governance-health' as WidgetType, name: 'Gov. Health', icon: ShieldCheck, description: 'Participation & compliance' },
 ];
 
 const WidgetLibrary: React.FC<WidgetLibraryProps> = ({ onAddWidget }) => {

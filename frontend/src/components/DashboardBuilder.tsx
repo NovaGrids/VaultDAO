@@ -21,6 +21,7 @@ import PieChartWidget from './widgets/PieChartWidget';
 import StatCardWidget from './widgets/StatCardWidget';
 import ProposalListWidget from './widgets/ProposalListWidget';
 import CalendarWidget from './widgets/CalendarWidget';
+import GovernanceHealthWidget from './widgets/GovernanceHealthWidget';
 import DashboardErrorBoundary from './DashboardErrorBoundary';
 import type { WidgetConfig, WidgetType, LayoutItem as DashboardLayoutItem } from '../types/dashboard';
 import { dashboardTemplates, saveDashboardLayout, loadDashboardLayout, clearDashboardLayout } from '../utils/dashboardTemplates';
@@ -42,6 +43,7 @@ function renderWidgetContent(widget: WidgetConfig, onDrillDown: (data: unknown) 
     case 'stat-card': return <StatCardWidget title={widget.title} value="0" />;
     case 'proposal-list': return <ProposalListWidget title={widget.title} />;
     case 'calendar': return <CalendarWidget title={widget.title} />;
+    case 'governance-health': return <GovernanceHealthWidget title={widget.title} />;
     default: return <div className="flex items-center justify-center h-full text-gray-500 text-sm">Unknown widget</div>;
   }
 }

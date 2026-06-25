@@ -128,6 +128,23 @@ pub enum VaultError {
 
     PermissionNotFound = 321,
 
+    /// Commit phase is closed (past commit_deadline)
+    CommitPhaseClosed = 1100,
+    /// Reveal phase has not started yet (before commit_deadline)
+    RevealPhaseNotStarted = 1101,
+    /// Reveal phase is closed (past reveal_deadline)
+    RevealPhaseClosed = 1102,
+    /// Signer has not committed a vote for this proposal
+    CommitNotFound = 1103,
+    /// Revealed vote does not match the stored commitment
+    CommitmentMismatch = 1104,
+    /// Signer has already committed a vote for this proposal
+    AlreadyCommitted = 1105,
+    /// Tally can only be computed after the reveal deadline
+    RevealDeadlineNotPassed = 1106,
+    /// This proposal does not use private (commit-reveal) voting
+    PrivateVotingNotEnabled = 1107,
+
     // =========================================================
     // Dependency graph errors (Issue #1066)
     // =========================================================

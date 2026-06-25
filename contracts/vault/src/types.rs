@@ -17,7 +17,7 @@
 //!
 //! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
-use soroban_sdk::{contracttype, Address, Env, Map, String, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Symbol, Vec};
 
 #[path = "types_balance_snapshot.rs"]
 mod types_balance_snapshot;
@@ -513,6 +513,23 @@ pub struct Proposal {
     pub voting_deadline: u64,
     /// Ledger sequence when this proposal was executed (0 = not yet executed)
     pub execution_ledger: u64,
+    /// Ledger sequence when the commit phase ends (0 = private voting disabled)
+    pub commit_deadline: u64,
+    /// Ledger sequence when the reveal phase ends (0 = private voting disabled)
+    pub reveal_deadline: u64,
+    /// Committed votes: signer -> sha256(vote_bool || salt)
+    pub vote_commitments: Map<Address, BytesN<32>>,
+}
+
+/// A revealed commit-reveal vote
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CommitRevealVote {
+    pub proposal_id: u64,
+    pub voter: Address,
+    /// sha256(vote_bool || salt)
+    pub commitment: BytesN<32>,
+    pub committed_at: u64,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
