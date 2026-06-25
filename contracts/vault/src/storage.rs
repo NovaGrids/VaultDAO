@@ -18,10 +18,18 @@
 //!
 //! 5. **Batch Operations**: Multiple related updates are batched into single storage operations.
 
-use soroban_sdk::{contracttype, Address, Env, String, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
+    AuditEntry, BatchExecutionResult, BatchTransaction, CapabilityToken, Comment, Config,
+    DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
+    ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig, InsuranceConfig,
+    ListMode, MultiPhaseProposal, NotificationPreferences, PermissionGrant, Proposal,
+    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
+    ReputationConfig, RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, Subscription,
+    SwapProposal, SwapResult, TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig,
+    VotingStrategy, WhitelistEntry, BridgeConfig, CrossChainProposal,
     AuditEntry, BatchExecutionResult, BatchTransaction, Comment, Config, DelegatedPermission,
     DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure, FundingRound,
     FundingRoundConfig, GasConfig, InsuranceConfig, InsuranceClaim, ListMode,
@@ -135,6 +143,8 @@ pub enum DataKey {
     DelegatorsFor(Address),
     /// Per-proposer per-token velocity history -> Vec<u64>
     VelocityHistoryByToken(Address, Address),
+    /// Proposal IDs indexed by status (u32 repr of ProposalStatus) -> Vec<u64>
+    StatusIndex(u32),
 }
 
 #[contracttype]
@@ -275,6 +285,12 @@ pub enum FeatureKey {
     MetricsBucketIndex,
     /// Pending config change proposal ID -> u64
     PendingConfig,
+    /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
+    WhitelistEntry(Address),
+    /// Multi-phase proposal by base proposal ID -> MultiPhaseProposal (issue #1096)
+    MultiPhaseProposal(u64),
+    /// Capability token by ID -> CapabilityToken (issue #1097)
+    CapabilityToken(BytesN<32>),
     /// Moderator flag for an address -> bool
     Moderator(Address),
     /// Comment rate tracking: (proposal_id, author, day_number) -> u32
@@ -2950,6 +2966,90 @@ pub fn remove_delegator_index(env: &Env, delegate: &Address, delegator: &Address
 }
 
 // ============================================================================
+// Issue #1094: On-Chain Recipient Whitelist
+// ============================================================================
+
+pub fn get_whitelist_entry(env: &Env, addr: &Address) -> Option<WhitelistEntry> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::WhitelistEntry(addr.clone()))
+}
+
+pub fn set_whitelist_entry(env: &Env, addr: &Address, entry: &WhitelistEntry) {
+    let key = FeatureKey::WhitelistEntry(addr.clone());
+    env.storage().persistent().set(&key, entry);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+pub fn remove_whitelist_entry(env: &Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&FeatureKey::WhitelistEntry(addr.clone()));
+}
+
+pub fn has_whitelist_entry(env: &Env, addr: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .has(&FeatureKey::WhitelistEntry(addr.clone()))
+}
+
+// ============================================================================
+// Issue #1096: Multi-Phase Proposals
+// ============================================================================
+
+pub fn get_multi_phase_proposal(env: &Env, proposal_id: u64) -> Option<MultiPhaseProposal> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::MultiPhaseProposal(proposal_id))
+}
+
+pub fn set_multi_phase_proposal(env: &Env, mp: &MultiPhaseProposal) {
+    let key = FeatureKey::MultiPhaseProposal(mp.proposal_id);
+    env.storage().persistent().set(&key, mp);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Issue #1097: Capability Tokens
+// ============================================================================
+
+pub fn get_capability_token(env: &Env, id: &BytesN<32>) -> Option<CapabilityToken> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::CapabilityToken(id.clone()))
+}
+
+pub fn set_capability_token(env: &Env, token: &CapabilityToken) {
+    let key = FeatureKey::CapabilityToken(token.id.clone());
+    env.storage().persistent().set(&key, token);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+pub fn remove_capability_token(env: &Env, id: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&FeatureKey::CapabilityToken(id.clone()));
+}
+
+// ============================================================================
+// Issue #1095: Voting Power Snapshot helper
+// ============================================================================
+
+/// Build a voting power snapshot for all current signers.
+/// Each signer gets voting_power = 1 (simple equal weight).
+/// Returns an empty map if there are no signers.
+pub fn build_signer_snapshot(env: &Env, signers: &Vec<Address>) -> Map<Address, i128> {
+    let mut snapshot = Map::new(env);
+    for signer in signers.iter() {
+        snapshot.set(signer, 1i128);
+    }
+    snapshot
 // Moderator Management (Issue #1076)
 // ============================================================================
 

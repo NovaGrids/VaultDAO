@@ -95,6 +95,8 @@ pub struct InitConfig {
     pub staking_config: StakingConfig,
     /// Proposal ID namespace prefix for multi-vault coordination (must be multiple of 1_000_000)
     pub proposal_id_prefix: u64,
+    /// Whether recipient whitelist enforcement is enabled (issue #1094)
+    pub whitelist_mode: bool,
     /// Grace period in ledgers after voting deadline before auto-expiry (default: 100)
     pub grace_period_ledgers: u64,
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
@@ -164,6 +166,8 @@ pub struct Config {
     pub staking_config: StakingConfig,
     /// Proposal ID namespace prefix for multi-vault coordination
     pub proposal_id_prefix: u64,
+    /// Whether recipient whitelist enforcement is enabled (issue #1094)
+    pub whitelist_mode: bool,
     /// Grace period in ledgers after voting deadline before auto-expiry (default: 100)
     pub grace_period_ledgers: u64,
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
@@ -533,6 +537,9 @@ pub struct Proposal {
     pub voting_deadline: u64,
     /// Ledger sequence when this proposal was executed (0 = not yet executed)
     pub execution_ledger: u64,
+    /// Voting power snapshot at proposal creation: signer -> voting_power
+    /// Used by vote_on_proposal to prevent vote-buying attacks
+    pub signer_snapshot: Map<Address, i128>,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
@@ -2041,126 +2048,119 @@ pub struct TransferDetails {
     pub amount: i128,
 }
 
-/// Status of a batch transaction
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BatchStatus {
-    Pending,
-    Executing,
-    Completed,
-    RolledBack,
-}
+// ============================================================================
+// Issue #1094: On-Chain Recipient Whitelist
+// ============================================================================
 
-/// Batch transaction containing multiple operations
+/// Entry in the on-chain recipient whitelist
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct BatchTransaction {
-    /// Unique batch ID
-    pub id: u64,
-    /// Creator of the batch
-    pub creator: Address,
-    /// List of operations
-    pub operations: Vec<BatchOperation>,
-    /// Current status
-    pub status: BatchStatus,
-    /// Creation timestamp
-    pub created_at: u64,
-    /// Optional memo
-    pub memo: Symbol,
+pub struct WhitelistEntry {
+    /// Human-readable label for this entry
+    pub label: Symbol,
+    /// Maximum amount allowed per proposal to this recipient (0 = no limit)
+    pub max_amount: i128,
+    /// Ledger after which this entry expires (0 = never expires)
+    pub expiry_ledger: u32,
+    /// Signers who approved adding this entry
+    pub approved_by: Vec<Address>,
 }
 
-/// Result of batch execution
+// ============================================================================
+// Issue #1095: Voting Power Snapshot
+// ============================================================================
+// (Fields are added to Proposal: signer_snapshot: Map<Address, i128>)
+// No separate type needed — Map is used inline.
+
+// ============================================================================
+// Issue #1096: Multi-Phase Proposal Execution
+// ============================================================================
+
+/// Operation that can be performed in a proposal phase
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct BatchExecutionResult {
-    /// Batch ID
-    pub batch_id: u64,
-    /// Whether all operations succeeded
-    pub success: bool,
-    /// Number of successful operations
-    pub successful_ops: u32,
-    /// Number of failed operations
-    pub failed_ops: u32,
+pub enum ProposalOperation {
+    /// Transfer tokens: (recipient, token, amount, memo)
+    Transfer(Address, Address, i128, Symbol),
 }
 
-// ============================================================================
-// Issue #1064: Streaming Rate Limiter
-// ============================================================================
-
-/// Rolling-window tracker for cumulative stream outflow.
-/// Stored in Temporary storage so it auto-evicts after TTL expires.
+/// Optional ProposalOperation wrapper (Soroban contracttype limitation)
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct StreamRateWindow {
-    /// Total amount streamed within the current window
-    pub total_streamed_in_window: i128,
-    /// Ledger sequence number when this window started
-    pub window_start_ledger: u32,
+pub enum OptionalProposalOperation {
+    None,
+    Some(ProposalOperation),
 }
 
-// ============================================================================
-// Issue #1075: Insurance Pool Governance — Claim Voting
-// ============================================================================
-
-/// Status of an insurance claim
+/// Status of a single proposal phase
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
-pub enum InsuranceClaimStatus {
-    /// Awaiting votes
+pub enum ProposalPhaseStatus {
     Pending = 0,
-    /// Approved by staker majority — funds released
-    Approved = 1,
-    /// Rejected by staker majority — bond slashed
-    Rejected = 2,
-    /// Vote deadline passed without majority — treated as rejected
-    Expired = 3,
+    Executed = 1,
+    RolledBack = 2,
+    Failed = 3,
 }
 
-/// An on-chain insurance claim submitted by a vault participant.
+/// A single phase in a multi-phase proposal
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct InsuranceClaim {
-    /// Unique claim ID
-    pub id: u64,
-    /// Address making the claim
-    pub claimant: Address,
-    /// Amount claimed from the insurance pool (in stroops)
-    pub amount: i128,
-    /// SHA-256 hash of supporting evidence (e.g. IPFS CID or document hash)
-    pub evidence_hash: BytesN<32>,
-    /// Ledger sequence number when voting closes
-    pub vote_deadline: u64,
-    /// Weighted approve votes (sum of staker stakes)
-    pub approve_weight: i128,
-    /// Weighted reject votes (sum of staker stakes)
-    pub reject_weight: i128,
-    /// Token the claim is denominated in (must be in insurance pool)
-    pub token: Address,
-    /// Minimum claimant bond locked until resolution
-    pub bond_amount: i128,
-    /// Whether the bond has been returned/slashed
-    pub bond_settled: bool,
-    /// Current claim status
-    pub status: InsuranceClaimStatus,
-    /// Ledger when claim was submitted
-    pub created_at: u64,
+pub struct ProposalPhase {
+    /// The operation to execute in this phase
+    pub operation: ProposalOperation,
+    /// Optional rollback operation to run if a later phase fails
+    pub rollback_operation: OptionalProposalOperation,
+    /// Execution status
+    pub status: ProposalPhaseStatus,
+}
+
+/// Multi-phase proposal stored alongside the base Proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MultiPhaseProposal {
+    /// Base proposal ID
+    pub proposal_id: u64,
+    /// Ordered list of phases (max 5)
+    pub phases: Vec<ProposalPhase>,
+    /// Index of last successfully executed phase (-1 if none)
+    pub last_executed_phase: i32,
 }
 
 // ============================================================================
-// Issue #1081: Multi-Token Vault Support
+// Issue #1097: Cross-Contract Capability Tokens
 // ============================================================================
 
-/// Per-token spending limits stored alongside each supported token
+/// Scoped capability granted to an external address
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct TokenSpendingConfig {
-    /// Token contract address
-    pub token: Address,
-    /// Maximum amount per proposal for this token
-    pub daily_limit: i128,
-    /// Maximum aggregate weekly spending for this token
-    pub weekly_limit: i128,
-    /// Whether this is the default (non-removable) token
-    pub is_default: bool,
+pub enum Capability {
+    /// Allow initiating a stream up to max_amount
+    InitiateStream(i128),
+    /// Allow creating a proposal up to max_amount
+    CreateProposal(i128),
+    /// Allow executing a specific recurring payment
+    ExecuteRecurring(u64),
 }
+
+/// Capability token granting scoped permissions to an external address
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CapabilityToken {
+    /// Unique token ID (32 bytes)
+    pub id: soroban_sdk::BytesN<32>,
+    /// Address the token is granted to
+    pub granted_to: Address,
+    /// List of capabilities this token grants
+    pub capabilities: Vec<Capability>,
+    /// Ledger after which this token expires
+    pub expires_at: u32,
+    /// Maximum number of times this token can be used (0 = unlimited)
+    pub max_uses: u32,
+    /// Number of times this token has been used
+    pub uses_count: u32,
+    /// Whether this token has been revoked
+    pub revoked: bool,
+}
+
+

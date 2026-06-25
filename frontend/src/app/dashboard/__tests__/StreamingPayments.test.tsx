@@ -5,11 +5,13 @@ import StreamingPayments, { type Stream } from '../StreamingPayments';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
+const mockWallet = {
+  address: 'GABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB',
+  isConnected: true,
+};
+
 vi.mock('../../../hooks/useWallet', () => ({
-  useWallet: () => ({
-    address: 'GABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB',
-    isConnected: true,
-  }),
+  useWallet: () => mockWallet,
 }));
 
 vi.mock('../../../context/ToastContext', () => ({
@@ -44,13 +46,13 @@ const makeStream = (overrides: Partial<Stream> = {}): Stream => ({
 
 describe('StreamingPayments page', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    mockWallet.address = 'GABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB';
+    mockWallet.isConnected = true;
     // Mock fetch to return demo streams
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -69,6 +71,7 @@ describe('StreamingPayments page', () => {
   });
 
   it('claimable counter increments over time for active streams', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ streams: [makeStream()] }),
@@ -85,6 +88,7 @@ describe('StreamingPayments page', () => {
       const claimableEl = screen.getByText(/Claimable now/i).closest('div')?.nextElementSibling;
       expect(claimableEl?.textContent).toMatch(/XLM/);
     });
+    vi.useRealTimers();
   });
 
   it('shows paused status for paused streams', async () => {
@@ -116,12 +120,9 @@ describe('StreamingPayments page', () => {
   });
 
   it('shows "Connect your wallet" when not connected', () => {
-    vi.doMock('../../../hooks/useWallet', () => ({
-      useWallet: () => ({ address: null, isConnected: false }),
-    }));
-    // Re-render with disconnected wallet via direct prop override
+    mockWallet.address = null;
+    mockWallet.isConnected = false;
     render(<StreamingPayments />);
-    // The page still renders (wallet mock is module-level), just verify no crash
-    expect(document.body).toBeTruthy();
+    expect(screen.getByText('Connect your wallet')).toBeInTheDocument();
   });
 });

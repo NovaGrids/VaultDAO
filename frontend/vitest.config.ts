@@ -15,5 +15,6 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    execArgv: ['--experimental-require-module'],
   },
 });
