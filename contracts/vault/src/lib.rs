@@ -28,7 +28,7 @@ use types::{
     CrossChainAsset, CrossChainProposal, CrossVaultConfig, CrossVaultProposal, CrossVaultStatus,
     Delegation, DelegationHistory, DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow,
     EscrowStatus, ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
-    FundingRoundConfig, FundingRoundStatus, GasConfig, HolidayBehavior, HolidayCalendar, InitConfig,
+    FundingRoundConfig, FundingRoundStatus, GasConfig, HolidayBehavior, HolidayCalendar, ImpactScore, InitConfig,
     InsuranceConfig, ListMode, Milestone, NotificationPreferences, OptionalVaultOracleConfig,
     Priority, Proposal,
     ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal,
@@ -143,6 +143,81 @@ fn calculate_expiration_ledger(config: &Config, priority: &Priority, current_led
     current_ledger + configured.saturating_mul(multiplier)
 }
 
+/// Calculate the impact score for a proposal
+/// 
+/// Returns ImpactScore struct with:
+/// - treasury_impact_bps: (amount / treasury_balance) * 10000
+/// - recipient_risk_score: 0 (whitelisted) to 100 (unknown)  
+/// - complexity_score: based on conditions, dependencies, scheduling
+/// - total_score: weighted average (0-100)
+fn calculate_impact_score(
+    env: &Env,
+    amount: i128,
+    treasury_balance: i128,
+    recipient: &Address,
+    conditions_count: u32,
+    dependencies_count: u32,
+    is_scheduled: bool,
+    has_insurance: bool,
+    has_stake: bool,
+) -> ImpactScore {
+    // 1. Treasury Impact in basis points
+    let treasury_impact_bps = if treasury_balance > 0 {
+        let bps = (amount as u64)
+            .saturating_mul(10_000)
+            .saturating_div(treasury_balance as u64);
+        bps.min(10_000) as u32  // Cap at 10000 bps (100%)
+    } else {
+        10_000  // Assume max impact if treasury is empty/zero
+    };
+
+    // 2. Recipient Risk Score (0-100)
+    // Whitelisted recipients get 0, unknown get 100
+    let recipient_risk_score = if storage::is_recipient_whitelisted(env, recipient) {
+        0u8
+    } else {
+        100u8
+    };
+
+    // 3. Complexity Score (0-100)
+    // Based on: conditions (0-20), dependencies (0-30), scheduling (0-20), insurance/stake (0-30)
+    let mut complexity = 0u32;
+    
+    // Condition complexity: 1 point per condition, max 20
+    complexity = complexity.saturating_add((conditions_count as u32).min(20));
+    
+    // Dependency complexity: 10 points per dependency, max 30
+    complexity = complexity.saturating_add((dependencies_count as u32).saturating_mul(10).min(30));
+    
+    // Scheduled execution adds 20 points
+    if is_scheduled {
+        complexity = complexity.saturating_add(20);
+    }
+    
+    // Insurance/staking adds complexity
+    if has_insurance || has_stake {
+        complexity = complexity.saturating_add(30);
+    }
+    
+    let complexity_score = (complexity as u8).min(100);
+
+    // 4. Total Impact Score using weighted average
+    // Formula: (treasury_impact_bps / 100) * 0.4 + recipient_risk * 0.3 + complexity * 0.3
+    // Normalized to 0-100 scale
+    let treasury_component = (treasury_impact_bps as u32).saturating_mul(40).saturating_div(10_000);
+    let recipient_component = (recipient_risk_score as u32).saturating_mul(30).saturating_div(100);
+    let complexity_component = (complexity_score as u32).saturating_mul(30).saturating_div(100);
+    
+    let total = (treasury_component + recipient_component + complexity_component).min(100) as u8;
+
+    ImpactScore {
+        treasury_impact_bps,
+        recipient_risk_score,
+        complexity_score,
+        total_score: total,
+    }
+}
+
 #[cfg(test)]
 mod test;
 #[cfg(test)]
@@ -228,6 +303,36 @@ pub mod mock_oracle {
 #[contractimpl]
 #[allow(clippy::too_many_arguments)]
 impl VaultDAO {
+    // ========================================================================
+    // Helper Methods
+    // ========================================================================
+
+    /// Internal static helper to calculate impact score
+    /// Callable from contract functions without self
+    fn calculate_impact_score_static(
+        env: &Env,
+        amount: i128,
+        treasury_balance: i128,
+        recipient: &Address,
+        conditions_count: u32,
+        dependencies_count: u32,
+        is_scheduled: bool,
+        has_insurance: bool,
+        has_stake: bool,
+    ) -> ImpactScore {
+        calculate_impact_score(
+            env,
+            amount,
+            treasury_balance,
+            recipient,
+            conditions_count,
+            dependencies_count,
+            is_scheduled,
+            has_insurance,
+            has_stake,
+        )
+    }
+
     // ========================================================================
     // Initialization
     // ========================================================================
@@ -325,6 +430,7 @@ impl VaultDAO {
                 100 // default grace period: 100 ledgers
             },
             vote_weight: config.vote_weight,
+            high_impact_threshold: config.high_impact_threshold,
         };
 
         // Store state
@@ -647,10 +753,35 @@ impl VaultDAO {
         storage::add_daily_spent(&env, today, amount);
         storage::add_weekly_spent(&env, week, amount);
 
-        // 12. Determine timelock
+        // 12. Calculate impact score (#1098)
+        let treasury_balance = token::get_vault_balance(&env, &token_addr);
+        let is_scheduled = execution_time.is_some();
+        let has_insurance = actual_insurance > 0;
+        let has_stake = actual_stake > 0;
+        let impact_score = Self::calculate_impact_score_static(
+            &env,
+            amount,
+            treasury_balance,
+            &recipient,
+            conditions.len() as u32,
+            depends_on.len() as u32,
+            is_scheduled,
+            has_insurance,
+            has_stake,
+        );
+
+        // 12a. Determine timelock with extended duration for high impact proposals
         let current_ledger = env.ledger().sequence() as u64;
+        let base_timelock_delay = config.timelock_delay;
+        let extended_timelock_delay = if impact_score.total_score >= config.high_impact_threshold {
+            // Add 48 hours (≈ 34560 ledgers at 5s/ledger) for high impact proposals
+            base_timelock_delay.saturating_add(34_560)
+        } else {
+            base_timelock_delay
+        };
+
         let unlock_ledger = if amount >= config.timelock_threshold {
-            current_ledger + config.timelock_delay
+            current_ledger + extended_timelock_delay
         } else {
             0
         };
@@ -726,6 +857,7 @@ impl VaultDAO {
                 0
             },
             execution_ledger: 0,
+            impact_score,
         };
 
         storage::set_proposal(&env, &proposal);

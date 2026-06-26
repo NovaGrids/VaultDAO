@@ -97,6 +97,8 @@ pub struct InitConfig {
     pub grace_period_ledgers: u64,
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
     pub vote_weight: VoteWeight,
+    /// High impact score threshold (0-100). Proposals at or above trigger extended timelock (+48h)
+    pub high_impact_threshold: u8,
 }
 
 /// Vault configuration
@@ -151,6 +153,8 @@ pub struct Config {
     pub grace_period_ledgers: u64,
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
     pub vote_weight: VoteWeight,
+    /// High impact score threshold (0-100). Proposals at or above trigger extended timelock (+48h)
+    pub high_impact_threshold: u8,
 }
 
 /// Audit record for a cancelled proposal
@@ -439,6 +443,28 @@ pub enum ListMode {
     Blacklist,
 }
 
+/// Proposal impact score — quantifies risk relative to treasury health
+/// Computed at proposal creation time and immutable thereafter.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImpactScore {
+    /// Treasury impact in basis points: (amount / treasury_balance) * 10000
+    /// 0-1000 = low impact, 1000-5000 = medium, 5000+ = high
+    pub treasury_impact_bps: u32,
+    /// Recipient risk score: 0 (whitelisted) to 100 (unknown)
+    /// Used to gauge exposure to new or untrusted addresses
+    pub recipient_risk_score: u8,
+    /// Complexity score: 0-100 based on:
+    ///   - Number of conditions (0-20 points)
+    ///   - Dependencies on other proposals (0-30 points)
+    ///   - Scheduled vs immediate execution (0-20 points)
+    ///   - Insurance/staking requirements (0-30 points)
+    pub complexity_score: u8,
+    /// Total impact score: weighted average of the three components (0-100)
+    /// Formula: (treasury_impact_bps / 100) * 0.4 + recipient_risk_score * 0.3 + complexity_score * 0.3
+    pub total_score: u8,
+}
+
 /// Transfer proposal
 /// Parameters for a scheduled transfer proposal.
 #[contracttype]
@@ -513,6 +539,8 @@ pub struct Proposal {
     pub voting_deadline: u64,
     /// Ledger sequence when this proposal was executed (0 = not yet executed)
     pub execution_ledger: u64,
+    /// Impact score quantifying risk relative to treasury health (computed at creation)
+    pub impact_score: ImpactScore,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
