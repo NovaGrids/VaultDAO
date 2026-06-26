@@ -646,6 +646,12 @@ pub struct RecurringPayment {
     pub skip_holidays: bool,
     /// Direction used when the scheduled ledger is not a business ledger.
     pub holiday_behavior: HolidayBehavior,
+    /// Maximum ledger spread before/after scheduled time for load distribution (0 = no jitter).
+    /// Capped at 10% of the payment interval.
+    pub jitter_window: u32,
+    /// Deterministic jitter offset computed as sha256(id || creation_ledger) % jitter_window.
+    /// Added to the base schedule ledger. Zero for the first payment.
+    pub jitter_offset: u32,
 }
 
 /// On-chain token vesting schedule.
@@ -1143,6 +1149,30 @@ pub struct AuditEntry {
     /// Hash of this entry
     pub hash: u64,
 }
+// ============================================================================
+// Issue #1087: Audit Trail Compression with Selective Disclosure
+// ============================================================================
+
+/// A Merkle-root checkpoint over a batch of archived audit entries.
+///
+/// Once created, the individual `AuditEntry` records in the batch are removed
+/// from Persistent storage. A Merkle proof can later prove that a specific
+/// entry was included in the checkpoint without re-storing all entries.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AuditCheckpoint {
+    /// Unique sequential checkpoint ID (1-based)
+    pub id: u64,
+    /// First audit entry ID in the checkpointed batch (inclusive)
+    pub from_entry_id: u64,
+    /// Last audit entry ID in the checkpointed batch (inclusive)
+    pub to_entry_id: u64,
+    /// SHA-256 Merkle root of all entry hashes in the batch
+    pub merkle_root: BytesN<32>,
+    /// Ledger at which this checkpoint was created
+    pub created_at: u64,
+}
+
 /// Comment on a proposal
 // Proposal Templates (Issue: feature/contract-templates)
 // ============================================================================
@@ -2130,6 +2160,51 @@ pub struct MultiPhaseProposal {
 // ============================================================================
 // Issue #1097: Cross-Contract Capability Tokens
 // ============================================================================
+
+// ============================================================================
+// Issue #1100: Vault Merge Protocol
+// ============================================================================
+
+/// Lifecycle states of a vault merge operation.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MergeStatus {
+    /// Merge has been initiated; source vault is locked (paused).
+    Initiated = 0,
+    /// All assets transferred; awaiting `complete_merge()`.
+    Transferring = 1,
+    /// Merge completed; source vault permanently deactivated.
+    Completed = 2,
+    /// Merge aborted; source vault unpaused.
+    Aborted = 3,
+}
+
+/// Record tracking an in-progress or completed vault merge.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MergeRecord {
+    /// Unique merge ID
+    pub id: u64,
+    /// Source vault contract address (will be deactivated on completion)
+    pub source_vault: Address,
+    /// Target vault contract address (receives all assets)
+    pub target_vault: Address,
+    /// Admin address of the source vault that approved the merge
+    pub source_admin: Address,
+    /// Admin address of the target vault that approved the merge
+    pub target_admin: Address,
+    /// Current merge lifecycle status
+    pub status: MergeStatus,
+    /// Ledger at which the merge was initiated
+    pub initiated_at: u64,
+    /// Ledger at which the merge was completed or aborted (0 if in progress)
+    pub finalized_at: u64,
+    /// Number of proposals transferred (capped at MAX_PROPOSALS_PER_MERGE)
+    pub proposals_transferred: u32,
+    /// Number of recurring payments transferred
+    pub recurring_transferred: u32,
+}
 
 /// Scoped capability granted to an external address
 #[contracttype]

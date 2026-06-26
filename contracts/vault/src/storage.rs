@@ -22,7 +22,7 @@ use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    AuditEntry, BatchExecutionResult, BatchTransaction, CapabilityToken, Comment, Config,
+    AuditCheckpoint, AuditEntry, BatchExecutionResult, BatchTransaction, CapabilityToken, Comment, Config, MergeRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig, InsuranceConfig,
     ListMode, MultiPhaseProposal, NotificationPreferences, PermissionGrant, Proposal,
@@ -145,6 +145,20 @@ pub enum DataKey {
     VelocityHistoryByToken(Address, Address),
     /// Proposal IDs indexed by status (u32 repr of ProposalStatus) -> Vec<u64>
     StatusIndex(u32),
+    // ---- Issue #1087: Audit Trail Compression ----
+    /// Audit checkpoint by ID -> AuditCheckpoint
+    AuditCheckpoint(u64),
+    /// Next audit checkpoint ID counter -> u64
+    NextAuditCheckpointId,
+    // ---- Issue #1100: Vault Merge Protocol ----
+    /// Merge record by ID -> MergeRecord
+    MergeRecord(u64),
+    /// Next merge ID counter -> u64
+    NextMergeId,
+    /// Whether this vault has been permanently deactivated by a completed merge -> bool
+    VaultDeactivated,
+    /// Active merge ID for this vault (0 if none) -> u64
+    ActiveMergeId,
 }
 
 #[contracttype]
@@ -2025,6 +2039,102 @@ pub fn create_audit_entry(
 
     set_audit_entry(env, &entry);
     set_last_audit_hash(env, hash);
+}
+
+// ============================================================================
+// Issue #1087: Audit Checkpoint Storage
+// ============================================================================
+
+pub fn get_next_audit_checkpoint_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextAuditCheckpointId)
+        .unwrap_or(1)
+}
+
+pub fn increment_audit_checkpoint_id(env: &Env) -> u64 {
+    let id = get_next_audit_checkpoint_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextAuditCheckpointId, &(id + 1));
+    id
+}
+
+pub fn set_audit_checkpoint(env: &Env, checkpoint: &AuditCheckpoint) {
+    let key = DataKey::AuditCheckpoint(checkpoint.id);
+    env.storage().persistent().set(&key, checkpoint);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_audit_checkpoint(env: &Env, id: u64) -> Option<AuditCheckpoint> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AuditCheckpoint(id))
+}
+
+pub fn remove_audit_entry(env: &Env, id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::AuditEntry(id));
+}
+
+// ============================================================================
+// Issue #1100: Vault Merge Protocol Storage
+// ============================================================================
+
+pub fn get_next_merge_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextMergeId)
+        .unwrap_or(1)
+}
+
+pub fn increment_merge_id(env: &Env) -> u64 {
+    let id = get_next_merge_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextMergeId, &(id + 1));
+    id
+}
+
+pub fn set_merge_record(env: &Env, record: &MergeRecord) {
+    let key = DataKey::MergeRecord(record.id);
+    env.storage().persistent().set(&key, record);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_merge_record(env: &Env, id: u64) -> Option<MergeRecord> {
+    env.storage().persistent().get(&DataKey::MergeRecord(id))
+}
+
+pub fn set_active_merge_id(env: &Env, merge_id: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ActiveMergeId, &merge_id);
+}
+
+pub fn get_active_merge_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ActiveMergeId)
+        .unwrap_or(0)
+}
+
+pub fn set_vault_deactivated(env: &Env) {
+    env.storage()
+        .instance()
+        .set(&DataKey::VaultDeactivated, &true);
+}
+
+pub fn is_vault_deactivated(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::VaultDeactivated)
+        .unwrap_or(false)
 }
 
 // ============================================================================

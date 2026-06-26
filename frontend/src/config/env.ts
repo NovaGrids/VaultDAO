@@ -46,4 +46,7 @@ export const env = {
 
   /** IPFS gateway base URL for resolving CIDs (default: https://ipfs.io/ipfs/) */
   ipfsGateway: optionalEnv('VITE_IPFS_GATEWAY', 'https://ipfs.io/ipfs/'),
+
+  /** Fee threshold (in XLM) above which a "High Cost" warning is shown (default: 0.01 XLM) */
+  highFeeThreshold: parseFloat(optionalEnv('VITE_HIGH_FEE_THRESHOLD_XLM', '0.01')),
 } as const;
