@@ -17,7 +17,7 @@
 //!
 //! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
-use soroban_sdk::{contracttype, Address, Env, Map, String, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Symbol, Vec};
 
 #[path = "types_balance_snapshot.rs"]
 mod types_balance_snapshot;
@@ -76,10 +76,6 @@ pub struct InitConfig {
     pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
-    /// Pre-execution hooks
-    pub pre_execution_hooks: Vec<Address>,
-    /// Post-execution hooks
-    pub post_execution_hooks: Vec<Address>,
     /// Default voting deadline in ledgers (0 = no deadline)
     pub default_voting_deadline: u64,
     /// Addresses allowed to veto proposals.
@@ -90,9 +86,17 @@ pub struct InitConfig {
     pub retry_config: RetryConfig,
     /// Recovery configuration
     pub recovery_config: RecoveryConfig,
+    /// Staking configuration
+    pub staking_config: StakingConfig,
+    /// Pre-execution hook addresses
+    pub pre_execution_hooks: Vec<Address>,
+    /// Post-execution hook addresses
+    pub post_execution_hooks: Vec<Address>,
     pub staking_config: StakingConfig,
     /// Proposal ID namespace prefix for multi-vault coordination (must be multiple of 1_000_000)
     pub proposal_id_prefix: u64,
+    /// Whether recipient whitelist enforcement is enabled (issue #1094)
+    pub whitelist_mode: bool,
     /// Grace period in ledgers after voting deadline before auto-expiry (default: 100)
     pub grace_period_ledgers: u64,
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
@@ -146,9 +150,26 @@ pub struct Config {
     pub retry_config: RetryConfig,
     /// Recovery configuration
     pub recovery_config: RecoveryConfig,
+    // pub staking_config: StakingConfig, // Feature incomplete
+
+    // ---- Issue #1081: Multi-Token Vault Support ----
+    /// Supported token addresses (max 10). The first entry is the default token and is never removable.
+    pub supported_tokens: Vec<Address>,
+    /// Per-token daily spending limits keyed by token address index in supported_tokens
+    pub token_daily_limits: Vec<i128>,
+    /// Per-token weekly spending limits
+    pub token_weekly_limits: Vec<i128>,
+
+    // ---- Issue #1064: Streaming Rate Limiter ----
+    /// Maximum cumulative stream outflow allowed within the rolling window (in stroops, 0 = disabled)
+    pub stream_max_window_amount: i128,
+    /// Burst allowance multiplier * 100 (e.g. 150 = 1.5x). Default 150.
+    pub burst_factor: u32,
     pub staking_config: StakingConfig,
     /// Proposal ID namespace prefix for multi-vault coordination
     pub proposal_id_prefix: u64,
+    /// Whether recipient whitelist enforcement is enabled (issue #1094)
+    pub whitelist_mode: bool,
     /// Grace period in ledgers after voting deadline before auto-expiry (default: 100)
     pub grace_period_ledgers: u64,
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
@@ -501,6 +522,9 @@ pub struct Proposal {
     pub abstentions: Vec<Address>,
     /// IPFS hashes of supporting documents
     pub attachments: Vec<String>,
+    /// Merkle root of attachment hashes — zero hash if no attachments.
+    /// Computed at proposal creation for tamper-evidence. (Issue #1063)
+    pub attachment_merkle_root: BytesN<32>,
     /// Current status
     pub status: ProposalStatus,
     /// Proposal urgency level
@@ -539,8 +563,9 @@ pub struct Proposal {
     pub voting_deadline: u64,
     /// Ledger sequence when this proposal was executed (0 = not yet executed)
     pub execution_ledger: u64,
-    /// Impact score quantifying risk relative to treasury health (computed at creation)
-    pub impact_score: ImpactScore,
+    /// Voting power snapshot at proposal creation: signer -> voting_power
+    /// Used by vote_on_proposal to prevent vote-buying attacks
+    pub signer_snapshot: Map<Address, i128>,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
@@ -2048,3 +2073,120 @@ pub struct TransferDetails {
     /// Amount to transfer
     pub amount: i128,
 }
+
+// ============================================================================
+// Issue #1094: On-Chain Recipient Whitelist
+// ============================================================================
+
+/// Entry in the on-chain recipient whitelist
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct WhitelistEntry {
+    /// Human-readable label for this entry
+    pub label: Symbol,
+    /// Maximum amount allowed per proposal to this recipient (0 = no limit)
+    pub max_amount: i128,
+    /// Ledger after which this entry expires (0 = never expires)
+    pub expiry_ledger: u32,
+    /// Signers who approved adding this entry
+    pub approved_by: Vec<Address>,
+}
+
+// ============================================================================
+// Issue #1095: Voting Power Snapshot
+// ============================================================================
+// (Fields are added to Proposal: signer_snapshot: Map<Address, i128>)
+// No separate type needed — Map is used inline.
+
+// ============================================================================
+// Issue #1096: Multi-Phase Proposal Execution
+// ============================================================================
+
+/// Operation that can be performed in a proposal phase
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum ProposalOperation {
+    /// Transfer tokens: (recipient, token, amount, memo)
+    Transfer(Address, Address, i128, Symbol),
+}
+
+/// Optional ProposalOperation wrapper (Soroban contracttype limitation)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum OptionalProposalOperation {
+    None,
+    Some(ProposalOperation),
+}
+
+/// Status of a single proposal phase
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ProposalPhaseStatus {
+    Pending = 0,
+    Executed = 1,
+    RolledBack = 2,
+    Failed = 3,
+}
+
+/// A single phase in a multi-phase proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalPhase {
+    /// The operation to execute in this phase
+    pub operation: ProposalOperation,
+    /// Optional rollback operation to run if a later phase fails
+    pub rollback_operation: OptionalProposalOperation,
+    /// Execution status
+    pub status: ProposalPhaseStatus,
+}
+
+/// Multi-phase proposal stored alongside the base Proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MultiPhaseProposal {
+    /// Base proposal ID
+    pub proposal_id: u64,
+    /// Ordered list of phases (max 5)
+    pub phases: Vec<ProposalPhase>,
+    /// Index of last successfully executed phase (-1 if none)
+    pub last_executed_phase: i32,
+}
+
+// ============================================================================
+// Issue #1097: Cross-Contract Capability Tokens
+// ============================================================================
+
+/// Scoped capability granted to an external address
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum Capability {
+    /// Allow initiating a stream up to max_amount
+    InitiateStream(i128),
+    /// Allow creating a proposal up to max_amount
+    CreateProposal(i128),
+    /// Allow executing a specific recurring payment
+    ExecuteRecurring(u64),
+}
+
+/// Capability token granting scoped permissions to an external address
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CapabilityToken {
+    /// Unique token ID (32 bytes)
+    pub id: soroban_sdk::BytesN<32>,
+    /// Address the token is granted to
+    pub granted_to: Address,
+    /// List of capabilities this token grants
+    pub capabilities: Vec<Capability>,
+    /// Ledger after which this token expires
+    pub expires_at: u32,
+    /// Maximum number of times this token can be used (0 = unlimited)
+    pub max_uses: u32,
+    /// Number of times this token has been used
+    pub uses_count: u32,
+    /// Whether this token has been revoked
+    pub revoked: bool,
+}
+
+

@@ -87,18 +87,31 @@ pub enum VaultError {
     TemplateInactive = 211,
     /// Template validation failed
     TemplateValidationFailed = 212,
+    FundingRoundError = 220,
+    // Issue #1064: Streaming Rate Limiter
+    StreamRateLimitExceeded = 230,
+    StreamDustRejected = 231,
+    // Issue #1075: Insurance Claim Governance
+    ClaimNotFound = 240,
+    ClaimNotPending = 241,
+    ClaimAlreadyVoted = 242,
+    ClaimSelfVote = 243,
+    ClaimVoteDeadlineTooShort = 244,
+    ClaimBondInsufficient = 245,
+    // Issue #1081: Multi-Token Vault
+    TokenAlreadySupported = 250,
+    TokenNotSupported = 251,
+    TooManyTokens = 252,
+    CannotRemoveDefaultToken = 253,
+    TokenHasActivePayments = 254,
     /// Invalid time-based threshold configuration
     InvalidThresholdConfig = 310,
-
     /// Delegation cycle detected
     CircularDelegation = 330,
-
     /// Delegation chain exceeds maximum depth
     DelegationChainTooLong = 331,
-
     /// Contract upgrade is not authorized
     UpgradeUnauthorized = 920,
-
     /// Contract upgrade timelock is still active
     UpgradeTimelockActive = 921,
     /// Veto window has closed
@@ -120,11 +133,56 @@ pub enum VaultError {
 
     /// Milestone has already been verified by this address
     AlreadyVerified = 510,
-
     /// Milestone does not have enough verifications to proceed
     InsufficientVerifications = 511,
-
     PermissionExpired = 320,
+    PermissionNotFound = 321,
+
+    // =========================================================
+    // Issue #1094: Recipient Whitelist
+    // =========================================================
+
+    /// Whitelist entry has expired
+    WhitelistEntryExpired = 600,
+
+    // =========================================================
+    // Issue #1095: Voting Power Snapshot
+    // =========================================================
+
+    /// Proposal has no signers in snapshot (cannot create)
+    EmptySignerSnapshot = 610,
+
+    // =========================================================
+    // Issue #1096: Multi-Phase Proposals
+    // =========================================================
+
+    /// Proposal exceeds maximum allowed phase count (5)
+    TooManyPhases = 620,
+
+    /// A phase execution failed
+    PhaseExecutionFailed = 621,
+
+    /// Multi-phase proposal not found
+    MultiPhaseProposalNotFound = 622,
+
+    // =========================================================
+    // Issue #1097: Capability Tokens
+    // =========================================================
+
+    /// Capability token not found
+    CapabilityNotFound = 630,
+
+    /// Capability token has expired
+    CapabilityExpired = 631,
+
+    /// Capability token has been revoked
+    CapabilityRevoked = 632,
+
+    /// Capability token max uses reached
+    CapabilityMaxUsesReached = 633,
+
+    /// Requested action not covered by capability
+    CapabilityNotGranted = 634,
 
     PermissionNotFound = 321,
 

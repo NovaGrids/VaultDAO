@@ -18,11 +18,25 @@
 //!
 //! 5. **Batch Operations**: Multiple related updates are batched into single storage operations.
 
-use soroban_sdk::{contracttype, Address, Env, String, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
+    AuditEntry, BatchExecutionResult, BatchTransaction, CapabilityToken, Comment, Config,
+    DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
+    ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig, InsuranceConfig,
+    ListMode, MultiPhaseProposal, NotificationPreferences, PermissionGrant, Proposal,
+    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
+    ReputationConfig, RetryState, Role, RoleAssignment, StakeRecord, StakingConfig, Subscription,
+    SwapProposal, SwapResult, TimeWeightedConfig, TokenLock, VaultMetrics, VelocityConfig,
+    VotingStrategy, WhitelistEntry, BridgeConfig, CrossChainProposal,
     AuditEntry, BatchExecutionResult, BatchTransaction, Comment, Config, DelegatedPermission,
+    DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure, FundingRound,
+    FundingRoundConfig, GasConfig, InsuranceConfig, InsuranceClaim, ListMode,
+    NotificationPreferences, PermissionGrant, Proposal, ProposalAmendment, ProposalTemplate,
+    RecoveryProposal, Reputation, RetryState, Role, StakeRecord, StakingConfig, StreamRateWindow,
+    SwapProposal, SwapResult, TimeWeightedConfig, TokenLock, TokenSpendingConfig, VaultMetrics,
+    VelocityConfig, VotingStrategy,
     Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot,
     FeeStructure, FundingRound, FundingRoundConfig, GasConfig, GovernanceProposal, InsuranceConfig,
     ListMode, NotificationPreferences, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus,
@@ -102,6 +116,23 @@ pub enum DataKey {
     ExecutionSnapshot(u64),
     /// Execution fee estimate
     ExecutionFeeEstimate(u64),
+    // ---- Issue #1064: Stream rate window per stream sender ----
+    /// Rolling-window outflow tracker for streaming payments (stream_id) -> StreamRateWindow
+    StreamRateWindow(u64),
+    // ---- Issue #1075: Insurance Claim Governance ----
+    /// Insurance claim by ID -> InsuranceClaim
+    InsuranceClaim(u64),
+    /// Next insurance claim ID -> u64
+    NextInsuranceClaimId,
+    /// Vote record — prevents double-voting (claim_id, voter) -> bool
+    InsuranceClaimVote(u64, Address),
+    // ---- Issue #1081: Per-token spending limits ----
+    /// Daily spent for a specific token (token_addr, day) -> i128
+    TokenDailySpent(Address, u64),
+    /// Weekly spent for a specific token (token_addr, week) -> i128
+    TokenWeeklySpent(Address, u64),
+    /// Supported token spending config by token address -> TokenSpendingConfig
+    TokenSpendingConfig(Address),
     /// Voting power delegation (delegator) -> Delegation
     Delegation(Address),
     /// Delegation history for an address -> Vec<DelegationHistory>
@@ -112,6 +143,8 @@ pub enum DataKey {
     DelegatorsFor(Address),
     /// Per-proposer per-token velocity history -> Vec<u64>
     VelocityHistoryByToken(Address, Address),
+    /// Proposal IDs indexed by status (u32 repr of ProposalStatus) -> Vec<u64>
+    StatusIndex(u32),
 }
 
 #[contracttype]
@@ -252,6 +285,12 @@ pub enum FeatureKey {
     MetricsBucketIndex,
     /// Pending config change proposal ID -> u64
     PendingConfig,
+    /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
+    WhitelistEntry(Address),
+    /// Multi-phase proposal by base proposal ID -> MultiPhaseProposal (issue #1096)
+    MultiPhaseProposal(u64),
+    /// Capability token by ID -> CapabilityToken (issue #1097)
+    CapabilityToken(BytesN<32>),
     /// Moderator flag for an address -> bool
     Moderator(Address),
     /// Comment rate tracking: (proposal_id, author, day_number) -> u32
@@ -2445,6 +2484,51 @@ pub fn get_cross_vault_config(env: &Env) -> Option<crate::types::CrossVaultConfi
     env.storage().instance().get(&FeatureKey::CrossVaultConfig)
 }
 
+pub fn set_delegation(_env: &Env, _delegation: &crate::types::Delegation) {}
+
+// ============================================================================
+// Issue #1064: Streaming Rate Limiter — StreamRateWindow storage
+// ============================================================================
+
+/// Retrieve the current rate window for a stream sender.
+pub fn get_stream_rate_window(env: &Env, stream_id: u64) -> Option<StreamRateWindow> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::StreamRateWindow(stream_id))
+}
+
+/// Persist an updated rate window. Uses Temporary storage so it auto-evicts.
+pub fn set_stream_rate_window(env: &Env, stream_id: u64, window: &StreamRateWindow) {
+    let key = DataKey::StreamRateWindow(stream_id);
+    env.storage().temporary().set(&key, window);
+    // Keep alive for ~2 days — enough for any reasonable rate window
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, DAY_IN_LEDGERS * 2, DAY_IN_LEDGERS * 2);
+}
+
+// ============================================================================
+// Issue #1075: Insurance Claim Governance
+// ============================================================================
+
+pub fn get_next_insurance_claim_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextInsuranceClaimId)
+        .unwrap_or(1)
+}
+
+pub fn increment_insurance_claim_id(env: &Env) -> u64 {
+    let id = get_next_insurance_claim_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextInsuranceClaimId, &(id + 1));
+    id
+}
+
+pub fn set_insurance_claim(env: &Env, claim: &InsuranceClaim) {
+    let key = DataKey::InsuranceClaim(claim.id);
+    env.storage().persistent().set(&key, claim);
 pub fn set_cross_vault_proposal(
     env: &Env,
     proposal_id: u64,
@@ -2544,6 +2628,25 @@ pub fn set_subscription(env: &Env, sub: &Subscription) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
+pub fn get_insurance_claim(env: &Env, claim_id: u64) -> Result<InsuranceClaim, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::InsuranceClaim(claim_id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+/// Returns true if the given voter has already cast a vote on this claim.
+pub fn has_voted_on_claim(env: &Env, claim_id: u64, voter: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::InsuranceClaimVote(claim_id, voter.clone()))
+        .unwrap_or(false)
+}
+
+/// Record that `voter` has cast a vote on `claim_id`.
+pub fn record_claim_vote(env: &Env, claim_id: u64, voter: &Address) {
+    let key = DataKey::InsuranceClaimVote(claim_id, voter.clone());
+    env.storage().persistent().set(&key, &true);
 pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> {
     env.storage()
         .persistent()
@@ -2573,6 +2676,90 @@ pub fn add_to_subscriber_index(env: &Env, subscriber: &Address, subscription_id:
 }
 
 // ============================================================================
+// Issue #1081: Per-token spending limits
+// ============================================================================
+
+/// Get how much of `token` has been spent today.
+pub fn get_token_daily_spent(env: &Env, token: &Address, day: u64) -> i128 {
+    env.storage()
+        .temporary()
+        .get(&DataKey::TokenDailySpent(token.clone(), day))
+        .unwrap_or(0)
+}
+
+/// Add `amount` to today's per-token spending total.
+pub fn add_token_daily_spent(env: &Env, token: &Address, day: u64, amount: i128) {
+    let current = get_token_daily_spent(env, token, day);
+    let key = DataKey::TokenDailySpent(token.clone(), day);
+    env.storage().temporary().set(&key, &(current + amount));
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, DAY_IN_LEDGERS * 2, DAY_IN_LEDGERS * 2);
+}
+
+/// Get how much of `token` has been spent this week.
+pub fn get_token_weekly_spent(env: &Env, token: &Address, week: u64) -> i128 {
+    env.storage()
+        .temporary()
+        .get(&DataKey::TokenWeeklySpent(token.clone(), week))
+        .unwrap_or(0)
+}
+
+/// Add `amount` to this week's per-token spending total.
+pub fn add_token_weekly_spent(env: &Env, token: &Address, week: u64, amount: i128) {
+    let current = get_token_weekly_spent(env, token, week);
+    let key = DataKey::TokenWeeklySpent(token.clone(), week);
+    env.storage().temporary().set(&key, &(current + amount));
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, DAY_IN_LEDGERS * 14, DAY_IN_LEDGERS * 14);
+}
+
+/// Retrieve the spending config for a supported token.
+pub fn get_token_spending_config(
+    env: &Env,
+    token: &Address,
+) -> Option<TokenSpendingConfig> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TokenSpendingConfig(token.clone()))
+}
+
+/// Persist the spending config for a supported token.
+pub fn set_token_spending_config(env: &Env, config: &TokenSpendingConfig) {
+    let key = DataKey::TokenSpendingConfig(config.token.clone());
+    env.storage().persistent().set(&key, config);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Remove a token spending config (used during token removal).
+pub fn remove_token_spending_config(env: &Env, token: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::TokenSpendingConfig(token.clone()));
+}
+
+/// Refund per-token spending when a proposal is cancelled.
+pub fn refund_token_spending_limits(env: &Env, token: &Address, amount: i128) {
+    let today = get_day_number(env);
+    let current_daily = get_token_daily_spent(env, token, today);
+    let refunded_daily = current_daily.saturating_sub(amount).max(0);
+    let key_daily = DataKey::TokenDailySpent(token.clone(), today);
+    env.storage().temporary().set(&key_daily, &refunded_daily);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key_daily, DAY_IN_LEDGERS * 2, DAY_IN_LEDGERS * 2);
+
+    let week = get_week_number(env);
+    let current_weekly = get_token_weekly_spent(env, token, week);
+    let refunded_weekly = current_weekly.saturating_sub(amount).max(0);
+    let key_weekly = DataKey::TokenWeeklySpent(token.clone(), week);
+    env.storage().temporary().set(&key_weekly, &refunded_weekly);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key_weekly, DAY_IN_LEDGERS * 14, DAY_IN_LEDGERS * 14);
 // Bridge Storage
 // ============================================================================
 
@@ -2779,6 +2966,90 @@ pub fn remove_delegator_index(env: &Env, delegate: &Address, delegator: &Address
 }
 
 // ============================================================================
+// Issue #1094: On-Chain Recipient Whitelist
+// ============================================================================
+
+pub fn get_whitelist_entry(env: &Env, addr: &Address) -> Option<WhitelistEntry> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::WhitelistEntry(addr.clone()))
+}
+
+pub fn set_whitelist_entry(env: &Env, addr: &Address, entry: &WhitelistEntry) {
+    let key = FeatureKey::WhitelistEntry(addr.clone());
+    env.storage().persistent().set(&key, entry);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+pub fn remove_whitelist_entry(env: &Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&FeatureKey::WhitelistEntry(addr.clone()));
+}
+
+pub fn has_whitelist_entry(env: &Env, addr: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .has(&FeatureKey::WhitelistEntry(addr.clone()))
+}
+
+// ============================================================================
+// Issue #1096: Multi-Phase Proposals
+// ============================================================================
+
+pub fn get_multi_phase_proposal(env: &Env, proposal_id: u64) -> Option<MultiPhaseProposal> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::MultiPhaseProposal(proposal_id))
+}
+
+pub fn set_multi_phase_proposal(env: &Env, mp: &MultiPhaseProposal) {
+    let key = FeatureKey::MultiPhaseProposal(mp.proposal_id);
+    env.storage().persistent().set(&key, mp);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Issue #1097: Capability Tokens
+// ============================================================================
+
+pub fn get_capability_token(env: &Env, id: &BytesN<32>) -> Option<CapabilityToken> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::CapabilityToken(id.clone()))
+}
+
+pub fn set_capability_token(env: &Env, token: &CapabilityToken) {
+    let key = FeatureKey::CapabilityToken(token.id.clone());
+    env.storage().persistent().set(&key, token);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+pub fn remove_capability_token(env: &Env, id: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&FeatureKey::CapabilityToken(id.clone()));
+}
+
+// ============================================================================
+// Issue #1095: Voting Power Snapshot helper
+// ============================================================================
+
+/// Build a voting power snapshot for all current signers.
+/// Each signer gets voting_power = 1 (simple equal weight).
+/// Returns an empty map if there are no signers.
+pub fn build_signer_snapshot(env: &Env, signers: &Vec<Address>) -> Map<Address, i128> {
+    let mut snapshot = Map::new(env);
+    for signer in signers.iter() {
+        snapshot.set(signer, 1i128);
+    }
+    snapshot
 // Moderator Management (Issue #1076)
 // ============================================================================
 
