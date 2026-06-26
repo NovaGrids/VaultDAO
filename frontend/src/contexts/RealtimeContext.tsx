@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { WebSocketClient, createWebSocketClient, type WebSocketStatus } from '../utils/websocket';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import type { WebSocketStatus } from '../utils/websocket';
+import { useWebSocketReconnect, type ConnectionPhase, type QueuedMessage } from '../hooks/useWebSocketReconnect';
 
 /** Max number of seen event IDs to retain for deduplication. */
 const SEEN_IDS_LIMIT = 500;
@@ -26,149 +27,102 @@ export interface RealtimeUpdate {
 interface RealtimeContextValue {
   isConnected: boolean;
   connectionStatus: WebSocketStatus;
+  /** Fine-grained state machine phase from the reconnect hook. */
+  connectionPhase: ConnectionPhase;
+  /** Current reconnect attempt number (0 when connected). */
+  reconnectAttempt: number;
   onlineUsers: UserPresence[];
   subscribe: (type: string, handler: (data: any) => void) => () => void;
   sendUpdate: (type: string, data: any) => void;
   updatePresence: (status: 'online' | 'away', currentPage?: string) => void;
   /** Returns true and marks the id as seen if it hasn't been seen before. */
   trackEvent: (id: string) => boolean;
+  /** Manually trigger reconnect after 'failed' state. */
+  reconnect: () => void;
 }
 
 const RealtimeContext = createContext<RealtimeContextValue | null>(null);
 
 export function RealtimeProvider({ children }: { children: React.ReactNode }) {
-  const [isConnected, setIsConnected] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<WebSocketStatus>('disconnected');
   const [onlineUsers, setOnlineUsers] = useState<UserPresence[]>([]);
-  const wsClient = useRef<WebSocketClient | null>(null);
   const seenEventIds = useRef<Set<string>>(new Set());
   const currentPresence = useRef<{ status: 'online' | 'away'; currentPage?: string } | null>(null);
+  const messageHandlers = useRef<Map<string, Set<(data: any) => void>>>(new Map());
 
-  // Initialize WebSocket connection
-  useEffect(() => {
-    // Get WebSocket URL from environment or use default
-    const wsUrl = (import.meta.env?.VITE_REALTIME_WS_URL as string | undefined) || 'ws://localhost:3001';
+  const wsUrl = (import.meta.env?.VITE_REALTIME_WS_URL as string | undefined) || 'ws://localhost:3001';
+  const catchUpBase = (import.meta.env?.VITE_API_BASE_URL as string | undefined) || '';
+  const wsEnabled = !!(import.meta.env?.PROD || import.meta.env?.VITE_REALTIME_WS_URL);
 
-    wsClient.current = createWebSocketClient({
-      url: wsUrl,
-      reconnectInterval: 3000,
-      maxReconnectAttempts: 10,
-      heartbeatInterval: 30000,
-      onConnect: () => {
-        console.log('[Realtime] Connected');
-        setIsConnected(true);
-        // Re-announce presence so the server has fresh state after reconnect
-        if (currentPresence.current) {
-          wsClient.current?.send('presence_update', {
-            ...currentPresence.current,
-            timestamp: Date.now(),
-          });
-        }
-      },
-      onDisconnect: () => {
-        console.log('[Realtime] Disconnected');
-        setIsConnected(false);
-      },
-      onError: (error) => {
-        console.error('[Realtime] Error:', error);
-      },
-    });
+  const handleMessage = useCallback((msg: QueuedMessage) => {
+    const handlers = messageHandlers.current.get(msg.type);
+    if (handlers) {
+      handlers.forEach((h) => {
+        try { h(msg.payload); } catch { /* ignore handler errors */ }
+      });
+    }
 
-    // Subscribe to status changes
-    const unsubscribeStatus = wsClient.current.onStatusChange((status) => {
-      setConnectionStatus(status);
-    });
-
-    // Subscribe to presence updates
-    const unsubscribePresence = wsClient.current.on('presence_update', (users: UserPresence[]) => {
-      setOnlineUsers(users);
-    });
-
-    // Subscribe to user joined
-    const unsubscribeJoined = wsClient.current.on('user_joined', (user: UserPresence) => {
+    if (msg.type === 'presence_update') {
+      setOnlineUsers(msg.payload as UserPresence[]);
+    } else if (msg.type === 'user_joined') {
+      const user = msg.payload as UserPresence;
       setOnlineUsers((prev) => {
         const exists = prev.find((u) => u.userId === user.userId);
-        if (exists) {
-          return prev.map((u) => (u.userId === user.userId ? user : u));
-        }
-        return [...prev, user];
+        return exists ? prev.map((u) => (u.userId === user.userId ? user : u)) : [...prev, user];
       });
-    });
-
-    // Subscribe to user left
-    const unsubscribeLeft = wsClient.current.on('user_left', (userId: string) => {
-      setOnlineUsers((prev) => prev.filter((u) => u.userId !== userId));
-    });
-
-    // Connect to WebSocket
-    // Only connect in production or if WS URL is configured
-    if (import.meta.env?.PROD || import.meta.env?.VITE_REALTIME_WS_URL) {
-      wsClient.current.connect();
-    } else {
-      console.log('[Realtime] WebSocket disabled in development (set VITE_REALTIME_WS_URL to enable)');
+    } else if (msg.type === 'user_left') {
+      setOnlineUsers((prev) => prev.filter((u) => u.userId !== (msg.payload as string)));
     }
-
-    // Cleanup on unmount
-    return () => {
-      unsubscribeStatus();
-      unsubscribePresence();
-      unsubscribeJoined();
-      unsubscribeLeft();
-      wsClient.current?.disconnect();
-    };
   }, []);
 
-  // Update presence when page visibility changes
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        updatePresence('away');
-      } else {
-        updatePresence('online');
+  const handleCatchUp = useCallback((events: unknown[]) => {
+    events.forEach((event) => {
+      const e = event as QueuedMessage;
+      handleMessage({ type: e.type ?? 'unknown', payload: e.payload ?? e, timestamp: e.timestamp ?? Date.now() });
+    });
+  }, [handleMessage]);
+
+  const { phase, attempt, connect, send } = useWebSocketReconnect({
+    url: wsUrl,
+    enabled: wsEnabled,
+    onMessage: handleMessage,
+    onCatchUp: handleCatchUp,
+    catchUpUrl: catchUpBase ? `${catchUpBase}/api/v1/events` : undefined,
+  });
+
+  const isConnected = phase === 'connected';
+
+  const connectionStatus: WebSocketStatus =
+    phase === 'connected' ? 'connected' :
+    phase === 'connecting' || phase === 'reconnecting' ? 'connecting' :
+    phase === 'failed' ? 'error' :
+    'disconnected';
+
+  const subscribe = useCallback((type: string, handler: (data: any) => void) => {
+    if (!messageHandlers.current.has(type)) {
+      messageHandlers.current.set(type, new Set());
+    }
+    messageHandlers.current.get(type)!.add(handler);
+    return () => {
+      const set = messageHandlers.current.get(type);
+      if (set) {
+        set.delete(handler);
+        if (set.size === 0) messageHandlers.current.delete(type);
       }
     };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  // Subscribe to specific message type
-  const subscribe = useCallback((type: string, handler: (data: any) => void) => {
-    if (!wsClient.current) {
-      return () => {};
-    }
-
-    return wsClient.current.on(type, handler);
-  }, []);
-
-  // Send update to server
   const sendUpdate = useCallback((type: string, data: any) => {
-    if (!wsClient.current) {
-      console.warn('[Realtime] Cannot send update, not connected');
-      return;
-    }
+    send(type, data);
+  }, [send]);
 
-    wsClient.current.send(type, data);
-  }, []);
-
-  // Update user presence
   const updatePresence = useCallback((status: 'online' | 'away', currentPage?: string) => {
-    if (!wsClient.current) {
-      return;
-    }
     currentPresence.current = { status, currentPage };
-    wsClient.current.send('presence_update', {
-      status,
-      currentPage,
-      timestamp: Date.now(),
-    });
-  }, []);
+    send('presence_update', { status, currentPage, timestamp: Date.now() });
+  }, [send]);
 
-  // Deduplication helper: returns true the first time an id is seen
   const trackEvent = useCallback((id: string): boolean => {
     if (seenEventIds.current.has(id)) return false;
     seenEventIds.current.add(id);
-    // Trim the set to avoid unbounded growth
     if (seenEventIds.current.size > SEEN_IDS_LIMIT) {
       const [oldest] = seenEventIds.current;
       seenEventIds.current.delete(oldest);
@@ -179,11 +133,14 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const value: RealtimeContextValue = {
     isConnected,
     connectionStatus,
+    connectionPhase: phase,
+    reconnectAttempt: attempt,
     onlineUsers,
     subscribe,
     sendUpdate,
     updatePresence,
     trackEvent,
+    reconnect: connect,
   };
 
   return (
