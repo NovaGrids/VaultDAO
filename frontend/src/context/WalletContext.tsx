@@ -4,9 +4,13 @@ import { useToast } from './ToastContext';
 import { WalletContext } from './WalletContextProps';
 import { detectAvailableWallets, getAdapterById } from '../adapters';
 import type { WalletAdapter } from '../adapters';
+import { useIdleTimer } from '../hooks/useIdleTimer';
 
 const PREFERRED_WALLET_KEY = 'vaultdao_preferred_wallet';
 const WALLET_CONNECTED_KEY = 'vaultdao_wallet_connected';
+const SESSION_PERSIST_KEY = 'vaultdao_session_persist';
+const SESSION_PERSIST_DURATION_MS = 24 * 60 * 60 * 1000; // 24 h
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [availableWallets, setAvailableWallets] = useState<WalletAdapter[]>([]);
@@ -14,6 +18,9 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [connected, setConnected] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [network, setNetwork] = useState<string | null>(null);
+  const [idleCountdown, setIdleCountdown] = useState<number | null>(null);
+  const [isIdleWarning, setIsIdleWarning] = useState(false);
+  const [isSessionPersisted, setIsSessionPersisted] = useState(false);
   const activeAdapterRef = useRef<WalletAdapter | null>(null);
   const { showToast } = useToast();
 
@@ -226,6 +233,69 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     []
   );
 
+  // Session persistence: check on mount whether a valid "remember me" token exists
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SESSION_PERSIST_KEY);
+      if (raw) {
+        const { expiry } = JSON.parse(raw) as { expiry: number };
+        if (Date.now() < expiry) {
+          setIsSessionPersisted(true);
+        } else {
+          localStorage.removeItem(SESSION_PERSIST_KEY);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const rememberSession = useCallback(() => {
+    try {
+      localStorage.setItem(SESSION_PERSIST_KEY, JSON.stringify({ expiry: Date.now() + SESSION_PERSIST_DURATION_MS }));
+      setIsSessionPersisted(true);
+      showToast('Session will be remembered for 24 hours', 'success');
+    } catch {
+      // ignore
+    }
+  }, [showToast]);
+
+  const dismissIdleWarning = useCallback(() => {
+    setIsIdleWarning(false);
+    setIdleCountdown(null);
+  }, []);
+
+  const handleIdle = useCallback(async () => {
+    setIsIdleWarning(false);
+    setIdleCountdown(null);
+    // Do not wipe pending draft proposals (stored in sessionStorage) — only disconnect
+    await disconnect();
+    showToast('You were disconnected due to inactivity', 'warning');
+  }, [disconnect, showToast]);
+
+  const handleCountdown = useCallback((remaining: number) => {
+    if (remaining <= 0) {
+      setIsIdleWarning(false);
+      setIdleCountdown(null);
+    } else {
+      setIsIdleWarning(true);
+      setIdleCountdown(remaining);
+    }
+  }, []);
+
+  const sessionPersisted = isSessionPersisted;
+  // Skip idle timer when session is persisted via "remember me"
+  const { resetTimer: resetIdleTimer } = useIdleTimer({
+    timeoutMs: IDLE_TIMEOUT_MS,
+    onIdle: handleIdle,
+    onCountdown: handleCountdown,
+    warningSeconds: 60,
+    enabled: connected && !sessionPersisted,
+  });
+
+  // Allow callers to manually reset the idle timer (e.g. after a signed tx)
+  void resetIdleTimer;
+
   return (
     <WalletContext.Provider
       value={{
@@ -241,6 +311,11 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         switchWallet,
         signTransaction,
         detectWallets,
+        idleCountdown,
+        isIdleWarning,
+        dismissIdleWarning,
+        rememberSession,
+        isSessionPersisted,
       }}
     >
       {children}
