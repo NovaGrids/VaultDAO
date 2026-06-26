@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, X, ChevronDown } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import ForecastChart from './ForecastChart';
 import AnomalyDetector from './AnomalyDetector';
+import RecipientDrillDownPanel from './RecipientDrillDownPanel';
 import { filterTransactionsByDateRange } from '../utils/analyticsAggregation';
 
 interface Transaction {
@@ -27,6 +29,7 @@ const SpendingAnalytics = ({
   const [currentTime] = useState(() => Date.now());
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
   const [activePreset, setActivePreset] = useState<DatePreset>('allTime');
+  const [drillDownRecipient, setDrillDownRecipient] = useState<string | null>(null);
 
   const handlePresetChange = (preset: DatePreset) => {
     setActivePreset(preset);
@@ -72,6 +75,22 @@ const SpendingAnalytics = ({
       .map(([date, amount]) => ({ date, amount }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
+    // Calculate recipient breakdown
+    const recipientSpending = filtered.reduce((acc, t) => {
+      const key = t.recipient;
+      acc[key] = (acc[key] || 0) + t.amount;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const recipientData = Object.entries(recipientSpending)
+      .map(([recipient, amount]) => ({
+        name: recipient.slice(0, 8) + '...' + recipient.slice(-8),
+        value: amount,
+        recipient,
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8); // Top 8 recipients
+
     // For metrics calculation, we use the filtered range duration
     const rangeDurationDays = (() => {
         if (!dateRange.from || !dateRange.to) {
@@ -99,6 +118,7 @@ const SpendingAnalytics = ({
 
     return {
       historicalData,
+      recipientData,
       totalSpent,
       burnRate,
       runway,
@@ -119,6 +139,16 @@ const SpendingAnalytics = ({
 
   return (
     <div className="space-y-6">
+      {/* Drill-Down Panel */}
+      {drillDownRecipient && (
+        <RecipientDrillDownPanel
+          isOpen={drillDownRecipient !== null}
+          recipient={drillDownRecipient}
+          transactions={transactions}
+          onClose={() => setDrillDownRecipient(null)}
+        />
+      )}
+
       {/* Date Range Picker */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 bg-gray-800/50 p-6 rounded-2xl border border-gray-700">
         <div className="space-y-3">
@@ -271,6 +301,49 @@ const SpendingAnalytics = ({
           )}
         </div>
       </div>
+
+      {/* Recipient Breakdown */}
+      {analytics.recipientData.length > 0 && (
+        <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+          <h4 className="font-semibold text-white mb-4">Top Recipients</h4>
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={analytics.recipientData}
+                onClick={(state) => {
+                  if (state?.activeTooltipIndex !== undefined) {
+                    const clickedData = analytics.recipientData[state.activeTooltipIndex];
+                    if (clickedData) {
+                      setDrillDownRecipient(clickedData.recipient);
+                    }
+                  }
+                }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fontSize: 12, fill: '#9CA3AF' }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                />
+                <YAxis tick={{ fontSize: 12, fill: '#9CA3AF' }} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#1F2937',
+                    border: '1px solid #374151',
+                    borderRadius: '8px',
+                  }}
+                  formatter={(value: number) => [value.toLocaleString() + ' XLM', 'Sent']}
+                  cursor={{ fill: 'rgba(139, 92, 246, 0.1)' }}
+                />
+                <Bar dataKey="value" fill="#8B5CF6" radius={[8, 8, 0, 0]} data-testid="recipient-bar" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">Click on a bar to drill down into a recipient</p>
+        </div>
+      )}
 
       {/* Forecast Chart */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
