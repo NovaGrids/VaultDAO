@@ -43,4 +43,7 @@ export const env = {
 
   /** Fee account for read-only operations when wallet is disconnected */
   feesAccount: requireEnv('VITE_FEES_ACCOUNT'),
+
+  /** IPFS gateway base URL for fetching content by CID */
+  ipfsGatewayUrl: optionalEnv('VITE_IPFS_GATEWAY_URL', 'https://ipfs.io/ipfs'),
 } as const;
