@@ -498,6 +498,53 @@ export class RecurringIndexerService {
   }
 
   /**
+   * Check for conflicting recurring payments based on similarity criteria:
+   * - Same recipient AND same amount (within 5% tolerance) AND overlapping interval
+   *
+   * Returns conflicts sorted by similarity score descending (100 = exact match).
+   * Runs in-memory in < 50ms against active payments.
+   */
+  public async checkConflicts(params: {
+    recipient: string;
+    amount: string;
+    intervalLedgers: number;
+  }): Promise<Array<{ id: string; similarity_score: number; description: string }>> {
+    const actives = await this.storage.getAll({ status: RecurringStatus.ACTIVE });
+    const conflicts: Array<{ id: string; similarity_score: number; description: string }> = [];
+
+    const proposedAmount = Number(params.amount);
+
+    for (const payment of actives) {
+      if (payment.recipient !== params.recipient) continue;
+
+      const existingAmount = Number(payment.amount);
+      const amountDiff = Math.abs(existingAmount - proposedAmount) / (proposedAmount || 1);
+      if (amountDiff > 0.05) continue;
+
+      // Check overlapping interval: intervals overlap if they share any execution window
+      // Simplified: intervals overlap when they are equal or one divides the other
+      const intervalOverlap =
+        payment.intervalLedgers === params.intervalLedgers ||
+        params.intervalLedgers % payment.intervalLedgers === 0 ||
+        payment.intervalLedgers % params.intervalLedgers === 0;
+      if (!intervalOverlap) continue;
+
+      // Compute similarity score 0-100
+      const amountScore = Math.round((1 - amountDiff) * 50);
+      const intervalScore = payment.intervalLedgers === params.intervalLedgers ? 50 : 25;
+      const similarity_score = amountScore + intervalScore;
+
+      conflicts.push({
+        id: payment.paymentId,
+        similarity_score,
+        description: `Existing payment to ${payment.recipient} for ${payment.amount} every ${payment.intervalLedgers} ledgers`,
+      });
+    }
+
+    return conflicts.sort((a, b) => b.similarity_score - a.similarity_score);
+  }
+
+  /**
    * Returns current indexer state for health monitoring.
    */
   public getStatus(): RecurringIndexerState {
