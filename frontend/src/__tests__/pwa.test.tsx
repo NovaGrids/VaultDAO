@@ -24,7 +24,7 @@ const mockIDB = {
 function createMockDB() {
   const store = new Map<string, unknown>();
 
-  const makeRequest = <T>(result: T) => {
+  const makeRequest = <T,>(result: T) => {
     const req = {
       result,
       error: null,
