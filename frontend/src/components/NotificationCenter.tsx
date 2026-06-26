@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import InfiniteScroll from 'react-infinite-scroll-component';
 import {
   Bell, X, Filter, CheckCheck, Trash2, ChevronDown, ChevronRight,
-  Layers, Volume2, VolumeX, Settings2,
+  Layers, Volume2, VolumeX, Settings2, Archive,
 } from 'lucide-react';
 import { useNotifications } from '../context/NotificationContext';
 import NotificationItem from './NotificationItem';
@@ -93,6 +93,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
     notifications, unreadCount, filter, sort,
     markAsRead, markAllAsRead, dismissNotification,
     setFilter, setSort, clearAll, typeSettings, updateTypeSettings,
+    archiveAllNormal,
   } = useNotifications();
 
   const [activeTab, setActiveTab] = useState<TabId>('all');
@@ -149,13 +150,15 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
       return categoryMatch && priorityMatch && statusMatch && notOptedOut;
     });
     filtered.sort((a, b) => {
-      if (sort.by === 'timestamp') return sort.order === 'desc' ? b.timestamp - a.timestamp : a.timestamp - b.timestamp;
-      if (sort.by === 'priority') {
-        const order = { critical: 0, high: 1, normal: 2, low: 3 };
-        const diff = order[a.priority] - order[b.priority];
-        return sort.order === 'desc' ? -diff : diff;
-      }
-      return 0;
+      const getPriorityVal = (p: NotificationPriority) => {
+        if (p === 'critical') return 0;
+        if (p === 'high') return 1;
+        return 2;
+      };
+      const pA = getPriorityVal(a.priority);
+      const pB = getPriorityVal(b.priority);
+      if (pA !== pB) return pA - pB;
+      return sort.order === 'desc' ? b.timestamp - a.timestamp : a.timestamp - b.timestamp;
     });
     return grouped ? groupNotifications(filtered) : filtered;
   }, [tabFiltered, filter, sort, grouped, typeSettings.disabledCategories]);
@@ -255,7 +258,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
               )}
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={() => updateTypeSettings({ muteSounds: !typeSettings.muteSounds })} className="p-2 hover:bg-gray-700 rounded-lg transition-colors" aria-label={typeSettings.muteSounds ? 'Unmute sounds' : 'Mute sounds'}>
+              <button onClick={() => updateTypeSettings({ muteSounds: !typeSettings.muteSounds })} className="p-2 hover:bg-gray-700 rounded-lg transition-colors" aria-label={typeSettings.muteSounds ? 'Unmute notification sounds' : 'Mute notification sounds'}>
                 {typeSettings.muteSounds ? <VolumeX size={16} className="text-gray-400" /> : <Volume2 size={16} className="text-gray-400" />}
               </button>
               <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-700 rounded-lg transition-colors" aria-label="Notification settings">
@@ -312,6 +315,9 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
             </button>
             <button onClick={markAllAsRead} disabled={unreadCount === 0} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
               <CheckCheck size={14} /><span>Mark all read</span>
+            </button>
+            <button onClick={archiveAllNormal} disabled={notifications.filter(n => n.priority === 'normal' || n.priority === 'low').length === 0} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              <Archive size={14} /><span>Archive all normal</span>
             </button>
             <button onClick={clearAll} disabled={notifications.length === 0} className="flex items-center gap-2 px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded-lg text-sm text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed ml-auto">
               <Trash2 size={14} /><span>Clear all</span>

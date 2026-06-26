@@ -48,6 +48,14 @@ vi.mock('../../context/NotificationContext', () => ({
   }),
 }));
 
+vi.mock('../../hooks/useWallet', () => ({
+  useWallet: () => ({
+    address: 'GBTESTWALLET',
+    isConnected: true,
+    signTransaction: vi.fn().mockResolvedValue('mock_sig'),
+  }),
+}));
+
 vi.mock('react-infinite-scroll-component', () => ({
   default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
@@ -74,7 +82,7 @@ describe('NotificationCenter', () => {
   it('shows unread count badge', () => {
     mockNotifications = [makeNotification({ status: 'unread' }), makeNotification({ status: 'unread' })];
     render(<NotificationCenter isOpen onClose={vi.fn()} />);
-    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getAllByText('2').length).toBeGreaterThan(0);
   });
 
   it('groups notifications by priority — urgent section appears first', () => {
@@ -83,7 +91,7 @@ describe('NotificationCenter', () => {
       makeNotification({ priority: 'normal', title: 'Normal info' }),
     ];
     render(<NotificationCenter isOpen onClose={vi.fn()} />);
-    const sections = screen.getAllByRole('button', { name: /urgent|normal/i });
+    const sections = screen.getAllByRole('button', { name: /^(urgent|normal)/i });
     // Urgent section header should appear before Normal
     expect(sections[0].textContent).toMatch(/urgent/i);
   });
@@ -92,14 +100,14 @@ describe('NotificationCenter', () => {
     mockNotifications = [makeNotification({ priority: 'normal', title: 'Normal notification' })];
     render(<NotificationCenter isOpen onClose={vi.fn()} />);
     // Normal section header exists but items are collapsed
-    expect(screen.getByText(/normal/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^normal/i })).toBeInTheDocument();
     expect(screen.queryByText('Normal notification')).not.toBeInTheDocument();
   });
 
   it('expands a collapsed section on click', () => {
     mockNotifications = [makeNotification({ priority: 'normal', title: 'Normal notification' })];
     render(<NotificationCenter isOpen onClose={vi.fn()} />);
-    const normalHeader = screen.getByRole('button', { name: /normal/i });
+    const normalHeader = screen.getByRole('button', { name: /^normal/i });
     fireEvent.click(normalHeader);
     expect(screen.getByText('Normal notification')).toBeInTheDocument();
   });

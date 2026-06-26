@@ -1,11 +1,24 @@
-/**
- * Tests for NotificationItem component
- * 
- * Note: These are example tests showing expected behavior.
- * In a real project, you would use Jest or Vitest with @testing-library/react.
- */
-
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Notification } from '../../types/notification';
+import NotificationItem from '../NotificationItem';
+
+// Mock useWallet
+vi.mock('../../hooks/useWallet', () => ({
+  useWallet: () => ({
+    address: 'GBTESTWALLET',
+    isConnected: true,
+    signTransaction: vi.fn().mockResolvedValue('mock_sig'),
+  }),
+}));
+
+// Mock useNotifications
+vi.mock('../../context/NotificationContext', () => ({
+  useNotifications: () => ({
+    acknowledgeNotification: vi.fn(),
+  }),
+}));
 
 describe('NotificationItem', () => {
   const mockNotification: Notification = {

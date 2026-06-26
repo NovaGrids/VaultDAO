@@ -33,6 +33,7 @@ import { LanguageSwitcher } from '../LanguageSwitcher';
 import { LayoutErrorBoundary } from '../ErrorHandler';
 import NotificationCenter from '../NotificationCenter';
 import { useNotifications } from '../../context/NotificationContext';
+import { CriticalNotificationOverlay } from "../CriticalNotificationOverlay";
 import { OnboardingFlow } from "../OnboardingFlow";
 import { ProductTour } from "../ProductTour";
 import { HelpCenter } from "../HelpCenter";
@@ -512,6 +513,7 @@ const DashboardLayout: React.FC = () => {
           </div>
         </div>
       )}
+      <CriticalNotificationOverlay />
     </div>
   );
 };

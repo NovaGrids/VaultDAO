@@ -46,4 +46,7 @@ export const env = {
 
   /** IPFS gateway base URL for resolving CIDs (default: https://ipfs.io/ipfs/) */
   ipfsGateway: optionalEnv('VITE_IPFS_GATEWAY', 'https://ipfs.io/ipfs/'),
+
+  /** Price feed URL for oracle */
+  priceFeedUrl: optionalEnv('VITE_PRICE_FEED_URL', 'https://api.coingecko.com/api/v3/simple/price'),
 } as const;
