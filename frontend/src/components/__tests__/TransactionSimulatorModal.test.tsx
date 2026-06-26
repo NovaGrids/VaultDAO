@@ -48,6 +48,10 @@ vi.mock('stellar-sdk', () => ({
     HostFunction: { hostFunctionTypeInvokeContract: vi.fn().mockReturnValue({}) },
     InvokeContractArgs: vi.fn().mockImplementation(() => ({})),
   },
+  xdrModule: {
+    HostFunction: { hostFunctionTypeInvokeContract: vi.fn().mockReturnValue({}) },
+    InvokeContractArgs: vi.fn().mockImplementation(() => ({})),
+  },
 }));
 
 vi.mock('../../utils/simulation', () => ({

@@ -14843,3 +14843,351 @@ fn test_get_proposals_by_status_empty_result() {
     let result = client.get_proposals_by_status(&ProposalStatus::Executed, &0u64, &50u64);
     assert_eq!(result.len(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #308 — Deposit boundary tests (min/max amount validation)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_deposit_zero_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
+    );
+
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &0,
+        &Symbol::new(&env, "zero"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_deposit_negative_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
+    );
+
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &-1i128,
+        &Symbol::new(&env, "neg"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_deposit_minimum_valid_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1,
+        &Symbol::new(&env, "min"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(proposal_id > 0);
+}
+
+#[test]
+fn test_deposit_exact_spending_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1000,
+        &Symbol::new(&env, "exact"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(proposal_id > 0);
+}
+
+#[test]
+fn test_deposit_exceeds_spending_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
+    );
+
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1001,
+        &Symbol::new(&env, "over"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
+
+#[test]
+fn test_deposit_max_i128_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
+    );
+
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &i128::MAX,
+        &Symbol::new(&env, "maxval"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
+
+// ---------------------------------------------------------------------------
+// Issue #308 — Deposit boundary tests (min/max amount validation)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_deposit_zero_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10_000,
+        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+    );
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &0i128,
+        &Symbol::new(&env, "zero"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_deposit_negative_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10_000,
+        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+    );
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &-1i128,
+        &Symbol::new(&env, "neg"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_deposit_minimum_valid_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10_000,
+        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+    );
+    // amount = 1 is the minimum valid positive amount
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1i128,
+        &Symbol::new(&env, "min"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(proposal_id > 0);
+}
+
+#[test]
+fn test_deposit_exact_spending_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10_000,
+        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+    );
+    // amount == spending_limit should succeed
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1000i128,
+        &Symbol::new(&env, "exact"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(proposal_id > 0);
+}
+
+#[test]
+fn test_deposit_exceeds_spending_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10_000,
+        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+    );
+    // amount = spending_limit + 1 must be rejected
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1001i128,
+        &Symbol::new(&env, "over"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
+
+#[test]
+fn test_deposit_max_i128_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        5000,
+        10_000,
+        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+    );
+    // i128::MAX far exceeds any spending limit and must be rejected
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &i128::MAX,
+        &Symbol::new(&env, "maxval"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
