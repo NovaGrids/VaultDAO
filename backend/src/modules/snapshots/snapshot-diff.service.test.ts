@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   SnapshotDiffService,
   InMemorySnapshotDiffAdapter,
+  SemanticSnapshotDiffService,
 } from "./snapshot-diff.service.js";
 import type { SerializableContractSnapshot } from "./types.js";
 
@@ -191,3 +192,149 @@ test("SnapshotDiffService: saveDiff falls back to base when no history exists", 
   assert.ok(diff !== null);
   assert.strictEqual(diff!.isBase, true, "should create base when no history exists");
 });
+
+// ── Semantic Diff Tests ───────────────────────────────────────────────────────
+
+function makeSemanticService() {
+  return new SemanticSnapshotDiffService(new InMemorySnapshotDiffAdapter());
+}
+
+test("SemanticSnapshotDiffService: threshold reduction is classified critical", async () => {
+  const svc = makeSemanticService();
+
+  // Base snapshot: totalSigners = 3
+  const base = makeSnapshot({ lastProcessedLedger: 100, totalSigners: 3 });
+  await svc.saveBaseSnapshot(base);
+
+  // Diff snapshot: totalSigners reduced to 1
+  const next = makeSnapshot({ lastProcessedLedger: 110, totalSigners: 1 });
+  await svc.saveDiff(next);
+
+  const result = await svc.computeSemanticDiff("CONTRACT-A", 100, 110);
+  assert.ok(result !== null, "should produce a semantic diff result");
+  assert.strictEqual(result!.hasCritical, true, "should have critical changes");
+
+  const criticals = result!.changes.filter((c) => c.severity === "critical");
+  assert.ok(criticals.length > 0, "should have at least one critical change");
+  assert.ok(
+    criticals.some((c) => c.field === "totalSigners"),
+    "totalSigners decrease should be critical",
+  );
+  assert.ok(
+    criticals[0]!.description.length > 0,
+    "critical change should have a description",
+  );
+});
+
+test("SemanticSnapshotDiffService: signer addition is classified warning", async () => {
+  const svc = makeSemanticService();
+
+  const base = makeSnapshot({
+    lastProcessedLedger: 200,
+    signers: {},
+    totalSigners: 0,
+  });
+  await svc.saveBaseSnapshot(base);
+
+  // Add a new signer
+  const next = makeSnapshot({
+    lastProcessedLedger: 210,
+    signers: {
+      SIGNER_A: {
+        address: "SIGNER_A",
+        role: 1,
+        addedAt: new Date().toISOString(),
+        addedAtLedger: 210,
+        isActive: true,
+      },
+    },
+    totalSigners: 1,
+  });
+  await svc.saveDiff(next);
+
+  const result = await svc.computeSemanticDiff("CONTRACT-A", 200, 210);
+  assert.ok(result !== null, "should produce a result");
+
+  const warnings = result!.changes.filter((c) => c.severity === "warning");
+  assert.ok(warnings.length > 0, "signer addition should produce a warning");
+  assert.ok(
+    warnings.some((c) => c.field === "signers" || c.field === "totalSigners"),
+    "the warning should be on the signers or totalSigners field",
+  );
+});
+
+test("SemanticSnapshotDiffService: label/catch-all field change is classified info", async () => {
+  const svc = makeSemanticSnapshotDiffService_custom();
+
+  const base = makeSnapshot({ lastProcessedLedger: 300, lastProcessedEventId: "evt-1" });
+  await svc.saveBaseSnapshot(base);
+
+  const next = makeSnapshot({ lastProcessedLedger: 310, lastProcessedEventId: "evt-2" });
+  await svc.saveDiff(next);
+
+  const result = await svc.computeSemanticDiff("CONTRACT-A", 300, 310);
+  assert.ok(result !== null);
+
+  const infoChanges = result!.changes.filter((c) => c.severity === "info");
+  assert.ok(infoChanges.length > 0, "non-critical field change should be info");
+  assert.strictEqual(result!.hasCritical, false, "should not have critical changes");
+});
+
+test("SemanticSnapshotDiffService: webhook is triggered for critical changes", async () => {
+  const delivered: unknown[] = [];
+  const mockWebhook = {
+    deliver: async (event: unknown) => {
+      delivered.push(event);
+    },
+  };
+
+  const svc = new SemanticSnapshotDiffService(
+    new InMemorySnapshotDiffAdapter(),
+    mockWebhook as any,
+  );
+
+  const base = makeSnapshot({ lastProcessedLedger: 400, totalSigners: 5 });
+  await svc.saveBaseSnapshot(base);
+
+  // Drastically reduce signers — triggers critical
+  const next = makeSnapshot({ lastProcessedLedger: 410, totalSigners: 1 });
+  await svc.saveDiff(next);
+
+  const result = await svc.computeSemanticDiff("CONTRACT-A", 400, 410);
+  assert.ok(result !== null);
+  assert.strictEqual(result!.hasCritical, true);
+
+  // Give the fire-and-forget a tick to resolve
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(delivered.length > 0, "webhook should have been triggered");
+  assert.ok(
+    (delivered[0] as any).topic === "snapshot:critical-change",
+    "webhook event topic should be snapshot:critical-change",
+  );
+});
+
+test("SemanticSnapshotDiffService: classifyChanges respects rule order (first match wins)", () => {
+  const svc = makeSemanticService();
+
+  // threshold decrease → critical (first matching rule)
+  const changes = [
+    { field: "totalSigners", before: 5, after: 2 },
+    { field: "lastProcessedLedger", before: 100, after: 110 },
+  ];
+
+  const classified = svc.classifyChanges(changes);
+  assert.strictEqual(classified.length, 2);
+  assert.strictEqual(classified[0]!.severity, "critical", "totalSigners decrease should be critical");
+  assert.strictEqual(classified[1]!.severity, "info", "ledger change should be info via catch-all");
+});
+
+test("SemanticSnapshotDiffService: computeSemanticDiff returns null when no snapshots exist", async () => {
+  const svc = makeSemanticService();
+  const result = await svc.computeSemanticDiff("NONEXISTENT-VAULT", 100, 200);
+  assert.strictEqual(result, null);
+});
+
+/** Helper to create a service with default rules but no webhook. */
+function makeSemanticSnapshotDiffService_custom() {
+  return new SemanticSnapshotDiffService(new InMemorySnapshotDiffAdapter());
+}

@@ -10,6 +10,17 @@ import {
   RecurringStatus,
 } from "./types.js";
 
+/**
+ * A due payment enriched with the reason it was triggered.
+ * - exact       : next_payment_ledger === current_ledger
+ * - jitter_early: payment was within the jitter window before its due date
+ * - jitter_late : payment is past due but within the jitter look-back window
+ */
+export interface DuePaymentResult {
+  readonly payment: NormalizedRecurringPayment;
+  readonly trigger_reason: "exact" | "jitter_early" | "jitter_late";
+}
+
 const logger = createLogger("recurring-indexer");
 
 /**
@@ -471,6 +482,7 @@ export class RecurringIndexerService {
 
   /**
    * Get payments that are ready for execution at a specific ledger.
+   * (Exact match — legacy method retained for backward compatibility.)
    */
   public async getDuePaymentsAtLedger(
     currentLedger: number,
@@ -481,6 +493,46 @@ export class RecurringIndexerService {
         payment.status !== RecurringStatus.CANCELLED &&
         payment.nextPaymentLedger <= currentLedger,
     );
+  }
+
+  /**
+   * Get payments due within a ledger window to account for on-chain jitter.
+   *
+   * Window: [currentLedger - jitterWindowMax, currentLedger + 1]
+   *
+   * Returns DuePaymentResult entries with a trigger_reason indicating
+   * whether the payment was triggered exactly on time, early (jitter_early),
+   * or late (jitter_late).
+   *
+   * @param currentLedger  - Current on-chain ledger
+   * @param jitterWindowMax - Width of the jitter look-back/ahead window
+   */
+  public async getDuePaymentsInWindow(
+    currentLedger: number,
+    jitterWindowMax: number,
+  ): Promise<DuePaymentResult[]> {
+    const windowStart = currentLedger - jitterWindowMax;
+    const windowEnd = currentLedger + 1; // inclusive upper bound
+
+    const all = await this.storage.getAll();
+    const inWindow = all.filter(
+      (payment) =>
+        payment.status !== RecurringStatus.CANCELLED &&
+        payment.nextPaymentLedger >= windowStart &&
+        payment.nextPaymentLedger <= windowEnd,
+    );
+
+    return inWindow.map((payment) => {
+      let trigger_reason: DuePaymentResult["trigger_reason"];
+      if (payment.nextPaymentLedger === currentLedger) {
+        trigger_reason = "exact";
+      } else if (payment.nextPaymentLedger > currentLedger) {
+        trigger_reason = "jitter_early";
+      } else {
+        trigger_reason = "jitter_late";
+      }
+      return { payment, trigger_reason };
+    });
   }
 
   /**
