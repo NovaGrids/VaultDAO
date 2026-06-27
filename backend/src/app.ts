@@ -19,6 +19,7 @@ import { createCacheRouter } from "./shared/cache/cache.routes.js";
 import { createVaultRouter } from "./modules/vault/vault.routes.js";
 import { createCursorsRouter } from "./modules/events/cursor/cursors.routes.js";
 import { createEventsRouter } from "./modules/events/events.routes.js";
+import { createJobsRouter } from "./modules/jobs/jobs.routes.js";
 import { error, success } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
@@ -325,8 +326,16 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   v1Router.use(
     "/contracts",
-    createContractsRouter(registry, adminAuthMiddleware),
+    createContractsRouter(registry, adminAuthMiddleware, (runtime as any).contractStateValidator),
   );
+
+  // Job Dashboard API (Issue #1161)
+  if (runtime.jobManager && runtime.scheduledJobRunner) {
+    v1Router.use(
+      "/jobs",
+      createJobsRouter(runtime.jobManager, runtime.scheduledJobRunner, adminAuthMiddleware),
+    );
+  }
 
   if (runtime.notificationQueue) {
     v1Router.use(
@@ -354,6 +363,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       runtime.snapshotService,
       adminAuthMiddleware,
       runtime.snapshotDiffService,
+      (runtime as any).governanceSnapshotJob,
     ),
   );
 
@@ -420,7 +430,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/vault",
     authMiddleware,
-    createVaultRouter(env.sorobanRpcUrl, passphrase, runtime.cacheManager),
+    createVaultRouter(env.sorobanRpcUrl, passphrase, runtime.cacheManager, (runtime as any).vaultRegistry, adminAuthMiddleware),
   );
 
   app.use("/api/v1", v1Router);

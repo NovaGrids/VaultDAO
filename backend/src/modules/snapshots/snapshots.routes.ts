@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import type { SnapshotService } from "./snapshot.service.js";
 import type { SnapshotDiffService } from "./snapshot-diff.service.js";
+import type { GovernanceSnapshotJob } from "../jobs/governance-snapshot.job.js";
 import { createSnapshotControllers } from "./snapshots.controller.js";
 import { success, error } from "../../shared/http/response.js";
 
@@ -30,6 +31,7 @@ export function createSnapshotRouter(
     next: NextFunction,
   ) => void,
   diffService?: SnapshotDiffService,
+  governanceJob?: GovernanceSnapshotJob,
 ) {
   const router = Router();
   const ctrl = createSnapshotControllers(service);
@@ -213,6 +215,32 @@ export function createSnapshotRouter(
         success(res, { compacted: deleted, contractId });
       },
     );
+  }
+
+  // ── Governance snapshot endpoint (Issue #79 / #1173) ────────────────────
+
+  if (governanceJob) {
+    /**
+     * GET /api/v1/snapshots/governance
+     * Returns the latest governance snapshot from the DB cache.
+     */
+    router.get("/governance", (_req: Request, res: Response) => {
+      const snapshot = governanceJob.getLatestSnapshot();
+      if (!snapshot) {
+        error(res, { message: "No governance snapshot available yet", status: 404 });
+        return;
+      }
+      success(res, snapshot);
+    });
+
+    /**
+     * GET /api/v1/snapshots/governance/history
+     * Returns last N governance snapshots.
+     */
+    router.get("/governance/history", (req: Request, res: Response) => {
+      const limit = Math.min(Number(req.query.limit) || 20, 100);
+      success(res, governanceJob.listSnapshots(limit));
+    });
   }
 
   return router;

@@ -1,6 +1,7 @@
 import express, { RequestHandler, Router } from "express";
 import type { ContractRegistry } from "./contract-registry.js";
-import { error } from "../../shared/http/response.js";
+import type { ContractStateValidator } from "./contract-state-validator.js";
+import { error, success } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 
 export function getContractsController(
@@ -43,6 +44,7 @@ export function registerContractController(
 export function createContractsRouter(
   registry: ContractRegistry,
   adminAuthMiddleware?: RequestHandler,
+  validator?: ContractStateValidator,
 ): Router {
   const router = express.Router();
   router.get("/", getContractsController(registry));
@@ -52,6 +54,24 @@ export function createContractsRouter(
   } else {
     router.post("/", registerContractController(registry));
   }
+
+  // GET /api/v1/contracts/drift — drift status for all contracts
+  router.get("/drift", (_req, res) => {
+    if (!validator) {
+      success(res, []);
+      return;
+    }
+    success(res, validator.getAllDriftStatuses());
+  });
+
+  // GET /api/v1/contracts/:id/drift — drift status for specific contract
+  router.get("/:id/drift", (req, res) => {
+    if (!validator) {
+      success(res, { contract_id: req.params.id, is_drifted: false, last_check: null, drifted_fields: [] });
+      return;
+    }
+    success(res, validator.getDriftStatus(req.params.id));
+  });
 
   return router;
 }
