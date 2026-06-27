@@ -215,19 +215,84 @@ pub enum VaultError {
 
     /// Cannot change vote weight model while proposals are active
     VoteWeightChangeBlocked = 980,
-}
 
-// Additional error types that exceed contracterror limits - use generic errors above
-// AttachmentHashInvalid -> InvalidAmount
-// TooManyAttachments -> BatchTooLarge
-// TooManyTags -> BatchTooLarge
-// MetadataValueInvalid -> InvalidAmount
-// SubscriptionNotFound -> TemplateNotFound
-// SubscriptionAlreadyCancelled -> ProposalAlreadyCancelled
-// RenewalNotDue -> TimelockNotExpired
-// NotSubscriberOrAdmin -> InsufficientRole
-// SubscriptionNotActive -> TemplateInactive
-// DependencyDepthExceeded -> BatchTooLarge
+    // =========================================================
+    // Tag/Metadata errors (previously aliased, now explicit)
+    // =========================================================
+
+    /// Too many tags on a proposal (max 8 for hierarchical, max 10 for flat)
+    TooManyTags = 700,
+
+    /// Tag not found
+    TagNotFound = 701,
+
+    /// Metadata value is invalid (empty or too long)
+    MetadataValueInvalid = 702,
+
+    /// Audit trail hash chain is broken
+    AuditChainBroken = 703,
+
+    // =========================================================
+    // Issue #1077: Hierarchical Tag Taxonomy
+    // =========================================================
+
+    /// Tag with this name already exists in the same parent scope
+    TagAlreadyExists = 710,
+
+    /// Tag has active proposals and cannot be deleted
+    TagHasActiveProposals = 711,
+
+    /// Maximum total tag count reached (100 per vault)
+    TooManyTagsTotal = 712,
+
+    /// Tag hierarchy exceeds maximum depth (3 levels)
+    TagLevelTooDeep = 713,
+
+    // =========================================================
+    // Issue #1085: Gas Cost Estimation Oracle
+    // =========================================================
+
+    /// Cost model not configured
+    CostModelNotFound = 720,
+
+    // =========================================================
+    // Issue #1083: Proposal Template with Variable Substitution
+    // =========================================================
+
+    /// Required template variable is missing from the provided values
+    TemplateVariableMissing = 730,
+
+    /// Too many variables in template (max 10)
+    TooManyTemplateVariables = 731,
+
+    /// Template is referenced by active proposals and cannot be deleted
+    TemplateHasActiveProposals = 732,
+
+    /// Max template count reached (20 per vault)
+    TooManyTemplates = 733,
+
+    // =========================================================
+    // Issue #1086: Threshold Signature Scheme (Cold Storage)
+    // =========================================================
+
+    /// Cold signature is invalid (Ed25519 verification failed)
+    InvalidColdSignature = 740,
+
+    /// Cold signature has already been submitted (replay prevention)
+    ColdSignatureAlreadySubmitted = 741,
+
+    /// Cold signature has expired
+    ColdSignatureExpired = 742,
+
+    /// Address is not a registered cold signer
+    NotAColdSigner = 743,
+
+    /// Cold signer configuration not set
+    ColdSignerConfigNotSet = 744,
+
+    /// Max cold signer count reached (5)
+    TooManyColdSigners = 745,
+}
 
 // Compatibility markers for CI source checks:
 // DelegationError, DelegationChainTooLong, CircularDelegation
