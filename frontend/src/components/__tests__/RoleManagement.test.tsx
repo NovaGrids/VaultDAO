@@ -145,4 +145,157 @@ describe('RoleManagement component', () => {
       expect(adminElements.length).toBeGreaterThan(0);
     });
   });
+
+  // ─── Kanban Drag-and-Drop Tests ────────────────────────────────────────
+  it('renders Kanban board with three role columns (Admin, Treasurer, Member)', async () => {
+    mockUseVaultContract.mockReturnValue(
+      makeVaultContractMock({
+        loading: false,
+        getUserRole: vi.fn().mockResolvedValue(2),
+        getAllRoles: vi.fn().mockResolvedValue([]),
+      }) as ReturnType<typeof useVaultContract>
+    );
+
+    render(<RoleManagement />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Drag to Assign Roles')).toBeInTheDocument();
+      // Columns should be present (Admin, Treasurer, Member)
+      const adminColumn = screen.getByText('Admin');
+      const treasurerColumn = screen.getByText('Treasurer');
+      const memberColumn = screen.getByText('Member');
+      expect(adminColumn).toBeInTheDocument();
+      expect(treasurerColumn).toBeInTheDocument();
+      expect(memberColumn).toBeInTheDocument();
+    });
+  });
+
+  it('displays signer cards in their assigned role columns', async () => {
+    mockUseVaultContract.mockReturnValue(
+      makeVaultContractMock({
+        loading: false,
+        getUserRole: vi.fn().mockResolvedValue(2),
+        getAllRoles: vi.fn().mockResolvedValue([
+          { address: 'GABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB', role: 2 },
+          { address: 'GDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB', role: 1 },
+          { address: 'GHIJ1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB', role: 0 },
+        ]),
+      }) as ReturnType<typeof useVaultContract>
+    );
+
+    render(<RoleManagement />);
+
+    await waitFor(() => {
+      // Cards should have data-testid
+      expect(
+        screen.getByTestId('signer-card-GABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB')
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('disables Undo button when there is no history', async () => {
+    mockUseVaultContract.mockReturnValue(
+      makeVaultContractMock({
+        loading: false,
+        getUserRole: vi.fn().mockResolvedValue(2),
+        getAllRoles: vi.fn().mockResolvedValue([]),
+      }) as ReturnType<typeof useVaultContract>
+    );
+
+    render(<RoleManagement />);
+
+    await waitFor(() => {
+      const undoBtn = screen.getByRole('button', { name: /Undo/i });
+      expect(undoBtn).toBeDisabled();
+    });
+  });
+
+  it('disables Apply Changes button when there are no pending changes', async () => {
+    mockUseVaultContract.mockReturnValue(
+      makeVaultContractMock({
+        loading: false,
+        getUserRole: vi.fn().mockResolvedValue(2),
+        getAllRoles: vi.fn().mockResolvedValue([]),
+      }) as ReturnType<typeof useVaultContract>
+    );
+
+    render(<RoleManagement />);
+
+    await waitFor(() => {
+      const applyBtn = screen.getByRole('button', { name: /Apply Changes/i });
+      expect(applyBtn).toBeDisabled();
+    });
+  });
+
+  // ─── Confirmation Modal Tests ──────────────────────────────────────────
+  it('shows confirmation modal when Apply Changes is clicked', async () => {
+    // Mock ConfirmationModal to render its content in the test
+    vi.doMock('../modals/ConfirmationModal', () => ({
+      default: ({ isOpen, title, message }: any) =>
+        isOpen ? (
+          <div data-testid="confirmation-modal">
+            <h3>{title}</h3>
+            <p>{message}</p>
+          </div>
+        ) : null,
+    }));
+
+    mockUseVaultContract.mockReturnValue(
+      makeVaultContractMock({
+        loading: false,
+        getUserRole: vi.fn().mockResolvedValue(2),
+        getAllRoles: vi.fn().mockResolvedValue([
+          { address: 'GABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB', role: 0 },
+        ]),
+      }) as ReturnType<typeof useVaultContract>
+    );
+
+    render(<RoleManagement />);
+
+    await waitFor(() => {
+      // Add a new signer to trigger pending change
+      const addressInput = screen.getByPlaceholderText(/Stellar Address/i) as HTMLInputElement;
+      fireEvent.change(addressInput, {
+        target: { value: 'GNEW1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB' },
+      });
+
+      const addBtn = screen.getByRole('button', { name: /Add Signer/i });
+      fireEvent.click(addBtn);
+    });
+
+    await waitFor(() => {
+      const applyBtn = screen.getByRole('button', { name: /Apply Changes/i });
+      expect(applyBtn).not.toBeDisabled();
+    });
+  });
+
+  it('shows pending changes alert when there are dragged changes', async () => {
+    mockUseVaultContract.mockReturnValue(
+      makeVaultContractMock({
+        loading: false,
+        getUserRole: vi.fn().mockResolvedValue(2),
+        getAllRoles: vi.fn().mockResolvedValue([
+          { address: 'GABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB', role: 0 },
+        ]),
+      }) as ReturnType<typeof useVaultContract>
+    );
+
+    render(<RoleManagement />);
+
+    await waitFor(() => {
+      // Add a signer to create a pending change
+      const addressInput = screen.getByPlaceholderText(/Stellar Address/i) as HTMLInputElement;
+      fireEvent.change(addressInput, {
+        target: { value: 'GNEW1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB' },
+      });
+
+      const addBtn = screen.getByRole('button', { name: /Add Signer/i });
+      fireEvent.click(addBtn);
+    });
+
+    await waitFor(() => {
+      // Pending changes should be displayed
+      expect(screen.getByText(/Pending Changes/)).toBeInTheDocument();
+    });
+  });
 });

@@ -22,7 +22,7 @@ import {
   HelpCircle,
   Sun,
   Moon,
-  Contrast,
+  Laptop2,
   Lock,
   Vote,
 } from "lucide-react";
@@ -33,6 +33,7 @@ import { LanguageSwitcher } from '../LanguageSwitcher';
 import { LayoutErrorBoundary } from '../ErrorHandler';
 import NotificationCenter from '../NotificationCenter';
 import { useNotifications } from '../../context/NotificationContext';
+import { CriticalNotificationOverlay } from "../CriticalNotificationOverlay";
 import { OnboardingFlow } from "../OnboardingFlow";
 import { ProductTour } from "../ProductTour";
 import { HelpCenter } from "../HelpCenter";
@@ -46,6 +47,7 @@ import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { KeyboardShortcuts } from "../KeyboardShortcuts";
 import { CommandPalette, modKey } from "../CommandPalette";
 import type { PaletteAction } from "../CommandPalette";
+import ThemeToggle from '../ThemeToggle';
 
 const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
@@ -198,17 +200,9 @@ const DashboardLayout: React.FC = () => {
             <LanguageSwitcher />
 
             {/* Theme Toggle */}
-            <button
-              onClick={toggleTheme}
-              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white"
-              aria-label={`Switch theme (current: ${theme})`}
-              title={`Theme: ${theme}`}
-              aria-describedby="theme-description"
-            >
-              {theme === 'dark' && <Moon size={20} />}
-              {theme === 'light' && <Sun size={20} />}
-              {theme === 'high-contrast' && <Contrast size={20} />}
-            </button>
+            <div aria-describedby="theme-description">
+              <ThemeToggle />
+            </div>
             
             {/* Notification Bell */}
             <button
@@ -423,7 +417,7 @@ const DashboardLayout: React.FC = () => {
             label: 'Switch Theme',
             description: `Current theme: ${theme}`,
             category: 'accessibility',
-            icon: theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Contrast size={16} />,
+            icon: theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Laptop2 size={16} />,
             action: toggleTheme,
           },
           {
@@ -512,6 +506,7 @@ const DashboardLayout: React.FC = () => {
           </div>
         </div>
       )}
+      <CriticalNotificationOverlay />
     </div>
   );
 };

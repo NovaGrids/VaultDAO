@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { FileText, CheckCircle, Wallet, Plus, TrendingUp, TrendingDown, X, RefreshCw, Grid3x3, Users } from 'lucide-react';
 import StatCard from '../../components/Layout/StatCard';
 import TokenBalanceCard, { TokenBalanceCardSkeleton } from '../../components/TokenBalanceCard';
+import { TokenPortfolioView } from '../../components/TokenPortfolioView';
 import DashboardBuilder from '../../components/DashboardBuilder';
 import DashboardErrorBoundary from '../../components/DashboardErrorBoundary';
 import { useVaultContract } from '../../hooks/useVaultContract';
@@ -43,6 +44,7 @@ const Overview: React.FC = () => {
     const [showAdvancedDashboard, setShowAdvancedDashboard] = useState(false);
     const [savedLayout, setSavedLayout] = useState<{ widgets?: unknown[] } | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [viewMode, setViewMode] = useState<'cards' | 'portfolio'>('cards');
 
     const quickActionTemplates = (() => {
         const mostUsed = getMostUsedTemplates(3);
@@ -158,8 +160,12 @@ const Overview: React.FC = () => {
         setSelectedToken(selectedToken?.address === token.address ? null : token);
     };
 
-    if (loading && !stats && isLoading) {
-        return null; // render skeletons inline instead
+    if (loading && !stats) {
+        return (
+            <div className="flex items-center justify-center min-h-[400px]">
+                <RefreshCw className="h-8 w-8 animate-spin text-purple-600" />
+            </div>
+        );
     }
 
     return (
@@ -311,13 +317,30 @@ const Overview: React.FC = () => {
                                     </div>
                                 )}
                             </div>
-                            <button
-                                onClick={() => setShowAddTokenModal(true)}
-                                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 text-sm font-semibold transition-colors"
-                            >
-                                <Plus size={16} />
-                                <span>{t('dashboard.addToken')}</span>
-                            </button>
+                            <div className="flex items-center gap-3">
+                                {/* Toggle View Mode */}
+                                <div className="flex bg-slate-100 dark:bg-gray-800 p-1 rounded-lg border border-slate-200 dark:border-gray-700">
+                                    <button
+                                        onClick={() => setViewMode('cards')}
+                                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${viewMode === 'cards' ? 'bg-white dark:bg-gray-700 text-purple-600 dark:text-purple-300 shadow-sm' : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white'}`}
+                                    >
+                                        Cards
+                                    </button>
+                                    <button
+                                        onClick={() => setViewMode('portfolio')}
+                                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${viewMode === 'portfolio' ? 'bg-white dark:bg-gray-700 text-purple-600 dark:text-purple-300 shadow-sm' : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white'}`}
+                                    >
+                                        Portfolio
+                                    </button>
+                                </div>
+                                <button
+                                    onClick={() => setShowAddTokenModal(true)}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 text-sm font-semibold transition-colors"
+                                >
+                                    <Plus size={16} />
+                                    <span>{t('dashboard.addToken')}</span>
+                                </button>
+                            </div>
                         </div>
 
                         {isLoadingBalances ? (
@@ -327,17 +350,25 @@ const Overview: React.FC = () => {
                                 ))}
                             </div>
                         ) : tokenBalances.length > 0 ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                {tokenBalances.map((tokenBalance) => (
-                                    <TokenBalanceCard
-                                        key={tokenBalance.token.address}
-                                        tokenBalance={tokenBalance}
-                                        onClick={() => handleTokenClick(tokenBalance.token)}
-                                        isSelected={selectedToken?.address === tokenBalance.token.address}
-                                        showUsdValue={true}
-                                    />
-                                ))}
-                            </div>
+                            viewMode === 'portfolio' ? (
+                                <TokenPortfolioView
+                                    tokenBalances={tokenBalances}
+                                    onRefresh={fetchTokenBalances}
+                                    isLoadingBalances={isLoadingBalances}
+                                />
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                    {tokenBalances.map((tokenBalance) => (
+                                        <TokenBalanceCard
+                                            key={tokenBalance.token.address}
+                                            tokenBalance={tokenBalance}
+                                            onClick={() => handleTokenClick(tokenBalance.token)}
+                                            isSelected={selectedToken?.address === tokenBalance.token.address}
+                                            showUsdValue={true}
+                                        />
+                                    ))}
+                                </div>
+                            )
                         ) : (
                             <div className="flex flex-col items-center justify-center py-12 text-slate-400 dark:text-gray-500">
                                 <Wallet size={48} className="mb-4 opacity-20" />

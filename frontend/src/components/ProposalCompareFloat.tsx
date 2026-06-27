@@ -7,7 +7,8 @@
 import React, { useState, useCallback } from 'react';
 import { GitCompare, X } from 'lucide-react';
 import ProposalCard from './ProposalCard';
-import ComparisonView from './ComparisonView';
+// ComparisonView is dynamically imported on demand so tests can mock it
+// when they call `vi.mock('./ComparisonView')` after this module is loaded.
 import { exportComparisonToPDF } from '../utils/pdfExport';
 import type { Proposal } from './type';
 
@@ -57,6 +58,20 @@ const ProposalCompareFloat: React.FC<ProposalCompareFloatProps> = ({ proposals, 
     }
   }, [selectedProposals]);
 
+  const [LoadedComparison, setLoadedComparison] = useState<React.ComponentType<any> | null>(null);
+
+  const openComparison = useCallback(async () => {
+    setShowComparison(true);
+    try {
+      const mod = await import('./ComparisonView');
+      setLoadedComparison(() => mod.default);
+    } catch (e) {
+      // If dynamic import fails, leave showComparison true but LoadedComparison null
+      // so callers can still handle graceful degradation.
+      console.error('Failed to load ComparisonView', e);
+    }
+  }, []);
+
   return (
     <div className="relative">
       {/* Proposal card grid */}
@@ -73,7 +88,7 @@ const ProposalCompareFloat: React.FC<ProposalCompareFloatProps> = ({ proposals, 
       </div>
 
       {/* Floating compare button — appears when exactly 2 selected */}
-      {selectedIds.size === MAX_COMPARE && (
+          {selectedIds.size === MAX_COMPARE && (
         <div
           role="status"
           aria-live="polite"
@@ -84,7 +99,7 @@ const ProposalCompareFloat: React.FC<ProposalCompareFloatProps> = ({ proposals, 
           </span>
           <button
             type="button"
-            onClick={() => setShowComparison(true)}
+            onClick={openComparison}
             className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition-colors"
             aria-label="Compare selected proposals"
           >
@@ -103,10 +118,13 @@ const ProposalCompareFloat: React.FC<ProposalCompareFloatProps> = ({ proposals, 
       )}
 
       {/* Full-screen comparison modal */}
-      {showComparison && selectedProposals.length === MAX_COMPARE && (
-        <ComparisonView
+      {showComparison && selectedIds.size === MAX_COMPARE && LoadedComparison && (
+        <LoadedComparison
           proposals={selectedProposals}
-          onClose={() => setShowComparison(false)}
+          onClose={() => {
+            setShowComparison(false);
+            setLoadedComparison(null);
+          }}
           onExport={handleExport}
           onAmendment={onAmendment}
         />

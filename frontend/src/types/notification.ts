@@ -22,6 +22,9 @@ export interface Notification {
   metadata?: Record<string, unknown>;
   groupKey?: string;
   count?: number;
+  acknowledged?: boolean;
+  acknowledgeSignature?: string;
+  acknowledgedAt?: number;
 }
 
 export interface NotificationFilter {
@@ -45,3 +48,4 @@ export interface NotificationState {
   page: number;
   pageSize: number;
 }
+

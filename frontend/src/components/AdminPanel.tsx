@@ -8,6 +8,7 @@ import { truncateAddress } from '../utils/formatters';
 import CopyButton from './CopyButton';
 import ConfirmationModal from './modals/ConfirmationModal';
 import ReadinessWarning from './ReadinessWarning';
+import SignerParticipationHeatmap from './SignerParticipationHeatmap';
 
 interface AdminPanelProps {
   vaultConfig: VaultConfig | null;
@@ -284,6 +285,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ vaultConfig, onConfigUpdated })
           </ul>
         )}
       </div>
+
+      <SignerParticipationHeatmap signerAddresses={signerAddresses} />
 
       <ConfirmationModal
         isOpen={Boolean(pendingAction)}

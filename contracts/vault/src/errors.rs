@@ -87,18 +87,31 @@ pub enum VaultError {
     TemplateInactive = 211,
     /// Template validation failed
     TemplateValidationFailed = 212,
+    FundingRoundError = 220,
+    // Issue #1064: Streaming Rate Limiter
+    StreamRateLimitExceeded = 230,
+    StreamDustRejected = 231,
+    // Issue #1075: Insurance Claim Governance
+    ClaimNotFound = 240,
+    ClaimNotPending = 241,
+    ClaimAlreadyVoted = 242,
+    ClaimSelfVote = 243,
+    ClaimVoteDeadlineTooShort = 244,
+    ClaimBondInsufficient = 245,
+    // Issue #1081: Multi-Token Vault
+    TokenAlreadySupported = 250,
+    TokenNotSupported = 251,
+    TooManyTokens = 252,
+    CannotRemoveDefaultToken = 253,
+    TokenHasActivePayments = 254,
     /// Invalid time-based threshold configuration
     InvalidThresholdConfig = 310,
-
     /// Delegation cycle detected
     CircularDelegation = 330,
-
     /// Delegation chain exceeds maximum depth
     DelegationChainTooLong = 331,
-
     /// Contract upgrade is not authorized
     UpgradeUnauthorized = 920,
-
     /// Contract upgrade timelock is still active
     UpgradeTimelockActive = 921,
     /// Veto window has closed
@@ -120,11 +133,56 @@ pub enum VaultError {
 
     /// Milestone has already been verified by this address
     AlreadyVerified = 510,
-
     /// Milestone does not have enough verifications to proceed
     InsufficientVerifications = 511,
-
     PermissionExpired = 320,
+    PermissionNotFound = 321,
+
+    // =========================================================
+    // Issue #1094: Recipient Whitelist
+    // =========================================================
+
+    /// Whitelist entry has expired
+    WhitelistEntryExpired = 600,
+
+    // =========================================================
+    // Issue #1095: Voting Power Snapshot
+    // =========================================================
+
+    /// Proposal has no signers in snapshot (cannot create)
+    EmptySignerSnapshot = 610,
+
+    // =========================================================
+    // Issue #1096: Multi-Phase Proposals
+    // =========================================================
+
+    /// Proposal exceeds maximum allowed phase count (5)
+    TooManyPhases = 620,
+
+    /// A phase execution failed
+    PhaseExecutionFailed = 621,
+
+    /// Multi-phase proposal not found
+    MultiPhaseProposalNotFound = 622,
+
+    // =========================================================
+    // Issue #1097: Capability Tokens
+    // =========================================================
+
+    /// Capability token not found
+    CapabilityNotFound = 630,
+
+    /// Capability token has expired
+    CapabilityExpired = 631,
+
+    /// Capability token has been revoked
+    CapabilityRevoked = 632,
+
+    /// Capability token max uses reached
+    CapabilityMaxUsesReached = 633,
+
+    /// Requested action not covered by capability
+    CapabilityNotGranted = 634,
 
     PermissionNotFound = 321,
 
@@ -174,19 +232,84 @@ pub enum VaultError {
 
     /// Cannot change vote weight model while proposals are active
     VoteWeightChangeBlocked = 980,
-}
 
-// Additional error types that exceed contracterror limits - use generic errors above
-// AttachmentHashInvalid -> InvalidAmount
-// TooManyAttachments -> BatchTooLarge
-// TooManyTags -> BatchTooLarge
-// MetadataValueInvalid -> InvalidAmount
-// SubscriptionNotFound -> TemplateNotFound
-// SubscriptionAlreadyCancelled -> ProposalAlreadyCancelled
-// RenewalNotDue -> TimelockNotExpired
-// NotSubscriberOrAdmin -> InsufficientRole
-// SubscriptionNotActive -> TemplateInactive
-// DependencyDepthExceeded -> BatchTooLarge
+    // =========================================================
+    // Tag/Metadata errors (previously aliased, now explicit)
+    // =========================================================
+
+    /// Too many tags on a proposal (max 8 for hierarchical, max 10 for flat)
+    TooManyTags = 700,
+
+    /// Tag not found
+    TagNotFound = 701,
+
+    /// Metadata value is invalid (empty or too long)
+    MetadataValueInvalid = 702,
+
+    /// Audit trail hash chain is broken
+    AuditChainBroken = 703,
+
+    // =========================================================
+    // Issue #1077: Hierarchical Tag Taxonomy
+    // =========================================================
+
+    /// Tag with this name already exists in the same parent scope
+    TagAlreadyExists = 710,
+
+    /// Tag has active proposals and cannot be deleted
+    TagHasActiveProposals = 711,
+
+    /// Maximum total tag count reached (100 per vault)
+    TooManyTagsTotal = 712,
+
+    /// Tag hierarchy exceeds maximum depth (3 levels)
+    TagLevelTooDeep = 713,
+
+    // =========================================================
+    // Issue #1085: Gas Cost Estimation Oracle
+    // =========================================================
+
+    /// Cost model not configured
+    CostModelNotFound = 720,
+
+    // =========================================================
+    // Issue #1083: Proposal Template with Variable Substitution
+    // =========================================================
+
+    /// Required template variable is missing from the provided values
+    TemplateVariableMissing = 730,
+
+    /// Too many variables in template (max 10)
+    TooManyTemplateVariables = 731,
+
+    /// Template is referenced by active proposals and cannot be deleted
+    TemplateHasActiveProposals = 732,
+
+    /// Max template count reached (20 per vault)
+    TooManyTemplates = 733,
+
+    // =========================================================
+    // Issue #1086: Threshold Signature Scheme (Cold Storage)
+    // =========================================================
+
+    /// Cold signature is invalid (Ed25519 verification failed)
+    InvalidColdSignature = 740,
+
+    /// Cold signature has already been submitted (replay prevention)
+    ColdSignatureAlreadySubmitted = 741,
+
+    /// Cold signature has expired
+    ColdSignatureExpired = 742,
+
+    /// Address is not a registered cold signer
+    NotAColdSigner = 743,
+
+    /// Cold signer configuration not set
+    ColdSignerConfigNotSet = 744,
+
+    /// Max cold signer count reached (5)
+    TooManyColdSigners = 745,
+}
 
 // Compatibility markers for CI source checks:
 // DelegationError, DelegationChainTooLong, CircularDelegation

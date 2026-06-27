@@ -8,9 +8,12 @@ import {
   Info,
   Circle,
   DollarSign,
+  ShieldCheck,
 } from 'lucide-react';
 import type { Notification } from '../types/notification';
 import NotificationActions from './NotificationActions';
+import { useWallet } from '../hooks/useWallet';
+import { useNotifications } from '../context/NotificationContext';
 
 interface NotificationItemProps {
   notification: Notification;
@@ -27,6 +30,10 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
   const [touchOffset, setTouchOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const itemRef = useRef<HTMLDivElement>(null);
+
+  const { address, signTransaction, isConnected } = useWallet();
+  const { acknowledgeNotification } = useNotifications();
+  const [acknowledging, setAcknowledging] = useState(false);
 
   const getCategoryIcon = () => {
     switch (notification.category) {
@@ -61,9 +68,9 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
   const getPriorityStyles = () => {
     switch (notification.priority) {
       case 'critical':
-        return 'border-l-4 border-l-red-500 bg-red-500/5';
+        return 'border border-red-500/30 border-l-4 border-l-red-500 bg-red-500/10 shadow-[0_0_15px_rgba(239,68,68,0.1)]';
       case 'high':
-        return 'border-l-4 border-l-orange-500 bg-orange-500/5';
+        return 'border border-orange-500/20 border-l-4 border-l-orange-500 bg-orange-500/5';
       case 'normal':
         return 'border-l-4 border-l-blue-500 bg-blue-500/5';
       case 'low':
@@ -127,8 +134,19 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
   };
 
   const handleClick = () => {
-    if (notification.status === 'unread') {
+    if (notification.status === 'unread' && notification.priority !== 'critical') {
       onMarkAsRead(notification.id);
+    }
+  };
+
+  const handleAcknowledge = async () => {
+    setAcknowledging(true);
+    try {
+      await acknowledgeNotification(notification.id, signTransaction, address || '');
+    } catch (err) {
+      console.error('Acknowledgment signature failed:', err);
+    } finally {
+      setAcknowledging(false);
     }
   };
 
@@ -146,8 +164,10 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onClick={handleClick}
       role="article"
       aria-label={`${notification.category} notification: ${notification.title}`}
+      onClick={handleClick}
     >
       {/* Swipe action background */}
       <div
@@ -174,7 +194,6 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
           transform: `translateX(${touchOffset}px)`,
           transition: isSwiping ? 'none' : 'transform 0.2s ease-out',
         }}
-        onClick={handleClick}
       >
         <div className="flex items-start gap-3">
           {/* Category Icon */}
@@ -206,6 +225,29 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
                 {formatTimestamp(notification.timestamp)}
               </time>
             </div>
+
+            {/* Acknowledge flow for Critical notifications */}
+            {notification.priority === 'critical' && (
+              <div className="mt-3">
+                {notification.acknowledged ? (
+                  <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium bg-green-500/10 border border-green-500/20 rounded-lg px-2.5 py-1.5 w-fit">
+                    <ShieldCheck size={14} />
+                    <span>Acknowledged Receipt</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAcknowledge();
+                    }}
+                    disabled={acknowledging || !isConnected}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-gray-800 disabled:text-gray-500 disabled:border disabled:border-gray-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-lg"
+                  >
+                    {acknowledging ? 'Confirming Receipt...' : isConnected ? 'Acknowledge with Wallet' : 'Connect Wallet to Acknowledge'}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Actions */}
             {notification.actions && notification.actions.length > 0 && (

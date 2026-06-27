@@ -124,7 +124,9 @@ describe('RecurringPayments page', () => {
     await waitFor(() => {
       expect(screen.getByText('Overdue payment')).toBeInTheDocument();
       // The Overdue status badge should be present
-      expect(screen.getByText('Overdue')).toBeInTheDocument();
+      const badge = document.querySelector('span.bg-red-500\\/20');
+      expect(badge).toBeInTheDocument();
+      expect(badge?.textContent).toContain('Overdue');
     });
   });
 
@@ -147,7 +149,9 @@ describe('RecurringPayments page', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Paused subscription')).toBeInTheDocument();
-      expect(screen.getByText('Paused')).toBeInTheDocument();
+      const badge = document.querySelector('span.bg-gray-500\\/20');
+      expect(badge).toBeInTheDocument();
+      expect(badge?.textContent).toContain('Paused');
     });
   });
 

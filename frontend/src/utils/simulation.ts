@@ -5,10 +5,17 @@ export interface SimulationResult {
     fee: string;
     feeXLM: string;
     resourceFee: string;
+    baseFee?: string;
+    cpuInsns?: string;
+    memBytes?: string;
+    ledgerReads?: number;
+    ledgerWrites?: number;
     error?: string;
     errorCode?: string;
     stateChanges?: StateChange[];
     timestamp: number;
+    /** Fee with 20% buffer applied (set when user opts in) */
+    bufferedFeeXLM?: string;
 }
 
 export interface StateChange {
@@ -263,17 +270,25 @@ export function formatFeeBreakdown(simulation: SorobanRpc.Api.SimulateTransactio
     resourceFee: string;
     totalFee: string;
     totalFeeXLM: string;
+    ledgerReads: number;
+    ledgerWrites: number;
 } {
-    // Extract fees from simulation
     const minResourceFee = simulation.minResourceFee || '0';
-    const baseFee = '100'; // Standard Stellar base fee in stroops
-    const totalFee = (parseInt(baseFee, 10) + parseInt(minResourceFee, 10)).toString();
+    const baseFeeStroops = '100'; // Standard Stellar base fee in stroops
+    const totalFeeStroops = (parseInt(baseFeeStroops, 10) + parseInt(minResourceFee, 10)).toString();
+
+    // Extract ledger read/write counts from transaction data if available
+    const txData = (simulation as { transactionData?: { readBytes?: number; writeBytes?: number } }).transactionData;
+    const ledgerReads = txData?.readBytes ?? 0;
+    const ledgerWrites = txData?.writeBytes ?? 0;
 
     return {
-        baseFee: stroopsToXLM(baseFee),
+        baseFee: stroopsToXLM(baseFeeStroops),
         resourceFee: stroopsToXLM(minResourceFee),
-        totalFee: stroopsToXLM(totalFee),
-        totalFeeXLM: stroopsToXLM(totalFee),
+        totalFee: stroopsToXLM(totalFeeStroops),
+        totalFeeXLM: stroopsToXLM(totalFeeStroops),
+        ledgerReads,
+        ledgerWrites,
     };
 }
 

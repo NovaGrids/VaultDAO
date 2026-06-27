@@ -1,5 +1,7 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import InfiniteScroll from 'react-infinite-scroll-component';
+import { FixedSizeList as List } from 'react-window';
+import Fuse from 'fuse.js';
 import {
   Copy,
   ExternalLink,
@@ -119,7 +121,9 @@ const AuditLog: React.FC = () => {
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [actionFilter, setActionFilter] = useState<string>('');
+  const [actionFilter, setActionFilter] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
   // Verification state
   const [verifying, setVerifying] = useState(false);
@@ -159,13 +163,36 @@ const AuditLog: React.FC = () => {
 
   // Initial load
   useEffect(() => {
-    void fetchPage(0, actionFilter, true);
-    // Reset verification when filter changes
+    void fetchPage(0, actionFilter.join(','), true);
     setVerificationResult(null);
     setVerificationError(null);
     brokenEntryRef.current = null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionFilter]);
+
+  const filteredEntries = useMemo(() => {
+    let result = entries;
+
+    if (dateRange.start && dateRange.end) {
+      const start = new Date(dateRange.start).getTime();
+      const end = new Date(dateRange.end).getTime();
+      if (start <= end) {
+        result = result.filter(e => {
+          const t = new Date(e.timestamp).getTime();
+          return t >= start && t <= end;
+        });
+      }
+    }
+
+    if (searchQuery) {
+      const fuse = new Fuse(result, {
+        keys: ['action', 'actor', 'target', 'txHash', 'details'],
+        threshold: 0.3,
+      });
+      result = fuse.search(searchQuery).map(res => res.item);
+    }
+
+    return result;
+  }, [entries, searchQuery, dateRange]);
 
   const loadMore = useCallback(() => {
     if (!loading && hasMore) {
@@ -173,7 +200,7 @@ const AuditLog: React.FC = () => {
     }
   }, [loading, hasMore, offset, actionFilter, fetchPage]);
 
-  const handleFilterChange = (action: string) => {
+  const handleFilterChange = (action: string[]) => {
     setActionFilter(action);
     setOffset(0);
     setHasMore(true);
@@ -229,13 +256,62 @@ const AuditLog: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Toolbar: filter + verify + export */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2 items-center">
+            <input 
+              type="text" 
+              placeholder="Search..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="px-3 py-1 bg-gray-800 text-white text-sm rounded border border-gray-700 focus:border-purple-500 focus:outline-none" 
+            />
+            <div className="flex items-center gap-1 text-sm text-gray-400">
+              <input 
+                type="date" 
+                value={dateRange.start}
+                onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                className="px-3 py-1 bg-gray-800 text-white rounded border border-gray-700 focus:border-purple-500 focus:outline-none" 
+              />
+              <span>to</span>
+              <input 
+                type="date" 
+                value={dateRange.end}
+                onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                className="px-3 py-1 bg-gray-800 text-white rounded border border-gray-700 focus:border-purple-500 focus:outline-none" 
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => void handleVerifyChain()}
+              disabled={verifying || entries.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 rounded-lg text-sm transition-colors"
+              aria-label="Verify audit chain integrity"
+              data-testid="verify-chain-button"
+            >
+              {verifying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  Verifying…
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                  Verify Chain
+                </>
+              )}
+            </button>
+            <AuditExporter entries={filteredEntries} />
+          </div>
+        </div>
+        
         {/* Action filter */}
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => handleFilterChange('')}
+            onClick={() => handleFilterChange([])}
             className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-              actionFilter === ''
+              actionFilter.length === 0
                 ? 'bg-purple-600 text-white'
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
@@ -245,9 +321,9 @@ const AuditLog: React.FC = () => {
           {ALL_ACTIONS.map((a) => (
             <button
               key={a}
-              onClick={() => handleFilterChange(a)}
+              onClick={() => handleFilterChange(actionFilter.includes(a) ? actionFilter.filter(x => x !== a) : [...actionFilter, a])}
               className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                actionFilter === a
+                actionFilter.includes(a)
                   ? 'bg-purple-600 text-white'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               }`}
@@ -350,61 +426,54 @@ const AuditLog: React.FC = () => {
           endMessage={
             entries.length > 0 ? (
               <div className="px-4 py-3 text-center text-gray-500 text-xs border-t border-gray-700">
-                All {entries.length} entries loaded
+                All {filteredEntries.length} entries loaded
               </div>
             ) : null
           }
           scrollableTarget="audit-scroll-container"
           style={{ overflow: 'visible' }}
         >
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" aria-label="Audit log entries">
-              <thead className="bg-gray-800 border-b border-gray-700">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
-                    Action
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
-                    Actor
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
-                    Target
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
-                    Time
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
-                    Tx
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700">
-                {entries.length === 0 && !loading ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                      No audit entries found.
-                    </td>
-                  </tr>
+          <div className="overflow-x-auto min-w-[600px]">
+            <div className="w-full text-sm">
+              <div className="flex bg-gray-800 border-b border-gray-700 px-4 py-3 text-xs font-medium text-gray-400 uppercase">
+                <div className="w-1/4">Action</div>
+                <div className="w-1/4">Actor</div>
+                <div className="w-1/4">Target</div>
+                <div className="w-1/6">Time</div>
+                <div className="w-1/12">Tx</div>
+              </div>
+              <div className="divide-y divide-gray-700">
+                {filteredEntries.length === 0 && !loading ? (
+                  <div className="px-4 py-8 text-center text-gray-400">
+                    No audit entries found.
+                  </div>
                 ) : (
-                  entries.map((entry, index) => {
-                    const broken = isBrokenEntry(index);
-                    const isBreakPoint =
-                      verificationResult !== null &&
-                      !verificationResult.verified &&
-                      index === verificationResult.brokenAtEntry;
+                  <List
+                    height={600}
+                    itemCount={filteredEntries.length}
+                    itemSize={60}
+                    width="100%"
+                  >
+                    {({ index, style }) => {
+                      const entry = filteredEntries[index];
+                      const broken = isBrokenEntry(index);
+                      const isBreakPoint =
+                        verificationResult !== null &&
+                        !verificationResult.verified &&
+                        index === verificationResult.brokenAtEntry;
 
-                    return (
-                      <tr
-                        key={entry.id}
-                        className={`transition-colors ${
-                          broken
-                            ? 'bg-red-500/10 hover:bg-red-500/15'
-                            : 'hover:bg-gray-700/30'
-                        }`}
-                        data-testid={broken ? 'broken-entry' : 'audit-entry'}
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
+                      return (
+                        <div
+                          style={style}
+                          key={entry.id}
+                          className={`flex items-center px-4 transition-colors ${
+                            broken
+                              ? 'bg-red-500/10 hover:bg-red-500/15'
+                              : 'hover:bg-gray-700/30'
+                          }`}
+                          data-testid={broken ? 'broken-entry' : 'audit-entry'}
+                        >
+                          <div className="w-1/4 flex items-center gap-2">
                             <ActionIcon action={entry.action} />
                             <span
                               className={`px-2 py-1 rounded text-xs font-medium ${
@@ -426,9 +495,7 @@ const AuditLog: React.FC = () => {
                               </span>
                             )}
                           </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1">
+                          <div className="w-1/4 flex items-center gap-1">
                             <code className="text-xs text-gray-300">{truncate(entry.actor)}</code>
                             <button
                               onClick={() => copyActor(entry.actor)}
@@ -439,48 +506,46 @@ const AuditLog: React.FC = () => {
                               <Copy size={12} aria-hidden="true" />
                             </button>
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-gray-400">
-                          {entry.target ? truncate(entry.target) : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                          <span
-                            title={new Date(entry.timestamp).toLocaleString()}
-                            className="cursor-help"
-                          >
-                            {relativeTime(entry.timestamp)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          {entry.txHash ? (
-                            <a
-                              href={`${env.explorerUrl}/tx/${entry.txHash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-purple-400 hover:text-purple-300 transition-colors"
-                              title="View on Stellar Expert"
-                              aria-label={`View transaction ${entry.txHash} on Stellar Expert`}
+                          <div className="w-1/4 text-xs text-gray-400">
+                            {entry.target ? truncate(entry.target) : '—'}
+                          </div>
+                          <div className="w-1/6 text-xs text-gray-400 whitespace-nowrap">
+                            <span
+                              title={new Date(entry.timestamp).toLocaleString()}
+                              className="cursor-help"
                             >
-                              <ExternalLink size={14} aria-hidden="true" />
-                            </a>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })
+                              {relativeTime(entry.timestamp)}
+                            </span>
+                          </div>
+                          <div className="w-1/12">
+                            {entry.txHash ? (
+                              <a
+                                href={`${env.explorerUrl}/tx/${entry.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-purple-400 hover:text-purple-300 transition-colors"
+                                title="View on Stellar Expert"
+                                aria-label={`View transaction ${entry.txHash} on Stellar Expert`}
+                              >
+                                <ExternalLink size={14} aria-hidden="true" />
+                              </a>
+                            ) : (
+                              '—'
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </List>
                 )}
-                {loading && entries.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400 text-xs">
-                      <Loader2 className="w-4 h-4 animate-spin inline mr-2" aria-hidden="true" />
-                      Loading…
-                    </td>
-                  </tr>
+                {loading && filteredEntries.length === 0 && (
+                  <div className="px-4 py-8 text-center text-gray-400 text-xs">
+                    <Loader2 className="w-4 h-4 animate-spin inline mr-2" aria-hidden="true" />
+                    Loading…
+                  </div>
                 )}
-              </tbody>
-            </table>
+              </div>
+            </div>
           </div>
         </InfiniteScroll>
       </div>

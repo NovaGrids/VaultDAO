@@ -1,187 +1,126 @@
 import React from 'react';
-import { render, screen, act, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ThemeProvider } from '../ThemeContext';
-import { useTheme } from '../useTheme';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ThemeProvider, useTheme } from '../ThemeContext';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const listeners: Array<(event: MediaQueryListEvent) => void> = [];
 
-/** A simple consumer component that renders theme state and exposes controls. */
-const ThemeConsumer: React.FC = () => {
-  const { theme, setTheme, toggleTheme, isSystemTheme } = useTheme();
+function mockMatchMedia(initialDark = false) {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn().mockImplementation(() => ({
+      matches: initialDark,
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: (_: string, handler: (event: MediaQueryListEvent) => void) => {
+        listeners.push(handler);
+      },
+      removeEventListener: vi.fn(),
+    })),
+  );
+}
+
+const Consumer = () => {
+  const { theme, resolvedTheme, toggleTheme, setTheme, isSystem } = useTheme();
+
   return (
     <div>
       <span data-testid="theme">{theme}</span>
-      <span data-testid="is-system">{String(isSystemTheme)}</span>
-      <button onClick={() => setTheme('light')}>set-light</button>
-      <button onClick={() => setTheme('dark')}>set-dark</button>
-      <button onClick={() => setTheme('high-contrast')}>set-hc</button>
+      <span data-testid="resolved">{resolvedTheme}</span>
+      <span data-testid="is-system">{String(isSystem)}</span>
       <button onClick={toggleTheme}>toggle</button>
+      <button onClick={() => setTheme('system')}>set-system</button>
+      <button onClick={() => setTheme('dark')}>set-dark</button>
+      <button onClick={() => setTheme('light')}>set-light</button>
     </div>
   );
 };
 
-const renderWithProvider = () =>
-  render(
-    <ThemeProvider>
-      <ThemeConsumer />
-    </ThemeProvider>,
-  );
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('ThemeContext', () => {
-  let matchMediaMock: ReturnType<typeof vi.fn>;
-  let mediaQueryListeners: Array<(e: MediaQueryListEvent) => void>;
-
   beforeEach(() => {
-    // Reset localStorage
     localStorage.clear();
-    // Reset html classes
-    document.documentElement.classList.remove('light', 'dark', 'high-contrast');
-
-    mediaQueryListeners = [];
-
-    matchMediaMock = vi.fn().mockImplementation((query: string) => ({
-      matches: query === '(prefers-color-scheme: dark)' ? false : false,
-      media: query,
-      addEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => {
-        mediaQueryListeners.push(cb);
-      },
-      removeEventListener: vi.fn(),
-    }));
-
-    vi.stubGlobal('matchMedia', matchMediaMock);
+    listeners.length = 0;
+    document.documentElement.classList.remove('light', 'dark');
+    mockMatchMedia(false);
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    localStorage.clear();
-    document.documentElement.classList.remove('light', 'dark', 'high-contrast');
-  });
+  it('defaults to system theme and resolves using media query', () => {
+    render(
+      <ThemeProvider>
+        <Consumer />
+      </ThemeProvider>,
+    );
 
-  // ── System preference detection ──────────────────────────────────────────
-
-  it('detects OS dark preference on first load when no stored theme', () => {
-    matchMediaMock.mockImplementation((query: string) => ({
-      matches: query === '(prefers-color-scheme: dark)',
-      media: query,
-      addEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => {
-        mediaQueryListeners.push(cb);
-      },
-      removeEventListener: vi.fn(),
-    }));
-
-    renderWithProvider();
-
-    expect(screen.getByTestId('theme').textContent).toBe('dark');
+    expect(screen.getByTestId('theme').textContent).toBe('system');
+    expect(screen.getByTestId('resolved').textContent).toBe('light');
     expect(screen.getByTestId('is-system').textContent).toBe('true');
   });
 
-  it('detects OS light preference on first load when no stored theme', () => {
-    // matchMedia returns false for dark → light
-    renderWithProvider();
+  it('loads stored preference from localStorage', () => {
+    localStorage.setItem('vaultdao_theme_preference', 'dark');
 
-    expect(screen.getByTestId('theme').textContent).toBe('light');
-    expect(screen.getByTestId('is-system').textContent).toBe('true');
-  });
-
-  it('applies the stored theme from localStorage and marks isSystemTheme=false', () => {
-    localStorage.setItem('vaultdao_theme', 'high-contrast');
-
-    renderWithProvider();
-
-    expect(screen.getByTestId('theme').textContent).toBe('high-contrast');
-    expect(screen.getByTestId('is-system').textContent).toBe('false');
-  });
-
-  // ── Manual override ───────────────────────────────────────────────────────
-
-  it('persists manual theme choice to localStorage and clears isSystemTheme', () => {
-    renderWithProvider();
-
-    act(() => {
-      fireEvent.click(screen.getByText('set-dark'));
-    });
+    render(
+      <ThemeProvider>
+        <Consumer />
+      </ThemeProvider>,
+    );
 
     expect(screen.getByTestId('theme').textContent).toBe('dark');
-    expect(screen.getByTestId('is-system').textContent).toBe('false');
-    expect(localStorage.getItem('vaultdao_theme')).toBe('dark');
+    expect(screen.getByTestId('resolved').textContent).toBe('dark');
   });
 
-  it('adds the theme class to document.documentElement', () => {
-    renderWithProvider();
+  it('toggle cycles light -> dark -> system -> light', () => {
+    localStorage.setItem('vaultdao_theme_preference', 'light');
 
-    act(() => {
-      fireEvent.click(screen.getByText('set-light'));
-    });
+    render(
+      <ThemeProvider>
+        <Consumer />
+      </ThemeProvider>,
+    );
 
-    expect(document.documentElement.classList.contains('light')).toBe(true);
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
-  });
-
-  // ── Toggle ────────────────────────────────────────────────────────────────
-
-  it('toggleTheme cycles dark → light → high-contrast → dark', () => {
-    localStorage.setItem('vaultdao_theme', 'dark');
-
-    renderWithProvider();
+    fireEvent.click(screen.getByText('toggle'));
     expect(screen.getByTestId('theme').textContent).toBe('dark');
 
-    act(() => { fireEvent.click(screen.getByText('toggle')); });
+    fireEvent.click(screen.getByText('toggle'));
+    expect(screen.getByTestId('theme').textContent).toBe('system');
+
+    fireEvent.click(screen.getByText('toggle'));
     expect(screen.getByTestId('theme').textContent).toBe('light');
-
-    act(() => { fireEvent.click(screen.getByText('toggle')); });
-    expect(screen.getByTestId('theme').textContent).toBe('high-contrast');
-
-    act(() => { fireEvent.click(screen.getByText('toggle')); });
-    expect(screen.getByTestId('theme').textContent).toBe('dark');
   });
 
-  it('toggleTheme persists each step to localStorage', () => {
-    localStorage.setItem('vaultdao_theme', 'dark');
-    renderWithProvider();
+  it('updates resolved theme when system preference changes while in system mode', () => {
+    render(
+      <ThemeProvider>
+        <Consumer />
+      </ThemeProvider>,
+    );
 
-    act(() => { fireEvent.click(screen.getByText('toggle')); });
-    expect(localStorage.getItem('vaultdao_theme')).toBe('light');
+    expect(screen.getByTestId('resolved').textContent).toBe('light');
 
-    act(() => { fireEvent.click(screen.getByText('toggle')); });
-    expect(localStorage.getItem('vaultdao_theme')).toBe('high-contrast');
-  });
+    // Replace matchMedia to report dark after change event callback.
+    mockMatchMedia(true);
 
-  // ── OS change listener ────────────────────────────────────────────────────
-
-  it('updates theme when OS preference changes and no manual override exists', () => {
-    // Start with light OS preference, no stored theme
-    renderWithProvider();
-    expect(screen.getByTestId('theme').textContent).toBe('light');
-
-    // Simulate OS switching to dark
     act(() => {
-      mediaQueryListeners.forEach((cb) =>
-        cb({ matches: true } as MediaQueryListEvent),
-      );
+      listeners.forEach((handler) => handler({ matches: true } as MediaQueryListEvent));
     });
 
-    expect(screen.getByTestId('theme').textContent).toBe('dark');
-    expect(screen.getByTestId('is-system').textContent).toBe('true');
+    expect(screen.getByTestId('resolved').textContent).toBe('dark');
   });
 
-  it('does NOT update theme when OS preference changes after manual override', () => {
-    renderWithProvider();
+  it('ignores system preference updates when user selects explicit theme', () => {
+    render(
+      <ThemeProvider>
+        <Consumer />
+      </ThemeProvider>,
+    );
 
-    // User manually picks light
-    act(() => { fireEvent.click(screen.getByText('set-light')); });
-    expect(localStorage.getItem('vaultdao_theme')).toBe('light');
+    fireEvent.click(screen.getByText('set-light'));
+    mockMatchMedia(true);
 
-    // OS switches to dark — should be ignored
     act(() => {
-      mediaQueryListeners.forEach((cb) =>
-        cb({ matches: true } as MediaQueryListEvent),
-      );
+      listeners.forEach((handler) => handler({ matches: true } as MediaQueryListEvent));
     });
 
-    // Theme should remain 'light' because user has an explicit preference
     expect(screen.getByTestId('theme').textContent).toBe('light');
+    expect(screen.getByTestId('resolved').textContent).toBe('light');
   });
 });

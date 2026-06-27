@@ -1,87 +1,111 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { ThemeContext, type Theme } from './themeContextDefinition';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ThemeContext, type ResolvedTheme, type Theme } from './themeContextDefinition';
 
-const STORAGE_KEY = 'vaultdao_theme';
-const VALID_THEMES: Theme[] = ['light', 'dark', 'high-contrast'];
+export const THEME_STORAGE_KEY = 'vaultdao_theme_preference';
+const SYSTEM_QUERY = '(prefers-color-scheme: dark)';
+const THEME_CYCLE: Theme[] = ['light', 'dark', 'system'];
 
-/** Read the persisted user preference, or null if none has been set. */
-function getStoredTheme(): Theme | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw && (VALID_THEMES as string[]).includes(raw)) return raw as Theme;
-  } catch { /* SSR / private browsing */ }
-  return null;
+function isTheme(value: string | null): value is Theme {
+  return value === 'light' || value === 'dark' || value === 'system';
 }
 
-/** Detect the OS-level colour scheme preference. */
-function getSystemTheme(): Theme {
-  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+function getStoredThemePreference(): Theme {
+  try {
+    const raw = localStorage.getItem(THEME_STORAGE_KEY);
+    if (isTheme(raw)) return raw;
+  } catch {
+    // ignore unavailable storage
+  }
+  return 'system';
+}
+
+function getSystemResolvedTheme(): ResolvedTheme {
+  if (typeof window !== 'undefined' && window.matchMedia(SYSTEM_QUERY).matches) {
     return 'dark';
   }
   return 'light';
 }
 
+function resolveTheme(theme: Theme): ResolvedTheme {
+  return theme === 'system' ? getSystemResolvedTheme() : theme;
+}
+
+function applyResolvedTheme(theme: ResolvedTheme) {
+  const root = document.documentElement;
+  root.classList.remove('light', 'dark');
+  root.classList.add(theme);
+  root.style.colorScheme = theme;
+}
+
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // isSystemTheme = true means no explicit user override; we follow the OS.
-  const [isSystemTheme, setIsSystemTheme] = useState<boolean>(() => getStoredTheme() === null);
+  const [theme, setThemeState] = useState<Theme>(() => getStoredThemePreference());
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(getStoredThemePreference()));
 
-  const [theme, _setTheme] = useState<Theme>(() => {
-    const stored = getStoredTheme();
-    return stored ?? getSystemTheme();
-  });
+  const isSystem = theme === 'system';
 
-  /** Apply the theme class to <html> and persist when it's a manual choice. */
-  const applyTheme = useCallback((targetTheme: Theme, persist: boolean) => {
-    const root = window.document.documentElement;
-    root.classList.remove('light', 'dark', 'high-contrast');
-    root.classList.add(targetTheme);
-    root.style.colorScheme = targetTheme === 'light' ? 'light' : 'dark';
-    if (persist) {
-      try { localStorage.setItem(STORAGE_KEY, targetTheme); } catch { /* ignore */ }
+  useEffect(() => {
+    const nextResolved = resolveTheme(theme);
+    setResolvedTheme(nextResolved);
+    applyResolvedTheme(nextResolved);
+
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // ignore storage failures
     }
+  }, [theme]);
+
+  useEffect(() => {
+    const media = window.matchMedia(SYSTEM_QUERY);
+    const onChange = () => {
+      let pref: Theme = theme;
+      try {
+        const stored = localStorage.getItem(THEME_STORAGE_KEY);
+        if (isTheme(stored)) pref = stored;
+      } catch {
+        // ignore storage failures
+      }
+
+      if (pref !== 'system') return;
+      const next = getSystemResolvedTheme();
+      setResolvedTheme(next);
+      applyResolvedTheme(next);
+    };
+
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [theme]);
+
+  const setTheme = useCallback((nextTheme: Theme) => {
+    setThemeState(nextTheme);
   }, []);
 
-  // Apply on mount and whenever theme changes.
-  useEffect(() => {
-    applyTheme(theme, !isSystemTheme);
-  }, [theme, isSystemTheme, applyTheme]);
-
-  /** Explicit user choice — persists to localStorage and clears system-follow flag. */
-  const setTheme = useCallback((newTheme: Theme) => {
-    setIsSystemTheme(false);
-    _setTheme(newTheme);
-    applyTheme(newTheme, true);
-  }, [applyTheme]);
-
-  /** Cycle: dark → light → high-contrast → dark */
   const toggleTheme = useCallback(() => {
-    _setTheme((prev) => {
-      const next: Theme = prev === 'dark' ? 'light' : prev === 'light' ? 'high-contrast' : 'dark';
-      setIsSystemTheme(false);
-      applyTheme(next, true);
-      return next;
+    setThemeState((prev) => {
+      const idx = THEME_CYCLE.indexOf(prev);
+      const nextIdx = (idx + 1) % THEME_CYCLE.length;
+      return THEME_CYCLE[nextIdx];
     });
-  }, [applyTheme]);
+  }, []);
 
-  // Listen for OS preference changes and update only when the user has NOT
-  // made an explicit choice (isSystemTheme === true).
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e: MediaQueryListEvent) => {
-      if (getStoredTheme() === null) {
-        const next: Theme = e.matches ? 'dark' : 'light';
-        setIsSystemTheme(true);
-        _setTheme(next);
-        applyTheme(next, false);
-      }
-    };
-    mq.addEventListener('change', handleChange);
-    return () => mq.removeEventListener('change', handleChange);
-  }, [applyTheme]);
-
-  return (
-    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme, isSystemTheme }}>
-      {children}
-    </ThemeContext.Provider>
+  const value = useMemo(
+    () => ({
+      theme,
+      resolvedTheme,
+      setTheme,
+      toggleTheme,
+      isSystem,
+    }),
+    [isSystem, resolvedTheme, setTheme, theme, toggleTheme],
   );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 };
+
+export function useTheme() {
+  const context = React.useContext(ThemeContext);
+  if (!context) {
+    throw new Error('useTheme must be used within a ThemeProvider');
+  }
+  return context;
+}
