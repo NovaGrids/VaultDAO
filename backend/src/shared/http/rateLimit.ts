@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { RedisRateLimitStore, createRedisRateLimitStore } from "./redis-rate-limit.store.js";
 
 export interface RateLimitConfig {
   windowMs: number; // Time window in milliseconds
@@ -10,6 +11,10 @@ export interface RateLimitConfig {
    * Defaults to false — uses socket.remoteAddress to prevent IP spoofing.
    */
   trustProxy?: boolean;
+  /**
+   * Redis URL for distributed rate limiting
+   */
+  redisUrl?: string;
 }
 
 interface ClientState {
@@ -23,7 +28,7 @@ interface ClientState {
  */
 export class RateLimiter {
   private clients = new Map<string, ClientState>();
-  private readonly config: Required<RateLimitConfig>;
+  private readonly config: Required<Omit<RateLimitConfig, 'redisUrl'>> & { redisUrl?: string };
 
   constructor(config: RateLimitConfig) {
     this.config = {
@@ -134,12 +139,23 @@ export class RateLimiter {
  */
 export function createRateLimitMiddleware(config: RateLimitConfig) {
   const limiter = new RateLimiter(config);
+  let redisStore: RedisRateLimitStore | null = null;
+  
+  if (config.redisUrl) {
+    try {
+      redisStore = createRedisRateLimitStore(config.redisUrl, config);
+    } catch (err) {
+      console.warn("Failed to create Redis rate limit store", err);
+    }
+  }
 
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const resetMs = limiter.getResetTime(req);
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const resetMs = redisStore ? await redisStore.getResetTime(req) : limiter.getResetTime(req);
     const resetUnix = Math.ceil(resetMs / 1000); // Unix timestamp in seconds
 
-    if (limiter.isLimited(req)) {
+    const isLimited = redisStore ? await redisStore.isLimited(req) : limiter.isLimited(req);
+    
+    if (isLimited) {
       res.set({
         "Retry-After": Math.ceil((resetMs - Date.now()) / 1000).toString(),
         "X-RateLimit-Limit": limiter.getMaxRequests().toString(),
@@ -161,9 +177,10 @@ export function createRateLimitMiddleware(config: RateLimitConfig) {
     }
 
     // Set rate limit headers on every non-limited response
+    const remaining = redisStore ? await redisStore.getRemaining(req) : limiter.getRemaining(req);
     res.set({
       "X-RateLimit-Limit": limiter.getMaxRequests().toString(),
-      "X-RateLimit-Remaining": limiter.getRemaining(req).toString(),
+      "X-RateLimit-Remaining": remaining.toString(),
       "X-RateLimit-Reset": resetUnix.toString(),
     });
 

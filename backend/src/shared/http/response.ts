@@ -1,5 +1,6 @@
 import type { Response } from "express";
 import { ErrorCode } from "./errorCodes.js";
+import { requestIdStorage } from "./requestId.js";
 
 export interface ApiSuccessResponse<T = any> {
   success: true;
@@ -11,7 +12,12 @@ export interface ApiErrorResponse {
   error: {
     message: string;
     code: ErrorCode;
-    details?: any;
+    details?: unknown;
+    requestId?: string;
+  };
+  meta: {
+    requestId: string;
+    timestamp: string;
   };
 }
 
@@ -42,6 +48,15 @@ export function error(
     code,
   };
 
+  // Resolve requestId: prefer the value attached to the request object,
+  // fall back to AsyncLocalStorage (covers background-job and non-HTTP paths).
+  const requestId =
+    (res.req && (res.req as any).requestId) ?? requestIdStorage.getStore();
+
+  if (requestId) {
+    safeError.requestId = requestId;
+  }
+
   if (options.exposeDetails && err.details) {
     safeError.details = err.details;
   }
@@ -50,8 +65,17 @@ export function error(
   if (status >= 500) {
     console.error("[API Error]", err);
   }
-  
+
+  const body: ApiErrorResponse = { 
+    success: false, 
+    error: safeError,
+    meta: {
+      requestId: requestId ?? "",
+      timestamp: new Date().toISOString(),
+    }
+  };
+
   res.status(status)
     .set("Content-Type", "application/json")
-    .json({ success: false, error: safeError });
+    .json(body);
 }

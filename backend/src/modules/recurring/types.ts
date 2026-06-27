@@ -62,6 +62,12 @@ export interface NormalizedRecurringPayment {
   /** Historical event log for state transitions */
   readonly events: RecurringEvent[];
   readonly metadata: RecurringMetadata;
+  /** Computed status: "active" | "paused" | "stopped" | "overdue" */
+  readonly computedStatus: "active" | "paused" | "stopped" | "overdue";
+  /** Number of ledgers until due (negative if overdue) */
+  readonly ledgersUntilDue: number;
+  /** Number of missed payments when overdue */
+  readonly missedPayments: number;
 }
 
 /**
@@ -112,6 +118,7 @@ export interface RecurringIndexerState {
  * Filter options for querying recurring payments.
  */
 export interface RecurringFilter {
+  readonly contractId?: string;
   readonly status?: RecurringStatus;
   readonly proposer?: string;
   readonly recipient?: string;

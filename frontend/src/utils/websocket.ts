@@ -7,7 +7,7 @@ export type WebSocketStatus = 'connecting' | 'connected' | 'disconnected' | 'err
 
 export interface WebSocketMessage {
   type: string;
-  payload: any;
+  payload: unknown;
   timestamp: number;
   userId?: string;
 }
@@ -29,7 +29,7 @@ export class WebSocketClient {
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-  private messageHandlers: Map<string, Set<(payload: any) => void>> = new Map();
+  private messageHandlers: Map<string, Set<(payload: unknown) => void>> = new Map();
   private status: WebSocketStatus = 'disconnected';
   private statusListeners: Set<(status: WebSocketStatus) => void> = new Set();
 
@@ -96,7 +96,7 @@ export class WebSocketClient {
   /**
    * Send message to server
    */
-  send(type: string, payload: any): void {
+  send(type: string, payload: unknown): void {
     if (this.ws?.readyState !== WebSocket.OPEN) {
       console.warn('[WS] Cannot send message, not connected');
       return;
@@ -118,7 +118,7 @@ export class WebSocketClient {
   /**
    * Subscribe to specific message type
    */
-  on(type: string, handler: (payload: any) => void): () => void {
+  on(type: string, handler: (payload: unknown) => void): () => void {
     if (!this.messageHandlers.has(type)) {
       this.messageHandlers.set(type, new Set());
     }

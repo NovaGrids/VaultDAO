@@ -1,87 +1,103 @@
+/**
+ * diffHighlighting.ts — word-level diff using diff-match-patch
+ *
+ * diff-match-patch ships as a CJS module whose default export IS the
+ * constructor function.  We use a robust import pattern that works in
+ * both Vite/ESM (browser builds) and the Vitest/Node test runner.
+ */
+
+// CJS interop: the package exports the constructor as module.exports,
+// so in ESM the default import is the constructor.
+import DiffMatchPatch from 'diff-match-patch';
 import type { DiffSegment } from '../types/comparison';
 
+// Numeric operation codes — declared as literals so we never rely on
+// prototype properties that may be undefined in certain ESM interop modes.
+const DIFF_EQUAL = 0;
+const DIFF_INSERT = 1;
+const DIFF_DELETE = -1;
+
+// Resolve the constructor whether we get a default or named export
+type DmpCtor = new () => {
+  diff_main(a: string, b: string, lineMode?: boolean): Array<[number, string]>;
+  diff_cleanupSemantic(diffs: Array<[number, string]>): void;
+};
+
+// Handle both `import DiffMatchPatch from 'diff-match-patch'` patterns:
+//   • default export IS the ctor  (Vite ESM interop)
+//   • default export has .diff_match_patch property  (some bundlers)
+const Ctor = (
+  typeof DiffMatchPatch === 'function'
+    ? DiffMatchPatch
+    : (DiffMatchPatch as unknown as Record<string, unknown>).diff_match_patch
+) as DmpCtor;
+
+const dmpInstance = new Ctor();
+
 /**
- * Simple diff algorithm for highlighting differences between two strings
- * Returns segments marked as equal, insert, or delete
+ * Compute word-level diff segments between two strings using diff-match-patch.
+ *
+ * Words (and whitespace tokens) are each mapped to a private-use Unicode
+ * character so diff_main can operate on them at "character" granularity,
+ * giving true LCS-based word diffs.  Results are decoded back to readable
+ * text and merged into DiffSegment[].
  */
-export function calculateDiff(text1: string, text2: string): DiffSegment[] {
-  const segments: DiffSegment[] = [];
-  
+export function getDiffSegments(text1: string, text2: string): DiffSegment[] {
   if (text1 === text2) {
     return [{ type: 'equal', value: text1 }];
   }
 
-  const words1 = text1.split(/(\s+)/);
-  const words2 = text2.split(/(\s+)/);
+  // --- word-to-char encoding ---
+  const wordToChar = new Map<string, string>();
+  let charCode = 0xe000; // start of Unicode private-use area (E000–F8FF)
 
-  const maxLen = Math.max(words1.length, words2.length);
-  
-  for (let i = 0; i < maxLen; i++) {
-    const word1 = words1[i] || '';
-    const word2 = words2[i] || '';
-
-    if (word1 === word2) {
-      segments.push({ type: 'equal', value: word1 });
-    } else {
-      if (word1) {
-        segments.push({ type: 'delete', value: word1 });
-      }
-      if (word2) {
-        segments.push({ type: 'insert', value: word2 });
-      }
-    }
+  function encodeWords(text: string): string {
+    // Split on whitespace, preserving whitespace tokens
+    const tokens = text.split(/(\s+)/);
+    return tokens
+      .map((token) => {
+        if (!wordToChar.has(token)) {
+          wordToChar.set(token, String.fromCodePoint(charCode++));
+        }
+        return wordToChar.get(token)!;
+      })
+      .join('');
   }
 
-  return segments;
-}
+  const enc1 = encodeWords(text1);
+  const enc2 = encodeWords(text2);
 
-/**
- * Calculate character-level diff for more precise highlighting
- */
-export function calculateCharDiff(text1: string, text2: string): DiffSegment[] {
-  if (text1 === text2) {
-    return [{ type: 'equal', value: text1 }];
-  }
+  // Build reverse map AFTER both strings are encoded
+  const charToWord = new Map<string, string>();
+  wordToChar.forEach((ch, word) => charToWord.set(ch, word));
 
+  // --- diff on encoded character strings ---
+  const rawDiffs = dmpInstance.diff_main(enc1, enc2, false);
+  dmpInstance.diff_cleanupSemantic(rawDiffs);
+
+  // --- decode back to words and build DiffSegment[] ---
   const segments: DiffSegment[] = [];
-  const len1 = text1.length;
-  const len2 = text2.length;
 
-  let i = 0;
-  let j = 0;
-  let equalBuffer = '';
+  for (const [op, encodedText] of rawDiffs) {
+    // Decode: split encoded string into individual code-points (handles > U+FFFF)
+    const value = [...encodedText]
+      .map((ch) => charToWord.get(ch) ?? ch)
+      .join('');
 
-  while (i < len1 || j < len2) {
-    if (i < len1 && j < len2 && text1[i] === text2[j]) {
-      equalBuffer += text1[i];
-      i++;
-      j++;
-    } else {
-      if (equalBuffer) {
-        segments.push({ type: 'equal', value: equalBuffer });
-        equalBuffer = '';
-      }
-
-      if (i < len1) {
-        segments.push({ type: 'delete', value: text1[i] });
-        i++;
-      }
-      if (j < len2) {
-        segments.push({ type: 'insert', value: text2[j] });
-        j++;
-      }
+    if (op === DIFF_EQUAL) {
+      segments.push({ type: 'equal', value });
+    } else if (op === DIFF_INSERT) {
+      segments.push({ type: 'insert', value });
+    } else if (op === DIFF_DELETE) {
+      segments.push({ type: 'delete', value });
     }
   }
 
-  if (equalBuffer) {
-    segments.push({ type: 'equal', value: equalBuffer });
-  }
-
-  return segments;
+  return mergeSegments(segments);
 }
 
 /**
- * Merge consecutive segments of the same type
+ * Merge consecutive segments of the same type (reduces React node count).
  */
 export function mergeSegments(segments: DiffSegment[]): DiffSegment[] {
   if (segments.length === 0) return [];
@@ -103,12 +119,12 @@ export function mergeSegments(segments: DiffSegment[]): DiffSegment[] {
 }
 
 /**
- * Get diff segments with merged consecutive segments
+ * Legacy aliases kept for backward-compatibility with any existing callers.
  */
-export function getDiffSegments(text1: string, text2: string, useCharLevel = false): DiffSegment[] {
-  const segments = useCharLevel 
-    ? calculateCharDiff(text1, text2)
-    : calculateDiff(text1, text2);
-  
-  return mergeSegments(segments);
+export function calculateDiff(text1: string, text2: string): DiffSegment[] {
+  return getDiffSegments(text1, text2);
+}
+
+export function calculateCharDiff(text1: string, text2: string): DiffSegment[] {
+  return getDiffSegments(text1, text2);
 }

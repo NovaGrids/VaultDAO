@@ -8,9 +8,15 @@ import type { EventWebSocketServer } from "../websocket/websocket.server.js";
 import type { SnapshotService } from "../snapshots/snapshot.service.js";
 import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 import { TimeoutError } from "../../shared/http/fetchWithTimeout.js";
+import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
+import type { MetricsRegistry } from "../health/metrics.registry.js";
+import { CircuitBreaker } from "../../shared/http/circuit-breaker.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
+
+/** Maximum number of events to request per RPC page. */
+const EVENTS_PAGE_LIMIT = 200;
 
 /** Contract topics that should be forwarded to the proposal consumer. */
 const PROPOSAL_TOPICS = new Set([
@@ -48,6 +54,9 @@ export class EventPollingService {
   private consecutiveErrors: number = 0;
   private processedEventIds: Set<string> = new Set();
   private readonly MAX_PROCESSED_IDS = 1000;
+  private readonly rpcClient: SorobanRpcClient;
+
+  private readonly circuitBreaker: CircuitBreaker;
 
   constructor(
     private readonly env: BackendEnv,
@@ -55,7 +64,14 @@ export class EventPollingService {
     private readonly proposalConsumer?: ProposalActivityConsumer,
     private readonly wsServer?: EventWebSocketServer,
     private readonly snapshotService?: SnapshotService,
-  ) {}
+    rpcClient?: SorobanRpcClient,
+    private readonly metrics?: MetricsRegistry,
+    circuitBreaker?: CircuitBreaker,
+  ) {
+    this.rpcClient =
+      rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
+    this.circuitBreaker = circuitBreaker ?? new CircuitBreaker();
+  }
 
   /**
    * Starts the polling loop if enabled in config.
@@ -135,7 +151,7 @@ export class EventPollingService {
         this.consecutiveErrors = 0;
       } catch (error) {
         this.consecutiveErrors++;
-        
+
         // Handle timeout errors with additional context
         if (error instanceof TimeoutError) {
           this.logger.error("RPC timeout during poll", {
@@ -158,31 +174,110 @@ export class EventPollingService {
 
   /**
    * Performs the actual RPC call to find new events.
+   *
+   * On the very first run (`lastLedgerPolled === 0`) the service has no
+   * starting point, so it fetches the current chain head and persists it as
+   * the initial cursor without processing any historical events.
+   *
+   * On subsequent runs it pages through all events in the range
+   * `[lastLedgerPolled + 1, latestLedger]` using cursor-based pagination,
+   * then advances the cursor to `latestLedger`.
    */
   private async poll(): Promise<void> {
-    // Placeholder for RPC call to get events
-    // Example (future implementation):
-    // const results = await this.rpcService.getContractEvents({
-    //   startLedger: this.lastLedgerPolled + 1,
-    //   contractIds: [this.env.contractId],
-    // });
-
-    // For now, we mock the polling activity
-    const mockEvents: ContractEvent[] = [];
-
-    if (mockEvents.length > 0) {
-      await this.handleBatch(mockEvents);
+    // ── First-run initialisation ─────────────────────────────────────────────
+    if (this.lastLedgerPolled === 0) {
+      const result = await this.circuitBreaker.execute(() =>
+        this.rpcClient.getLatestLedger(),
+      );
+      if (!result.success) {
+        this.logger.warn("circuit breaker prevented getLatestLedger call", {
+          state: result.state,
+          error: result.error?.message,
+        });
+        throw result.error;
+      }
+      const latestLedger = result.data;
+      if (latestLedger === undefined) {
+        throw new Error("getLatestLedger returned no ledger");
+      }
+      this.logger.info(`initializing polling cursor at ledger ${latestLedger}`);
+      await this.storage.saveCursor({
+        lastLedger: latestLedger,
+        updatedAt: new Date().toISOString(),
+      });
+      this.lastLedgerPolled = latestLedger;
+      return;
     }
 
-    // Advance the "last polled" pointer (simulation)
-    // Normally this would be updated based on the last event's ledger or the RPC's newest ledger.
-    this.lastLedgerPolled += 1;
+    // ── Paginated event fetch ────────────────────────────────────────────────
+    const startLedger = this.lastLedgerPolled + 1;
+    const allEvents: ContractEvent[] = [];
+    let cursor: string | undefined;
+    let latestLedger = this.lastLedgerPolled;
 
-    // Persist new cursor
+    do {
+      const result = await this.circuitBreaker.execute(() =>
+        this.rpcClient.getEventsPage({
+          startLedger,
+          filters: [
+            {
+              type: "contract",
+              contractIds: [this.env.contractId],
+            },
+          ],
+          pagination: {
+            limit: EVENTS_PAGE_LIMIT,
+            ...(cursor !== undefined ? { cursor } : {}),
+          },
+        }),
+      );
+      if (!result.success) {
+        this.logger.warn("circuit breaker prevented getEventsPage call", {
+          state: result.state,
+          error: result.error?.message,
+        });
+        throw result.error;
+      }
+      const pageResult = result.data;
+      if (!pageResult) {
+        throw new Error("getEventsPage returned null result");
+      }
+
+      latestLedger = pageResult.latestLedger;
+
+      allEvents.push(
+        ...pageResult.events.map((raw) => ({
+          id: raw.id,
+          contractId: raw.contractId,
+          topic: raw.topic,
+          value: raw.value,
+          ledger: raw.ledger,
+          ledgerClosedAt: raw.ledgerClosedAt,
+        })),
+      );
+
+      // Continue paginating when the page was full — there may be more events.
+      cursor =
+        pageResult.events.length === EVENTS_PAGE_LIMIT
+          ? pageResult.events[pageResult.events.length - 1].pagingToken
+          : undefined;
+    } while (cursor !== undefined);
+
+    if (allEvents.length > 0) {
+      await this.handleBatch(allEvents);
+    }
+
     await this.storage.saveCursor({
-      lastLedger: this.lastLedgerPolled,
+      lastLedger: latestLedger,
       updatedAt: new Date().toISOString(),
     });
+    if (this.metrics) {
+      this.metrics.setGauge(
+        "vaultdao_polling_lag_ledgers",
+        latestLedger - this.lastLedgerPolled,
+      );
+    }
+    this.lastLedgerPolled = latestLedger;
   }
 
   /**
@@ -191,9 +286,9 @@ export class EventPollingService {
    */
   private async handleBatch(events: ContractEvent[]): Promise<void> {
     this.logger.info(`processing batch of ${events.length} events`);
-    
+
     let duplicateCount = 0;
-    
+
     for (const event of events) {
       // Check if event has already been processed
       if (event.id && this.processedEventIds.has(event.id)) {
@@ -213,11 +308,16 @@ export class EventPollingService {
         // Maintain bounded set size (FIFO eviction)
         if (this.processedEventIds.size > this.MAX_PROCESSED_IDS) {
           const firstId = this.processedEventIds.values().next().value;
-          this.processedEventIds.delete(firstId);
-          this.logger.debug("processedEventIds at capacity, removing oldest entry", {
-            removedId: firstId,
-            currentSize: this.processedEventIds.size,
-          });
+          if (firstId !== undefined) {
+            this.processedEventIds.delete(firstId);
+            this.logger.debug(
+              "processedEventIds at capacity, removing oldest entry",
+              {
+                removedId: firstId,
+                currentSize: this.processedEventIds.size,
+              },
+            );
+          }
         }
       }
 
@@ -225,6 +325,13 @@ export class EventPollingService {
       if (this.wsServer) {
         this.wsServer.broadcastEvent(event);
       }
+
+      // Increment events processed metric
+      if (this.metrics) {
+        this.metrics.incrementCounter("vaultdao_events_processed_total");
+        this.metrics.incrementCounter("vaultdao_events_polled_total");
+      }
+
       await this.processEvent(event);
     }
 
@@ -254,7 +361,10 @@ export class EventPollingService {
       }
 
       // Snapshot events → snapshotService
-      if (this.snapshotService && SnapshotNormalizer.isSnapshotEvent(normalized.type as any)) {
+      if (
+        this.snapshotService &&
+        SnapshotNormalizer.isSnapshotEvent(normalized.type as any)
+      ) {
         try {
           await this.snapshotService.processEvent(normalized as any);
         } catch (error) {
@@ -284,5 +394,12 @@ export class EventPollingService {
       isPolling: this.isRunning,
       errors: this.consecutiveErrors,
     };
+  }
+
+  /**
+   * Returns the circuit breaker instance used by this service.
+   */
+  public getCircuitBreaker(): CircuitBreaker | undefined {
+    return this.circuitBreaker;
   }
 }

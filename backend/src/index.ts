@@ -3,14 +3,11 @@ import { loadEnv } from "./config/env.js";
 import { startServer } from "./server.js";
 import { createLogger } from "./shared/logging/logger.js";
 import { maskContractId } from "./shared/utils/mask.js";
-import { LifecycleManager } from "./app/lifecycle/lifecycle-manager.js";
 import {
   RealtimeServer,
   createRealtimeTopic,
 } from "./modules/realtime/index.js";
 import { InMemoryNotificationQueue } from "./modules/notifications/index.js";
-import { ScheduledJobRunner } from "./modules/jobs/index.js";
-import { randomUUID } from "node:crypto";
 
 function logStartupConfig(env: BackendEnv) {
   const logger = createLogger("vaultdao-backend");
@@ -40,39 +37,24 @@ const realtimeServer = new RealtimeServer({
   },
 });
 const notificationQueue = new InMemoryNotificationQueue();
-const jobRunner = new ScheduledJobRunner();
 
 const notificationTopic = createRealtimeTopic("notification", "events");
 const unsubscribeNotificationBridge = notificationQueue.subscribe((event) => {
   realtimeServer.broadcast(notificationTopic, event);
 });
 
-jobRunner.register({
-  name: "notification-queue-heartbeat",
-  intervalMs: 60_000,
-  runOnStart: false,
-  run: async () => {
-    await notificationQueue.publish({
-      id: randomUUID(),
-      topic: notificationTopic,
-      source: "jobs.notification-queue-heartbeat",
-      createdAt: new Date().toISOString(),
-      payload: {
-        queueDepth: notificationQueue.size(),
-      },
-    });
-  },
-});
-
-realtimeServer.start();
-jobRunner.start();
-
 // Start server and integrate with lifecycle management
-const { server, runtime } = startServer(env, notificationQueue);
-const lifecycle = new LifecycleManager(server, 10_000); // 10s shutdown timeout
+const { server, runtime } = await startServer(env, notificationQueue);
+const lifecycle = runtime.lifecycleManager;
+
+realtimeServer.start(server);
 
 lifecycle.onShutdown({
-  name: "background-jobs",
+  // "job-manager" hook stops all background jobs (EventPollingService,
+  // RecurringIndexerService, ProposalActivityConsumer) before cache teardown.
+  // Must be registered before lifecycle.initialize() — LifecycleManager
+  // executes hooks in LIFO order so this runs first.
+  name: "job-manager",
   handler: async () => {
     await runtime.jobManager.stopAll();
   },
@@ -81,7 +63,7 @@ lifecycle.onShutdown({
 lifecycle.onShutdown({
   name: "scheduled-job-runner",
   handler: () => {
-    jobRunner.stop();
+    runtime.scheduledJobRunner.stop();
   },
 });
 lifecycle.onShutdown({

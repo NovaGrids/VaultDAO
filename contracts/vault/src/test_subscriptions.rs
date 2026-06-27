@@ -1,3 +1,4 @@
+use crate::errors::VaultError;
 use crate::types::{
     RetryConfig, SubscriptionStatus, SubscriptionTier, ThresholdStrategy, VelocityConfig,
 };
@@ -34,8 +35,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             timelock_delay: 0,
             velocity_limit: VelocityConfig {
                 limit: 100,
-                window: 3600,
-            },
+                window: 3600, per_token_limit: 0 },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -47,6 +47,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: crate::types::StakingConfig::default(),
+        proposal_id_prefix: 0,
             quorum_percentage: 0,
         },
     );
@@ -54,13 +55,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     (client, admin, token_admin, token)
 }
 
-fn fund_subscriber(
-    env: &Env,
-    _token_admin: &Address,
-    token: &Address,
-    subscriber: &Address,
-    amount: i128,
-) {
+fn fund_subscriber(env: &Env, token: &Address, subscriber: &Address, amount: i128) {
     StellarAssetClient::new(env, token).mint(subscriber, &amount);
 }
 
@@ -73,11 +68,11 @@ fn test_create_subscription_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -87,6 +82,7 @@ fn test_create_subscription_success() {
         &100i128,
         &1000u64,
         &true,
+        &0u64,
     );
 
     assert_eq!(id, 1);
@@ -99,7 +95,6 @@ fn test_create_subscription_success() {
 }
 
 #[test]
-#[should_panic]
 fn test_create_subscription_zero_amount_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -108,7 +103,7 @@ fn test_create_subscription_zero_amount_fails() {
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    client.create_subscription(
+    let res = client.try_create_subscription(
         &subscriber,
         &provider,
         &SubscriptionTier::Basic,
@@ -116,22 +111,23 @@ fn test_create_subscription_zero_amount_fails() {
         &0i128,
         &1000u64,
         &false,
+        &0u64,
     );
+    assert_eq!(res, Err(Ok(VaultError::InvalidAmount)));
 }
 
 #[test]
-#[should_panic]
 fn test_create_subscription_zero_interval_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
-    client.create_subscription(
+    let res = client.try_create_subscription(
         &subscriber,
         &provider,
         &SubscriptionTier::Basic,
@@ -139,7 +135,9 @@ fn test_create_subscription_zero_interval_fails() {
         &100i128,
         &0u64,
         &false,
+        &0u64,
     );
+    assert_eq!(res, Err(Ok(VaultError::IntervalTooShort)));
 }
 
 // ============================================================================
@@ -151,11 +149,11 @@ fn test_renew_subscription_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -165,28 +163,29 @@ fn test_renew_subscription_success() {
         &100i128,
         &500u64,
         &true,
+        &0u64,
     );
 
-    // Advance ledger past renewal point.
     env.ledger().with_mut(|l| l.sequence_number += 501);
 
     client.renew_subscription(&subscriber, &id);
 
     let sub = client.get_subscription(&id);
     assert_eq!(sub.total_payments, 2);
+    // next_renewal_ledger advances by interval
+    assert_eq!(sub.next_renewal_ledger, sub.last_payment_ledger + 500);
 }
 
 #[test]
-#[should_panic]
 fn test_renew_before_renewal_ledger_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -196,23 +195,24 @@ fn test_renew_before_renewal_ledger_fails() {
         &100i128,
         &1000u64,
         &true,
+        &0u64,
     );
 
     // Do NOT advance ledger — renewal not due yet.
-    client.renew_subscription(&subscriber, &id);
+    let res = client.try_renew_subscription(&subscriber, &id);
+    assert_eq!(res, Err(Ok(VaultError::RenewalNotDue)));
 }
 
 #[test]
-#[should_panic]
 fn test_renew_cancelled_subscription_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -222,12 +222,14 @@ fn test_renew_cancelled_subscription_fails() {
         &100i128,
         &500u64,
         &true,
+        &0u64,
     );
 
     client.cancel_subscription(&subscriber, &id);
 
     env.ledger().with_mut(|l| l.sequence_number += 501);
-    client.renew_subscription(&subscriber, &id);
+    let res = client.try_renew_subscription(&subscriber, &id);
+    assert_eq!(res, Err(Ok(VaultError::SubscriptionAlreadyCancelled)));
 }
 
 // ============================================================================
@@ -239,11 +241,11 @@ fn test_cancel_subscription_by_subscriber() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -253,6 +255,7 @@ fn test_cancel_subscription_by_subscriber() {
         &100i128,
         &1000u64,
         &false,
+        &0u64,
     );
 
     client.cancel_subscription(&subscriber, &id);
@@ -266,11 +269,11 @@ fn test_cancel_subscription_by_admin() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token_admin, token) = setup(&env);
+    let (client, admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -280,6 +283,7 @@ fn test_cancel_subscription_by_admin() {
         &100i128,
         &1000u64,
         &false,
+        &0u64,
     );
 
     client.cancel_subscription(&admin, &id);
@@ -289,16 +293,16 @@ fn test_cancel_subscription_by_admin() {
 }
 
 #[test]
-#[should_panic]
-fn test_cancel_already_cancelled_fails() {
+fn test_cancel_by_non_subscriber_non_admin_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
+    let rando = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -308,10 +312,38 @@ fn test_cancel_already_cancelled_fails() {
         &100i128,
         &1000u64,
         &false,
+        &0u64,
+    );
+
+    let res = client.try_cancel_subscription(&rando, &id);
+    assert_eq!(res, Err(Ok(VaultError::NotSubscriberOrAdmin)));
+}
+
+#[test]
+fn test_cancel_already_cancelled_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
     );
 
     client.cancel_subscription(&subscriber, &id);
-    client.cancel_subscription(&subscriber, &id); // second cancel should panic
+    let res = client.try_cancel_subscription(&subscriber, &id);
+    assert_eq!(res, Err(Ok(VaultError::SubscriptionAlreadyCancelled)));
 }
 
 // ============================================================================
@@ -323,11 +355,11 @@ fn test_upgrade_subscription_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -337,6 +369,7 @@ fn test_upgrade_subscription_success() {
         &100i128,
         &1000u64,
         &false,
+        &0u64,
     );
 
     client.upgrade_subscription(&subscriber, &id, &SubscriptionTier::Premium, &300i128);
@@ -348,16 +381,15 @@ fn test_upgrade_subscription_success() {
 }
 
 #[test]
-#[should_panic]
 fn test_upgrade_cancelled_subscription_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -367,24 +399,30 @@ fn test_upgrade_cancelled_subscription_fails() {
         &100i128,
         &1000u64,
         &false,
+        &0u64,
     );
 
     client.cancel_subscription(&subscriber, &id);
-    client.upgrade_subscription(&subscriber, &id, &SubscriptionTier::Premium, &300i128);
+    let res = client.try_upgrade_subscription(
+        &subscriber,
+        &id,
+        &SubscriptionTier::Premium,
+        &300i128,
+    );
+    assert_eq!(res, Err(Ok(VaultError::SubscriptionNotActive)));
 }
 
 #[test]
-#[should_panic]
 fn test_upgrade_by_non_subscriber_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
     let other = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -394,9 +432,39 @@ fn test_upgrade_by_non_subscriber_fails() {
         &100i128,
         &1000u64,
         &false,
+        &0u64,
     );
 
-    client.upgrade_subscription(&other, &id, &SubscriptionTier::Premium, &300i128);
+    let res =
+        client.try_upgrade_subscription(&other, &id, &SubscriptionTier::Premium, &300i128);
+    assert_eq!(res, Err(Ok(VaultError::NotSubscriberOrAdmin)));
+}
+
+#[test]
+fn test_upgrade_zero_amount_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+
+    let res =
+        client.try_upgrade_subscription(&subscriber, &id, &SubscriptionTier::Enterprise, &0i128);
+    assert_eq!(res, Err(Ok(VaultError::InvalidAmount)));
 }
 
 // ============================================================================
@@ -406,15 +474,14 @@ fn test_upgrade_by_non_subscriber_fails() {
 #[test]
 fn test_auto_renew_by_third_party() {
     let env = Env::default();
-    // Allow non-root auth so the keeper can trigger subscriber's token transfer.
     env.mock_all_auths_allowing_non_root_auth();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
     let keeper = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -423,12 +490,12 @@ fn test_auto_renew_by_third_party() {
         &token,
         &100i128,
         &500u64,
-        &true, // auto_renew = true
+        &true,
+        &0u64,
     );
 
     env.ledger().with_mut(|l| l.sequence_number += 501);
 
-    // A third-party keeper can trigger renewal when auto_renew is true.
     client.renew_subscription(&keeper, &id);
 
     let sub = client.get_subscription(&id);
@@ -436,17 +503,16 @@ fn test_auto_renew_by_third_party() {
 }
 
 #[test]
-#[should_panic]
 fn test_manual_renew_by_third_party_fails_when_auto_renew_false() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
     let keeper = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 1000);
+    fund_subscriber(&env, &token, &subscriber, 1000);
 
     let id = client.create_subscription(
         &subscriber,
@@ -455,27 +521,28 @@ fn test_manual_renew_by_third_party_fails_when_auto_renew_false() {
         &token,
         &100i128,
         &500u64,
-        &false, // auto_renew = false
+        &false,
+        &0u64,
     );
 
     env.ledger().with_mut(|l| l.sequence_number += 501);
 
-    // Third party cannot renew when auto_renew is false.
-    client.renew_subscription(&keeper, &id);
+    let res = client.try_renew_subscription(&keeper, &id);
+    assert_eq!(res, Err(Ok(VaultError::NotSubscriberOrAdmin)));
 }
 
 // ============================================================================
-// get_subscription
+// get_subscription / get_subscriptions_by_subscriber
 // ============================================================================
 
 #[test]
-#[should_panic]
 fn test_get_nonexistent_subscription_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client, _admin, _token_admin, _token) = setup(&env);
-    client.get_subscription(&999u64);
+    let res = client.try_get_subscription(&999u64);
+    assert_eq!(res.err(), Some(Ok(VaultError::SubscriptionNotFound)));
 }
 
 #[test]
@@ -483,11 +550,11 @@ fn test_subscription_ids_are_sequential() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token_admin, token) = setup(&env);
+    let (client, _admin, _token_admin, token) = setup(&env);
     let subscriber = Address::generate(&env);
     let provider = Address::generate(&env);
 
-    fund_subscriber(&env, &token_admin, &token, &subscriber, 10_000);
+    fund_subscriber(&env, &token, &subscriber, 10_000);
 
     let id1 = client.create_subscription(
         &subscriber,
@@ -497,6 +564,7 @@ fn test_subscription_ids_are_sequential() {
         &100i128,
         &1000u64,
         &false,
+        &0u64,
     );
     let id2 = client.create_subscription(
         &subscriber,
@@ -506,8 +574,652 @@ fn test_subscription_ids_are_sequential() {
         &200i128,
         &1000u64,
         &false,
+        &0u64,
     );
 
     assert_eq!(id1, 1);
     assert_eq!(id2, 2);
+}
+
+#[test]
+fn test_get_subscriptions_by_subscriber() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 10_000);
+
+    let id1 = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+    let id2 = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Premium,
+        &token,
+        &300i128,
+        &2000u64,
+        &false,
+        &0u64,
+    );
+
+    let ids = client.get_subscriptions_by_subscriber(&subscriber);
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids.get(0).unwrap(), id1);
+    assert_eq!(ids.get(1).unwrap(), id2);
+}
+
+#[test]
+fn test_get_subscriptions_by_subscriber_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, _token) = setup(&env);
+    let stranger = Address::generate(&env);
+
+    let ids = client.get_subscriptions_by_subscriber(&stranger);
+    assert_eq!(ids.len(), 0);
+}
+
+// ============================================================================
+// Event verification
+// ============================================================================
+
+#[test]
+fn test_subscription_created_event_emitted() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &true,
+        &0u64,
+    );
+
+    let events = env.events().all();
+    let expected_topic: soroban_sdk::Val =
+        soroban_sdk::Symbol::new(&env, "subscription_created").into_val(&env);
+
+    let found = events.iter().any(|e| {
+        let topics = e.1;
+        topics.len() >= 1
+            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+    });
+    assert!(found, "subscription_created event not emitted for id={}", id);
+}
+
+#[test]
+fn test_subscription_renewed_event_emitted() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Standard,
+        &token,
+        &100i128,
+        &500u64,
+        &true,
+        &0u64,
+    );
+
+    env.ledger().with_mut(|l| l.sequence_number += 501);
+    client.renew_subscription(&subscriber, &id);
+
+    let events = env.events().all();
+    let expected_topic: soroban_sdk::Val =
+        soroban_sdk::Symbol::new(&env, "subscription_renewed").into_val(&env);
+
+    let found = events.iter().any(|e| {
+        let topics = e.1;
+        topics.len() >= 1
+            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+    });
+    assert!(found, "subscription_renewed event not emitted");
+}
+
+#[test]
+fn test_subscription_cancelled_event_emitted() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+
+    client.cancel_subscription(&subscriber, &id);
+
+    let events = env.events().all();
+    let expected_topic: soroban_sdk::Val =
+        soroban_sdk::Symbol::new(&env, "subscription_cancelled").into_val(&env);
+
+    let found = events.iter().any(|e| {
+        let topics = e.1;
+        topics.len() >= 1
+            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+    });
+    assert!(found, "subscription_cancelled event not emitted");
+}
+
+#[test]
+fn test_subscription_upgraded_event_emitted() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+
+    client.upgrade_subscription(&subscriber, &id, &SubscriptionTier::Enterprise, &500i128);
+
+    let events = env.events().all();
+    let expected_topic: soroban_sdk::Val =
+        soroban_sdk::Symbol::new(&env, "subscription_upgraded").into_val(&env);
+
+    let found = events.iter().any(|e| {
+        let topics = e.1;
+        topics.len() >= 1
+            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+    });
+    assert!(found, "subscription_upgraded event not emitted");
+}
+
+// ============================================================================
+// Status transitions
+// ============================================================================
+
+#[test]
+fn test_status_transitions_create_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+
+    // After creation: Active
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Active);
+
+    // After cancel: Cancelled
+    client.cancel_subscription(&subscriber, &id);
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Cancelled);
+}
+
+#[test]
+fn test_renew_increments_total_payments() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 10_000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &500u64,
+        &true,
+        &0u64,
+    );
+
+    assert_eq!(client.get_subscription(&id).total_payments, 1);
+
+    env.ledger().with_mut(|l| l.sequence_number += 501);
+    client.renew_subscription(&subscriber, &id);
+    assert_eq!(client.get_subscription(&id).total_payments, 2);
+
+    env.ledger().with_mut(|l| l.sequence_number += 501);
+    client.renew_subscription(&subscriber, &id);
+    assert_eq!(client.get_subscription(&id).total_payments, 3);
+}
+
+#[test]
+fn test_upgrade_preserves_active_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+
+    client.upgrade_subscription(&subscriber, &id, &SubscriptionTier::Premium, &300i128);
+
+    let sub = client.get_subscription(&id);
+    assert_eq!(sub.status, SubscriptionStatus::Active);
+    assert_eq!(sub.tier, SubscriptionTier::Premium);
+    assert_eq!(sub.amount_per_period, 300);
+}
+
+#[test]
+fn test_all_subscription_tiers() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 100_000);
+
+    for (tier, amount) in [
+        (SubscriptionTier::Basic, 100i128),
+        (SubscriptionTier::Standard, 200i128),
+        (SubscriptionTier::Premium, 300i128),
+        (SubscriptionTier::Enterprise, 500i128),
+    ] {
+        let id = client.create_subscription(
+            &subscriber,
+            &provider,
+            &tier,
+            &token,
+            &amount,
+            &1000u64,
+            &false,
+        );
+        let sub = client.get_subscription(&id);
+        assert_eq!(sub.tier, tier);
+        assert_eq!(sub.amount_per_period, amount);
+        assert_eq!(sub.status, SubscriptionStatus::Active);
+    }
+}
+
+#[test]
+fn test_auto_renew_flag_stored_correctly() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 10_000);
+
+    let id_auto = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &true,
+        &0u64,
+    );
+    let id_manual = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+
+    assert!(client.get_subscription(&id_auto).auto_renew);
+    assert!(!client.get_subscription(&id_manual).auto_renew);
+}
+
+#[test]
+fn test_renew_at_exact_renewal_ledger_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 1000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &500u64,
+        &true,
+        &0u64,
+    );
+
+    // Advance exactly to next_renewal_ledger
+    let sub = client.get_subscription(&id);
+    let advance = sub.next_renewal_ledger - env.ledger().sequence() as u64;
+    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+
+    // Should succeed at the exact boundary
+    client.renew_subscription(&subscriber, &id);
+    assert_eq!(client.get_subscription(&id).total_payments, 2);
+}
+
+#[test]
+fn test_multiple_subscribers_independent_indexes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let sub_a = Address::generate(&env);
+    let sub_b = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &sub_a, 10_000);
+    fund_subscriber(&env, &token, &sub_b, 10_000);
+
+    client.create_subscription(
+        &sub_a,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+    client.create_subscription(
+        &sub_b,
+        &provider,
+        &SubscriptionTier::Standard,
+        &token,
+        &200i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+    client.create_subscription(
+        &sub_a,
+        &provider,
+        &SubscriptionTier::Enterprise,
+        &token,
+        &500i128,
+        &1000u64,
+        &false,
+        &0u64,
+    );
+
+    let ids_a = client.get_subscriptions_by_subscriber(&sub_a);
+    let ids_b = client.get_subscriptions_by_subscriber(&sub_b);
+
+    assert_eq!(ids_a.len(), 2);
+    assert_eq!(ids_b.len(), 1);
+}
+
+// ============================================================================
+// Grace Period Tests (#898)
+// ============================================================================
+
+#[test]
+fn test_renew_on_time_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 10_000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &500u64,
+        &true,
+        &200u64, // grace period
+    );
+
+    let sub = client.get_subscription(&id);
+    let advance = sub.next_renewal_ledger - env.ledger().sequence() as u64;
+    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+
+    client.renew_subscription(&subscriber, &id);
+    assert_eq!(client.get_subscription(&id).total_payments, 2);
+}
+
+#[test]
+fn test_renew_within_grace_period_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 10_000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &500u64,
+        &true,
+        &200u64, // 200-ledger grace period
+    );
+
+    let sub = client.get_subscription(&id);
+    // Advance to next_renewal_ledger + 100 (inside grace period)
+    let advance = sub.next_renewal_ledger + 100 - env.ledger().sequence() as u64;
+    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+
+    client.renew_subscription(&subscriber, &id);
+    assert_eq!(client.get_subscription(&id).total_payments, 2);
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Active);
+}
+
+#[test]
+fn test_renew_after_grace_period_fails_and_expires() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 10_000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &500u64,
+        &true,
+        &200u64, // 200-ledger grace period
+    );
+
+    let sub = client.get_subscription(&id);
+    // Advance past next_renewal_ledger + grace_period_ledgers
+    let advance = sub.next_renewal_ledger + sub.grace_period_ledgers + 1
+        - env.ledger().sequence() as u64;
+    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+
+    let res = client.try_renew_subscription(&subscriber, &id);
+    assert_eq!(res, Err(Ok(VaultError::SubscriptionAlreadyExpired)));
+
+    // Subscription should now be Expired with auto_renew = false
+    let expired_sub = client.get_subscription(&id);
+    assert_eq!(expired_sub.status, SubscriptionStatus::Expired);
+    assert!(!expired_sub.auto_renew);
+}
+
+#[test]
+fn test_expire_overdue_subscriptions_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 100_000);
+
+    // Create two subscriptions with short grace periods
+    let id1 = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &500u64,
+        &false,
+        &50u64,
+    );
+    let id2 = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Standard,
+        &token,
+        &200i128,
+        &500u64,
+        &false,
+        &50u64,
+    );
+
+    let sub1 = client.get_subscription(&id1);
+    // Advance past both grace deadlines
+    let advance = sub1.next_renewal_ledger + 51 - env.ledger().sequence() as u64;
+    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+
+    let expired = client.expire_overdue_subscriptions(&subscriber);
+    assert_eq!(expired, 2);
+
+    assert_eq!(client.get_subscription(&id1).status, SubscriptionStatus::Expired);
+    assert_eq!(client.get_subscription(&id2).status, SubscriptionStatus::Expired);
+}
+
+#[test]
+fn test_reactivate_expired_subscription() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_admin, token) = setup(&env);
+    let subscriber = Address::generate(&env);
+    let provider = Address::generate(&env);
+
+    fund_subscriber(&env, &token, &subscriber, 100_000);
+
+    let id = client.create_subscription(
+        &subscriber,
+        &provider,
+        &SubscriptionTier::Basic,
+        &token,
+        &100i128,
+        &500u64,
+        &true,
+        &50u64,
+    );
+
+    let sub = client.get_subscription(&id);
+    // Expire it
+    let advance = sub.next_renewal_ledger + 51 - env.ledger().sequence() as u64;
+    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+    client.expire_overdue_subscriptions(&subscriber);
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Expired);
+
+    // Reactivate
+    client.reactivate_subscription(&subscriber, &id);
+    let reactivated = client.get_subscription(&id);
+    assert_eq!(reactivated.status, SubscriptionStatus::Active);
+    assert!(reactivated.auto_renew);
+    assert_eq!(reactivated.total_payments, 2);
 }

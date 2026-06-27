@@ -4,10 +4,12 @@ import type {
   GetContractDataResult,
   GetEventsParams,
   GetEventsResult,
+  GetLatestLedgerResult,
   RpcRequest,
   RpcResponse,
   SorobanRpcClientConfig,
 } from "./soroban-rpc.types.js";
+import { requestIdStorage, REQUEST_ID_HEADER } from "../http/requestId.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
@@ -88,15 +90,38 @@ export class SorobanRpcClient {
     );
   }
 
+  /**
+   * Fetch latest ledger information from the Soroban RPC.
+   */
+  async getLatestLedger(): Promise<number> {
+    const result = await this.call<undefined, GetLatestLedgerResult>(
+      "getLatestLedger",
+      undefined,
+    );
+    return result.sequence;
+  }
+
+  /**
+   * Fetch a raw page of contract events from the Soroban RPC, including
+   * `latestLedger` and per-event `pagingToken` needed for cursor-based
+   * pagination.
+   */
+  async getEventsPage(params: GetEventsParams): Promise<GetEventsResult> {
+    return this.call<GetEventsParams, GetEventsResult>("getEvents", params);
+  }
+
   // ─── Internal ──────────────────────────────────────────────────────────────
 
-  private async call<P, R>(method: string, params: P): Promise<R> {
+  private async call<P, R>(method: string, params?: P): Promise<R> {
     const body: RpcRequest<P> = {
       jsonrpc: "2.0",
       id: ++this.requestId,
       method,
-      params,
     };
+
+    if (params !== undefined) {
+      (body as RpcRequest<P> & { params: P }).params = params;
+    }
 
     let lastError: unknown;
 
@@ -139,9 +164,15 @@ export class SorobanRpcClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const requestId = requestIdStorage.getStore();
+    if (requestId) {
+      headers[REQUEST_ID_HEADER] = requestId;
+    }
+
     return this.fetchFn(this.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     }).finally(() => clearTimeout(timer));

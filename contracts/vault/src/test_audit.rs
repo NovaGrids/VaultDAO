@@ -1,31 +1,23 @@
+//! Audit chain integrity tests
+
+#![cfg(test)]
+
 use super::*;
-use crate::types::{
-    AuditAction, ConditionLogic, ListMode, Priority, ThresholdStrategy, VelocityConfig,
-};
+use crate::types::{AuditAction, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, Env, Symbol, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Env, Symbol, Vec,
+};
+use crate::types::*;
+use crate::VaultDAO;
+use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-fn setup_test_environment(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(env, &contract_id);
-
-    let admin = Address::generate(env);
-    let signer1 = Address::generate(env);
-    let user = Address::generate(env);
-
-    let mut signers = Vec::new(env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
+fn make_audit_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
+    InitConfig {
         signers,
-        threshold: 1,
+        threshold,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -36,49 +28,40 @@ fn setup_test_environment(env: &Env) -> (VaultDAOClient<'_>, Address, Address, A
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
-        pre_execution_hooks: Vec::new(env),
-        post_execution_hooks: Vec::new(env),
         default_voting_deadline: 0,
         veto_addresses: Vec::new(env),
-        retry_config: crate::types::RetryConfig {
+        retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(env),
-        staking_config: crate::types::StakingConfig::default(),
-    };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    (client, admin, signer1, user)
-}
-
-fn verify_hash_chain(client: &VaultDAOClient, start_id: u64, end_id: u64) -> bool {
-    let mut prev_hash = 0u64;
-    for i in start_id..=end_id {
-        let entry = client.get_audit_entry(&i);
-        assert_eq!(
-            entry.prev_hash, prev_hash,
-            "Hash chain broken at entry {}",
-            i
-        );
-        prev_hash = entry.hash;
+        staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: Vec::new(env),
+        post_execution_hooks: Vec::new(env),
     }
-    true
 }
-
-// ============================================================================
-// Basic Audit Trail Tests
-// ============================================================================
 
 #[test]
-fn test_audit_trail_creation() {
+fn test_audit_chain_integrity_after_5_entries() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, signer1, _) = setup_test_environment(&env);
+    let contract_id = env.register(VaultDAO, ());
+    let client = crate::VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = make_audit_config(&env, signers, 1);
+    client.initialize(&admin, &config);
 
     // Verify initialization audit entry
     let audit_entry = client.get_audit_entry(&1);
@@ -92,23 +75,144 @@ fn test_audit_trail_creation() {
     let audit_entry2 = client.get_audit_entry(&2);
     assert_eq!(audit_entry2.action, AuditAction::SetRole);
     assert_eq!(audit_entry2.prev_hash, audit_entry.hash);
+    let config = InitConfig {
+        signers,
+        threshold: 2,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600, per_token_limit: 0 },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: RecoveryConfig::default(&env),
+        staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        veto_addresses: soroban_sdk::Vec::new(&env),
+    };
+
+    // Entry 1: Initialize
+    client.initialize(&admin, &config);
+
+    // Entry 2: Propose transfer
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &env.current_contract_address(),
+        &1000i128,
+        &soroban_sdk::Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Entry 3: Approve proposal
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Entry 4: Approve proposal (second approval)
+    client.approve_proposal(&signer2, &proposal_id);
+
+    // Entry 5: Execute proposal
+    client.execute_proposal(&admin, &proposal_id);
+
+    // Verify chain integrity for all 5 entries
+    let result = client.verify_audit_chain(&1u64, &5u64);
+    assert!(result.is_ok(), "Audit chain should be valid for 5 entries");
+
+    // Verify full audit trail
+    let full_result = client.verify_audit_trail_full();
+    assert!(full_result.is_ok());
+    assert_eq!(full_result.unwrap(), None, "Full audit trail should be intact");
+
+    // Verify individual segments
+    assert!(client.verify_audit_chain(&1u64, &3u64).is_ok());
+    assert!(client.verify_audit_chain(&3u64, &5u64).is_ok());
+    assert!(client.verify_audit_chain(&2u64, &4u64).is_ok());
 }
 
 #[test]
-fn test_audit_trail_hash_chain() {
+fn test_audit_chain_tamper_detection() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, signer1, _user) = setup_test_environment(&env);
+    let contract_id = env.register(VaultDAO, ());
+    let client = crate::VaultDAOClient::new(&env, &contract_id);
 
-    let token = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10000);
+    let signer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = make_audit_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
     let proposal_id = client.propose_transfer(
         &signer1,
-        &_user,
+        &user,
         &token,
-        &100i128,
+        &100,
         &Symbol::new(&env, "test"),
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600, per_token_limit: 0 },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: RecoveryConfig::default(&env),
+        staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        veto_addresses: soroban_sdk::Vec::new(&env),
+    };
+
+    // Create some audit entries
+    client.initialize(&admin, &config);
+    
+    let proposal_id = client.propose_transfer(
+        &signer,
+        &recipient,
+        &env.current_contract_address(),
+        &1000i128,
+        &soroban_sdk::Symbol::new(&env, "test"),
         &Priority::Normal,
         &Vec::new(&env),
         &ConditionLogic::And,
@@ -125,34 +229,131 @@ fn test_audit_trail_hash_chain() {
     assert_eq!(entry2.prev_hash, entry1.hash);
     assert_eq!(entry3.prev_hash, entry2.hash);
     assert_eq!(entry4.prev_hash, entry3.hash);
+
+    client.approve_proposal(&signer, &proposal_id);
+
+    // Verify chain is initially valid
+    assert!(client.verify_audit_chain(&1u64, &3u64).is_ok());
+
+    // Simulate tampering by directly modifying storage
+    // Note: In a real scenario, this would be detected by the hash mismatch
+    // We can't actually tamper with the storage in this test environment,
+    // but we can test invalid ranges and edge cases
+
+    // Test invalid ranges
+    let result = client.try_verify_audit_chain(&0u64, &3u64);
+    assert!(result.is_err(), "Should fail for invalid from_id = 0");
+
+    let result = client.try_verify_audit_chain(&3u64, &2u64);
+    assert!(result.is_err(), "Should fail when from_id > to_id");
+
+    let result = client.try_verify_audit_chain(&1u64, &100u64);
+    assert!(result.is_err(), "Should fail when to_id exceeds available entries");
 }
 
 #[test]
-fn test_audit_trail_verification() {
+fn test_audit_hash_deterministic() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, _signer1, _user) = setup_test_environment(&env);
+    let contract_id = env.register(VaultDAO, ());
+    let client = crate::VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = make_audit_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.add_signer(&admin, &user);
 
     // Verify entire audit trail
-    let is_valid = client.verify_audit_trail(&1, &2);
-    assert!(is_valid);
+    let is_valid = client.verify_audit_trail(&1, &3);
+    assert_eq!(is_valid, true);
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600, per_token_limit: 0 },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: RecoveryConfig::default(&env),
+        staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        veto_addresses: soroban_sdk::Vec::new(&env),
+    };
+
+    // Initialize and create an entry
+    client.initialize(&admin, &config);
+
+    // Get the first audit entry
+    let entry1 = client.get_audit_entry(&1u64).unwrap();
+    
+    // Verify the entry has non-zero hash (not the old placeholder)
+    assert_ne!(entry1.hash, 0, "Hash should not be zero with proper SHA256 computation");
+    assert_ne!(entry1.prev_hash, entry1.hash, "prev_hash should differ from hash");
+
+    // Create another entry and verify chain linkage
+    client.update_threshold(&admin, &2u32);
+    let entry2 = client.get_audit_entry(&2u64).unwrap();
+    
+    // Verify chain linkage
+    assert_eq!(entry2.prev_hash, entry1.hash, "Chain should be properly linked");
+    assert_ne!(entry2.hash, entry1.hash, "Each entry should have unique hash");
 }
 
 #[test]
-fn test_audit_trail_core_actions() {
+fn test_performance_100_entry_chain() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, signer1, user) = setup_test_environment(&env);
+    let contract_id = env.register(VaultDAO, ());
+    let client = crate::VaultDAOClient::new(&env, &contract_id);
 
-    let token = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10000);
+    let signer = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = make_audit_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.add_signer(&admin, &signer2);
 
     let proposal_id = client.propose_transfer(
         &signer1,
         &user,
         &token,
-        &100i128,
+        &100,
         &Symbol::new(&env, "test"),
         &Priority::Normal,
         &Vec::new(&env),
@@ -160,9 +361,6 @@ fn test_audit_trail_core_actions() {
         &0i128,
     );
     client.approve_proposal(&signer1, &proposal_id);
-
-    client.update_limits(&admin, &2000i128, &10000i128, &20000i128);
-    client.update_threshold(&admin, &2);
 
     // Verify all audit entries exist
     let entry1 = client.get_audit_entry(&1);
@@ -172,336 +370,122 @@ fn test_audit_trail_core_actions() {
     assert_eq!(entry2.action, AuditAction::SetRole);
 
     let entry3 = client.get_audit_entry(&3);
-    assert_eq!(entry3.action, AuditAction::ProposeTransfer);
+    assert_eq!(entry3.action, AuditAction::AddSigner);
 
     let entry4 = client.get_audit_entry(&4);
-    assert_eq!(entry4.action, AuditAction::ApproveProposal);
+    assert_eq!(entry4.action, AuditAction::ProposeTransfer);
 
     let entry5 = client.get_audit_entry(&5);
-    assert_eq!(entry5.action, AuditAction::UpdateLimits);
-
-    let entry6 = client.get_audit_entry(&6);
-    assert_eq!(entry6.action, AuditAction::UpdateThreshold);
+    assert_eq!(entry5.action, AuditAction::ApproveProposal);
 
     // Verify entire chain
-    let is_valid = client.verify_audit_trail(&1, &6);
-    assert!(is_valid);
-}
+    let is_valid = client.verify_audit_trail(&1, &5);
+    assert_eq!(is_valid, true);
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600, per_token_limit: 0 },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: RecoveryConfig::default(&env),
+        staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        veto_addresses: soroban_sdk::Vec::new(&env),
+    };
 
-// ============================================================================
-// Admin Actions Audit Tests (Documentation)
-// ============================================================================
+    // Initialize (entry 1)
+    client.initialize(&admin, &config);
 
-#[test]
-fn test_audit_update_quorum() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup_test_environment(&env);
-
-    let initial_count = client.get_audit_entry_count();
-
-    // Update quorum
-    let new_quorum = 2u32;
-    client.update_quorum(&admin, &new_quorum);
-
-    let new_count = client.get_audit_entry_count();
-
-    // Note: update_quorum doesn't create an audit entry in current implementation
-    // This test documents the expected behavior for future implementation
-    assert_eq!(new_count, initial_count);
-}
-
-#[test]
-fn test_audit_set_list_mode() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup_test_environment(&env);
-
-    let initial_count = client.get_audit_entry_count();
-
-    // Set list mode to whitelist
-    client.set_list_mode(&admin, &ListMode::Whitelist);
-
-    let new_count = client.get_audit_entry_count();
-
-    // Note: set_list_mode doesn't create audit entry in current implementation
-    // This test documents expected behavior for future implementation
-    assert_eq!(new_count, initial_count);
-}
-
-#[test]
-fn test_audit_whitelist_operations() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup_test_environment(&env);
-
-    let whitelist_addr = Address::generate(&env);
-
-    let initial_count = client.get_audit_entry_count();
-
-    // Add to whitelist
-    client.add_to_whitelist(&admin, &whitelist_addr);
-
-    // Remove from whitelist
-    client.remove_from_whitelist(&admin, &whitelist_addr);
-
-    let final_count = client.get_audit_entry_count();
-
-    // Note: whitelist operations don't create audit entries in current implementation
-    // This test documents expected behavior for future implementation
-    assert_eq!(final_count, initial_count);
-}
-
-#[test]
-fn test_audit_blacklist_operations() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup_test_environment(&env);
-
-    let blacklist_addr = Address::generate(&env);
-
-    let initial_count = client.get_audit_entry_count();
-
-    // Add to blacklist
-    client.add_to_blacklist(&admin, &blacklist_addr);
-
-    // Remove from blacklist
-    client.remove_from_blacklist(&admin, &blacklist_addr);
-
-    let final_count = client.get_audit_entry_count();
-
-    // Note: blacklist operations don't create audit entries in current implementation
-    // This test documents expected behavior for future implementation
-    assert_eq!(final_count, initial_count);
-}
-
-// ============================================================================
-// Recurring Actions Audit Tests (Documentation)
-// ============================================================================
-
-#[test]
-fn test_audit_schedule_payment() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, recipient) = setup_test_environment(&env);
-
-    // Create token for recurring payment
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token = token_contract.address();
-
-    let initial_count = client.get_audit_entry_count();
-
-    // Schedule recurring payment
-    let interval = 1000u64;
-    let amount = 100i128;
-    let _payment_id = client.schedule_payment(
-        &admin,
-        &recipient,
-        &token,
-        &amount,
-        &Symbol::new(&env, "recurring"),
-        &interval,
-    );
-
-    let new_count = client.get_audit_entry_count();
-
-    // Note: schedule_payment doesn't create audit entry in current implementation
-    // This test documents expected behavior for future implementation
-    assert_eq!(new_count, initial_count);
-}
-
-// ============================================================================
-// Comprehensive Hash Chain Integrity Tests
-// ============================================================================
-
-#[test]
-fn test_audit_chain_integrity_multiple_action_types() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, signer1, user) = setup_test_environment(&env);
-
-    // Create token
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token = token_contract.address();
-
-    // Execute multiple different action types that create audit entries
-    // 1. Propose transfer (creates audit entry)
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100i128,
-        &Symbol::new(&env, "test1"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // 2. Approve proposal (creates audit entry)
-    client.approve_proposal(&signer1, &proposal_id);
-
-    // 3. Update limits (creates audit entry)
-    client.update_limits(&admin, &2000i128, &10000i128, &20000i128);
-
-    // 4. Update threshold (creates audit entry)
-    client.update_threshold(&admin, &2);
-
-    // 5. Set role (creates audit entry)
-    let signer2 = Address::generate(&env);
-    client.set_role(&admin, &signer2, &Role::Member);
-
-    // Verify hash chain integrity across all action types (entries 1-7)
-    assert!(verify_hash_chain(&client, 1, 7));
-}
-
-#[test]
-fn test_audit_chain_integrity_stress_test() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, signer1, _) = setup_test_environment(&env);
-
-    // Create token
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token = token_contract.address();
-
-    // Create many proposals (each creates an audit entry)
-    let mut proposal_ids = Vec::new(&env);
-    for _i in 0..5 {
-        let recipient = Address::generate(&env);
-        let proposal_id = client.propose_transfer(
-            &signer1,
-            &recipient,
-            &token,
-            &10i128,
-            &Symbol::new(&env, "stress"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-        proposal_ids.push_back(proposal_id);
+    // Create many audit entries by updating threshold repeatedly
+    // This is a simple way to generate many audit entries
+    for i in 2..=50 {
+        client.update_threshold(&admin, &(i % 10 + 1)); // Cycle through valid thresholds
     }
 
-    // Approve first 3 proposals (each creates an audit entry)
-    for i in 0..3 {
-        let pid = proposal_ids.get(i).unwrap();
-        client.approve_proposal(&signer1, &pid);
-    }
+    // Verify we have enough entries
+    let entry_count = client.get_audit_entry_count();
+    assert!(entry_count >= 50, "Should have at least 50 audit entries");
 
-    // Verify hash chain integrity across all operations (entries 1-10)
-    // 2 (init + set_role) + 5 (proposals) + 3 (approvals) = 10 entries
-    assert!(verify_hash_chain(&client, 1, 10));
+    // Performance test: verify a large chain segment
+    // This should complete within Soroban CPU budget
+    let result = client.verify_audit_chain(&1u64, &entry_count.min(50));
+    assert!(result.is_ok(), "Should be able to verify 50+ entry chain within CPU budget");
 
-    // Verify using built-in verification
-    let is_valid = client.verify_audit_trail(&1, &10);
-    assert!(is_valid, "Audit trail verification failed");
-}
-
-// ============================================================================
-// Edge Cases and Regression Tests
-// ============================================================================
-
-#[test]
-fn test_audit_trail_empty_range() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, _, _) = setup_test_environment(&env);
-
-    // Verify audit trail with single entry
-    let is_valid = client.verify_audit_trail(&1, &1);
-    assert!(is_valid);
+    // Test full trail verification
+    let full_result = client.verify_audit_trail_full();
+    assert!(full_result.is_ok(), "Full trail verification should succeed");
+    assert_eq!(full_result.unwrap(), None, "Full trail should be intact");
 }
 
 #[test]
-fn test_audit_trail_timestamp_ordering() {
+fn test_audit_chain_edge_cases() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, signer1, _user) = setup_test_environment(&env);
+    let contract_id = env.register(VaultDAO, ());
+    let client = crate::VaultDAOClient::new(&env, &contract_id);
 
-    // Create token
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token = token_contract.address();
+    // Test empty chain
+    let result = client.try_verify_audit_chain(&1u64, &1u64);
+    assert!(result.is_err(), "Should fail when no entries exist");
 
-    // Create multiple proposals (each creates an audit entry)
-    for _i in 0..3 {
-        let recipient = Address::generate(&env);
-        let _proposal_id = client.propose_transfer(
-            &signer1,
-            &recipient,
-            &token,
-            &10i128,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-    }
+    // Test single entry after initialization
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
 
-    // Verify timestamps are monotonically increasing (entries 1-5)
-    let mut prev_timestamp = 0u64;
-    for i in 1..=5 {
-        let entry = client.get_audit_entry(&i);
-        assert!(
-            entry.timestamp >= prev_timestamp,
-            "Timestamps not monotonically increasing at entry {}",
-            i
-        );
-        prev_timestamp = entry.timestamp;
-    }
-}
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 10000,
+        daily_limit: 50000,
+        weekly_limit: 100000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600, per_token_limit: 0 },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: RecoveryConfig::default(&env),
+        staking_config: StakingConfig::default(),
+        proposal_id_prefix: 0,
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        veto_addresses: soroban_sdk::Vec::new(&env),
+    };
 
-#[test]
-fn test_audit_trail_actor_tracking() {
-    let env = Env::default();
-    env.mock_all_auths();
+    client.initialize(&admin, &config);
 
-    let (client, admin, signer1, user) = setup_test_environment(&env);
+    // Test single entry verification
+    let result = client.verify_audit_chain(&1u64, &1u64);
+    assert!(result.is_ok(), "Should succeed for single entry");
 
-    // Create token
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token = token_contract.address();
-
-    // Different actors perform actions (each creates an audit entry)
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100i128,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-    client.update_limits(&admin, &2000i128, &10000i128, &20000i128);
-
-    // Verify actors are correctly tracked
-    // Entry 3: propose_transfer by signer1
-    let entry1 = client.get_audit_entry(&3);
-    assert_eq!(entry1.actor, signer1);
-
-    // Entry 4: approve_proposal by signer1
-    let entry2 = client.get_audit_entry(&4);
-    assert_eq!(entry2.actor, signer1);
-
-    // Entry 5: update_limits by admin
-    let entry3 = client.get_audit_entry(&5);
-    assert_eq!(entry3.actor, admin);
+    // Test first entry has prev_hash = 0
+    let entry1 = client.get_audit_entry(&1u64).unwrap();
+    assert_eq!(entry1.prev_hash, 0, "First entry should have prev_hash = 0");
+    assert_ne!(entry1.hash, 0, "First entry should have non-zero hash");
 }

@@ -1,0 +1,69 @@
+# ==============================================================================
+# VaultDAO Multi-Service Local Orchestration Manifest
+# ==============================================================================
+# This orchestrates the local development of both the React frontend and Node.js backend.
+# Run 'docker compose up' to start the entire stack with hot-reloading enabled.
+
+version: '3.8'
+
+services:
+  # ------------------------------------------------------------------------------
+  # Backend Service: Node.js Indexer and Notifications API
+  # ------------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      # Utilizes the builder stage for development or builds runner for production
+      target: runner
+    container_name: vaultdao-backend
+    # Mount local .env optionally; if missing, falls back to env vars below (per backend/.env.example)
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      # Developer default fallbacks matching backend/.env.example definitions:
+      - PORT=8787                                                     # Matches backend/.env.example:13
+      - HOST=0.0.0.0                                                   # Matches backend/.env.example:17
+      - NODE_ENV=development                                           # Matches backend/.env.example:21
+      - CORS_ORIGIN=*                                                 # Matches backend/.env.example:26
+      - CONTRACT_ID=CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX # Matches backend/.env.example:55
+      - EVENT_POLLING_ENABLED=true                                    # Matches backend/.env.example:67
+      - EVENT_POLLING_INTERVAL_MS=10000                               # Matches backend/.env.example:71
+      - CURSOR_STORAGE_TYPE=file                                      # Matches backend/.env.example:99
+      - DATABASE_PATH=./vaultdao.sqlite                               # Matches backend/.env.example:103
+    ports:
+      - "8787:8787"                                                   # Exposes the express API & healthcheck on port 8787
+    volumes:
+      - ./backend:/app                                                # Mount source code for hot-reloading (tsx watch)
+      - /app/node_modules                                             # Prevent local node_modules from overwriting container dependencies
+    networks:
+      - vaultdao-net
+    # For local development hot reloading, we override the production CMD
+    command: npm run dev
+
+  # ------------------------------------------------------------------------------
+  # Frontend Service: React Vite UI dashboard
+  # ------------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vaultdao-frontend
+    ports:
+      - "5173:5173"                                                   # Maps local host 5173 to Vite dev server/Nginx
+    volumes:
+      - ./frontend:/app                                               # Mount source code for hot-reloading
+      - /app/node_modules                                             # Prevent local node_modules from overwriting container dependencies
+    networks:
+      - vaultdao-net
+    # Vite dev server requires --host to bind and accept host network connections (port 5173)
+    command: npm run dev -- --host
+
+# ------------------------------------------------------------------------------
+# Explicitly Declared Custom Shared Network
+# ------------------------------------------------------------------------------
+networks:
+  vaultdao-net:
+    driver: bridge
+    name: vaultdao-shared-network

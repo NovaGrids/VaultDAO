@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import FileUploader, { type UploadedAttachment } from '../FileUploader';
+import { useToast } from '../../hooks/useToast';
+import IPFSUploader, { validateCID, MAX_ATTACHMENTS, type IPFSUploadResult } from '../IPFSUploader';
 import FormRenderer from '../FormRenderer';
 import VoiceToText from '../VoiceToText';
 import type { FormConfig, FormSubmissionData } from '../../types/formBuilder';
@@ -11,7 +12,7 @@ export interface NewProposalFormData {
   token: string;
   amount: string;
   memo: string;
-  attachments?: UploadedAttachment[];
+  attachments?: Array<{ cid: string; name: string }>;
 }
 
 interface NewProposalModalProps {
@@ -22,7 +23,7 @@ interface NewProposalModalProps {
   onClose: () => void;
   onSubmit: (event: React.FormEvent) => void;
   onFieldChange: (field: keyof NewProposalFormData, value: string) => void;
-  onAttachmentsChange?: (attachments: UploadedAttachment[]) => void;
+  onAttachmentsChange?: (attachments: Array<{ cid: string; name: string }>) => void;
   onOpenTemplateSelector: () => void;
   onSaveAsTemplate: () => void;
   onEnableCollaboration?: () => void;
@@ -45,9 +46,39 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   customFormConfig,
 }) => {
   const { getListMode, isWhitelisted, isBlacklisted } = useVaultContract();
+  const { showToast } = useToast();
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [listMode, setListMode] = useState<string>('Disabled');
   const modalRef = useFocusTrap<HTMLDivElement>(isOpen);
+
+  const currentAttachments = formData.attachments ?? [];
+  const remaining = MAX_ATTACHMENTS - currentAttachments.length;
+
+  const handleUploadComplete = useCallback(
+    (result: IPFSUploadResult) => {
+      if (!validateCID(result.cid)) {
+        showToast(`Invalid CID format for "${result.name}". Expected CIDv0 (Qm…) or CIDv1 (bafy…).`, 'error');
+        return;
+      }
+      const next = [...currentAttachments, { cid: result.cid, name: result.name }];
+      onAttachmentsChange?.(next);
+    },
+    [currentAttachments, onAttachmentsChange, showToast],
+  );
+
+  const handleRemoveAttachment = useCallback(
+    (cid: string) => {
+      onAttachmentsChange?.(currentAttachments.filter((a) => a.cid !== cid));
+    },
+    [currentAttachments, onAttachmentsChange],
+  );
+
+  const handleUploadError = useCallback(
+    (message: string) => {
+      showToast(message, 'error');
+    },
+    [showToast],
+  );
 
   const loadListMode = useCallback(async () => {
     try {
@@ -242,12 +273,20 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
           />
 
           <div>
-            <p className="mb-2 text-sm font-medium text-gray-300">Attachments (invoices, receipts, contracts)</p>
-            <FileUploader
-              value={formData.attachments ?? []}
-              onChange={(attachments) => onAttachmentsChange?.(attachments)}
-              maxFiles={10}
-              disabled={loading}
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-sm font-medium text-gray-300">
+                Attachments (invoices, receipts, contracts)
+              </p>
+              <span className="text-xs text-gray-500">
+                {currentAttachments.length}/{MAX_ATTACHMENTS} — {remaining} remaining
+              </span>
+            </div>
+            <IPFSUploader
+              existingAttachments={currentAttachments}
+              onUploadComplete={handleUploadComplete}
+              onRemoveAttachment={handleRemoveAttachment}
+              onError={handleUploadError}
+              maxFiles={MAX_ATTACHMENTS}
             />
           </div>
 

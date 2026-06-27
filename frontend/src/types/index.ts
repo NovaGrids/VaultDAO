@@ -31,6 +31,22 @@ export interface Comment {
 // List mode types
 export type ListMode = 'Disabled' | 'Whitelist' | 'Blacklist';
 
+// Proposal priority level — mirrors the contract's Priority enum (u32)
+export const Priority = {
+  Low: 0,
+  Normal: 1,
+  High: 2,
+  Critical: 3,
+} as const;
+export type Priority = (typeof Priority)[keyof typeof Priority];
+
+// Logic for combining multiple conditions — mirrors the contract's ConditionLogic enum (u32)
+export const ConditionLogic = {
+  And: 0,
+  Or: 1,
+} as const;
+export type ConditionLogic = (typeof ConditionLogic)[keyof typeof ConditionLogic];
+
 // Re-export activity types
 export type { VaultActivity, VaultEventType, VaultEventsFilters, GetVaultEventsResult } from './activity';
 export type { DashboardLayout, DashboardTemplate, WidgetConfig, WidgetType } from './dashboard';

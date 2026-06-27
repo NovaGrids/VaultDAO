@@ -1,6 +1,10 @@
 import { Router } from "express";
 import type { TransactionsService } from "./transactions.service.js";
-import { getTransactionsController } from "./transactions.controller.js";
+import {
+  getTransactionByHashController,
+  getTransactionsByProposalController,
+  getTransactionsController,
+} from "./transactions.controller.js";
 
 /**
  * Creates the transactions router.
@@ -11,6 +15,7 @@ import { getTransactionsController } from "./transactions.controller.js";
 export function createTransactionsRouter(
   service: TransactionsService,
   defaultContractId: string,
+  cache?: any,
 ) {
   const router = Router();
 
@@ -22,9 +27,21 @@ export function createTransactionsRouter(
    * - contractId: string (optional, defaults to env CONTRACT_ID)
    * - cursor:     string (optional) — paging token for next page
    * - limit:      number (optional, default: 20, max: 200)
-   * - order:      "asc" | "desc" (optional, default: "desc")
+   * - token:      string (optional) — filter by token address
+   * - from:       ISO8601 date (optional) — filter by start date
+   * - to:         ISO8601 date (optional) — filter by end date
+   * - minAmount:  number (optional) — filter by minimum amount
+   * - maxAmount:  number (optional) — filter by maximum amount
    */
-  router.get("/", getTransactionsController(service, defaultContractId));
+  router.get("/", getTransactionsController(service, defaultContractId, cache));
+  router.get(
+    "/by-proposal/:proposalId",
+    getTransactionsByProposalController(service, defaultContractId, cache),
+  );
+  router.get(
+    "/:txHash",
+    getTransactionByHashController(service, defaultContractId),
+  );
 
   return router;
 }

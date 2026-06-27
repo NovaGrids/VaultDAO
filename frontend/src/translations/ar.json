@@ -128,5 +128,22 @@
     "dateShort": "DD/MM/YYYY",
     "dateLong": "D MMMM YYYY",
     "time": "HH:mm:ss"
+  },
+  "VaultError": {
+    "UNAUTHORIZED": "إجراء غير مصرح به",
+    "INSUFFICIENT_FUNDS": "أموال الخزانة غير كافية",
+    "INVALID_SIGNATURE": "توقيع غير صالح",
+    "PROPOSAL_NOT_FOUND": "الاقتراح غير موجود",
+    "PROPOSAL_EXPIRED": "انتهت صلاحية الاقتراح"
+  },
+  "Status": {
+    "Active": "نشط",
+    "Pending": "قيد الانتظار",
+    "Expired": "منتهية الصلاحية"
+  },
+  "Actions": {
+    "approve": "يوافق",
+    "reject": "يرفض",
+    "create_payment": "إنشاء الدفع"
   }
 }

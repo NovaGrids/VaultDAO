@@ -1,9 +1,30 @@
 import { useEffect, useRef } from 'react';
+import { onCLS, onFID, onFCP, onLCP, onTTFB, type Metric } from 'web-vitals';
 import { performanceTracker, type PerformanceMetrics } from '../utils/performanceTracking';
+import { recordError } from '../utils/errorAnalytics';
 
 interface PerformanceMonitorProps {
   onMetricsUpdate?: (metrics: PerformanceMetrics) => void;
   enableConsoleLogging?: boolean;
+}
+
+/**
+ * Report a web-vitals metric to the error analytics infrastructure
+ * using the PERF_METRIC code for easy filtering.
+ */
+function reportWebVital(metric: Metric): void {
+  recordError({
+    code: 'PERF_METRIC',
+    message: `${metric.name}: ${metric.value.toFixed(2)} (rating: ${metric.rating})`,
+    context: JSON.stringify({
+      name: metric.name,
+      value: metric.value,
+      rating: metric.rating,
+      delta: metric.delta,
+      id: metric.id,
+      navigationType: metric.navigationType,
+    }),
+  });
 }
 
 export default function PerformanceMonitor({
@@ -13,6 +34,17 @@ export default function PerformanceMonitor({
   const metricsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    const isReportingEnabled = (import.meta as any).env?.VITE_ERROR_REPORTING_ENABLED;
+
+    // Register web-vitals observers when reporting is enabled
+    if (isReportingEnabled) {
+      onCLS(reportWebVital);
+      onFID(reportWebVital);
+      onFCP(reportWebVital);
+      onLCP(reportWebVital);
+      onTTFB(reportWebVital);
+    }
+
     // Track page visibility changes
     const handleVisibilityChange = () => {
       if (document.hidden) {

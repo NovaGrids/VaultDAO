@@ -43,6 +43,24 @@
     <!-- Preconnect to external domains -->
     <link rel="preconnect" href="https://soroban-testnet.stellar.org" />
     <link rel="dns-prefetch" href="https://soroban-testnet.stellar.org" />
+
+    <!--
+      No-flash theme script: runs synchronously before first paint so the
+      correct theme class is on <html> before any CSS is applied.
+      This prevents the flash of wrong theme on page load.
+    -->
+    <script>
+      (function () {
+        var VALID = ['light', 'dark', 'high-contrast'];
+        var stored = null;
+        try { stored = localStorage.getItem('vaultdao_theme'); } catch (e) {}
+        var theme = (stored && VALID.indexOf(stored) !== -1)
+          ? stored
+          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.classList.add(theme);
+        document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -15,6 +15,14 @@ import type {
   Proposal,
   RecurringPayment,
   SdkOptions,
+  StreamingPayment,
+  Subscription,
+  Escrow,
+  ProposalTemplate,
+  Comment,
+  VaultMetrics,
+  Reputation,
+  AuditEntry,
 } from "./types";
 import { Role, ProposalStatus, VaultError, VaultErrorCode } from "./types";
 import {
@@ -399,6 +407,457 @@ export async function executeRecurringPayment(
     u64ToScVal(paymentId)
   );
   return buildTransaction(callerPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming Payments
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a new streaming payment.
+ */
+export async function createStream(
+  senderPublicKey: string,
+  recipient: string,
+  token: string,
+  totalAmount: bigint,
+  flowRate: bigint,
+  startLedger: bigint,
+  endLedger: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "create_stream",
+    addressToScVal(senderPublicKey),
+    addressToScVal(recipient),
+    addressToScVal(token),
+    i128ToScVal(totalAmount),
+    i128ToScVal(flowRate),
+    u64ToScVal(startLedger),
+    u64ToScVal(endLedger)
+  );
+  return buildTransaction(senderPublicKey, op, opts);
+}
+
+/**
+ * Claim streamed funds.
+ */
+export async function claimStream(
+  recipientPublicKey: string,
+  streamId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("claim_stream", u64ToScVal(streamId));
+  return buildTransaction(recipientPublicKey, op, opts);
+}
+
+/**
+ * Pause a streaming payment.
+ */
+export async function pauseStream(
+  senderPublicKey: string,
+  streamId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("pause_stream", u64ToScVal(streamId));
+  return buildTransaction(senderPublicKey, op, opts);
+}
+
+/**
+ * Cancel a streaming payment.
+ */
+export async function cancelStream(
+  senderPublicKey: string,
+  streamId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("cancel_stream", u64ToScVal(streamId));
+  return buildTransaction(senderPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a new subscription.
+ */
+export async function createSubscription(
+  subscriberPublicKey: string,
+  serviceProvider: string,
+  tier: number,
+  token: string,
+  amountPerPeriod: bigint,
+  intervalLedgers: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "create_subscription",
+    addressToScVal(subscriberPublicKey),
+    addressToScVal(serviceProvider),
+    u32ToScVal(tier),
+    addressToScVal(token),
+    i128ToScVal(amountPerPeriod),
+    u64ToScVal(intervalLedgers)
+  );
+  return buildTransaction(subscriberPublicKey, op, opts);
+}
+
+/**
+ * Renew a subscription.
+ */
+export async function renewSubscription(
+  subscriberPublicKey: string,
+  subscriptionId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("renew_subscription", u64ToScVal(subscriptionId));
+  return buildTransaction(subscriberPublicKey, op, opts);
+}
+
+/**
+ * Cancel a subscription.
+ */
+export async function cancelSubscription(
+  subscriberPublicKey: string,
+  subscriptionId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("cancel_subscription", u64ToScVal(subscriptionId));
+  return buildTransaction(subscriberPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Escrow
+// ---------------------------------------------------------------------------
+
+/**
+ * Create an escrow agreement.
+ */
+export async function createEscrow(
+  funderPublicKey: string,
+  recipient: string,
+  token: string,
+  amount: bigint,
+  arbitrator: string,
+  durationLedgers: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "create_escrow",
+    addressToScVal(funderPublicKey),
+    addressToScVal(recipient),
+    addressToScVal(token),
+    i128ToScVal(amount),
+    addressToScVal(arbitrator),
+    u64ToScVal(durationLedgers)
+  );
+  return buildTransaction(funderPublicKey, op, opts);
+}
+
+/**
+ * Complete an escrow milestone.
+ */
+export async function completeMilestone(
+  recipientPublicKey: string,
+  escrowId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("complete_milestone", u64ToScVal(escrowId));
+  return buildTransaction(recipientPublicKey, op, opts);
+}
+
+/**
+ * Release escrow funds.
+ */
+export async function releaseEscrow(
+  arbitratorPublicKey: string,
+  escrowId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("release_escrow", u64ToScVal(escrowId));
+  return buildTransaction(arbitratorPublicKey, op, opts);
+}
+
+/**
+ * Dispute an escrow agreement.
+ */
+export async function disputeEscrow(
+  partyPublicKey: string,
+  escrowId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("dispute_escrow", u64ToScVal(escrowId));
+  return buildTransaction(partyPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a proposal template.
+ */
+export async function createTemplate(
+  creatorPublicKey: string,
+  name: string,
+  description: string,
+  recipientTemplate: string,
+  tokenTemplate: string,
+  amountTemplate: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "create_template",
+    addressToScVal(creatorPublicKey),
+    xdr.ScVal.scvString(name),
+    xdr.ScVal.scvString(description),
+    xdr.ScVal.scvString(recipientTemplate),
+    xdr.ScVal.scvString(tokenTemplate),
+    i128ToScVal(amountTemplate)
+  );
+  return buildTransaction(creatorPublicKey, op, opts);
+}
+
+/**
+ * Propose a transfer from a template.
+ */
+export async function proposeFromTemplate(
+  proposerPublicKey: string,
+  templateId: bigint,
+  recipient: string,
+  amount: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "propose_from_template",
+    u64ToScVal(templateId),
+    addressToScVal(recipient),
+    i128ToScVal(amount)
+  );
+  return buildTransaction(proposerPublicKey, op, opts);
+}
+
+/**
+ * Deactivate a proposal template.
+ */
+export async function deactivateTemplate(
+  creatorPublicKey: string,
+  templateId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("deactivate_template", u64ToScVal(templateId));
+  return buildTransaction(creatorPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Comments
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a comment to a proposal.
+ */
+export async function addComment(
+  authorPublicKey: string,
+  proposalId: bigint,
+  content: string,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "add_comment",
+    u64ToScVal(proposalId),
+    xdr.ScVal.scvString(content)
+  );
+  return buildTransaction(authorPublicKey, op, opts);
+}
+
+/**
+ * Edit a comment.
+ */
+export async function editComment(
+  authorPublicKey: string,
+  commentId: bigint,
+  newContent: string,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "edit_comment",
+    u64ToScVal(commentId),
+    xdr.ScVal.scvString(newContent)
+  );
+  return buildTransaction(authorPublicKey, op, opts);
+}
+
+/**
+ * Get comments for a proposal.
+ */
+export async function getComments(
+  proposalId: bigint,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<Comment[]> {
+  const contract = getContract(opts);
+  const op = contract.call("get_comments", u64ToScVal(proposalId));
+  const raw = await simulateReadOnly<Record<string, unknown>[]>(
+    op,
+    opts,
+    callerPublicKey
+  );
+  return raw.map((c) => ({
+    id: BigInt(c.id as number),
+    proposalId: BigInt(c.proposal_id as number),
+    author: c.author as string,
+    content: c.content as string,
+    createdAt: BigInt(c.created_at as number),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Recovery
+// ---------------------------------------------------------------------------
+
+/**
+ * Propose a recovery action.
+ */
+export async function proposeRecovery(
+  proposerPublicKey: string,
+  recoveryType: string,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "propose_recovery",
+    xdr.ScVal.scvString(recoveryType)
+  );
+  return buildTransaction(proposerPublicKey, op, opts);
+}
+
+/**
+ * Approve a recovery proposal.
+ */
+export async function approveRecovery(
+  approverPublicKey: string,
+  recoveryId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("approve_recovery", u64ToScVal(recoveryId));
+  return buildTransaction(approverPublicKey, op, opts);
+}
+
+/**
+ * Execute a recovery action.
+ */
+export async function executeRecovery(
+  executorPublicKey: string,
+  recoveryId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  const contract = getContract(opts);
+  const op = contract.call("execute_recovery", u64ToScVal(recoveryId));
+  return buildTransaction(executorPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Read Functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Get vault metrics.
+ */
+export async function getVaultMetrics(
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<VaultMetrics> {
+  const contract = getContract(opts);
+  const op = contract.call("get_vault_metrics");
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey
+  );
+  return {
+    executedCount: BigInt(raw.executed_count as number),
+    rejectedCount: BigInt(raw.rejected_count as number),
+    expiredCount: BigInt(raw.expired_count as number),
+    totalVolume: BigInt(raw.total_volume as number),
+  };
+}
+
+/**
+ * Get reputation for an address.
+ */
+export async function getReputation(
+  address: string,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<Reputation> {
+  const contract = getContract(opts);
+  const op = contract.call("get_reputation", addressToScVal(address));
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey
+  );
+  return {
+    address: raw.address as string,
+    score: BigInt(raw.score as number),
+    proposalsCreated: BigInt(raw.proposals_created as number),
+    proposalsApproved: BigInt(raw.proposals_approved as number),
+    lastUpdated: BigInt(raw.last_updated as number),
+  };
+}
+
+/**
+ * Get audit trail entries.
+ */
+export async function getAuditTrail(
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<AuditEntry[]> {
+  const contract = getContract(opts);
+  const op = contract.call("get_audit_trail");
+  const raw = await simulateReadOnly<Record<string, unknown>[]>(
+    op,
+    opts,
+    callerPublicKey
+  );
+  return raw.map((e) => ({
+    id: BigInt(e.id as number),
+    action: e.action as string,
+    actor: e.actor as string,
+    proposalId: BigInt(e.proposal_id as number),
+    timestamp: BigInt(e.timestamp as number),
+  }));
+}
+
+/**
+ * Get delegation chain for an address.
+ */
+export async function getDelegationChain(
+  address: string,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<string[]> {
+  const contract = getContract(opts);
+  const op = contract.call("get_delegation_chain", addressToScVal(address));
+  return simulateReadOnly<string[]>(op, opts, callerPublicKey);
 }
 
 // ---------------------------------------------------------------------------

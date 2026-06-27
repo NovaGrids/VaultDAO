@@ -26,7 +26,7 @@ const DEFAULT_STATE: OnboardingState = {
   currentStep: 0,
   isActive: false,
   completedSteps: [],
-  achievements: ACHIEVEMENTS.map(a => ({ ...a })),
+  achievements: ACHIEVEMENTS.map((a: Achievement) => ({ ...a })),
   completedOnboarding: false,
   lastUpdated: Date.now(),
 };

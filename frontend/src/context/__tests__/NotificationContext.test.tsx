@@ -5,6 +5,11 @@
  * In a real project, you would use Jest or Vitest with @testing-library/react.
  */
 
+import React from 'react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import { NotificationProvider, useNotifications } from '../NotificationContext';
+
 import type { NotificationCategory, NotificationPriority } from '../../types/notification';
 
 // Mock localStorage
@@ -257,6 +262,25 @@ describe('NotificationContext', () => {
     
     const ids = result.current.notifications.map((n) => n.id);
     expect(new Set(ids).size).toBe(2); // All IDs should be unique
+  });
+
+  it('enforces maximum notification count by evicting oldest entries', () => {
+    const { result } = renderHook(() => useNotifications(), { wrapper });
+
+    act(() => {
+      for (let i = 0; i < 550; i++) {
+        result.current.addNotification({
+          title: `Test ${i}`,
+          message: `Message ${i}`,
+          category: 'system',
+          priority: 'normal',
+        });
+      }
+    });
+
+    expect(result.current.notifications).toHaveLength(500);
+    expect(result.current.notifications[0].title).toBe('Test 549');
+    expect(result.current.notifications[result.current.notifications.length - 1].title).toBe('Test 50');
   });
 
   it('throws error when used outside provider', () => {

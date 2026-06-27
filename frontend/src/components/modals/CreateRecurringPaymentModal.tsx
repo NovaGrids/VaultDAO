@@ -264,7 +264,7 @@ const CreateRecurringPaymentModal: React.FC<CreateRecurringPaymentModalProps> = 
               type="hidden" 
               {...register('interval', { 
                 required: 'Interval is required',
-                min: { value: 1, message: 'Please select or set a valid interval' }
+                min: { value: 3600, message: 'Interval must be at least 1 hour' }
               })} 
             />
 

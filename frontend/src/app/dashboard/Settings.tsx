@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   getExportHistory,
   clearExportHistory,
@@ -17,6 +18,10 @@ import {
   AlertTriangle,
   Loader2,
   RefreshCw,
+  Activity,
+  Plus,
+  X,
+  Check,
 } from 'lucide-react';
 import RecipientListManagement from '../../components/RecipientListManagement';
 import RoleManagement from '../../components/RoleManagement';
@@ -27,8 +32,12 @@ import SpendingLimitsPanel from '../../components/SpendingLimitsPanel';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
 import { formatTokenAmount, truncateAddress } from '../../utils/formatters';
+import { isValidStellarAddress } from '../../constants/tokens';
+import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import { useOnboarding } from '../../context/OnboardingProvider';
 import { Play } from 'lucide-react';
+import PerformanceDashboard from '../../components/PerformanceDashboard';
+import { AccessibilitySettings } from '../../components/AccessibilitySettings';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -78,15 +87,30 @@ function reDownloadItem(item: ExportItemWithContent): void {
 }
 
 const Settings: React.FC = () => {
-  const { getVaultConfig } = useVaultContract();
+  const { getVaultConfig, addSigner, removeSigner, updateThreshold } = useVaultContract();
   const { address } = useWallet();
   const onboarding = useOnboarding();
+  const { t } = useTranslation();
   const [history, setHistory] = useState<ExportHistoryItem[]>(() => getExportHistory());
   const [showRecipientLists, setShowRecipientLists] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [vaultConfig, setVaultConfig] = useState<Awaited<ReturnType<typeof getVaultConfig>> | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [configError, setConfigError] = useState<string | null>(null);
+
+  // Add signer state
+  const [newSignerAddress, setNewSignerAddress] = useState('');
+  const [addSignerError, setAddSignerError] = useState<string | null>(null);
+  const [addSignerLoading, setAddSignerLoading] = useState(false);
+
+  // Remove signer state
+  const [removeConfirmAddress, setRemoveConfirmAddress] = useState<string | null>(null);
+  const [removeSignerLoading, setRemoveSignerLoading] = useState(false);
+
+  // Threshold state
+  const [newThreshold, setNewThreshold] = useState('');
+  const [thresholdError, setThresholdError] = useState<string | null>(null);
+  const [thresholdLoading, setThresholdLoading] = useState(false);
 
   const loadVaultConfig = useCallback(async () => {
     setConfigLoading(true);
@@ -104,6 +128,63 @@ const Settings: React.FC = () => {
   useEffect(() => {
     loadVaultConfig();
   }, [loadVaultConfig]);
+
+  const handleAddSigner = async () => {
+    const addr = newSignerAddress.trim();
+    if (!isValidStellarAddress(addr)) {
+      setAddSignerError('Invalid Stellar address format');
+      return;
+    }
+    setAddSignerError(null);
+    setAddSignerLoading(true);
+    try {
+      await addSigner(addr);
+      setNewSignerAddress('');
+      await loadVaultConfig();
+    } catch (err: unknown) {
+      setAddSignerError(err instanceof Error ? err.message : 'Failed to add signer');
+    } finally {
+      setAddSignerLoading(false);
+    }
+  };
+
+  const handleRemoveSigner = async () => {
+    if (!removeConfirmAddress) return;
+    setRemoveSignerLoading(true);
+    try {
+      await removeSigner(removeConfirmAddress);
+      setRemoveConfirmAddress(null);
+      await loadVaultConfig();
+    } catch (err: unknown) {
+      setConfigError(err instanceof Error ? err.message : 'Failed to remove signer');
+    } finally {
+      setRemoveSignerLoading(false);
+    }
+  };
+
+  const handleUpdateThreshold = async () => {
+    const val = parseInt(newThreshold, 10);
+    if (isNaN(val) || val < 1) {
+      setThresholdError('Threshold must be at least 1');
+      return;
+    }
+    const signerCount = vaultConfig?.signers.length ?? 0;
+    if (val > signerCount) {
+      setThresholdError(`Threshold cannot exceed signer count (${signerCount})`);
+      return;
+    }
+    setThresholdError(null);
+    setThresholdLoading(true);
+    try {
+      await updateThreshold(val);
+      setNewThreshold('');
+      await loadVaultConfig();
+    } catch (err: unknown) {
+      setThresholdError(err instanceof Error ? err.message : 'Failed to update threshold');
+    } finally {
+      setThresholdLoading(false);
+    }
+  };
 
   const handleClearHistory = () => {
     clearExportHistory();
@@ -148,20 +229,19 @@ const Settings: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-3xl font-bold">Settings</h2>
+      <h2 className="text-3xl font-bold">{t('settings.title')}</h2>
 
       {/* Emergency Controls */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <EmergencyControls isAdmin={isAdmin} isSigner={isSigner} />
       </div>
 
+      {/* Vault Configuration */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
           <div>
-            <h3 className="text-lg font-semibold">Vault Configuration</h3>
-            <p className="text-gray-400 text-sm mt-1">
-              Current multisig settings, signer set, limits, and timelock rules.
-            </p>
+            <h3 className="text-lg font-semibold">{t('settings.vaultConfig')}</h3>
+            <p className="text-gray-400 text-sm mt-1">{t('settings.vaultConfigDesc')}</p>
           </div>
           <button
             type="button"
@@ -193,44 +273,73 @@ const Settings: React.FC = () => {
             <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
                 <User size={14} />
-                Your Role
+                {t('settings.yourRole')}
               </p>
               <p className={`text-lg font-semibold ${roleInfo.color}`}>{roleInfo.label}</p>
               <p className="text-xs text-gray-500 mt-2">
-                {vaultConfig.isCurrentUserSigner ? 'You are in the signer set.' : 'You are not in the signer set.'}
+                {vaultConfig.isCurrentUserSigner ? t('settings.signerSetNote') : t('settings.notSignerSetNote')}
               </p>
             </div>
 
             <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
                 <Key size={14} />
-                Threshold
+                {t('settings.threshold')}
               </p>
               <p className="text-lg font-semibold">
                 {vaultConfig.threshold} of {Math.max(signerAddresses.length, vaultConfig.signers.length)} signatures required
               </p>
-              <p className="text-xs text-gray-500 mt-2">Approvals needed before execution is possible.</p>
+              <p className="text-xs text-gray-500 mt-2">{t('settings.approvalsNeeded')}</p>
+              {isAdmin && (
+                <div className="mt-3 space-y-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={signerAddresses.length}
+                    value={newThreshold}
+                    onChange={(e) => { setNewThreshold(e.target.value); setThresholdError(null); }}
+                    placeholder={`1–${signerAddresses.length}`}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                  {thresholdError && <p className="text-xs text-red-400">{thresholdError}</p>}
+                  <button
+                    onClick={handleUpdateThreshold}
+                    disabled={thresholdLoading || !newThreshold}
+                    className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+                  >
+                    {thresholdLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                    Update Threshold
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
                 <Clock size={14} />
-                Timelock
+                {t('settings.timelock')}
               </p>
               <p className="text-sm text-gray-200">
-                Trigger: <span className="font-semibold">{formatTokenAmount(vaultConfig.timelockThreshold)}</span>
+                {t('settings.timelockTrigger')}: <span className="font-semibold">{formatTokenAmount(vaultConfig.timelockThreshold)}</span>
               </p>
               <p className="text-sm text-gray-200 mt-1">
-                Delay: <span className="font-semibold">{formatTimelockDelay(vaultConfig.timelockDelay)}</span>
+                {t('settings.timelockDelay')}: <span className="font-semibold">{formatTimelockDelay(vaultConfig.timelockDelay)}</span>
                 <span className="text-gray-500"> ({vaultConfig.timelockDelay} ledgers)</span>
               </p>
             </div>
 
             <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4 md:col-span-2 xl:col-span-2">
-              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
-                <Users size={14} />
-                Signers ({signerAddresses.length})
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs uppercase tracking-wide text-gray-400 flex items-center gap-2">
+                  <Users size={14} />
+                  {t('settings.signers')} ({signerAddresses.length})
+                </p>
+                {!isAdmin && (
+                  <span className="text-xs text-gray-500 italic flex items-center gap-1">
+                    <Shield size={12} /> Read-only
+                  </span>
+                )}
+              </div>
               {signerAddresses.length > 0 ? (
                 <ul className="space-y-2">
                   {signerAddresses.map((signer) => (
@@ -247,34 +356,68 @@ const Settings: React.FC = () => {
                           {truncateAddress(signer, 8, 6)}
                         </p>
                         {isCurrentUserSigner(signer) ? (
-                          <p className="text-xs text-blue-300 mt-0.5">Current wallet</p>
+                          <p className="text-xs text-blue-300 mt-0.5">{t('settings.currentWallet')}</p>
                         ) : null}
                       </div>
-                      <CopyButton text={signer} />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <CopyButton text={signer} />
+                        {isAdmin && (
+                          <button
+                            onClick={() => setRemoveConfirmAddress(signer)}
+                            className="p-1.5 rounded text-red-400 hover:bg-red-500/10 transition-colors"
+                            title="Remove signer"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-gray-400">Signer list not available from current contract view methods.</p>
+                <p className="text-sm text-gray-400">{t('settings.signerListUnavailable')}</p>
+              )}
+              {isAdmin && (
+                <div className="mt-4 space-y-2 pt-4 border-t border-gray-700">
+                  <p className="text-xs text-gray-400 font-medium">Add Signer</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newSignerAddress}
+                      onChange={(e) => { setNewSignerAddress(e.target.value); setAddSignerError(null); }}
+                      placeholder="G... Stellar address"
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                    <button
+                      onClick={handleAddSigner}
+                      disabled={addSignerLoading || !newSignerAddress.trim()}
+                      className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+                    >
+                      {addSignerLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                      Add
+                    </button>
+                  </div>
+                  {addSignerError && <p className="text-xs text-red-400">{addSignerError}</p>}
+                </div>
               )}
             </div>
 
             <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-2 flex items-center gap-2">
                 <Wallet size={14} />
-                Spending Limits
+                {t('settings.spendingLimits')}
               </p>
               <dl className="space-y-1.5 text-sm text-gray-200">
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="text-gray-400">Per-proposal</dt>
+                  <dt className="text-gray-400">{t('settings.perProposal')}</dt>
                   <dd className="font-semibold">{formatTokenAmount(vaultConfig.spendingLimit)}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="text-gray-400">Daily</dt>
+                  <dt className="text-gray-400">{t('settings.daily')}</dt>
                   <dd className="font-semibold">{formatTokenAmount(vaultConfig.dailyLimit)}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="text-gray-400">Weekly</dt>
+                  <dt className="text-gray-400">{t('settings.weekly')}</dt>
                   <dd className="font-semibold">{formatTokenAmount(vaultConfig.weeklyLimit)}</dd>
                 </div>
               </dl>
@@ -285,24 +428,20 @@ const Settings: React.FC = () => {
 
       {/* Wallet Comparison */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <h3 className="text-lg font-semibold mb-4">Supported Wallets</h3>
-        <p className="text-gray-400 text-sm mb-4">
-          Compare wallet features. Select your preferred wallet in the header to connect.
-        </p>
+        <h3 className="text-lg font-semibold mb-4">{t('settings.supportedWallets')}</h3>
+        <p className="text-gray-400 text-sm mb-4">{t('settings.supportedWalletsDesc')}</p>
         <WalletComparison />
       </div>
 
       {/* Role Management Section */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <h3 className="text-lg font-semibold mb-4">Role Management</h3>
+        <h3 className="text-lg font-semibold mb-4">{t('settings.roleManagement')}</h3>
         <RoleManagement />
       </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-        <h3 className="text-lg font-semibold mb-4">Export history</h3>
-        <p className="text-gray-400 text-sm mb-4">
-          Recent exports from Proposals, Activity, and other data sources.
-        </p>
+        <h3 className="text-lg font-semibold mb-4">{t('settings.exportHistory')}</h3>
+        <p className="text-gray-400 text-sm mb-4">{t('settings.exportHistoryDesc')}</p>
 
         {history.length > 0 ? (
           <>
@@ -335,7 +474,7 @@ const Settings: React.FC = () => {
                       aria-label={hasStoredContent(item) ? `Re-export ${item.filename}` : 'Re-export not available'}
                     >
                       <Download size={18} aria-hidden="true" />
-                      <span className="hidden sm:inline">Re-export</span>
+                      <span className="hidden sm:inline">{t('settings.reExport')}</span>
                     </button>
                   </div>
                 </li>
@@ -350,17 +489,15 @@ const Settings: React.FC = () => {
                 aria-label="Clear export history"
               >
                 <Trash2 size={18} aria-hidden="true" />
-                Clear history
+                {t('settings.clearHistory')}
               </button>
             </div>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <FileText size={48} className="text-gray-600 mb-3" aria-hidden="true" />
-            <p className="text-gray-400">No export history yet.</p>
-            <p className="text-sm text-gray-500 mt-1">
-              Exports from Proposals and Activity will appear here.
-            </p>
+            <p className="text-gray-400">{t('settings.noExportHistory')}</p>
+            <p className="text-sm text-gray-500 mt-1">{t('settings.noExportHistoryDesc')}</p>
           </div>
         )}
       </div>
@@ -369,20 +506,18 @@ const Settings: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Shield className="text-blue-400" size={24} aria-hidden="true" />
-            <h3 className="text-lg font-semibold">Recipient Lists</h3>
+            <h3 className="text-lg font-semibold">{t('settings.recipientLists')}</h3>
           </div>
           <button
             onClick={() => setShowRecipientLists(!showRecipientLists)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
             aria-expanded={showRecipientLists}
-            aria-label={showRecipientLists ? 'Hide recipient lists' : 'Manage recipient lists'}
+            aria-label={showRecipientLists ? t('common.hide') : t('settings.manageLists')}
           >
-            {showRecipientLists ? 'Hide' : 'Manage Lists'}
+            {showRecipientLists ? t('common.hide') : t('settings.manageLists')}
           </button>
         </div>
-        <p className="text-gray-400 text-sm mb-4">
-          Control which addresses can receive funds through whitelist or blacklist modes.
-        </p>
+        <p className="text-gray-400 text-sm mb-4">{t('settings.recipientListsDesc')}</p>
         {showRecipientLists && <RecipientListManagement />}
       </div>
 
@@ -393,19 +528,41 @@ const Settings: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Play className="text-purple-400" size={24} aria-hidden="true" />
-            <h3 className="text-lg font-semibold">Onboarding</h3>
+            <h3 className="text-lg font-semibold">{t('settings.onboarding')}</h3>
           </div>
           <button
             onClick={() => onboarding.restartOnboarding()}
             className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 min-h-[44px]"
           >
-            Restart Tour
+            {t('settings.restartTour')}
           </button>
         </div>
-        <p className="text-gray-400 text-sm">
-          Need a refresher? Restart the onboarding tour to walk through the platform features again.
-        </p>
+        <p className="text-gray-400 text-sm">{t('settings.onboardingDesc')}</p>
       </div>
+
+      {/* Accessibility Settings */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <AccessibilitySettings />
+      </div>
+
+      {/* Performance Dashboard */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Activity className="text-blue-400" size={24} aria-hidden="true" />
+          <h3 className="text-lg font-semibold">{t('performance.title')}</h3>
+        </div>
+        <PerformanceDashboard />
+      </div>
+
+      <ConfirmationModal
+        isOpen={!!removeConfirmAddress}
+        title="Remove Signer"
+        message={`Remove ${removeConfirmAddress ? truncateAddress(removeConfirmAddress, 8, 6) : ''} from the vault signers? This cannot be undone without re-adding them.`}
+        confirmText={removeSignerLoading ? 'Removing…' : 'Remove'}
+        onConfirm={handleRemoveSigner}
+        onCancel={() => setRemoveConfirmAddress(null)}
+        isDestructive={true}
+      />
     </div>
   );
 };

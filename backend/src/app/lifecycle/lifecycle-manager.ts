@@ -23,6 +23,57 @@ export class LifecycleManager {
   private hooks: ShutdownHook[] = [];
   private shuttingDown = false;
   private shutdownTimeout: NodeJS.Timeout | null = null;
+  private initialized = false;
+  private inFlightRequests = 0;
+
+  /**
+   * Increment the in-flight request counter
+   */
+  public incrementInFlight(): void {
+    this.inFlightRequests++;
+  }
+
+  /**
+   * Decrement the in-flight request counter
+   */
+  public decrementInFlight(): void {
+    this.inFlightRequests = Math.max(0, this.inFlightRequests - 1);
+  }
+
+  /**
+   * Get the current in-flight request count
+   */
+  public getInFlightCount(): number {
+    return this.inFlightRequests;
+  }
+
+  /**
+   * Check if the service is shutting down
+   */
+  public isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  /**
+   * Wait for in-flight requests to complete or timeout
+   */
+  private async waitForInFlightRequests(): Promise<void> {
+    const startTime = Date.now();
+    
+    while (this.inFlightRequests > 0) {
+      // Check if we've exceeded the shutdown timeout
+      if (Date.now() - startTime > this.shutdownTimeoutMs) {
+        this.logger.warn("shutdown timeout exceeded waiting for in-flight requests", {
+          inFlightRequests: this.inFlightRequests,
+          timeoutMs: this.shutdownTimeoutMs,
+        });
+        break;
+      }
+      
+      // Wait for a short period before checking again
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
 
   constructor(
     private server: Server | null = null,
@@ -50,6 +101,12 @@ export class LifecycleManager {
    * Initialize signal handlers and start listening for shutdown signals.
    */
   public initialize(): void {
+    if (this.initialized) {
+      this.logger.warn("lifecycle manager already initialized, skipping");
+      return;
+    }
+    this.initialized = true;
+
     const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
     signals.forEach((signal) => {
@@ -123,7 +180,10 @@ export class LifecycleManager {
         await this.closeServer();
       }
 
-      // 2. Execute shutdown hooks (background jobs, queues, etc.) after HTTP is drained
+      // 2. Wait for in-flight requests to complete
+      await this.waitForInFlightRequests();
+
+      // 3. Execute shutdown hooks (background jobs, queues, etc.) after HTTP is drained
       await this.executeShutdownHooks();
 
       const totalDuration = Date.now() - startTime;

@@ -4,7 +4,7 @@ export interface RpcRequest<P = unknown> {
   readonly jsonrpc: "2.0";
   readonly id: number;
   readonly method: string;
-  readonly params: P;
+  readonly params?: P;
 }
 
 export interface RpcResponse<R = unknown> {
@@ -58,6 +58,14 @@ export interface LedgerEntry {
 export interface GetContractDataResult {
   readonly entries: LedgerEntry[] | null;
   readonly latestLedger: number;
+}
+
+// ─── getLatestLedger ─────────────────────────────────────────────────────────
+
+export interface GetLatestLedgerResult {
+  readonly id?: string;
+  readonly protocolVersion?: number;
+  readonly sequence: number;
 }
 
 // ─── Client config ────────────────────────────────────────────────────────────

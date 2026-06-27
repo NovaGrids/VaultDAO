@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare, RefreshCw, Loader2 } from 'lucide-react';
 import SignatureStatus, { type Signer } from '../SignatureStatus';
-import SignatureFlow, { type FlowStep } from '../SignatureFlow';
+import SignatureFlow from '../SignatureFlow';
 import QRSignature from '../QRSignature';
+import ProposalPhaseTimeline, { type ProposalPhase } from '../proposals/ProposalPhaseTimeline';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
+import VersionHistory from '../collaborative/VersionHistory';
 
 export interface Proposal {
     id: string;
@@ -20,6 +22,8 @@ export interface Proposal {
     createdAt?: string;
     title?: string;
     description?: string;
+    /** Optional multi-phase execution steps */
+    phases?: ProposalPhase[];
 }
 
 interface ProposalDetailModalProps {
@@ -31,12 +35,13 @@ interface ProposalDetailModalProps {
 const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClose, proposal }) => {
     const [activeTab, setActiveTab] = useState<'details' | 'comments'>('details');
     const { getProposalSignatures, approveProposal, rejectProposal, exportSignatures } = useVaultContract();
-    const { address } = useWallet();
+    const { address, accountRole } = useWallet();
     const [signers, setSigners] = useState<Signer[]>([]);
     const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
     const [signaturesLoading, setSignaturesLoading] = useState(false);
     const [showQR, setShowQR] = useState(false);
+    const [restoredDraft, setRestoredDraft] = useState<Partial<{ recipient: string; token: string; amount: string; memo: string }> | null>(null);
 
     const signingPayload = proposal
         ? `${window.location.origin}/sign?proposal=${proposal.id}&recipient=${encodeURIComponent(proposal.recipient)}&amount=${encodeURIComponent(proposal.amount ?? '0')}&token=${encodeURIComponent(proposal.token ?? 'NATIVE')}`
@@ -111,13 +116,6 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
         }
     };
 
-    const flowSteps: FlowStep[] = [
-        { label: 'Proposal Created', status: 'completed', timestamp: proposal.createdAt },
-        { label: `Collecting Signatures (${signedCount}/${threshold})`, status: signedCount >= threshold ? 'completed' : 'active' },
-        { label: 'Timelock Period', status: proposal.status === 'Timelocked' ? 'active' : proposal.status === 'Executed' ? 'completed' : 'pending' },
-        { label: 'Execution', status: proposal.status === 'Executed' ? 'completed' : 'pending' },
-    ];
-
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
             <div className="bg-secondary w-full max-w-2xl h-fit max-h-[90vh] flex flex-col rounded-2xl border border-gray-800 shadow-2xl overflow-hidden">
@@ -161,7 +159,20 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                     {/* Signing Progress */}
                     <div>
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Signing Progress</h3>
-                        <SignatureFlow steps={flowSteps} />
+                        <SignatureFlow
+                            proposal={{
+                                id: parseInt(proposal.id, 10),
+                                recipient: proposal.recipient,
+                                amount: proposal.amount ?? '0',
+                                token: proposal.token ?? 'NATIVE',
+                                memo: proposal.memo ?? '',
+                                approvalCount: signedCount,
+                                threshold,
+                                alreadyApproved: Boolean(address && approvedBy.includes(address)),
+                            }}
+                            onComplete={onClose}
+                            onCancel={onClose}
+                        />
                     </div>
 
                     {/* Signatures */}
@@ -199,7 +210,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         </button>
                         {showQR && (
                             <div className="mt-4">
-                                <QRSignature transactionXDR={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
+                                <QRSignature proposalId={proposal.id} contractAddress={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
                             </div>
                         )}
                     </div>
@@ -207,7 +218,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                     {/* QR Code — Desktop */}
                     <div className="hidden lg:block">
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Mobile Signing</h3>
-                        <QRSignature transactionXDR={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
+                        <QRSignature proposalId={proposal.id} contractAddress={signingPayload} onRefresh={() => void loadSignatures()} signed={signedCount >= threshold} />
                     </div>
 
                     {/* Timeline */}
@@ -235,9 +246,41 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         </div>
                     </div>
 
+                    {/* Draft Version History */}
+                    <div>
+                        <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Draft History</h3>
+                        <VersionHistory
+                            draftId={`proposal-${proposal.id}`}
+                            proposalAuthor={proposal.proposer ?? ''}
+                            viewerAddress={address}
+                            viewerRole={accountRole}
+                            onRestore={(version) => setRestoredDraft(version)}
+                        />
+                        {restoredDraft && (
+                            <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+                                <p className="font-semibold">Restored snapshot loaded</p>
+                                <p className="mt-1 text-emerald-200/90">
+                                    Recipient: {restoredDraft.recipient || '—'} | Token: {restoredDraft.token || '—'} | Amount: {restoredDraft.amount || '—'}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Phase Timeline (#1106) */}
+                    {proposal.phases && (
+                        <div>
+                            <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">
+                                Execution Phases
+                            </h3>
+                            <ProposalPhaseTimeline
+                                phases={proposal.phases}
+                                isExecuting={proposal.status === 'Approved'}
+                            />
+                        </div>
+                    )}
+
                     {/* Proposer & Recipient */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {[
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">                        {[
                             { label: 'Proposer', value: proposal.proposer || '—' },
                             { label: 'Recipient', value: proposal.recipient },
                         ].map(({ label, value }) => (

@@ -1,4 +1,5 @@
 import type { BackendEnv } from "../../config/env.js";
+import { createLogger } from "../../shared/logging/logger.js";
 import {
   NormalizedRecurringPayment,
   RawRecurringPayment,
@@ -8,6 +9,19 @@ import {
   RecurringIndexerState,
   RecurringStatus,
 } from "./types.js";
+
+/**
+ * A due payment enriched with the reason it was triggered.
+ * - exact       : next_payment_ledger === current_ledger
+ * - jitter_early: payment was within the jitter window before its due date
+ * - jitter_late : payment is past due but within the jitter look-back window
+ */
+export interface DuePaymentResult {
+  readonly payment: NormalizedRecurringPayment;
+  readonly trigger_reason: "exact" | "jitter_early" | "jitter_late";
+}
+
+const logger = createLogger("recurring-indexer");
 
 /**
  * Storage adapter interface for recurring payments.
@@ -42,6 +56,11 @@ export class MemoryRecurringStorageAdapter implements RecurringStorageAdapter {
     let payments = Array.from(this.payments.values());
 
     if (filter) {
+      if (filter.contractId) {
+        payments = payments.filter(
+          (p) => p.metadata.contractId === filter.contractId,
+        );
+      }
       if (filter.status) {
         payments = payments.filter((p) => p.status === filter.status);
       }
@@ -131,6 +150,29 @@ export function transformRawRecurringPayment(
     events.push(RecurringEvent.EXECUTED);
   }
 
+  // Calculate computed fields
+  const nextPaymentLedger = Number(raw.next_payment_ledger);
+  const currentLedger = ledger;
+  const interval = Number(raw.interval);
+
+  let computedStatus: "active" | "paused" | "stopped" | "overdue" = "active";
+  let ledgersUntilDue = nextPaymentLedger - currentLedger;
+  let missedPayments = 0;
+
+  if (!raw.is_active) {
+    computedStatus = "stopped";
+    ledgersUntilDue = 0;
+    missedPayments = 0;
+  } else if (nextPaymentLedger < currentLedger) {
+    computedStatus = "overdue";
+    // Calculate missed payments: floor((currentLedger - nextPaymentLedger) / interval)
+    missedPayments = Math.floor((currentLedger - nextPaymentLedger) / interval);
+  } else if (nextPaymentLedger === currentLedger) {
+    computedStatus = "active";
+  } else {
+    computedStatus = "active";
+  }
+
   return {
     paymentId: raw.id,
     proposer: raw.proposer,
@@ -150,6 +192,9 @@ export function transformRawRecurringPayment(
       lastUpdatedAt: now,
       ledger,
     },
+    computedStatus,
+    ledgersUntilDue,
+    missedPayments,
   };
 }
 
@@ -161,15 +206,32 @@ export function transformRawRecurringPayment(
  */
 export class RecurringIndexerService {
   private isRunning: boolean = false;
+  private syncInProgress: boolean = false;
   private timer: NodeJS.Timeout | null = null;
   private lastLedgerProcessed: number = 0;
   private consecutiveErrors: number = 0;
   private totalPaymentsIndexed: number = 0;
+  /** Tracks payment IDs already alerted to avoid duplicate warn logs/callbacks. */
+  private readonly alertedIds = new Set<string>();
 
   constructor(
     private readonly env: BackendEnv,
     private readonly storage: RecurringStorageAdapter,
+    private readonly onPaymentDue?: (
+      payment: NormalizedRecurringPayment,
+    ) => void,
   ) {}
+
+  /**
+   * Seeds alertedIds with payments already in DUE status so they don't
+   * re-trigger alerts when the service starts.
+   */
+  private async seedAlertedIds(): Promise<void> {
+    const existing = await this.storage.getAll({ status: RecurringStatus.DUE });
+    for (const p of existing) {
+      this.alertedIds.add(p.paymentId);
+    }
+  }
 
   /**
    * Starts the indexing loop if enabled in config.
@@ -199,6 +261,9 @@ export class RecurringIndexerService {
     console.log(`- rpc: ${this.env.sorobanRpcUrl}`);
     console.log(`- contract: ${this.env.contractId}`);
     console.log(`- interval: ${this.env.eventPollingIntervalMs}ms`);
+
+    // Seed alerted IDs so pre-existing DUE payments don't re-trigger alerts.
+    await this.seedAlertedIds();
 
     this.scheduleNextSync();
   }
@@ -250,27 +315,37 @@ export class RecurringIndexerService {
    * Performs a sync cycle: fetches recurring payments and updates index.
    */
   public async sync(): Promise<void> {
-    // TODO: Implement RPC call to fetch recurring payments
-    // const payments = await this.rpcService.getRecurringPayments({
-    //   offset: 0,
-    //   limit: 100,
-    // });
+    this.syncInProgress = true;
+    try {
+      // TODO: Implement RPC call to fetch recurring payments
+      // const payments = await this.rpcService.getRecurringPayments({
+      //   offset: 0,
+      //   limit: 100,
+      // });
 
-    // Placeholder for development
-    const mockPayments: RawRecurringPayment[] = [];
+      // Placeholder for development
+      const mockPayments: RawRecurringPayment[] = [];
 
-    if (mockPayments.length > 0) {
-      await this.indexPayments(mockPayments);
+      if (mockPayments.length > 0) {
+        await this.indexPayments(mockPayments);
+      }
+
+      this.lastLedgerProcessed += 1;
+
+      // Persist cursor
+      await this.storage.saveCursor({
+        lastId: "",
+        lastLedger: this.lastLedgerProcessed,
+        updatedAt: new Date().toISOString(),
+      });
+    } finally {
+      this.syncInProgress = false;
     }
+  }
 
-    this.lastLedgerProcessed += 1;
-
-    // Persist cursor
-    await this.storage.saveCursor({
-      lastId: "",
-      lastLedger: this.lastLedgerProcessed,
-      updatedAt: new Date().toISOString(),
-    });
+  /** Returns true if a sync cycle is currently in progress. */
+  public isSyncing(): boolean {
+    return this.syncInProgress;
   }
 
   /**
@@ -289,6 +364,21 @@ export class RecurringIndexerService {
       );
       await this.storage.save(normalized);
       this.totalPaymentsIndexed++;
+
+      // Emit alert on first transition to DUE — not on every sync.
+      if (
+        normalized.status === RecurringStatus.DUE &&
+        !this.alertedIds.has(normalized.paymentId)
+      ) {
+        this.alertedIds.add(normalized.paymentId);
+        logger.warn("recurring payment is due", {
+          paymentId: normalized.paymentId,
+          recipient: normalized.recipient,
+          amount: normalized.amount,
+          token: normalized.token,
+        });
+        this.onPaymentDue?.(normalized);
+      }
     }
   }
 
@@ -315,17 +405,55 @@ export class RecurringIndexerService {
 
   /**
    * Get paginated indexed payments with optional filtering.
+   * Enriches payments with computed status fields using current ledger.
    */
   public async getPayments(
     filter?: RecurringFilter,
     pagination?: { offset: number; limit: number },
+    currentLedger?: number,
   ): Promise<{
     items: NormalizedRecurringPayment[];
     total: number;
     offset: number;
     limit: number;
   }> {
-    const all = await this.storage.getAll(filter);
+    let all = await this.storage.getAll(filter);
+
+    // Enrich payments with computed status if current ledger is provided
+    if (currentLedger !== undefined) {
+      all = all.map((payment) => {
+        // Calculate computed fields based on current ledger
+        const nextPaymentLedger = payment.nextPaymentLedger;
+        const interval = payment.intervalLedgers;
+
+        let computedStatus: "active" | "paused" | "stopped" | "overdue" =
+          "active";
+        let ledgersUntilDue = nextPaymentLedger - currentLedger;
+        let missedPayments = 0;
+
+        if (!payment.status || payment.status === RecurringStatus.CANCELLED) {
+          computedStatus = "stopped";
+        } else if (nextPaymentLedger < currentLedger) {
+          computedStatus = "overdue";
+          // Calculate missed payments: floor((currentLedger - nextPaymentLedger) / interval)
+          missedPayments = Math.floor(
+            (currentLedger - nextPaymentLedger) / interval,
+          );
+        } else if (nextPaymentLedger === currentLedger) {
+          computedStatus = "active";
+        } else {
+          computedStatus = "active";
+        }
+
+        return {
+          ...payment,
+          computedStatus,
+          ledgersUntilDue,
+          missedPayments,
+        };
+      });
+    }
+
     const offset = pagination?.offset ?? 0;
     const limit = pagination?.limit ?? 50;
     return {
@@ -353,6 +481,61 @@ export class RecurringIndexerService {
   }
 
   /**
+   * Get payments that are ready for execution at a specific ledger.
+   * (Exact match — legacy method retained for backward compatibility.)
+   */
+  public async getDuePaymentsAtLedger(
+    currentLedger: number,
+  ): Promise<NormalizedRecurringPayment[]> {
+    const all = await this.storage.getAll();
+    return all.filter(
+      (payment) =>
+        payment.status !== RecurringStatus.CANCELLED &&
+        payment.nextPaymentLedger <= currentLedger,
+    );
+  }
+
+  /**
+   * Get payments due within a ledger window to account for on-chain jitter.
+   *
+   * Window: [currentLedger - jitterWindowMax, currentLedger + 1]
+   *
+   * Returns DuePaymentResult entries with a trigger_reason indicating
+   * whether the payment was triggered exactly on time, early (jitter_early),
+   * or late (jitter_late).
+   *
+   * @param currentLedger  - Current on-chain ledger
+   * @param jitterWindowMax - Width of the jitter look-back/ahead window
+   */
+  public async getDuePaymentsInWindow(
+    currentLedger: number,
+    jitterWindowMax: number,
+  ): Promise<DuePaymentResult[]> {
+    const windowStart = currentLedger - jitterWindowMax;
+    const windowEnd = currentLedger + 1; // inclusive upper bound
+
+    const all = await this.storage.getAll();
+    const inWindow = all.filter(
+      (payment) =>
+        payment.status !== RecurringStatus.CANCELLED &&
+        payment.nextPaymentLedger >= windowStart &&
+        payment.nextPaymentLedger <= windowEnd,
+    );
+
+    return inWindow.map((payment) => {
+      let trigger_reason: DuePaymentResult["trigger_reason"];
+      if (payment.nextPaymentLedger === currentLedger) {
+        trigger_reason = "exact";
+      } else if (payment.nextPaymentLedger > currentLedger) {
+        trigger_reason = "jitter_early";
+      } else {
+        trigger_reason = "jitter_late";
+      }
+      return { payment, trigger_reason };
+    });
+  }
+
+  /**
    * Get all active payments.
    */
   public async getActivePayments(): Promise<NormalizedRecurringPayment[]> {
@@ -364,6 +547,53 @@ export class RecurringIndexerService {
    */
   public async getCancelledPayments(): Promise<NormalizedRecurringPayment[]> {
     return this.storage.getAll({ status: RecurringStatus.CANCELLED });
+  }
+
+  /**
+   * Check for conflicting recurring payments based on similarity criteria:
+   * - Same recipient AND same amount (within 5% tolerance) AND overlapping interval
+   *
+   * Returns conflicts sorted by similarity score descending (100 = exact match).
+   * Runs in-memory in < 50ms against active payments.
+   */
+  public async checkConflicts(params: {
+    recipient: string;
+    amount: string;
+    intervalLedgers: number;
+  }): Promise<Array<{ id: string; similarity_score: number; description: string }>> {
+    const actives = await this.storage.getAll({ status: RecurringStatus.ACTIVE });
+    const conflicts: Array<{ id: string; similarity_score: number; description: string }> = [];
+
+    const proposedAmount = Number(params.amount);
+
+    for (const payment of actives) {
+      if (payment.recipient !== params.recipient) continue;
+
+      const existingAmount = Number(payment.amount);
+      const amountDiff = Math.abs(existingAmount - proposedAmount) / (proposedAmount || 1);
+      if (amountDiff > 0.05) continue;
+
+      // Check overlapping interval: intervals overlap if they share any execution window
+      // Simplified: intervals overlap when they are equal or one divides the other
+      const intervalOverlap =
+        payment.intervalLedgers === params.intervalLedgers ||
+        params.intervalLedgers % payment.intervalLedgers === 0 ||
+        payment.intervalLedgers % params.intervalLedgers === 0;
+      if (!intervalOverlap) continue;
+
+      // Compute similarity score 0-100
+      const amountScore = Math.round((1 - amountDiff) * 50);
+      const intervalScore = payment.intervalLedgers === params.intervalLedgers ? 50 : 25;
+      const similarity_score = amountScore + intervalScore;
+
+      conflicts.push({
+        id: payment.paymentId,
+        similarity_score,
+        description: `Existing payment to ${payment.recipient} for ${payment.amount} every ${payment.intervalLedgers} ledgers`,
+      });
+    }
+
+    return conflicts.sort((a, b) => b.similarity_score - a.similarity_score);
   }
 
   /**

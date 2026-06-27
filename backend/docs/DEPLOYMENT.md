@@ -5,14 +5,54 @@ Lightweight Node.js service for indexing, realtime, and notifications. **Statele
 
 ## ☁️ **Deployment Models**
 
-### 1. **Docker (Recommended)**
+### 1. **Local Orchestration (Docker Compose - Recommended for Dev)**
+This spins up both the React `frontend` and Node.js `backend` services inside a shared custom network with hot-reloading and automatic environment variable fallbacks.
+
+```bash
+# Start both services in development mode with live hot-reloading
+docker compose up
+
+# Build containers from scratch and start the stack
+docker compose up --build
+
+# Start the services in detached (background) mode
+docker compose up -d
+
+# Check orchestration container statuses
+docker compose ps
+
+# Follow logs from both services
+docker compose logs -f
+
+# Stop and clean up containers, volumes, and network resources
+docker compose down
 ```
-# Production image
-docker build -t vaultdao-backend .
-docker run --env-file .env.prod \
+
+### 2. **Production Docker Container**
+We leverage an optimized two-stage Docker build that isolates production assets, discards development dependencies, and runs as a non-root `node` user for security compliance.
+
+```bash
+# Build the highly optimized production image from the repository root
+docker build -t vaultdao-backend:latest ./backend
+
+# Run the production container mapping host port 8787
+docker run -d \
+  --name vaultdao-backend \
+  --env-file ./backend/.env \
   -p 8787:8787 \
   --restart unless-stopped \
-  vaultdao-backend
+  vaultdao-backend:latest
+```
+
+### 3. **Image Footprint Verification**
+To ensure the container remains lightweight and fits under target constraints:
+
+```bash
+# Check size of the built image (Target: strictly < 200MB)
+docker images vaultdao-backend
+
+# Analyze container layers and their respective weights
+docker history vaultdao-backend
 ```
 
 ### 2. **Railway/Render/Fly.io**

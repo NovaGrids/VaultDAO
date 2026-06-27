@@ -6,7 +6,7 @@
 import { recordError } from '../utils/errorAnalytics';
 import type { VaultError } from '../utils/errorParser';
 
-const REPORT_ENDPOINT = import.meta.env.VITE_ERROR_REPORT_ENDPOINT || '';
+const REPORT_ENDPOINT = (import.meta as any).env?.VITE_ERROR_REPORT_ENDPOINT || '';
 const OFFLINE_QUEUE_KEY = 'vaultdao_error_report_queue';
 const MAX_QUEUE = 100;
 

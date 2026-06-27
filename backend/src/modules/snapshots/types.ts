@@ -190,3 +190,73 @@ export interface SnapshotStorageAdapter {
    */
   getStats(contractId: string): Promise<SnapshotStats | null>;
 }
+
+// ── Incremental Diff Types ────────────────────────────────────────────────────
+
+/**
+ * A single field change within a snapshot diff.
+ */
+export interface SnapshotFieldChange {
+  readonly field: string;
+  readonly before: unknown;
+  readonly after: unknown;
+}
+
+/**
+ * Severity levels for semantic changes.
+ * - critical: security-relevant changes (e.g. threshold reduction)
+ * - warning:  notable but not immediately dangerous (e.g. new signer)
+ * - info:     informational/cosmetic changes (e.g. label update)
+ */
+export type SemanticChangeSeverity = "critical" | "warning" | "info";
+
+/**
+ * A semantically classified change between two snapshots.
+ */
+export interface SemanticChange {
+  readonly field: string;
+  readonly old_value: unknown;
+  readonly new_value: unknown;
+  readonly severity: SemanticChangeSeverity;
+  readonly description: string;
+}
+
+/**
+ * Result of a semantic diff operation between two ledger snapshots.
+ */
+export interface SemanticDiffResult {
+  readonly vaultAddress: string;
+  readonly fromLedger: number;
+  readonly toLedger: number;
+  readonly changes: SemanticChange[];
+  readonly hasCritical: boolean;
+  readonly computedAt: string;
+}
+
+/**
+ * Incremental diff between two consecutive snapshots.
+ * Only fields that changed since the previous snapshot are stored.
+ */
+export interface SnapshotDiff {
+  readonly snapshotId: string;
+  /** null for base snapshots (no parent). */
+  readonly parentSnapshotId: string | null;
+  readonly contractId: string;
+  readonly changedFields: SnapshotFieldChange[];
+  readonly timestamp: string;
+  readonly ledger: number;
+  /** true when this entry is a full base snapshot (not a diff). */
+  readonly isBase: boolean;
+  /** Full snapshot state — only populated for base snapshots. */
+  readonly baseState?: SerializableContractSnapshot;
+}
+
+/**
+ * Storage adapter for snapshot diffs.
+ */
+export interface SnapshotDiffStorageAdapter {
+  saveDiff(diff: SnapshotDiff): Promise<void>;
+  getDiff(snapshotId: string): Promise<SnapshotDiff | null>;
+  listDiffs(contractId: string): Promise<SnapshotDiff[]>;
+  deleteDiff(snapshotId: string): Promise<void>;
+}

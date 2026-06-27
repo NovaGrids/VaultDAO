@@ -1,19 +1,8 @@
-/**
- * Types for collaborative proposal editing
- */
-
 export interface ProposalDraft {
-  id: string;
-  vaultId: string;
   recipient: string;
   token: string;
   amount: string;
   memo: string;
-  createdBy: string;
-  createdAt: number;
-  lastModified: number;
-  collaborators: string[];
-  status: 'draft' | 'submitted';
 }
 
 export interface DraftVersion {
@@ -40,24 +29,10 @@ export interface UserChange {
   timestamp: number;
 }
 
-export interface DraftComment {
-  id: string;
-  draftId: string;
-  userId: string;
-  userName: string;
-  content: string;
-  field?: 'recipient' | 'token' | 'amount' | 'memo';
-  timestamp: number;
-  resolved: boolean;
-}
-
 export interface CollaboratorPresence {
   userId: string;
   userName: string;
   color: string;
-  cursor?: {
-    field: string;
-    position: number;
-  };
+  cursor: { field: string; position: number; timestamp: number; isTyping?: boolean } | null;
   lastSeen: number;
 }

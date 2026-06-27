@@ -2,16 +2,6 @@
 
 Thank you for your interest in contributing to VaultDAO! We're building the "Gnosis Safe of Stellar" and welcome contributions from developers of all skill levels.
 
-## 🌊 Stellar Drips Wave Contributors
-
-If you're here through the **Stellar Drips Wave** program:
-
-1. Browse our [Issues](https://github.com/otwizzy/VaultDAO/issues) labeled with `drips-wave`
-2. Comment "I would like to work on this!" on the issue
-3. Apply on the [Drips Platform](https://docs.drips.network/wave/)
-4. Wait for assignment before starting work
-5. Follow the contribution process below
-
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -178,7 +168,7 @@ Then create a PR on GitHub with:
 
 ## 🧪 Testing
 
-For the full testing guide — including how to run tests, write new ones, set up coverage, and understand CI requirements — see **[docs/TESTING.md](docs/TESTING.md)**.
+For the full testing guide — including how to run tests, write new ones, set up coverage, and understand CI requirements — see **[docs/reference/TESTING.md](docs/reference/TESTING.md)**.
 
 ### Testing Requirements
 
@@ -193,7 +183,7 @@ For the full testing guide — including how to run tests, write new ones, set u
 ### For Frontend Changes
 
 - Ensure the app builds without errors (`npm run build`)
-- Write or update Vitest tests for new components/hooks (see [TESTING.md](docs/TESTING.md#4-writing-component-tests))
+- Write or update Vitest tests for new components/hooks (see [TESTING.md](docs/reference/TESTING.md#4-writing-component-tests))
 - Test manually in the browser
 - Verify wallet integration works (if applicable)
 - Check responsive design on mobile
@@ -220,7 +210,7 @@ Before submitting your PR, ensure:
 
 ## 🐛 Reporting Bugs
 
-Found a bug? Please [open an issue](https://github.com/otwizzy/VaultDAO/issues/new?template=bug_report.md) with:
+Found a bug? Please [open an issue](https://github.com/NovaGrids/VaultDAO/issues/new?template=bug_report.md) with:
 
 - Clear description of the bug
 - Steps to reproduce
@@ -230,7 +220,7 @@ Found a bug? Please [open an issue](https://github.com/otwizzy/VaultDAO/issues/n
 
 ## 💡 Suggesting Features
 
-Have an idea? [Open a feature request](https://github.com/otwizzy/VaultDAO/issues/new?template=feature_request.md) with:
+Have an idea? [Open a feature request](https://github.com/NovaGrids/VaultDAO/issues/new?template=feature_request.md) with:
 
 - Problem you're trying to solve
 - Proposed solution
@@ -251,9 +241,8 @@ This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participatin
 
 ## ❓ Questions?
 
-- **General Questions**: Open a [Discussion](https://github.com/otwizzy/VaultDAO/discussions)
-- **Drips Wave**: Check [docs/WAVE_ISSUES.md](docs/WAVE_ISSUES.md)
-- **Technical Issues**: Open an [Issue](https://github.com/otwizzy/VaultDAO/issues)
+- **General Questions**: Open a [Discussion](https://github.com/NovaGrids/VaultDAO/discussions)
+- **Technical Issues**: Open an [Issue](https://github.com/NovaGrids/VaultDAO/issues)
 
 ---
 

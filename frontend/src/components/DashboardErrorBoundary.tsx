@@ -1,62 +1,60 @@
-import React, { Component, type ErrorInfo, type ReactNode } from 'react';
+/**
+ * DashboardErrorBoundary
+ * Wraps individual dashboard widgets so one failing widget
+ * doesn't crash the entire dashboard.
+ */
+import React from 'react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 
-interface DashboardErrorBoundaryProps {
-  children: ReactNode;
+interface Props {
+  widgetTitle?: string;
+  children: React.ReactNode;
 }
 
-interface DashboardErrorBoundaryState {
+interface State {
   hasError: boolean;
+  error: Error | null;
 }
 
-class DashboardErrorBoundary extends Component<DashboardErrorBoundaryProps, DashboardErrorBoundaryState> {
-  public state: DashboardErrorBoundaryState = {
-    hasError: false,
-  };
-
-  public static getDerivedStateFromError(_: Error): DashboardErrorBoundaryState {
-    return { hasError: true };
+class DashboardErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, error: null };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error('DashboardBuilder error:', error, errorInfo);
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
   }
 
-  private handleReset = (): void => {
-    // Clear saved layout from localStorage
-    localStorage.removeItem('dashboard-layout');
-    // Reset state
-    this.setState({ hasError: false });
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error(`[DashboardErrorBoundary] Widget "${this.props.widgetTitle}" crashed:`, error, info);
+  }
+
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null });
   };
 
-  public render(): ReactNode {
+  render() {
     if (this.state.hasError) {
       return (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-6 dark:border-red-800 dark:bg-red-900/20">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex-shrink-0">
-              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <h3 className="text-sm font-medium text-red-800 dark:text-red-200">
-              Dashboard builder failed to load
-            </h3>
-          </div>
-          <div className="ml-8">
-            <p className="text-sm text-red-700 dark:text-red-300 mb-4">
-              There was an issue loading the dashboard builder. This might be due to corrupted layout data.
-            </p>
-            <button
-              onClick={this.handleReset}
-              className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 dark:text-red-300 dark:bg-red-800 dark:hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-            >
-              Reset Dashboard Layout
-            </button>
-          </div>
+        <div className="flex flex-col items-center justify-center h-full min-h-[120px] bg-red-500/5 border border-red-500/20 rounded-lg p-4 text-center">
+          <AlertTriangle size={24} className="text-red-400 mb-2" />
+          <p className="text-sm font-semibold text-red-300 mb-1">
+            {this.props.widgetTitle ?? 'Widget'} failed to render
+          </p>
+          <p className="text-xs text-red-400/70 mb-3 max-w-[200px] truncate">
+            {this.state.error?.message ?? 'Unknown error'}
+          </p>
+          <button
+            onClick={this.handleRetry}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-xs font-medium transition-colors"
+          >
+            <RefreshCw size={12} />
+            Retry
+          </button>
         </div>
       );
     }
-
     return this.props.children;
   }
 }

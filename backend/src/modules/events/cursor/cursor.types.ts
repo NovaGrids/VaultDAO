@@ -25,4 +25,16 @@ export interface CursorStorage {
    * Persists a new cursor.
    */
   saveCursor(cursor: EventCursor): Promise<void>;
+
+  /**
+   * Lists all stored cursors with their IDs.
+   * Used by the cleanup job to find stale cursors.
+   */
+  listCursors(): Promise<Array<{ id: string; cursor: EventCursor }>>;
+
+  /**
+   * Deletes a cursor by its ID.
+   * Used by the cleanup job to remove stale cursors.
+   */
+  deleteCursor(id: string): Promise<void>;
 }

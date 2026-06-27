@@ -83,11 +83,23 @@ export const getTemplate = (id: string): DashboardTemplate | undefined => {
   return dashboardTemplates.find(t => t.id === id);
 };
 
-export const saveDashboardLayout = (layout: unknown) => {
-  localStorage.setItem('vaultdao-dashboard-layout', JSON.stringify(layout));
+/** Storage key for a specific wallet address */
+export function dashboardLayoutKey(walletAddress: string): string {
+  return `vaultdao-dashboard-layout-${walletAddress}`;
+}
+
+export const saveDashboardLayout = (layout: unknown, walletAddress?: string) => {
+  const key = walletAddress ? dashboardLayoutKey(walletAddress) : 'vaultdao-dashboard-layout';
+  localStorage.setItem(key, JSON.stringify(layout));
 };
 
-export const loadDashboardLayout = (): unknown | null => {
-  const saved = localStorage.getItem('vaultdao-dashboard-layout');
+export const loadDashboardLayout = (walletAddress?: string): unknown | null => {
+  const key = walletAddress ? dashboardLayoutKey(walletAddress) : 'vaultdao-dashboard-layout';
+  const saved = localStorage.getItem(key);
   return saved ? JSON.parse(saved) : null;
+};
+
+export const clearDashboardLayout = (walletAddress?: string): void => {
+  const key = walletAddress ? dashboardLayoutKey(walletAddress) : 'vaultdao-dashboard-layout';
+  localStorage.removeItem(key);
 };

@@ -22,7 +22,9 @@ export enum EventType {
   PROPOSAL_FROM_TEMPLATE = "PROPOSAL_FROM_TEMPLATE",
   SCHEDULED_PROPOSAL_CANCELLED = "SCHEDULED_PROPOSAL_CANCELLED",
   DELEGATED_VOTE = "DELEGATED_VOTE",
+  VOTE_CHANGED = "VOTE_CHANGED",
   VOTING_DEADLINE_EXTENDED = "VOTING_DEADLINE_EXTENDED",
+  THRESHOLD_REDUCED = "THRESHOLD_REDUCED",
   QUORUM_REACHED = "QUORUM_REACHED",
 
   // ── Role / admin ──────────────────────────────────────────────────────────
@@ -32,6 +34,14 @@ export enum EventType {
   SIGNER_REMOVED = "SIGNER_REMOVED",
   QUORUM_UPDATED = "QUORUM_UPDATED",
   ORACLE_CONFIG_UPDATED = "ORACLE_CONFIG_UPDATED",
+  ORACLE_PRICE_STALE = "ORACLE_PRICE_STALE",
+  RECOVERY_CONFIG_UPDATED = "RECOVERY_CONFIG_UPDATED",
+  INSURANCE_CONFIG_UPDATED = "INSURANCE_CONFIG_UPDATED",
+  GAS_CONFIG_UPDATED = "GAS_CONFIG_UPDATED",
+  DEX_CONFIG_UPDATED = "DEX_CONFIG_UPDATED",
+  CROSS_VAULT_CONFIG_SET = "CROSS_VAULT_CONFIG_SET",
+  BRIDGE_CONFIG_UPDATED = "BRIDGE_CONFIG_UPDATED",
+  REPUTATION_CONFIG_UPDATED = "REPUTATION_CONFIG_UPDATED",
 
   // ── Insurance / staking ───────────────────────────────────────────────────
   INSURANCE_LOCKED = "INSURANCE_LOCKED",
@@ -58,6 +68,7 @@ export enum EventType {
 
   // ── Recurring / streaming ─────────────────────────────────────────────────
   STREAM_CREATED = "STREAM_CREATED",
+  STREAM_RATE_ADJUSTED = "STREAM_RATE_ADJUSTED",
   STREAM_STATUS = "STREAM_STATUS",
   STREAM_CLAIMED = "STREAM_CLAIMED",
   SUBSCRIPTION_CREATED = "SUBSCRIPTION_CREATED",
@@ -75,6 +86,7 @@ export enum EventType {
   // ── Misc ──────────────────────────────────────────────────────────────────
   REPUTATION_UPDATED = "REPUTATION_UPDATED",
   BATCH_EXECUTED = "BATCH_EXECUTED",
+  BATCH_ROLLED_BACK = "BATCH_ROLLED_BACK",
   RETRY_SCHEDULED = "RETRY_SCHEDULED",
   RETRY_ATTEMPTED = "RETRY_ATTEMPTED",
   RETRIES_EXHAUSTED = "RETRIES_EXHAUSTED",
@@ -85,6 +97,36 @@ export enum EventType {
   GAS_LIMIT_EXCEEDED = "GAS_LIMIT_EXCEEDED",
   CROSS_VAULT_PROPOSED = "CROSS_VAULT_PROPOSED",
   CROSS_VAULT_EXECUTED = "CROSS_VAULT_EXECUTED",
+  NOTIFICATION_PREFS_UPDATED = "NOTIFICATION_PREFS_UPDATED",
+  COMMENT_ADDED = "COMMENT_ADDED",
+  COMMENT_EDITED = "COMMENT_EDITED",
+  COMMENT_DELETED = "COMMENT_DELETED",
+  HOOK_REGISTERED = "HOOK_REGISTERED",
+  HOOK_REMOVED = "HOOK_REMOVED",
+  HOOK_EXECUTED = "HOOK_EXECUTED",
+  LIQUIDITY_REMOVED = "LIQUIDITY_REMOVED",
+  LIQUIDITY_ADDED = "LIQUIDITY_ADDED",
+  LP_STAKED = "LP_STAKED",
+  LP_UNSTAKED = "LP_UNSTAKED",
+  REWARDS_CLAIMED = "REWARDS_CLAIMED",
+  EXECUTION_FEE_ESTIMATED = "EXECUTION_FEE_ESTIMATED",
+  EXECUTION_FEE_USED = "EXECUTION_FEE_USED",
+  METRICS_UPDATED = "METRICS_UPDATED",
+  METRICS_BUCKET_UPDATED = "METRICS_BUCKET_UPDATED",
+  TEMPLATE_CREATED = "TEMPLATE_CREATED",
+  TEMPLATE_UPDATED = "TEMPLATE_UPDATED",
+  TEMPLATE_VERSION_PRUNED = "TEMPLATE_VERSION_PRUNED",
+  TEMPLATE_STATUS_CHANGED = "TEMPLATE_STATUS_CHANGED",
+  FEE_STRUCTURE_UPDATED = "FEE_STRUCTURE_UPDATED",
+  FEE_COLLECTED = "FEE_COLLECTED",
+  SWAP_EXECUTED = "SWAP_EXECUTED",
+  PERMISSION_GRANTED = "PERMISSION_GRANTED",
+  PERMISSION_REVOKED = "PERMISSION_REVOKED",
+  PERMISSION_DELEGATED = "PERMISSION_DELEGATED",
+  DISPUTE_RAISED = "DISPUTE_RAISED",
+  DISPUTE_RESOLVED = "DISPUTE_RESOLVED",
+  BRIDGE_PROPOSED = "BRIDGE_PROPOSED",
+  BRIDGE_EXECUTED = "BRIDGE_EXECUTED",
 
   UNKNOWN = "UNKNOWN",
 }
@@ -297,6 +339,47 @@ export interface FundingReleasedData {
   readonly milestoneIndex: number;
 }
 
+// ── Staking data interfaces ───────────────────────────────────────────────────
+
+export interface StakeLockedData {
+  readonly proposalId: string;
+  readonly staker: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface StakeSlashedData {
+  readonly proposalId: string;
+  readonly staker: string;
+  readonly slashedAmount: string;
+  readonly returnedAmount: string;
+}
+
+export interface StakeRefundedData {
+  readonly proposalId: string;
+  readonly staker: string;
+  readonly amount: string;
+}
+
+// ── Funding round extension data interfaces ───────────────────────────────────
+
+export interface FundingRoundApprovedData {
+  readonly roundId: string;
+  readonly proposalId: string;
+  readonly approver: string;
+}
+
+export interface FundingRoundCancelledData {
+  readonly roundId: string;
+  readonly cancelledBy: string;
+  readonly reason: string;
+}
+
+export interface FundingRoundCompletedData {
+  readonly roundId: string;
+  readonly totalReleased: string;
+}
+
 // ── Recurring / streaming data interfaces ─────────────────────────────────────
 
 export interface StreamCreatedData {
@@ -306,6 +389,177 @@ export interface StreamCreatedData {
   readonly token: string;
   readonly totalAmount: string;
   readonly rate: string;
+}
+
+export interface StreamStatusData {
+  readonly streamId: string;
+  readonly status: string;
+  readonly updatedBy: string;
+}
+
+export interface StreamClaimedData {
+  readonly streamId: string;
+  readonly recipient: string;
+  readonly amount: string;
+}
+
+export interface StreamRateAdjustedData {
+  readonly streamId: string;
+  readonly oldRate: string;
+  readonly newRate: string;
+  readonly adjustedBy: string;
+}
+
+// ── Subscription data interfaces ──────────────────────────────────────────────
+
+export interface SubscriptionCreatedData {
+  readonly subscriptionId: string;
+  readonly subscriber: string;
+  readonly tier: number;
+  readonly amount: string;
+}
+
+export interface SubscriptionRenewedData {
+  readonly subscriptionId: string;
+  readonly paymentNumber: number;
+  readonly amount: string;
+}
+
+export interface SubscriptionCancelledData {
+  readonly subscriptionId: string;
+  readonly cancelledBy: string;
+}
+
+export interface SubscriptionUpgradedData {
+  readonly subscriptionId: string;
+  readonly oldTier: string;
+  readonly newTier: string;
+  readonly additionalAmount: string;
+}
+
+export interface SubscriptionExpiredData {
+  readonly subscriptionId: string;
+}
+
+// ── Recovery data interfaces ──────────────────────────────────────────────────
+
+export interface RecoveryProposedData {
+  readonly proposalId: string;
+  readonly newThreshold: number;
+}
+
+export interface RecoveryApprovedData {
+  readonly proposalId: string;
+  readonly guardian: string;
+}
+
+export interface RecoveryExecutedData {
+  readonly proposalId: string;
+}
+
+export interface RecoveryCancelledData {
+  readonly proposalId: string;
+  readonly cancelledBy: string;
+}
+
+export interface GenericEventData {
+  readonly topic: string;
+  readonly topicArgs: readonly string[];
+  readonly value: unknown;
+}
+
+// ── Misc data interfaces ──────────────────────────────────────────────────────
+
+export interface ReputationUpdatedData {
+  readonly address: string;
+  readonly oldScore: number;
+  readonly newScore: number;
+  readonly reason: string;
+}
+
+export interface BatchExecutedData {
+  readonly batchId: string;
+  readonly executor: string;
+  readonly count: number;
+  readonly successCount: number;
+}
+
+export interface RetryScheduledData {
+  readonly targetId: string;
+  readonly retryAt: number;
+  readonly attemptNumber: number;
+}
+
+export interface RetryAttemptedData {
+  readonly targetId: string;
+  readonly attemptNumber: number;
+  readonly success: boolean;
+}
+
+export interface RetriesExhaustedData {
+  readonly targetId: string;
+  readonly maxAttempts: number;
+}
+
+export interface TokensLockedData {
+  readonly address: string;
+  readonly amount: string;
+  readonly token: string;
+  readonly unlockLedger: number;
+}
+
+export interface LockExtendedData {
+  readonly address: string;
+  readonly token: string;
+  readonly newUnlockLedger: number;
+}
+
+export interface TokensUnlockedData {
+  readonly address: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface EarlyUnlockData {
+  readonly address: string;
+  readonly amount: string;
+  readonly token: string;
+  readonly penalty: string;
+}
+
+export interface GasLimitExceededData {
+  readonly proposalId: string;
+  readonly gasUsed: number;
+  readonly gasLimit: number;
+}
+
+export interface CrossVaultProposedData {
+  readonly proposalId: string;
+  readonly sourceVault: string;
+  readonly targetVault: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface CrossVaultExecutedData {
+  readonly proposalId: string;
+  readonly sourceVault: string;
+  readonly targetVault: string;
+  readonly amount: string;
+  readonly token: string;
+}
+
+export interface ConfigUpdatedData {
+  readonly admin: string;
+  readonly field: string;
+  readonly oldValue: string;
+  readonly newValue: string;
+}
+
+export interface OracleConfigUpdatedData {
+  readonly admin: string;
+  readonly oracle: string;
+  readonly config: string;
 }
 
 // ── Map of contract event topics → EventType ─────────────────────────────────
@@ -330,7 +584,9 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   proposal_from_template: EventType.PROPOSAL_FROM_TEMPLATE,
   scheduled_proposal_cancelled: EventType.SCHEDULED_PROPOSAL_CANCELLED,
   delegated_vote: EventType.DELEGATED_VOTE,
+  vote_changed: EventType.VOTE_CHANGED,
   voting_deadline_ext: EventType.VOTING_DEADLINE_EXTENDED,
+  threshold_reduced: EventType.THRESHOLD_REDUCED,
   quorum_reached: EventType.QUORUM_REACHED,
 
   // Role / admin
@@ -340,6 +596,14 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   signer_removed: EventType.SIGNER_REMOVED,
   quorum_updated: EventType.QUORUM_UPDATED,
   oracle_cfg_updated: EventType.ORACLE_CONFIG_UPDATED,
+  oracle_price_stale: EventType.ORACLE_PRICE_STALE,
+  recovery_config: EventType.RECOVERY_CONFIG_UPDATED,
+  insurance_cfg_updated: EventType.INSURANCE_CONFIG_UPDATED,
+  gas_cfg_updated: EventType.GAS_CONFIG_UPDATED,
+  dex_cfg_updated: EventType.DEX_CONFIG_UPDATED,
+  cv_config_set: EventType.CROSS_VAULT_CONFIG_SET,
+  bridge_cfg_updated: EventType.BRIDGE_CONFIG_UPDATED,
+  rep_config_updated: EventType.REPUTATION_CONFIG_UPDATED,
 
   // Insurance / staking
   insurance_locked: EventType.INSURANCE_LOCKED,
@@ -366,6 +630,7 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
 
   // Recurring / streaming
   stream_created: EventType.STREAM_CREATED,
+  stream_rate_adj: EventType.STREAM_RATE_ADJUSTED,
   stream_status: EventType.STREAM_STATUS,
   stream_claimed: EventType.STREAM_CLAIMED,
   subscription_created: EventType.SUBSCRIPTION_CREATED,
@@ -383,6 +648,7 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   // Misc
   reputation_updated: EventType.REPUTATION_UPDATED,
   batch_executed: EventType.BATCH_EXECUTED,
+  batch_rolled_back: EventType.BATCH_ROLLED_BACK,
   retry_scheduled: EventType.RETRY_SCHEDULED,
   retry_attempted: EventType.RETRY_ATTEMPTED,
   retries_exhausted: EventType.RETRIES_EXHAUSTED,
@@ -393,4 +659,34 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   gas_limit_exceeded: EventType.GAS_LIMIT_EXCEEDED,
   cv_proposed: EventType.CROSS_VAULT_PROPOSED,
   cv_executed: EventType.CROSS_VAULT_EXECUTED,
+  notif_prefs_updated: EventType.NOTIFICATION_PREFS_UPDATED,
+  comment_added: EventType.COMMENT_ADDED,
+  comment_edited: EventType.COMMENT_EDITED,
+  comment_deleted: EventType.COMMENT_DELETED,
+  hook_registered: EventType.HOOK_REGISTERED,
+  hook_removed: EventType.HOOK_REMOVED,
+  hook_executed: EventType.HOOK_EXECUTED,
+  liquidity_removed: EventType.LIQUIDITY_REMOVED,
+  liquidity_added: EventType.LIQUIDITY_ADDED,
+  lp_staked: EventType.LP_STAKED,
+  lp_unstaked: EventType.LP_UNSTAKED,
+  rewards_claimed: EventType.REWARDS_CLAIMED,
+  exec_fee_estimated: EventType.EXECUTION_FEE_ESTIMATED,
+  exec_fee_used: EventType.EXECUTION_FEE_USED,
+  metrics_updated: EventType.METRICS_UPDATED,
+  metrics_bucket_upd: EventType.METRICS_BUCKET_UPDATED,
+  template_created: EventType.TEMPLATE_CREATED,
+  template_updated: EventType.TEMPLATE_UPDATED,
+  template_ver_pruned: EventType.TEMPLATE_VERSION_PRUNED,
+  template_status: EventType.TEMPLATE_STATUS_CHANGED,
+  fee_structure_updated: EventType.FEE_STRUCTURE_UPDATED,
+  fee_collected: EventType.FEE_COLLECTED,
+  swap_executed: EventType.SWAP_EXECUTED,
+  permission_granted: EventType.PERMISSION_GRANTED,
+  permission_revoked: EventType.PERMISSION_REVOKED,
+  permission_delegated: EventType.PERMISSION_DELEGATED,
+  dispute_raised: EventType.DISPUTE_RAISED,
+  dispute_resolved: EventType.DISPUTE_RESOLVED,
+  bridge_proposed: EventType.BRIDGE_PROPOSED,
+  bridge_executed: EventType.BRIDGE_EXECUTED,
 };

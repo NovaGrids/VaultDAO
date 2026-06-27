@@ -15,6 +15,8 @@ import type {
   ProgressCallback,
   EventBatch,
   ReplayCursor,
+  ReplayEventConsumer,
+  ReplayBatchConsumer,
 } from "./replay.types.js";
 import type { ContractEvent } from "../events.types.js";
 import type { NormalizedEvent } from "../types.js";
@@ -31,6 +33,8 @@ export class EventReplayService {
   private readonly rpc: SorobanRpcClient;
   private startTime: number = 0;
   private stats: ReplayStats;
+  private readonly eventConsumers: ReplayEventConsumer[] = [];
+  private readonly batchConsumers: ReplayBatchConsumer[] = [];
 
   constructor(
     private readonly env: BackendEnv,
@@ -93,10 +97,18 @@ export class EventReplayService {
           this.log(`[replay] No events found in ledgers ${currentLedger}-${batchEndLedger}`);
         } else {
           this.log(`[replay] Processing batch of ${batch.events.length} events`);
+          const normalizedBatch: NormalizedEvent[] = [];
 
           for (const event of batch.events) {
-            const result = this.processEvent(event);
+            const result = await this.processEvent(event);
             this.updateStats(result);
+            if (result.normalized) {
+              normalizedBatch.push(result.normalized);
+            }
+          }
+
+          if (normalizedBatch.length > 0) {
+            await this.dispatchBatch(normalizedBatch);
           }
         }
 
@@ -142,10 +154,11 @@ export class EventReplayService {
   /**
    * Processes a single event through normalization.
    */
-  private processEvent(event: ContractEvent): EventProcessingResult {
+  private async processEvent(event: ContractEvent): Promise<EventProcessingResult> {
     try {
       const normalized = EventNormalizer.normalize(event);
-      
+
+      await this.dispatchEvent(normalized);
       this.logEvent(event, normalized);
 
       return {
@@ -211,9 +224,45 @@ export class EventReplayService {
    * Gets the latest ledger number from the RPC.
    */
   private async getLatestLedger(): Promise<number> {
-    // getLedgerEntries with an empty key list returns latestLedger in the response
-    const result = await this.rpc.getContractData({ keys: [] });
-    return result.latestLedger;
+    return this.rpc.getLatestLedger();
+  }
+
+  /**
+   * Registers a single normalized event consumer.
+   */
+  public registerConsumer(consumer: ReplayEventConsumer): void {
+    this.eventConsumers.push(consumer);
+  }
+
+  /**
+   * Registers a batch normalized event consumer.
+   */
+  public registerBatchConsumer(consumer: ReplayBatchConsumer): void {
+    this.batchConsumers.push(consumer);
+  }
+
+  private async dispatchEvent(event: NormalizedEvent): Promise<void> {
+    for (const consumer of this.eventConsumers) {
+      try {
+        await consumer(event);
+      } catch (error) {
+        this.log(
+          `[replay] consumer dispatch error: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  private async dispatchBatch(events: NormalizedEvent[]): Promise<void> {
+    for (const consumer of this.batchConsumers) {
+      try {
+        await consumer(events);
+      } catch (error) {
+        this.log(
+          `[replay] batch consumer dispatch error: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
 
   /**

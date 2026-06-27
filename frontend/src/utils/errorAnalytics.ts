@@ -15,92 +15,88 @@ export interface ErrorEvent {
   retryCount?: number;
 }
 
-const STORAGE_KEY = 'vaultdao_error_analytics';
-const MAX_IN_MEMORY = 200;
+const STORAGE_KEY = 'vaultdao_error_events';
+const MAX_STORED = 100;
 
-const events: ErrorEvent[] = [];
-
-function getStored(): ErrorEvent[] {
+// Initialize from localStorage
+const loadEvents = (): ErrorEvent[] => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as ErrorEvent[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch (e) {
+    console.warn('Failed to load error events from localStorage:', e);
     return [];
   }
-}
+};
 
-function persist(items: ErrorEvent[]) {
+let events: ErrorEvent[] = loadEvents();
+
+const persistEvents = () => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(-500)));
-  } catch {
-    // ignore quota or disabled localStorage
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(events.slice(-MAX_STORED)));
+  } catch (e) {
+    console.warn('Failed to persist error events:', e);
   }
-}
+};
 
 /**
- * Record an error for analytics (in-memory + optional localStorage backup).
- * @param payload - Error details including code, message, stack, and optional context (e.g., component stack)
+ * Record an error for analytics.
  */
-export function recordError(payload: Omit<ErrorEvent, 'id' | 'timestamp' | 'userAgent' | 'url'>): void {
-  try {
-    const event: ErrorEvent = {
-      ...payload,
-      id: `err_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      timestamp: Date.now(),
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-      url: typeof window !== 'undefined' ? window.location.href : '',
-    };
-    events.push(event);
-    if (events.length > MAX_IN_MEMORY) events.splice(0, events.length - MAX_IN_MEMORY);
-    
-    const stored = getStored();
-    stored.push(event);
-    persist(stored);
-    
-    // Log to console in development for debugging
-    if (import.meta.env.DEV) {
-      console.warn('[ErrorAnalytics] Recorded error:', {
-        code: event.code,
-        message: event.message,
-        context: event.context,
-      });
-    }
-  } catch (error) {
-    // Fail silently to prevent cascading errors
-    console.error('[ErrorAnalytics] Failed to record error:', error);
+export function recordError(payload: {
+  code: string;
+  message: string;
+  stack?: string;
+  context?: string;
+  retryCount?: number;
+}): string {
+  // 8-character uppercase UUID for support reference
+  const id = Math.random().toString(36).substring(2, 10).toUpperCase();
+  const event: ErrorEvent = {
+    ...payload,
+    id,
+    timestamp: Date.now(),
+    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+    url: typeof window !== 'undefined' ? window.location.href : 'unknown',
+  };
+
+  events.push(event);
+  if (events.length > MAX_STORED) {
+    events = events.slice(-MAX_STORED);
   }
+
+  persistEvents();
+
+  if ((import.meta as any).env?.DEV) {
+    console.warn(`[ErrorAnalytics] Recorded error ${id}:`, payload);
+  }
+
+  return id;
 }
 
-/**
- * Get recent errors for dashboard (in-memory only for current session).
- */
 export function getErrorEvents(): ErrorEvent[] {
-  return [...events].reverse();
+  return [...events].sort((a, b) => b.timestamp - a.timestamp);
 }
 
-/**
- * Get aggregated counts by code for the current session.
- */
-export function getErrorCountsByCode(): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const e of events) {
-    counts[e.code] = (counts[e.code] ?? 0) + 1;
-  }
-  return counts;
+export function getRecentErrors(count = 20): ErrorEvent[] {
+  return getErrorEvents().slice(0, count);
 }
 
-/**
- * Get total count for current session.
- */
+export function clearErrorAnalytics(): void {
+  events = [];
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+export function exportErrorsAsJson(): string {
+  return JSON.stringify(events, null, 2);
+}
+
 export function getTotalErrorCount(): number {
   return events.length;
 }
 
-/**
- * Clear in-memory analytics (optional; persisted queue is separate).
- */
-export function clearErrorAnalytics(): void {
-  events.length = 0;
+export function getErrorCountsByCode(): Record<string, number> {
+  return events.reduce((acc, event) => {
+    acc[event.code] = (acc[event.code] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
 }

@@ -9,6 +9,7 @@ import ProposalDetailModal from '../../components/modals/ProposalDetailModal';
 import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
 import ProposalComparison from '../../components/ProposalComparison';
+import TransactionSimulatorModal from '../../components/TransactionSimulatorModal';
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useProposals } from '../../hooks/useProposals';
@@ -20,13 +21,15 @@ import type { TokenInfo, TokenBalance } from '../../types';
 import { DEFAULT_TOKENS } from '../../constants/tokens';
 import VoiceCommands from '../../components/VoiceCommands';
 import ReadinessWarning from '../../components/ReadinessWarning';
+import { nativeToScVal, Address, xdr } from 'stellar-sdk';
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
-    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); }}
+    onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(text); }}
     className="p-1 hover:bg-gray-700 rounded text-gray-400"
+    title="Copy address"
   >
-    <Clock size={14} />
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
   </button>
 );
 
@@ -61,7 +64,7 @@ export interface Proposal {
 
 const Proposals: React.FC = () => {
   const { notify } = useToast();
-  const { rejectProposal, approveProposal, getTokenBalances } = useVaultContract();
+  const { rejectProposal, approveProposal, executeProposal, getUserRole, getTokenBalances } = useVaultContract();
   const { address } = useWallet();
   const { isReady, checkReady } = useActionReadiness();
   const { subscribe, updatePresence, connectionStatus, trackEvent } = useRealtime();
@@ -75,6 +78,8 @@ const Proposals: React.FC = () => {
 
   const [localProposals, setLocalProposals] = useState<Proposal[]>([]);
   const [approvingIds, setApprovingIds] = useState<Set<string>>(new Set());
+  const [executingIds, setExecutingIds] = useState<Set<string>>(new Set());
+  const [userRole, setUserRole] = useState<number>(0);
   const [showNewProposalModal, setShowNewProposalModal] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -82,6 +87,16 @@ const Proposals: React.FC = () => {
   const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
   const [showComparison, setShowComparison] = useState(false);
   const [selectedForComparison, setSelectedForComparison] = useState<Set<string>>(new Set());
+
+  // Simulator modal state
+  const [simulatorOpen, setSimulatorOpen] = useState(false);
+  const [simulatorConfig, setSimulatorConfig] = useState<{
+    functionName: string;
+    args: xdr.ScVal[];
+    actionLabel: string;
+    params?: Record<string, unknown>;
+    onProceed: () => Promise<void>;
+  } | null>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -145,6 +160,11 @@ const Proposals: React.FC = () => {
     };
     fetchBalances();
   }, [getTokenBalances]);
+
+  // Fetch current user's role for action gating
+  useEffect(() => {
+    getUserRole().then(setUserRole).catch(() => setUserRole(0));
+  }, [getUserRole]);
 
   // Sync real proposals into local state (local state handles optimistic updates)
   useEffect(() => {
@@ -278,33 +298,51 @@ const Proposals: React.FC = () => {
       return;
     }
 
-    setApprovingIds(prev => new Set(prev).add(proposalId));
-    try {
-      await approveProposal(Number(proposalId));
-      setLocalProposals(prev => prev.map(p => {
-        if (p.id === proposalId) {
-          const newApprovals = p.approvals + 1;
-          const newApprovedBy = [...p.approvedBy, address!];
-          return {
-            ...p,
-            approvals: newApprovals,
-            approvedBy: newApprovedBy,
-            status: newApprovals >= p.threshold ? 'Approved' : p.status
-          };
-        }
-        return p;
-      }));
-      notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to approve proposal';
-      notify('proposal_rejected', errorMessage, 'error');
-    } finally {
-      setApprovingIds(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(proposalId);
-        return newSet;
-      });
-    }
+    // Build simulator args
+    const approverAddr = address!;
+    const simArgs: xdr.ScVal[] = [
+      new Address(approverAddr).toScVal(),
+      nativeToScVal(BigInt(proposalId), { type: 'u64' }),
+    ];
+
+    const doApprove = async () => {
+      setApprovingIds(prev => new Set(prev).add(proposalId));
+      try {
+        await approveProposal(Number(proposalId));
+        setLocalProposals(prev => prev.map(p => {
+          if (p.id === proposalId) {
+            const newApprovals = p.approvals + 1;
+            const newApprovedBy = [...p.approvedBy, address!];
+            return {
+              ...p,
+              approvals: newApprovals,
+              approvedBy: newApprovedBy,
+              status: newApprovals >= p.threshold ? 'Approved' : p.status
+            };
+          }
+          return p;
+        }));
+        notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to approve proposal';
+        notify('proposal_rejected', errorMessage, 'error');
+      } finally {
+        setApprovingIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(proposalId);
+          return newSet;
+        });
+      }
+    };
+
+    setSimulatorConfig({
+      functionName: 'approve_proposal',
+      args: simArgs,
+      actionLabel: 'Approve Proposal',
+      params: { proposalId },
+      onProceed: doApprove,
+    });
+    setSimulatorOpen(true);
   };
 
   // Initialize selected token when tokenBalances load
@@ -319,8 +357,48 @@ const Proposals: React.FC = () => {
     }
   }, [selectedToken, tokenBalances]);
 
+  const isSigner = userRole >= 1;
+
+  const handleExecute = async (proposalId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const { ready, message } = checkReady();
+    if (!ready) {
+      notify('proposal_rejected', message ?? 'Not ready', 'error');
+      return;
+    }
+
+    const executorAddr = address!;
+    const simArgs: xdr.ScVal[] = [
+      new Address(executorAddr).toScVal(),
+      nativeToScVal(BigInt(proposalId), { type: 'u64' }),
+    ];
+
+    const doExecute = async () => {
+      setExecutingIds(prev => new Set(prev).add(proposalId));
+      try {
+        await executeProposal(Number(proposalId));
+        setLocalProposals(prev => prev.map(p => p.id === proposalId ? { ...p, status: 'Executed' } : p));
+        notify('proposal_executed', `Proposal #${proposalId} executed successfully`, 'success');
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to execute proposal';
+        notify('proposal_rejected', errorMessage, 'error');
+      } finally {
+        setExecutingIds(prev => { const s = new Set(prev); s.delete(proposalId); return s; });
+      }
+    };
+
+    setSimulatorConfig({
+      functionName: 'execute_proposal',
+      args: simArgs,
+      actionLabel: 'Execute Proposal',
+      params: { proposalId },
+      onProceed: doExecute,
+    });
+    setSimulatorOpen(true);
+  };
+
   return (
-    <div className="min-h-screen bg-gray-900 p-6 text-white">
+    <div className="space-y-6 pb-10">
       <div className="max-w-7xl mx-auto">
         <ReadinessWarning />
         {connectionStatus === 'connecting' && (
@@ -381,6 +459,7 @@ const Proposals: React.FC = () => {
           ) : filteredProposals.length > 0 ? (
             filteredProposals.map((prop) => {
               const isApproving = approvingIds.has(prop.id);
+              const isExecuting = executingIds.has(prop.id);
               const hasUserApproved = address ? prop.approvedBy.includes(address) : false;
               const progressPercent = (prop.approvals / prop.threshold) * 100;
 
@@ -483,7 +562,7 @@ const Proposals: React.FC = () => {
                             )}
                           </div>
                           <div className="flex gap-2 w-full sm:w-auto">
-                            {address && !hasUserApproved && (
+                            {isSigner && address && !hasUserApproved && (
                               <button
                                 onClick={(e) => handleApprove(prop.id, e)}
                                 disabled={isApproving}
@@ -508,14 +587,31 @@ const Proposals: React.FC = () => {
                                 Approved
                               </div>
                             )}
+                            {isSigner && (
                             <button
                               onClick={(e) => { e.stopPropagation(); setRejectingId(prop.id); setShowRejectModal(true); }}
                               className="flex-1 sm:flex-initial bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                             >
                               Reject
                             </button>
+                            )}
                           </div>
                         </div>
+                      </div>
+                    )}
+                    {prop.status === 'Approved' && isSigner && (
+                      <div className="flex justify-end pt-3 border-t border-gray-700/50">
+                        <button
+                          onClick={(e) => handleExecute(prop.id, e)}
+                          disabled={isExecuting}
+                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                          {isExecuting ? (
+                            <><Loader2 size={16} className="animate-spin" />Executing...</>
+                          ) : (
+                            <><Check size={16} />Execute</>
+                          )}
+                        </button>
                       </div>
                     )}
                     </div>
@@ -562,6 +658,7 @@ const Proposals: React.FC = () => {
           selectedTemplateName={null}
           formData={newProposalForm}
           onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
+          onAttachmentsChange={(attachments) => setNewProposalForm(prev => ({ ...prev, attachments }))}
           onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
           onOpenTemplateSelector={() => { }}
           onSaveAsTemplate={() => { }}
@@ -585,6 +682,19 @@ const Proposals: React.FC = () => {
         />
 
       </div>
+
+      {/* Transaction Simulator Modal */}
+      {simulatorConfig && (
+        <TransactionSimulatorModal
+          isOpen={simulatorOpen}
+          functionName={simulatorConfig.functionName}
+          args={simulatorConfig.args}
+          actionLabel={simulatorConfig.actionLabel}
+          params={simulatorConfig.params}
+          onProceed={simulatorConfig.onProceed}
+          onClose={() => { setSimulatorOpen(false); setSimulatorConfig(null); }}
+        />
+      )}
     </div>
   );
 };

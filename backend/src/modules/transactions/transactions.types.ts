@@ -2,29 +2,34 @@
  * Transaction history types for the VaultDAO backend.
  */
 
-export interface TransactionRecord {
-  readonly id: string;
-  readonly hash: string;
+export interface Transaction {
+  readonly proposalId: string;
+  readonly contractId: string;
+  readonly transactionHash: string;
   readonly ledger: number;
-  readonly createdAt: string;
-  readonly sourceAccount: string;
-  readonly feeCharged: string;
-  readonly operationCount: number;
-  readonly memoType: string;
-  readonly memo?: string;
-  readonly successful: boolean;
-  readonly pagingToken: string;
+  readonly timestamp: string;
+  readonly executor: string;
+  readonly recipient: string;
+  readonly token: string;
+  readonly amount: string;
+  readonly decodedProposalId?: number | null;
+  readonly decodedMemo?: string | null;
 }
 
 export interface GetTransactionsParams {
   readonly contractId: string;
   readonly cursor?: string;
+  readonly token?: string;
+  readonly recipient?: string;
+  readonly from?: Date;
+  readonly to?: Date;
+  readonly minAmount?: number;
+  readonly maxAmount?: number;
   readonly limit?: number;
-  readonly order?: "asc" | "desc";
 }
 
 export interface GetTransactionsResult {
-  readonly items: TransactionRecord[];
+  readonly data: Transaction[];
   readonly nextCursor: string | null;
-  readonly total: number;
+  readonly hasMore: boolean;
 }

@@ -9,6 +9,8 @@ interface ProposalComparisonProps {
   selectedIds: Set<string>;
   onClose: () => void;
   onSelectionChange: (ids: Set<string>) => void;
+  /** Called with pre-filled amendment data when user clicks "Propose Amendment" */
+  onAmendment?: (data: Record<string, string>) => void;
 }
 
 const ProposalComparison: React.FC<ProposalComparisonProps> = ({
@@ -16,6 +18,7 @@ const ProposalComparison: React.FC<ProposalComparisonProps> = ({
   selectedIds,
   onClose,
   onSelectionChange,
+  onAmendment,
 }) => {
   const [showComparison, setShowComparison] = useState(false);
 
@@ -63,6 +66,7 @@ const ProposalComparison: React.FC<ProposalComparisonProps> = ({
         proposals={selectedProposals}
         onClose={() => setShowComparison(false)}
         onExport={handleExport}
+        onAmendment={onAmendment}
       />
     );
   }

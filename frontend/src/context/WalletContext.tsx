@@ -2,25 +2,22 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useToast } from './ToastContext';
 import { WalletContext } from './WalletContextProps';
+import type { WalletType } from './WalletContextProps';
 import { detectAvailableWallets, getAdapterById } from '../adapters';
 import type { WalletAdapter } from '../adapters';
-import { useIdleTimer } from '../hooks/useIdleTimer';
 
 const PREFERRED_WALLET_KEY = 'vaultdao_preferred_wallet';
 const WALLET_CONNECTED_KEY = 'vaultdao_wallet_connected';
-const SESSION_PERSIST_KEY = 'vaultdao_session_persist';
-const SESSION_PERSIST_DURATION_MS = 24 * 60 * 60 * 1000; // 24 h
-const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const LAST_ACCOUNT_KEY = 'vaultdao_last_account';
 
 export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [availableWallets, setAvailableWallets] = useState<WalletAdapter[]>([]);
-  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
+  const [selectedWalletId, setSelectedWalletId] = useState<WalletType | null>(null);
   const [connected, setConnected] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [network, setNetwork] = useState<string | null>(null);
-  const [idleCountdown, setIdleCountdown] = useState<number | null>(null);
-  const [isIdleWarning, setIsIdleWarning] = useState(false);
-  const [isSessionPersisted, setIsSessionPersisted] = useState(false);
+  const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
+  const [accountRole, setAccountRole] = useState<string | null>(null);
   const activeAdapterRef = useRef<WalletAdapter | null>(null);
   const { showToast } = useToast();
 
@@ -63,12 +60,28 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           setConnected(true);
           activeAdapterRef.current = adapter;
           await validateNetwork(adapter);
+          // Persist last-used account
+          try { localStorage.setItem(LAST_ACCOUNT_KEY, pubkey); } catch { /* ignore */ }
+          // Fetch all accounts if adapter supports it
+          if (typeof (adapter as any).getAccounts === 'function') {
+            try {
+              const accounts: string[] = await (adapter as any).getAccounts();
+              setAvailableAccounts(accounts);
+            } catch {
+              setAvailableAccounts([pubkey]);
+            }
+          } else {
+            setAvailableAccounts([pubkey]);
+          }
           return true;
         } else {
           setAddress(null);
           setConnected(false);
           activeAdapterRef.current = null;
+          setAvailableAccounts([]);
+          setAccountRole(null);
           localStorage.removeItem(WALLET_CONNECTED_KEY);
+          localStorage.removeItem(LAST_ACCOUNT_KEY);
         }
       } catch (e) {
         console.error('Failed to update wallet state', e);
@@ -88,7 +101,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
       const preferred = localStorage.getItem(PREFERRED_WALLET_KEY);
       const id = preferred && getAdapterById(preferred) ? preferred : wallets[0]?.id ?? null;
-      if (id) setSelectedWalletId(id);
+      if (id) setSelectedWalletId(id as WalletType);
 
       const wasConnected = localStorage.getItem(WALLET_CONNECTED_KEY);
       if (!wasConnected || !id) return;
@@ -164,8 +177,9 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWalletId, connected, updateWalletState]);
 
-  const connect = useCallback(async () => {
-    const adapter = selectedWalletId ? getAdapterById(selectedWalletId) : availableWallets[0];
+  const connect = useCallback(async (walletType?: WalletType) => {
+    const targetWalletId = walletType ?? selectedWalletId;
+    const adapter = targetWalletId ? getAdapterById(targetWalletId) : availableWallets[0];
     if (!adapter) {
       showToast('No wallet selected. Please install Freighter, Albedo, or Rabet.', 'error');
       if (availableWallets.length === 0) {
@@ -173,6 +187,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
       return;
     }
+    setSelectedWalletId(adapter.id as WalletType);
 
     const isAvailable = await adapter.isAvailable();
     if (!isAvailable) {
@@ -217,12 +232,30 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, [showToast]);
 
   const switchWallet = useCallback((adapter: WalletAdapter) => {
-    setSelectedWalletId(adapter.id);
+    setSelectedWalletId(adapter.id as WalletType);
     savePreferredWallet(adapter.id);
     if (connected) {
       disconnect();
     }
   }, [connected, disconnect, savePreferredWallet]);
+
+  const switchAccount = useCallback(async (account: string) => {
+    // Clear any pending transaction state
+    const adapter = activeAdapterRef.current;
+    if (!adapter) return;
+    setAddress(account);
+    try { localStorage.setItem(LAST_ACCOUNT_KEY, account); } catch { /* ignore */ }
+    // Emit analytics event
+    try {
+      const { trackedFetch } = await import('../utils/apiTracking');
+      void trackedFetch('/api/v1/analytics/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'wallet_switched', account: account.slice(0, 8) }),
+      }).catch(() => { /* non-critical */ });
+    } catch { /* ignore */ }
+    showToast(`Switched to ${account.slice(0, 6)}...${account.slice(-4)}`, 'info');
+  }, [showToast]);
 
   const signTransaction = useCallback(
     async (xdr: string, options?: { network?: string }): Promise<string> => {
@@ -233,69 +266,6 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     []
   );
 
-  // Session persistence: check on mount whether a valid "remember me" token exists
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(SESSION_PERSIST_KEY);
-      if (raw) {
-        const { expiry } = JSON.parse(raw) as { expiry: number };
-        if (Date.now() < expiry) {
-          setIsSessionPersisted(true);
-        } else {
-          localStorage.removeItem(SESSION_PERSIST_KEY);
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const rememberSession = useCallback(() => {
-    try {
-      localStorage.setItem(SESSION_PERSIST_KEY, JSON.stringify({ expiry: Date.now() + SESSION_PERSIST_DURATION_MS }));
-      setIsSessionPersisted(true);
-      showToast('Session will be remembered for 24 hours', 'success');
-    } catch {
-      // ignore
-    }
-  }, [showToast]);
-
-  const dismissIdleWarning = useCallback(() => {
-    setIsIdleWarning(false);
-    setIdleCountdown(null);
-  }, []);
-
-  const handleIdle = useCallback(async () => {
-    setIsIdleWarning(false);
-    setIdleCountdown(null);
-    // Do not wipe pending draft proposals (stored in sessionStorage) — only disconnect
-    await disconnect();
-    showToast('You were disconnected due to inactivity', 'warning');
-  }, [disconnect, showToast]);
-
-  const handleCountdown = useCallback((remaining: number) => {
-    if (remaining <= 0) {
-      setIsIdleWarning(false);
-      setIdleCountdown(null);
-    } else {
-      setIsIdleWarning(true);
-      setIdleCountdown(remaining);
-    }
-  }, []);
-
-  const sessionPersisted = isSessionPersisted;
-  // Skip idle timer when session is persisted via "remember me"
-  const { resetTimer: resetIdleTimer } = useIdleTimer({
-    timeoutMs: IDLE_TIMEOUT_MS,
-    onIdle: handleIdle,
-    onCountdown: handleCountdown,
-    warningSeconds: 60,
-    enabled: connected && !sessionPersisted,
-  });
-
-  // Allow callers to manually reset the idle timer (e.g. after a signed tx)
-  void resetIdleTimer;
-
   return (
     <WalletContext.Provider
       value={{
@@ -303,19 +273,18 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         isInstalled: availableWallets.length > 0,
         address,
         network,
+        walletType: (activeAdapterRef.current?.id ?? selectedWalletId) as WalletType | null,
         connect,
         disconnect,
         availableWallets,
         selectedWalletId,
-        setSelectedWallet: (id: string) => setSelectedWalletId(id),
+        setSelectedWallet: (id: WalletType) => setSelectedWalletId(id),
         switchWallet,
         signTransaction,
         detectWallets,
-        idleCountdown,
-        isIdleWarning,
-        dismissIdleWarning,
-        rememberSession,
-        isSessionPersisted,
+        availableAccounts,
+        switchAccount,
+        accountRole,
       }}
     >
       {children}

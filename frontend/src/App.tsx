@@ -4,6 +4,8 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from './components/Layout/DashboardLayout';
 import ErrorBoundary from './components/ErrorBoundary';
+import { ProductTour } from './components/ProductTour';
+import { useDirection } from './hooks/useDirection';
 
 const Overview = lazy(() => import('./app/dashboard/Overview'));
 const Proposals = lazy(() => import('./app/dashboard/Proposals'));
@@ -12,6 +14,8 @@ const Analytics = lazy(() => import('./app/dashboard/Analytics'));
 const Settings = lazy(() => import('./app/dashboard/Settings'));
 const Templates = lazy(() => import('./app/dashboard/Templates'));
 const RecurringPayments = lazy(() => import('./app/dashboard/RecurringPayments'));
+const EscrowPage = lazy(() => import('./app/dashboard/Escrow'));
+const GovernancePage = lazy(() => import('./app/dashboard/Governance'));
 const ErrorDashboard = lazy(() => import('./components/ErrorDashboard'));
 
 const PageFallback = () => (
@@ -21,9 +25,12 @@ const PageFallback = () => (
 );
 
 function App() {
+  useDirection();
+
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <ProductTour />
         <Suspense fallback={<PageFallback />}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -34,6 +41,8 @@ function App() {
               <Route path="templates" element={<Templates />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="recurring-payments" element={<RecurringPayments />} />
+              <Route path="escrow" element={<EscrowPage />} />
+              <Route path="governance" element={<GovernancePage />} />
               <Route path="settings" element={<Settings />} />
               <Route path="errors" element={<ErrorDashboard />} />
             </Route>

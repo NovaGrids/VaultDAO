@@ -1,4 +1,5 @@
 import type { FormField, ValidationRule, FormSubmissionData, FormValidationResult } from '../types/formBuilder';
+import { isValidStellarAddress } from './address';
 
 /**
  * Validate a single field value against its validation rules
@@ -29,6 +30,11 @@ export const validateField = (field: FormField, value: unknown): string[] => {
     if (ruleError) {
       errors.push(ruleError);
     }
+  }
+
+  // Check address validity if it's an address field
+  if (field.type === 'address' && value && !isValidStellarAddress(String(value))) {
+    errors.push(`Invalid Stellar address`);
   }
 
   return errors;

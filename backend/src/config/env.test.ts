@@ -36,3 +36,38 @@ test("loadEnv - EVENT_POLLING_INTERVAL_MS validation", () => {
     process.env = originalEnv;
   }
 });
+
+test("loadEnv - CORS_ORIGIN validation", () => {
+  const originalEnv = { ...process.env };
+
+  try {
+    process.env.HOST = "localhost";
+    process.env.SOROBAN_RPC_URL = "http://localhost:8000";
+    process.env.HORIZON_URL = "http://localhost:8000";
+    process.env.VITE_WS_URL = "ws://localhost:8080";
+
+    process.env.NODE_ENV = "production";
+    process.env.CORS_ORIGIN = "http://localhost:3000";
+    assert.throws(() => loadEnv(), (err: Error) => {
+      return err.message.includes("http://") && err.message.includes("production");
+    });
+
+    process.env.NODE_ENV = "development";
+    process.env.CORS_ORIGIN = "http://localhost:3000";
+    const devEnv = loadEnv();
+    assert.deepEqual(devEnv.corsOrigin, ["http://localhost:3000"]);
+
+    process.env.NODE_ENV = "production";
+    process.env.CORS_ORIGIN = "*,https://allowed.example";
+    assert.throws(() => loadEnv(), (err: Error) => {
+      return err.message.includes('cannot combine "*" with specific origins');
+    });
+
+    process.env.CORS_ORIGIN = "https://allowed.example/";
+    assert.throws(() => loadEnv(), (err: Error) => {
+      return err.message.includes("trailing slash");
+    });
+  } finally {
+    process.env = originalEnv;
+  }
+});

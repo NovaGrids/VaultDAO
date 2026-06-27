@@ -6,16 +6,26 @@ import './index.css';
 import './i18n';
 import i18n from './i18n';
 import { ToastProvider } from './context/ToastContext';
-import { WalletProvider } from './context/WalletContext';
+import { WalletProviders } from './components/WalletProviders';
 import { NotificationProvider } from './context/NotificationContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { OnboardingProvider } from './context/OnboardingProvider';
 import { RealtimeProvider } from './contexts/RealtimeContext';
 import { AppErrorBoundary } from './components/ErrorHandler';
 import { flushOfflineErrorQueue } from './components/ErrorReporting';
+import { RealtimeNotificationBridge } from './components/RealtimeNotificationBridge';
 import { registerServiceWorker } from './utils/pwa';
+import { AccessibilityProvider } from './contexts/AccessibilityContext';
+import { SkipLinks } from './components/SkipLinks';
+import { applyThemeBeforeMount } from './styles/themes';
 
-registerServiceWorker();
+// Prevent flash of incorrect theme before React mounts.
+applyThemeBeforeMount();
+
+// Register service worker for PWA support
+registerServiceWorker().catch((error) => {
+  console.warn('Failed to register service worker:', error);
+});
 
 function AppWithErrorBoundary() {
   useEffect(() => {
@@ -37,19 +47,30 @@ function RootApp() {
   return (
     <React.StrictMode>
       <I18nextProvider i18n={i18n}>
-        <ThemeProvider>
-          <ToastProvider>
-            <WalletProvider>
-              <NotificationProvider>
-                <OnboardingProvider>
-                  <RealtimeProvider>
-                    <AppWithErrorBoundary />
-                  </RealtimeProvider>
-                </OnboardingProvider>
-              </NotificationProvider>
-            </WalletProvider>
-          </ToastProvider>
-        </ThemeProvider>
+        <AccessibilityProvider>
+          <ThemeProvider>
+            <ToastProvider>
+              <WalletProviders>
+                <NotificationProvider>
+                  <OnboardingProvider>
+                    <RealtimeProvider>
+                      <SkipLinks />
+                      {/* aria-live region for screen reader announcements */}
+                      <div
+                        id="sr-announcer"
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="sr-only"
+                      />
+                      <AppWithErrorBoundary />
+                    </RealtimeProvider>
+                  </OnboardingProvider>
+                </NotificationProvider>
+              </WalletProviders>
+            </ToastProvider>
+          </ThemeProvider>
+        </AccessibilityProvider>
       </I18nextProvider>
     </React.StrictMode>
   );

@@ -1,74 +1,72 @@
-name: VaultDAO CI
+name: CI
 
 on:
   push:
-    branches:
-      - "**"
+    branches: [main, "feature/**", "fix/**"]
   pull_request:
-    branches:
-      - "**"
-  workflow_dispatch:
+    branches: [main]
 
 jobs:
-  test-contracts:
-    name: Test Smart Contracts
+  contract-tests:
+    name: Smart Contract Tests
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/vault
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           targets: wasm32-unknown-unknown
-          components: clippy, rustfmt
 
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
         with:
-          workspaces: contracts/vault
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/vault/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/vault/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run fmt check
+      - name: Check formatting
         run: cargo fmt --all -- --check
-        working-directory: contracts/vault
 
-      - name: Run clippy
+      - name: Lint (clippy)
         run: cargo clippy --all-targets --all-features -- -D warnings
-        working-directory: contracts/vault
-
-      - name: Build WASM contract
-        run: cargo build --target wasm32-unknown-unknown --release
-        working-directory: contracts/vault
 
       - name: Run tests
         run: cargo test
-        working-directory: contracts/vault
 
-  build-frontend:
-    name: Build Frontend
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown --release
+
+  backend-checks:
+    name: Backend Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "20"
           cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
-        working-directory: frontend
+      - name: Install root dependencies
+        run: npm install
 
-      - name: Build frontend
-        run: npm run build
-        working-directory: frontend
-        env:
-          VITE_CONTRACT_ID: "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-          VITE_SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"
-          VITE_STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
-          VITE_STELLAR_NETWORK: "TESTNET"
-          VITE_HORIZON_URL: "https://horizon-testnet.stellar.org"
-          VITE_STELLAR_EXPLORER_URL: "https://stellar.expert/explorer/testnet"
-          VITE_COLLAB_WS_URL: "ws://localhost:1234"
+      - name: Install backend dependencies
+        run: npm --prefix backend install
+
+      - name: Copy backend env
+        run: cp backend/.env.example backend/.env
+
+      - name: Typecheck backend
+        run: npm run backend:typecheck
+
+      - name: Test backend
+        run: npm run backend:test

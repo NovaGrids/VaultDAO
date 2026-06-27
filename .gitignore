@@ -21,6 +21,10 @@ node_modules/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# macOS
+.DS_Store
+**/.DS_Store
+
 .agent/
 .agents/
 issue.md
@@ -29,6 +33,13 @@ contracts/vault/test_snapshots/
 REPUTATION_SYSTEM_COMMIT.md 
 CI_CHECKS_SUMMARY.md
 ATOMIC_BATCHING_COMMIT.md
+GEMINI.md
+# Scripts and secrets — not for public consumption
+.env
+.env.*
+!.env.example
+push_issues.sh
+
 backend/dist/
 backend/.env
 backend/.env.*
@@ -37,3 +48,13 @@ backend/coverage/
 backend/*.log
 backend/logs/
 backend/.tsbuildinfo
+
+# Contribution-wave scratch files (keep out of the repo)
+contract_issues.md
+issue2.md
+PR_BODY.md
+PR_DESCRIPTION.md
+ATOMIC_BATCH_IMPLEMENTATION_SUMMARY.md
+ATOMIC_BATCHING_COMMIT.md
+REPUTATION_SYSTEM_COMMIT.md
+CI_CHECKS_SUMMARY.md

@@ -15,18 +15,22 @@ const mockService = (overrides = {}) => ({
     activeSigners: 8,
     inactiveSigners: 2,
     totalRoleAssignments: 5,
-    roleDistribution: { [Role.ADMIN]: 1, [Role.TREASURER]: 1, [Role.MEMBER]: 3 },
+    roleDistribution: {
+      [Role.ADMIN]: 1,
+      [Role.TREASURER]: 1,
+      [Role.MEMBER]: 3,
+    },
     lastProcessedLedger: 1000,
-    snapshotAge: 100
+    snapshotAge: 100,
   }),
   rebuildFromRpc: async () => ({
     success: true,
     signersUpdated: 5,
     rolesUpdated: 2,
     eventsProcessed: 10,
-    lastProcessedLedger: 1000
+    lastProcessedLedger: 1000,
   }),
-  ...overrides
+  ...overrides,
 });
 
 // Mock Express Response
@@ -49,11 +53,11 @@ test("SnapshotController - rebuildSnapshot - success", async () => {
   const ctrl = createSnapshotControllers(service as any);
   const req = {
     params: { contractId: "CC123" },
-    body: { startLedger: 100, endLedger: 500 }
+    body: { startLedger: 100, endLedger: 500 },
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.data.success, true);
@@ -65,11 +69,11 @@ test("SnapshotController - rebuildSnapshot - invalid range", async () => {
   const ctrl = createSnapshotControllers(service as any);
   const req = {
     params: { contractId: "CC123" },
-    body: { startLedger: 500, endLedger: 100 }
+    body: { startLedger: 500, endLedger: 100 },
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 400);
   assert.equal(res.data.success, false);
@@ -77,21 +81,19 @@ test("SnapshotController - rebuildSnapshot - invalid range", async () => {
 });
 
 test("SnapshotController - rebuildSnapshot - async for large range", async () => {
-  let rebuildCalled = false;
   const service = mockService({
     rebuildFromRpc: async () => {
-      rebuildCalled = true;
       return { success: true };
-    }
+    },
   });
   const ctrl = createSnapshotControllers(service as any);
   const req = {
     params: { contractId: "CC123" },
-    body: { startLedger: 0, endLedger: 20000 }
+    body: { startLedger: 0, endLedger: 20000 },
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 202);
   assert.equal(res.data.success, true);
@@ -101,19 +103,25 @@ test("SnapshotController - rebuildSnapshot - async for large range", async () =>
 test("SnapshotController - rebuildSnapshot - default endLedger from stats", async () => {
   let capturedEndLedger: number | undefined;
   const service = mockService({
-    rebuildFromRpc: async (id: string, start: number, end: number) => {
+    rebuildFromRpc: async (_id: string, _start: number, end: number) => {
       capturedEndLedger = end;
-      return { success: true, eventsProcessed: 1, signersUpdated: 1, rolesUpdated: 1, lastProcessedLedger: end };
-    }
+      return {
+        success: true,
+        eventsProcessed: 1,
+        signersUpdated: 1,
+        rolesUpdated: 1,
+        lastProcessedLedger: end,
+      };
+    },
   });
   const ctrl = createSnapshotControllers(service as any);
   const req = {
     params: { contractId: "CC123" },
-    body: { startLedger: 100 }
+    body: { startLedger: 100 },
   } as any as Request;
   const res = mockResponse();
 
-  await ctrl.rebuildSnapshot(req, res);
+  await ctrl.rebuildSnapshot(req, res, () => {});
 
   assert.equal(res.statusCode, 200);
   assert.equal(capturedEndLedger, 1000); // from mock stats

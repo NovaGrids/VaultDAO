@@ -1,84 +1,205 @@
 /**
  * TransactionsService
  *
- * Fetches and caches transaction history from the Horizon API
- * for the configured vault contract address.
+ * Provides executed proposal transactions indexed from proposal activity persistence.
  */
 
-import type { HorizonClient } from "../../shared/rpc/horizon.client.js";
-import { InMemoryCacheAdapter } from "../../shared/cache/cache.adapter.js";
+import { ProposalActivityType } from "../proposals/types.js";
+import type { ProposalActivityPersistence } from "../proposals/types.js";
 import type {
   GetTransactionsParams,
   GetTransactionsResult,
-  TransactionRecord,
+  Transaction,
 } from "./transactions.types.js";
-
-/** Cache TTL: 30 seconds — short enough to stay fresh, long enough to absorb bursts. */
-const CACHE_TTL_MS = 30_000;
-
-function buildCacheKey(params: GetTransactionsParams): string {
-  return [
-    params.contractId,
-    params.cursor ?? "",
-    String(params.limit ?? 20),
-    params.order ?? "desc",
-  ].join(":");
-}
+import { decodeMemo } from "../../shared/utils/memo.js";
 
 export class TransactionsService {
-  private readonly cache = new InMemoryCacheAdapter<GetTransactionsResult>();
+  constructor(
+    private readonly persistence: ProposalActivityPersistence,
+    private readonly horizonUrl?: string,
+  ) {}
 
-  constructor(private readonly horizon: HorizonClient) {}
+  private static readDataString(
+    data: unknown,
+    key: "executor" | "recipient" | "token" | "amount",
+  ): string {
+    if (!data || typeof data !== "object") {
+      return "";
+    }
+
+    const value = (data as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : "";
+  }
 
   /**
-   * Returns paginated transaction history for the given contract/account.
-   * Results are cached per unique (contractId, cursor, limit, order) combination.
+   * Returns paginated executed transactions for a contract with optional filters.
    */
   async getTransactions(
     params: GetTransactionsParams,
   ): Promise<GetTransactionsResult> {
-    const key = buildCacheKey(params);
-    const cached = this.cache.get(key);
-    if (cached) return cached;
-
-    const page = await this.horizon.getTransactions(
+    const allRecords = await this.persistence.getByContractId(
       params.contractId,
-      params.cursor,
-      params.limit,
-      params.order,
     );
+    const executed = allRecords
+      .filter((record) => record.type === ProposalActivityType.EXECUTED)
+      .map((record): Transaction => {
+        const data = record.data ?? {};
+        const base: Transaction = {
+          proposalId: record.proposalId,
+          contractId: record.metadata.contractId,
+          transactionHash: record.metadata.transactionHash,
+          ledger: record.metadata.ledger,
+          timestamp: record.timestamp,
+          executor: TransactionsService.readDataString(data, "executor"),
+          recipient: TransactionsService.readDataString(data, "recipient"),
+          token: TransactionsService.readDataString(data, "token"),
+          amount: TransactionsService.readDataString(data, "amount"),
+        };
 
-    const items: TransactionRecord[] = page.records.map((tx) => ({
-      id: tx.id,
-      hash: tx.hash,
-      ledger: tx.ledger,
-      createdAt: tx.created_at,
-      sourceAccount: tx.source_account,
-      feeCharged: tx.fee_charged,
-      operationCount: tx.operation_count,
-      memoType: tx.memo_type,
-      memo: tx.memo,
-      successful: tx.successful,
-      pagingToken: tx.paging_token,
-    }));
+        // best-effort: try to decode memo if horizonUrl provided
+        if (this.horizonUrl && record.metadata.transactionHash) {
+          void this.attachMemoInfo(record.metadata.transactionHash, base).catch(
+            () => {},
+          );
+        }
 
-    const result: GetTransactionsResult = {
-      items,
-      nextCursor: page.nextCursor,
-      total: items.length,
+        return base;
+      })
+      .filter((tx) => (params.token ? tx.token === params.token : true))
+      .filter((tx) =>
+        params.recipient ? tx.recipient === params.recipient : true,
+      )
+      // Filter by date range using timestamp field
+      .filter((tx) => {
+        if (!params.from && !params.to) return true;
+        const txDate = new Date(tx.timestamp);
+        if (isNaN(txDate.getTime())) return false;
+        
+        if (params.from && txDate < params.from) return false;
+        if (params.to && txDate > params.to) return false;
+        return true;
+      })
+      // Filter by amount range
+      .filter((tx) => {
+        if (params.minAmount === undefined && params.maxAmount === undefined) return true;
+        const amount = parseFloat(tx.amount);
+        if (isNaN(amount)) return false;
+        
+        if (params.minAmount !== undefined && amount < params.minAmount) return false;
+        if (params.maxAmount !== undefined && amount > params.maxAmount) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    // Apply cursor-based pagination
+    let startIndex = 0;
+    let endIndex = executed.length;
+    
+    if (params.cursor) {
+      // Find the index of the cursor item
+      const cursorIndex = executed.findIndex(tx => tx.transactionHash === params.cursor);
+      if (cursorIndex !== -1) {
+        startIndex = cursorIndex + 1;
+      }
+    }
+    
+    const limit = params.limit ?? 20;
+    const maxLimit = Math.min(limit, 200); // Cap at 200 per page
+    endIndex = Math.min(startIndex + maxLimit, executed.length);
+    
+    const data = executed.slice(startIndex, endIndex);
+    const nextCursor = endIndex < executed.length ? executed[endIndex]?.transactionHash : null;
+    
+    return {
+      data,
+      nextCursor,
+      hasMore: endIndex < executed.length,
     };
-
-    this.cache.set(key, result, CACHE_TTL_MS);
-    return result;
   }
 
-  /** Returns cache hit/miss statistics. */
-  cacheStats() {
-    return this.cache.stats();
+  /**
+   * Returns all transactions linked to a proposal via memo decoding.
+   */
+  async getTransactionsByProposal(
+    proposalId: string,
+    contractId: string,
+    cache?: {
+      get: (k: string) => any;
+      set: (k: string, v: any, ttl?: number) => void;
+    },
+  ): Promise<Transaction[]> {
+    const key = `proposal_txns:${contractId}:${proposalId}`;
+    const ttl = 5 * 60 * 1000; // 5 minutes
+    if (cache) {
+      const cached = cache.get(key);
+      if (cached) return cached;
+    }
+
+    const records = await this.persistence.getByProposalId(proposalId);
+    const txs: Transaction[] = [];
+    for (const record of records) {
+      if (record.type !== ProposalActivityType.EXECUTED) continue;
+      const data = record.data ?? {};
+      const tx: Transaction = {
+        proposalId: record.proposalId,
+        contractId: record.metadata.contractId,
+        transactionHash: record.metadata.transactionHash,
+        ledger: record.metadata.ledger,
+        timestamp: record.timestamp,
+        executor: TransactionsService.readDataString(data, "executor"),
+        recipient: TransactionsService.readDataString(data, "recipient"),
+        token: TransactionsService.readDataString(data, "token"),
+        amount: TransactionsService.readDataString(data, "amount"),
+      };
+
+      if (this.horizonUrl && tx.transactionHash) {
+        try {
+          await this.attachMemoInfo(tx.transactionHash, tx);
+        } catch {
+          // ignore
+        }
+      }
+
+      txs.push(tx);
+    }
+
+    // reverse chronological
+    txs.sort((a, b) => b.ledger - a.ledger);
+
+    if (cache) cache.set(key, txs, ttl);
+    return txs;
   }
 
-  /** Invalidate all cached transaction pages (e.g. after a known new tx). */
-  invalidateCache(): void {
-    this.cache.clear();
+  private async attachMemoInfo(txHash: string, tx: Transaction): Promise<void> {
+    try {
+      const res = await fetch(
+        `${this.horizonUrl}/transactions/${encodeURIComponent(txHash)}`,
+      );
+      if (!res.ok) return;
+      const json = await res.json();
+      const memoType = json.memo_type as string | undefined;
+      const memo = json.memo as string | undefined;
+      const decoded = decodeMemo(memoType, memo);
+      (tx as any).decodedProposalId = decoded.decodedProposalId;
+      (tx as any).decodedMemo = decoded.decodedMemo;
+    } catch {
+      // ignore decoding errors
+      (tx as any).decodedProposalId = null;
+      (tx as any).decodedMemo = null;
+    }
+  }
+
+  /**
+   * Gets a single executed transaction by hash.
+   */
+  async getTransactionByHash(
+    contractId: string,
+    txHash: string,
+  ): Promise<Transaction | null> {
+    const result = await this.getTransactions({
+      contractId,
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+    return result.data.find((tx) => tx.transactionHash === txHash) ?? null;
   }
 }

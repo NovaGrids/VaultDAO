@@ -1,6 +1,6 @@
 # Contract Integration Checklist
 
-Maps every public contract method to its frontend (`useVaultContract`) and SDK consumer status. Use this to find gaps, plan contributions, and avoid drift between the contract and its consumers.
+Maps every public contract method to its frontend (`useVaultContract`) and SDK consumer status. Use this to find gaps, plan integration work, and avoid drift between the contract and its consumers.
 
 **References:**
 - Contract: `contracts/vault/src/lib.rs`

@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 import type { AuditEntry } from './auditVerification';
 import { stripHtml } from './pdfExport';
 
-export type ReportType = 'SOC2' | 'ISO27001' | 'Custom';
+export type ReportType = 'SOC2' | 'ISO27001' | 'Custom' | 'Full' | 'TransactionLog' | 'SignerActivity';
 
 export interface ReportConfig {
   type: ReportType;
@@ -27,6 +27,13 @@ export interface ReportData {
     dateRange: string;
     actionsByType: Record<string, number>;
   };
+}
+
+export interface ComplianceReportData {
+  proposals: any[];
+  dateRange: { start: string; end: string };
+  vaultConfig: any;
+  contractId?: string;
 }
 
 function generateSOC2ReportPDF(config: ReportConfig, data: ReportData): jsPDF {
@@ -219,7 +226,6 @@ export function exportToJSON(data: unknown): Blob {
   return new Blob([jsonString], { type: 'application/json' });
 }
 
-// Simplified wrapper for SOC2 reports
 export async function generateSOC2Report(reportData: {
   entries: AuditEntry[];
   dateRange: { start: string; end: string };
@@ -257,7 +263,6 @@ export async function generateSOC2Report(reportData: {
   return new Blob([doc.output('arraybuffer') as ArrayBuffer], { type: 'application/pdf' });
 }
 
-// Simplified wrapper for ISO27001 reports
 export async function generateISO27001Report(reportData: {
   entries: AuditEntry[];
   dateRange: { start: string; end: string };
@@ -292,6 +297,157 @@ export async function generateISO27001Report(reportData: {
   };
 
   const doc = generateISO27001ReportPDF(config, data);
+  return new Blob([doc.output('arraybuffer') as ArrayBuffer], { type: 'application/pdf' });
+}
+
+export function generateComplianceReport(
+  proposals: any[],
+  dateRange: { start: string; end: string },
+  vaultConfig: any,
+  contractId: string = 'VAULT'
+): Blob {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.width;
+  const margin = 14;
+  let yPos = 20;
+
+  // Header
+  doc.setFontSize(18);
+  doc.text('VaultDAO Compliance Report', pageWidth / 2, yPos, { align: 'center' });
+  yPos += 8;
+
+  doc.setFontSize(10);
+  doc.text(`Contract ID: ${contractId}`, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 5;
+  doc.text(`Report Date: ${new Date().toLocaleDateString()}`, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 5;
+  doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 12;
+
+  // Executive Summary
+  doc.setFontSize(14);
+  doc.text('Executive Summary', margin, yPos);
+  yPos += 8;
+
+  doc.setFontSize(10);
+  const summaryData = [
+    ['Total Transactions', proposals.length.toString()],
+    ['Unique Signers', new Set(proposals.flatMap(p => p.signers || [])).size.toString()],
+    ['Approved', proposals.filter(p => p.status === 'approved').length.toString()],
+    ['Pending', proposals.filter(p => p.status === 'pending').length.toString()],
+  ];
+
+  autoTable(doc as unknown as import('jspdf').jsPDF, {
+    startY: yPos,
+    head: [['Metric', 'Value']],
+    body: summaryData,
+    theme: 'striped',
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [88, 28, 135] },
+    margin: { left: margin, right: margin },
+  });
+
+  const docObj = doc as unknown as Record<string, unknown>;
+  yPos = (docObj.lastAutoTable as number) + 10;
+
+  // Transaction Log
+  if (yPos > 240) {
+    doc.addPage();
+    yPos = 20;
+  }
+
+  doc.setFontSize(14);
+  doc.text('Transaction Log', margin, yPos);
+  yPos += 8;
+
+  const txData = proposals.slice(0, 20).map(p => [
+    new Date(p.createdAt || Date.now()).toLocaleDateString(),
+    p.recipient?.slice(0, 10) + '...' || 'N/A',
+    p.amount?.toString() || '0',
+    p.status || 'unknown',
+  ]);
+
+  autoTable(doc as unknown as import('jspdf').jsPDF, {
+    startY: yPos,
+    head: [['Date', 'Recipient', 'Amount', 'Status']],
+    body: txData,
+    theme: 'striped',
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [88, 28, 135] },
+    margin: { left: margin, right: margin },
+  });
+
+  yPos = (docObj.lastAutoTable as number) + 10;
+
+  // Signer Activity
+  if (yPos > 240) {
+    doc.addPage();
+    yPos = 20;
+  }
+
+  doc.setFontSize(14);
+  doc.text('Signer Activity', margin, yPos);
+  yPos += 8;
+
+  const signerMap = new Map<string, number>();
+  proposals.forEach(p => {
+    (p.signers || []).forEach((signer: string) => {
+      signerMap.set(signer, (signerMap.get(signer) || 0) + 1);
+    });
+  });
+
+  const signerData = Array.from(signerMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([signer, count]) => [signer.slice(0, 12) + '...', count.toString()]);
+
+  autoTable(doc as unknown as import('jspdf').jsPDF, {
+    startY: yPos,
+    head: [['Signer', 'Approvals']],
+    body: signerData,
+    theme: 'striped',
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [88, 28, 135] },
+    margin: { left: margin, right: margin },
+  });
+
+  yPos = (docObj.lastAutoTable as number) + 10;
+
+  // Spending vs Limits
+  if (yPos > 240) {
+    doc.addPage();
+    yPos = 20;
+  }
+
+  doc.setFontSize(14);
+  doc.text('Spending vs Limits', margin, yPos);
+  yPos += 8;
+
+  const totalSpent = proposals.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  const dailyLimit = vaultConfig?.dailyLimit || 100000;
+  const weeklyLimit = vaultConfig?.weeklyLimit || 500000;
+  const dailyUtilization = ((totalSpent / dailyLimit) * 100).toFixed(1);
+  const weeklyUtilization = ((totalSpent / weeklyLimit) * 100).toFixed(1);
+
+  const limitData = [
+    ['Daily Limit', `$${dailyLimit}`, `${dailyUtilization}%`],
+    ['Weekly Limit', `$${weeklyLimit}`, `${weeklyUtilization}%`],
+    ['Total Spent', `$${totalSpent.toFixed(2)}`, ''],
+  ];
+
+  autoTable(doc as unknown as import('jspdf').jsPDF, {
+    startY: yPos,
+    head: [['Limit Type', 'Amount', 'Utilization']],
+    body: limitData,
+    theme: 'striped',
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [88, 28, 135] },
+    margin: { left: margin, right: margin },
+  });
+
+  doc.setFontSize(8);
+  doc.text(`Generated: ${new Date().toISOString()}`, margin, doc.internal.pageSize.height - 10);
+
   return new Blob([doc.output('arraybuffer') as ArrayBuffer], { type: 'application/pdf' });
 }
 

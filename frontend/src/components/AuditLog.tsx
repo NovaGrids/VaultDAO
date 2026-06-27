@@ -1,480 +1,553 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, Shield, AlertTriangle, CheckCircle, ChevronLeft, ChevronRight, RefreshCw, Info } from 'lucide-react';
-import type { AuditVerificationResult, AuditEntry } from '../utils/auditVerification';
-import { verifyAuditChain, prepareChainedAuditLog, entryDetailAmount } from '../utils/auditVerification';
-import { useVaultContract } from '../hooks/useVaultContract';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import InfiniteScroll from 'react-infinite-scroll-component';
+import { FixedSizeList as List } from 'react-window';
+import Fuse from 'fuse.js';
+import {
+  Copy,
+  ExternalLink,
+  ShieldCheck,
+  ShieldAlert,
+  Loader2,
+  UserPlus,
+  UserMinus,
+  CheckCircle2,
+  XCircle,
+  PlayCircle,
+  PlusCircle,
+  Settings,
+  Key,
+  Zap,
+  AlertTriangle,
+} from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { env } from '../config/env';
+import AuditExporter from './AuditExporter';
 
-interface FilterState {
-  search: string;
-  dateFrom: string;
-  dateTo: string;
-  userFilter: string;
-  actionTypeFilter: string[];
-  amountMin: string;
-  amountMax: string;
+const API_BASE =
+  (import.meta.env as Record<string, string | undefined>).VITE_API_BASE_URL ??
+  'http://localhost:3000';
+const PAGE_SIZE = 50;
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export type AuditAction =
+  | 'proposal_created'
+  | 'proposal_approved'
+  | 'proposal_executed'
+  | 'proposal_rejected'
+  | 'signer_added'
+  | 'signer_removed'
+  | 'config_updated'
+  | 'role_assigned'
+  | 'initialized';
+
+export interface BackendAuditEntry {
+  id: string;
+  action: AuditAction | string;
+  actor: string;
+  target?: string;
+  txHash?: string;
+  timestamp: string;
+  details?: Record<string, unknown>;
+  hash?: string;
+  prev_hash?: string;
 }
 
-const ITEMS_PER_PAGE = 50;
-
-function formatUserLabel(user: string): string {
-  if (!user || user === 'System') return user;
-  if (user.length <= 16) return user;
-  return `${user.slice(0, 8)}...${user.slice(-6)}`;
+interface VerificationResult {
+  verified: boolean;
+  brokenAtEntry: number | null;
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function truncate(addr: string): string {
+  if (addr.length <= 14) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-6)}`;
+}
+
+function relativeTime(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 2_592_000_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(isoString).toLocaleDateString();
+}
+
+function ActionIcon({ action }: { action: string }) {
+  const cls = 'w-4 h-4 flex-shrink-0';
+  switch (action) {
+    case 'proposal_created':
+      return <PlusCircle className={`${cls} text-blue-400`} aria-hidden="true" />;
+    case 'proposal_approved':
+      return <CheckCircle2 className={`${cls} text-green-400`} aria-hidden="true" />;
+    case 'proposal_executed':
+      return <PlayCircle className={`${cls} text-purple-400`} aria-hidden="true" />;
+    case 'proposal_rejected':
+      return <XCircle className={`${cls} text-red-400`} aria-hidden="true" />;
+    case 'signer_added':
+      return <UserPlus className={`${cls} text-teal-400`} aria-hidden="true" />;
+    case 'signer_removed':
+      return <UserMinus className={`${cls} text-orange-400`} aria-hidden="true" />;
+    case 'config_updated':
+      return <Settings className={`${cls} text-gray-400`} aria-hidden="true" />;
+    case 'role_assigned':
+      return <Key className={`${cls} text-yellow-400`} aria-hidden="true" />;
+    case 'initialized':
+      return <Zap className={`${cls} text-indigo-400`} aria-hidden="true" />;
+    default:
+      return <AlertTriangle className={`${cls} text-gray-500`} aria-hidden="true" />;
+  }
+}
+
+const ALL_ACTIONS: (AuditAction | string)[] = [
+  'proposal_created',
+  'proposal_approved',
+  'proposal_executed',
+  'proposal_rejected',
+  'signer_added',
+  'signer_removed',
+  'config_updated',
+  'role_assigned',
+  'initialized',
+];
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 const AuditLog: React.FC = () => {
-  const { getAllVaultEventsForAudit } = useVaultContract();
-  const { notify } = useToast();
+  const { notify, showToast } = useToast();
 
-  const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [entries, setEntries] = useState<BackendAuditEntry[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [verification, setVerification] = useState<AuditVerificationResult | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [showFilters, setShowFilters] = useState(false);
+  const [actionFilter, setActionFilter] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
-  const [filters, setFilters] = useState<FilterState>({
-    search: '',
-    dateFrom: '',
-    dateTo: '',
-    userFilter: '',
-    actionTypeFilter: [],
-    amountMin: '',
-    amountMax: '',
-  });
+  // Verification state
+  const [verifying, setVerifying] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
-  const fetchAuditLog = async () => {
-    setLoading(true);
-    try {
-      const result = await getAllVaultEventsForAudit(2000);
-      const chainedEntries = prepareChainedAuditLog(result.activities, env.contractId);
-      setEntries(chainedEntries);
-      const v = verifyAuditChain(chainedEntries);
-      setVerification(v);
-      if (!v.isValid) {
-        notify('audit_tamper', v.headline, 'error');
+  // Track broken entry index for highlighting
+  const brokenEntryRef = useRef<number | null>(null);
+
+  const fetchPage = useCallback(
+    async (nextOffset: number, filter: string, replace: boolean) => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          contractId: env.contractId,
+          offset: String(nextOffset),
+          limit: String(PAGE_SIZE),
+        });
+        if (filter) params.set('action', filter);
+
+        const res = await fetch(`${API_BASE}/api/v1/audit?${params.toString()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { entries?: BackendAuditEntry[]; data?: BackendAuditEntry[]; total?: number };
+        const fetched = data.entries ?? data.data ?? [];
+
+        setEntries((prev) => (replace ? fetched : [...prev, ...fetched]));
+        setOffset(nextOffset + fetched.length);
+        setHasMore(fetched.length === PAGE_SIZE);
+      } catch (e) {
+        notify('audit_error', e instanceof Error ? e.message : 'Failed to load audit log', 'error');
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error('Failed to fetch audit log:', err);
-      notify('audit_error', 'Failed to load audit log', 'error');
-      setVerification(null);
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [notify],
+  );
 
+  // Initial load
   useEffect(() => {
-    void fetchAuditLog();
-    // Intentionally once on mount — pagination helper from the contract hook is not referentially stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void fetchPage(0, actionFilter.join(','), true);
+    setVerificationResult(null);
+    setVerificationError(null);
+    brokenEntryRef.current = null;
+  }, [actionFilter]);
 
   const filteredEntries = useMemo(() => {
-    const minAmt = filters.amountMin.trim() ? parseFloat(filters.amountMin) : null;
-    const maxAmt = filters.amountMax.trim() ? parseFloat(filters.amountMax) : null;
+    let result = entries;
 
-    return entries.filter(entry => {
-      if (filters.search) {
-        const searchLower = filters.search.toLowerCase();
-        const matchesSearch =
-          entry.action.toLowerCase().includes(searchLower) ||
-          entry.user.toLowerCase().includes(searchLower) ||
-          entry.transactionHash.toLowerCase().includes(searchLower) ||
-          entry.sourceEventId.toLowerCase().includes(searchLower) ||
-          entry.ledger.includes(searchLower) ||
-          JSON.stringify(entry.details).toLowerCase().includes(searchLower);
-        if (!matchesSearch) return false;
+    if (dateRange.start && dateRange.end) {
+      const start = new Date(dateRange.start).getTime();
+      const end = new Date(dateRange.end).getTime();
+      if (start <= end) {
+        result = result.filter(e => {
+          const t = new Date(e.timestamp).getTime();
+          return t >= start && t <= end;
+        });
       }
+    }
 
-      if (filters.dateFrom) {
-        const entryDate = new Date(entry.timestamp);
-        const fromDate = new Date(filters.dateFrom);
-        if (entryDate < fromDate) return false;
-      }
+    if (searchQuery) {
+      const fuse = new Fuse(result, {
+        keys: ['action', 'actor', 'target', 'txHash', 'details'],
+        threshold: 0.3,
+      });
+      result = fuse.search(searchQuery).map(res => res.item);
+    }
 
-      if (filters.dateTo) {
-        const entryDate = new Date(entry.timestamp);
-        const toDate = new Date(filters.dateTo);
-        toDate.setHours(23, 59, 59);
-        if (entryDate > toDate) return false;
-      }
+    return result;
+  }, [entries, searchQuery, dateRange]);
 
-      if (filters.userFilter && !entry.user.toLowerCase().includes(filters.userFilter.toLowerCase())) {
-        return false;
-      }
+  const loadMore = useCallback(() => {
+    if (!loading && hasMore) {
+      void fetchPage(offset, actionFilter, false);
+    }
+  }, [loading, hasMore, offset, actionFilter, fetchPage]);
 
-      if (filters.actionTypeFilter.length > 0 && !filters.actionTypeFilter.includes(entry.action)) {
-        return false;
-      }
-
-      if (minAmt != null || maxAmt != null) {
-        const amt = entryDetailAmount(entry);
-        if (amt == null) return false;
-        if (minAmt != null && amt < minAmt) return false;
-        if (maxAmt != null && amt > maxAmt) return false;
-      }
-
-      return true;
-    });
-  }, [entries, filters]);
-
-  const paginatedEntries = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-    return filteredEntries.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  }, [filteredEntries, currentPage]);
-
-  const totalPages = Math.ceil(filteredEntries.length / ITEMS_PER_PAGE);
-
-  const actionTypes = useMemo(() => {
-    const types = new Set(entries.map(e => e.action));
-    return Array.from(types);
-  }, [entries]);
-
-  const tamperedSet = useMemo(() => new Set(verification?.tamperedEntries ?? []), [verification]);
-
-  const handleFilterChange = (key: keyof FilterState, value: unknown) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-    setCurrentPage(1);
+  const handleFilterChange = (action: string[]) => {
+    setActionFilter(action);
+    setOffset(0);
+    setHasMore(true);
   };
 
-  const clearFilters = () => {
-    setFilters({
-      search: '',
-      dateFrom: '',
-      dateTo: '',
-      userFilter: '',
-      actionTypeFilter: [],
-      amountMin: '',
-      amountMax: '',
-    });
-    setCurrentPage(1);
+  const copyActor = (actor: string) => {
+    void navigator.clipboard.writeText(actor);
+    showToast('Address copied', 'success');
   };
 
-  const statusBadge = verification ? (
-    <div
-      className={`flex flex-col gap-1 px-3 py-2 rounded-lg border max-w-md ${
-        !verification.isValid
-          ? 'bg-red-500/10 border-red-500/30 text-red-300'
-          : verification.integrity === 'strong'
-            ? 'bg-green-500/10 border-green-500/30 text-green-400'
-            : verification.integrity === 'none'
-              ? 'bg-gray-500/10 border-gray-500/30 text-gray-400'
-              : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        {!verification.isValid ? (
-          <AlertTriangle size={16} />
-        ) : verification.integrity === 'strong' ? (
-          <CheckCircle size={16} />
-        ) : verification.integrity === 'none' ? (
-          <Info size={16} />
-        ) : (
-          <Shield size={16} />
-        )}
-        <span className="text-xs font-medium leading-snug">{verification.headline}</span>
-      </div>
-      {verification.detailLines.length > 0 && (
-        <ul className="text-[11px] text-gray-400 list-disc pl-4 space-y-0.5">
-          {verification.detailLines.map((line, i) => (
-            <li key={i}>{line}</li>
-          ))}
-        </ul>
-      )}
-    </div>
-  ) : null;
+  // ── Chain Verification ────────────────────────────────────────────────────
 
-  const structuralIssues = verification?.issues.filter(
-    i => i.code === 'hash_mismatch' || i.code === 'chain_break'
-  ) ?? [];
-  const qualityIssues = verification?.issues.filter(
-    i => i.code === 'missing_payload' || i.code === 'failed_call'
-  ) ?? [];
+  const handleVerifyChain = useCallback(async () => {
+    setVerifying(true);
+    setVerificationResult(null);
+    setVerificationError(null);
+    brokenEntryRef.current = null;
+
+    try {
+      const params = new URLSearchParams({
+        contractId: env.contractId,
+        offset: '0',
+        limit: String(Math.max(entries.length, PAGE_SIZE)),
+      });
+
+      const res = await fetch(`${API_BASE}/api/v1/audit/verify?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { data?: VerificationResult } | VerificationResult;
+
+      // Handle both wrapped and unwrapped response shapes
+      const result: VerificationResult =
+        'data' in data && data.data ? data.data : (data as VerificationResult);
+
+      setVerificationResult(result);
+      brokenEntryRef.current = result.brokenAtEntry;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Verification failed';
+      setVerificationError(msg);
+      notify('audit_verify_error', msg, 'error');
+    } finally {
+      setVerifying(false);
+    }
+  }, [entries.length, notify]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  const isBrokenEntry = (index: number) =>
+    verificationResult !== null &&
+    !verificationResult.verified &&
+    verificationResult.brokenAtEntry !== null &&
+    index >= verificationResult.brokenAtEntry;
 
   return (
-    <div className="min-h-screen bg-gray-900 p-4 sm:p-6 text-white">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-          <div>
-            <h1 className="text-3xl font-bold">Audit Log</h1>
-            <p className="text-gray-400 text-sm mt-1">
-              Cryptographic chain over Soroban contract events for this vault (newest pages merged up to 2k events).
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-            {statusBadge}
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <button
-                type="button"
-                onClick={() => void fetchAuditLog()}
-                disabled={loading}
-                className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-              >
-                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowFilters(!showFilters)}
-                className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg transition-colors"
-              >
-                <Filter size={16} />
-                Filters
-              </button>
+    <div className="space-y-4">
+      {/* Toolbar: filter + verify + export */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2 items-center">
+            <input 
+              type="text" 
+              placeholder="Search..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="px-3 py-1 bg-gray-800 text-white text-sm rounded border border-gray-700 focus:border-purple-500 focus:outline-none" 
+            />
+            <div className="flex items-center gap-1 text-sm text-gray-400">
+              <input 
+                type="date" 
+                value={dateRange.start}
+                onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                className="px-3 py-1 bg-gray-800 text-white rounded border border-gray-700 focus:border-purple-500 focus:outline-none" 
+              />
+              <span>to</span>
+              <input 
+                type="date" 
+                value={dateRange.end}
+                onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                className="px-3 py-1 bg-gray-800 text-white rounded border border-gray-700 focus:border-purple-500 focus:outline-none" 
+              />
             </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => void handleVerifyChain()}
+              disabled={verifying || entries.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 rounded-lg text-sm transition-colors"
+              aria-label="Verify audit chain integrity"
+              data-testid="verify-chain-button"
+            >
+              {verifying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  Verifying…
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                  Verify Chain
+                </>
+              )}
+            </button>
+            <AuditExporter entries={filteredEntries} />
           </div>
         </div>
+        
+        {/* Action filter */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => handleFilterChange([])}
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+              actionFilter.length === 0
+                ? 'bg-purple-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            All
+          </button>
+          {ALL_ACTIONS.map((a) => (
+            <button
+              key={a}
+              onClick={() => handleFilterChange(actionFilter.includes(a) ? actionFilter.filter(x => x !== a) : [...actionFilter, a])}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                actionFilter.includes(a)
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              {a}
+            </button>
+          ))}
+        </div>
 
-        {verification && verification.issues.length > 0 && (
-          <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-            {structuralIssues.length > 0 && (
-              <div className="rounded-xl border border-red-500/30 bg-red-950/20 p-4">
-                <div className="text-xs font-semibold text-red-300 uppercase tracking-wide mb-2">Chain problems</div>
-                <ul className="text-sm text-red-200/90 space-y-1 max-h-40 overflow-y-auto">
-                  {structuralIssues.slice(0, 12).map((iss, idx) => (
-                    <li key={`${iss.entryId}-${iss.code}-${idx}`}>{iss.message}</li>
-                  ))}
-                </ul>
-              </div>
+        {/* Actions */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => void handleVerifyChain()}
+            disabled={verifying || entries.length === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 rounded-lg text-sm transition-colors"
+            aria-label="Verify audit chain integrity"
+            data-testid="verify-chain-button"
+          >
+            {verifying ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                Verifying…
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                Verify Chain
+              </>
             )}
-            {qualityIssues.length > 0 && verification.isValid && (
-              <div className="rounded-xl border border-amber-500/25 bg-amber-950/15 p-4">
-                <div className="text-xs font-semibold text-amber-300 uppercase tracking-wide mb-2">Data quality</div>
-                <ul className="text-sm text-amber-100/90 space-y-1 max-h-40 overflow-y-auto">
-                  {qualityIssues.slice(0, 12).map((iss, idx) => (
-                    <li key={`${iss.entryId}-${iss.code}-${idx}`}>{iss.message}</li>
-                  ))}
-                  {qualityIssues.length > 12 && (
-                    <li className="text-amber-200/70">…and {qualityIssues.length - 12} more</li>
-                  )}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
+          </button>
 
-        {showFilters && (
-          <div className="bg-gray-800/50 rounded-xl p-4 mb-6 border border-gray-700">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <AuditExporter entries={entries} />
+        </div>
+      </div>
+
+      {/* Verification banner */}
+      {verificationResult !== null && (
+        <div
+          className={`flex items-start gap-3 rounded-xl px-4 py-3 text-sm border ${
+            verificationResult.verified
+              ? 'bg-green-500/10 border-green-500/30 text-green-300'
+              : 'bg-red-500/10 border-red-500/30 text-red-300'
+          }`}
+          role="status"
+          aria-live="polite"
+          data-testid="verification-banner"
+        >
+          {verificationResult.verified ? (
+            <>
+              <ShieldCheck className="w-5 h-5 flex-shrink-0 mt-0.5" aria-hidden="true" />
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Search</label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500" size={16} />
-                  <input
-                    type="text"
-                    value={filters.search}
-                    onChange={(e) => handleFilterChange('search', e.target.value)}
-                    placeholder="Action, user, event id, ledger, details…"
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                  />
-                </div>
+                <p className="font-semibold">Chain Verified ✓</p>
+                <p className="text-xs opacity-80 mt-0.5">
+                  All {entries.length} entries form a valid hash chain.
+                </p>
               </div>
-
+            </>
+          ) : (
+            <>
+              <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" aria-hidden="true" />
               <div>
-                <label className="block text-xs text-gray-400 mb-1">From Date</label>
-                <input
-                  type="date"
-                  value={filters.dateFrom}
-                  onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                />
+                <p className="font-semibold">
+                  Chain Broken at entry #{verificationResult.brokenAtEntry ?? '?'} ✗
+                </p>
+                <p className="text-xs opacity-80 mt-0.5">
+                  The hash chain is invalid from entry #{verificationResult.brokenAtEntry ?? '?'}{' '}
+                  onwards. This may indicate tampered or missing records.
+                </p>
               </div>
-
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">To Date</label>
-                <input
-                  type="date"
-                  value={filters.dateTo}
-                  onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">User</label>
-                <input
-                  type="text"
-                  value={filters.userFilter}
-                  onChange={(e) => handleFilterChange('userFilter', e.target.value)}
-                  placeholder="Filter by user..."
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Min amount (from details)</label>
-                <input
-                  type="number"
-                  value={filters.amountMin}
-                  onChange={(e) => handleFilterChange('amountMin', e.target.value)}
-                  placeholder="e.g. 100"
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Max amount (from details)</label>
-                <input
-                  type="number"
-                  value={filters.amountMax}
-                  onChange={(e) => handleFilterChange('amountMax', e.target.value)}
-                  placeholder="e.g. 10000"
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="block text-xs text-gray-400 mb-1">Action Types</label>
-                <div className="flex flex-wrap gap-2">
-                  {actionTypes.map(type => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => {
-                        const current = filters.actionTypeFilter;
-                        const updated = current.includes(type)
-                          ? current.filter(t => t !== type)
-                          : [...current, type];
-                        handleFilterChange('actionTypeFilter', updated);
-                      }}
-                      className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                        filters.actionTypeFilter.includes(type)
-                          ? 'bg-purple-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-colors"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-gray-800/50 rounded-xl border border-gray-700 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-800 border-b border-gray-700">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Timestamp</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Ledger</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">User</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Action</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Details</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Event</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700">
-                {loading ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                      Loading audit log from chain…
-                    </td>
-                  </tr>
-                ) : paginatedEntries.length > 0 ? (
-                  paginatedEntries.map(entry => {
-                    const broken = tamperedSet.has(entry.id);
-                    return (
-                      <tr
-                        key={entry.id}
-                        className={`hover:bg-gray-700/30 transition-colors ${
-                          broken ? 'bg-red-950/30 border-l-2 border-l-red-500' : ''
-                        }`}
-                      >
-                        <td className="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">
-                          {new Date(entry.timestamp).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-400 whitespace-nowrap">{entry.ledger}</td>
-                        <td className="px-4 py-3 text-sm text-gray-300">
-                          <code className="text-xs bg-gray-900 px-2 py-1 rounded">{formatUserLabel(entry.user)}</code>
-                        </td>
-                        <td className="px-4 py-3 text-sm">
-                          <span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs font-medium">
-                            {entry.action}
-                          </span>
-                          {entry.callSucceeded === false && (
-                            <span className="ml-1 text-[10px] uppercase text-red-400">failed call</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-400 max-w-xs truncate" title={JSON.stringify(entry.details)}>
-                          {JSON.stringify(entry.details)}
-                        </td>
-                        <td className="px-4 py-3 text-sm">
-                          <code className="text-xs text-gray-500 break-all">{entry.sourceEventId.slice(0, 20)}…</code>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                      No audit entries match your filters
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700">
-              <div className="text-sm text-gray-400">
-                Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, filteredEntries.length)} of {filteredEntries.length} entries
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="p-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-600 rounded-lg transition-colors"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <div className="flex items-center px-4 py-2 bg-gray-700 rounded-lg text-sm">
-                  Page {currentPage} of {totalPages}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="p-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-600 rounded-lg transition-colors"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
+            </>
           )}
         </div>
+      )}
 
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-            <div className="text-gray-400 text-sm mb-1">Total Actions</div>
-            <div className="text-2xl font-bold text-white">{entries.length}</div>
-          </div>
-          <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-            <div className="text-gray-400 text-sm mb-1">Unique Users</div>
-            <div className="text-2xl font-bold text-white">
-              {new Set(entries.map(e => e.user)).size}
+      {verificationError && (
+        <div
+          className="flex items-center gap-2 rounded-xl px-4 py-3 text-sm bg-red-500/10 border border-red-500/30 text-red-300"
+          role="alert"
+        >
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+          {verificationError}
+        </div>
+      )}
+
+      {/* Infinite scroll table */}
+      <div
+        id="audit-scroll-container"
+        className="bg-gray-800/50 rounded-xl border border-gray-700 overflow-hidden"
+      >
+        <InfiniteScroll
+          dataLength={entries.length}
+          next={loadMore}
+          hasMore={hasMore}
+          loader={
+            <div className="px-4 py-4 text-center text-gray-400 text-xs">
+              <Loader2 className="w-4 h-4 animate-spin inline mr-2" aria-hidden="true" />
+              Loading more entries…
+            </div>
+          }
+          endMessage={
+            entries.length > 0 ? (
+              <div className="px-4 py-3 text-center text-gray-500 text-xs border-t border-gray-700">
+                All {filteredEntries.length} entries loaded
+              </div>
+            ) : null
+          }
+          scrollableTarget="audit-scroll-container"
+          style={{ overflow: 'visible' }}
+        >
+          <div className="overflow-x-auto min-w-[600px]">
+            <div className="w-full text-sm">
+              <div className="flex bg-gray-800 border-b border-gray-700 px-4 py-3 text-xs font-medium text-gray-400 uppercase">
+                <div className="w-1/4">Action</div>
+                <div className="w-1/4">Actor</div>
+                <div className="w-1/4">Target</div>
+                <div className="w-1/6">Time</div>
+                <div className="w-1/12">Tx</div>
+              </div>
+              <div className="divide-y divide-gray-700">
+                {filteredEntries.length === 0 && !loading ? (
+                  <div className="px-4 py-8 text-center text-gray-400">
+                    No audit entries found.
+                  </div>
+                ) : (
+                  <List
+                    height={600}
+                    itemCount={filteredEntries.length}
+                    itemSize={60}
+                    width="100%"
+                  >
+                    {({ index, style }) => {
+                      const entry = filteredEntries[index];
+                      const broken = isBrokenEntry(index);
+                      const isBreakPoint =
+                        verificationResult !== null &&
+                        !verificationResult.verified &&
+                        index === verificationResult.brokenAtEntry;
+
+                      return (
+                        <div
+                          style={style}
+                          key={entry.id}
+                          className={`flex items-center px-4 transition-colors ${
+                            broken
+                              ? 'bg-red-500/10 hover:bg-red-500/15'
+                              : 'hover:bg-gray-700/30'
+                          }`}
+                          data-testid={broken ? 'broken-entry' : 'audit-entry'}
+                        >
+                          <div className="w-1/4 flex items-center gap-2">
+                            <ActionIcon action={entry.action} />
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                broken
+                                  ? 'bg-red-500/20 text-red-300'
+                                  : 'bg-purple-500/20 text-purple-300'
+                              }`}
+                            >
+                              {entry.action}
+                            </span>
+                            {isBreakPoint && (
+                              <span
+                                className="ml-1 px-1.5 py-0.5 bg-red-600/30 border border-red-500/50 rounded text-xs text-red-300"
+                                title="Hash chain breaks at this entry — subsequent entries may be tampered"
+                                role="tooltip"
+                                data-testid="chain-break-tooltip"
+                              >
+                                ⚠ chain break
+                              </span>
+                            )}
+                          </div>
+                          <div className="w-1/4 flex items-center gap-1">
+                            <code className="text-xs text-gray-300">{truncate(entry.actor)}</code>
+                            <button
+                              onClick={() => copyActor(entry.actor)}
+                              className="text-gray-500 hover:text-gray-300 transition-colors p-0.5 rounded"
+                              title={`Copy full address: ${entry.actor}`}
+                              aria-label={`Copy actor address ${entry.actor}`}
+                            >
+                              <Copy size={12} aria-hidden="true" />
+                            </button>
+                          </div>
+                          <div className="w-1/4 text-xs text-gray-400">
+                            {entry.target ? truncate(entry.target) : '—'}
+                          </div>
+                          <div className="w-1/6 text-xs text-gray-400 whitespace-nowrap">
+                            <span
+                              title={new Date(entry.timestamp).toLocaleString()}
+                              className="cursor-help"
+                            >
+                              {relativeTime(entry.timestamp)}
+                            </span>
+                          </div>
+                          <div className="w-1/12">
+                            {entry.txHash ? (
+                              <a
+                                href={`${env.explorerUrl}/tx/${entry.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-purple-400 hover:text-purple-300 transition-colors"
+                                title="View on Stellar Expert"
+                                aria-label={`View transaction ${entry.txHash} on Stellar Expert`}
+                              >
+                                <ExternalLink size={14} aria-hidden="true" />
+                              </a>
+                            ) : (
+                              '—'
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </List>
+                )}
+                {loading && filteredEntries.length === 0 && (
+                  <div className="px-4 py-8 text-center text-gray-400 text-xs">
+                    <Loader2 className="w-4 h-4 animate-spin inline mr-2" aria-hidden="true" />
+                    Loading…
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-            <div className="text-gray-400 text-sm mb-1">Action Types</div>
-            <div className="text-2xl font-bold text-white">{actionTypes.length}</div>
-          </div>
-        </div>
+        </InfiniteScroll>
       </div>
     </div>
   );

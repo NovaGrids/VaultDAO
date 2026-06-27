@@ -1,31 +1,28 @@
 import { createContext } from "react";
 import type { WalletAdapter } from "../adapters";
 
+export type WalletType = 'freighter' | 'albedo' | 'rabet';
+
 export interface WalletContextType {
   isConnected: boolean;
   isInstalled: boolean;
   address: string | null;
   network: string | null;
-  connect: () => Promise<void>;
+  walletType: WalletType | null;
+  connect: (walletType?: WalletType) => Promise<void>;
   disconnect: () => Promise<void>;
   availableWallets: WalletAdapter[];
   selectedWalletId: string | null;
-  setSelectedWallet: (id: string) => void;
+  setSelectedWallet: (id: WalletType) => void;
   switchWallet: (adapter: WalletAdapter) => void;
   signTransaction: (xdr: string, options?: { network?: string }) => Promise<string>;
   detectWallets: () => Promise<WalletAdapter[]>;
-
-  // Session management
-  /** Seconds remaining in the idle-disconnect countdown (null = not counting down). */
-  idleCountdown: number | null;
-  /** True while the "you will be disconnected" warning is visible. */
-  isIdleWarning: boolean;
-  /** Dismisses the countdown and resets the idle timer without disconnecting. */
-  dismissIdleWarning: () => void;
-  /** Persist session for 24 h ("remember me"). */
-  rememberSession: () => void;
-  /** Whether the current session is persisted (remember-me active). */
-  isSessionPersisted: boolean;
+  /** All accounts available in the connected wallet */
+  availableAccounts: string[];
+  /** Switch to a different account within the same wallet */
+  switchAccount: (account: string) => Promise<void>;
+  /** Role of the current account in the vault */
+  accountRole: string | null;
 }
 
 export const WalletContext = createContext<WalletContextType | undefined>(

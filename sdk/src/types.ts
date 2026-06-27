@@ -118,6 +118,94 @@ export interface RecurringPayment {
   isActive: boolean;
 }
 
+/** Streaming payment configuration. */
+export interface StreamingPayment {
+  id: bigint;
+  sender: string;
+  recipient: string;
+  token: string;
+  totalAmount: bigint;
+  flowRate: bigint;
+  startLedger: bigint;
+  endLedger: bigint;
+  claimedAmount: bigint;
+}
+
+/** Subscription configuration. */
+export interface Subscription {
+  id: bigint;
+  subscriber: string;
+  serviceProvider: string;
+  tier: number;
+  token: string;
+  amountPerPeriod: bigint;
+  intervalLedgers: bigint;
+  nextRenewalLedger: bigint;
+  createdAt: bigint;
+  status: number;
+}
+
+/** Escrow agreement. */
+export interface Escrow {
+  id: bigint;
+  funder: string;
+  recipient: string;
+  token: string;
+  amount: bigint;
+  releasedAmount: bigint;
+  arbitrator: string;
+  durationLedgers: bigint;
+  createdAt: bigint;
+  status: number;
+}
+
+/** Proposal template. */
+export interface ProposalTemplate {
+  id: bigint;
+  creator: string;
+  name: string;
+  description: string;
+  recipientTemplate: string;
+  tokenTemplate: string;
+  amountTemplate: bigint;
+  isActive: boolean;
+}
+
+/** Comment on a proposal. */
+export interface Comment {
+  id: bigint;
+  proposalId: bigint;
+  author: string;
+  content: string;
+  createdAt: bigint;
+}
+
+/** Vault metrics and statistics. */
+export interface VaultMetrics {
+  executedCount: bigint;
+  rejectedCount: bigint;
+  expiredCount: bigint;
+  totalVolume: bigint;
+}
+
+/** Reputation record for an address. */
+export interface Reputation {
+  address: string;
+  score: bigint;
+  proposalsCreated: bigint;
+  proposalsApproved: bigint;
+  lastUpdated: bigint;
+}
+
+/** Audit trail entry. */
+export interface AuditEntry {
+  id: bigint;
+  action: string;
+  actor: string;
+  proposalId: bigint;
+  timestamp: bigint;
+}
+
 // ---------------------------------------------------------------------------
 // Error codes
 // ---------------------------------------------------------------------------

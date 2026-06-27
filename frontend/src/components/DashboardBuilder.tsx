@@ -1,25 +1,18 @@
-import React, { useState, useRef, useCallback, memo } from 'react';
-import { Edit3, Save, Download, Grid3x3, X, Package, GripVertical } from 'lucide-react';
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-  DragStartEvent,
-  DragOverlay,
-  UniqueIdentifier,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  arrayMove,
-  rectSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+/**
+ * DashboardBuilder
+ *
+ * Standardized on react-grid-layout for resizable, draggable widget positioning.
+ * Layout is persisted to localStorage keyed by walletAddress + "dashboard_layout".
+ * Layout changes are debounced 500ms before writing.
+ * Each widget is wrapped in DashboardErrorBoundary.
+ * WidgetLibrary slides in from the right.
+ */
+
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import GridLayout, { type Layout as GridLayoutType } from 'react-grid-layout/legacy';
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
+import { Edit3, Save, Download, X, Package, RotateCcw, PanelRight } from 'lucide-react';
 import WidgetLibrary from './WidgetLibrary';
 import WidgetSystem from './WidgetSystem';
 import LineChartWidget from './widgets/LineChartWidget';
@@ -28,397 +21,395 @@ import PieChartWidget from './widgets/PieChartWidget';
 import StatCardWidget from './widgets/StatCardWidget';
 import ProposalListWidget from './widgets/ProposalListWidget';
 import CalendarWidget from './widgets/CalendarWidget';
-import type { WidgetConfig, WidgetType } from '../types/dashboard';
-import { saveDashboardLayout, dashboardTemplates } from '../utils/dashboardTemplates';
+import DashboardErrorBoundary from './DashboardErrorBoundary';
+import type { WidgetConfig, WidgetType, LayoutItem as DashboardLayoutItem } from '../types/dashboard';
+import { dashboardTemplates, saveDashboardLayout, loadDashboardLayout, clearDashboardLayout } from '../utils/dashboardTemplates';
+import { useWallet } from '../hooks/useWallet';
 
 interface DashboardBuilderProps {
   initialWidgets?: WidgetConfig[];
 }
 
-interface WidgetItemProps {
-  widget: WidgetConfig;
-  editMode: boolean;
-  onRemove: (id: string) => void;
-  onDrillDown: (widget: string, data: unknown) => void;
-}
+const COLS = 12;
+const ROW_HEIGHT = 80;
+const WIDGET_STORAGE_KEY = 'vaultdao-dashboard-widgets';
 
 function renderWidgetContent(widget: WidgetConfig, onDrillDown: (data: unknown) => void): React.ReactNode {
   switch (widget.type) {
-    case 'line-chart':
-      return <LineChartWidget title={widget.title} onDrillDown={onDrillDown} />;
-    case 'bar-chart':
-      return <BarChartWidget title={widget.title} onDrillDown={onDrillDown} />;
-    case 'pie-chart':
-      return <PieChartWidget title={widget.title} onDrillDown={onDrillDown} />;
-    case 'stat-card':
-      return <StatCardWidget title={widget.title} value="0" />;
-    case 'proposal-list':
-      return <ProposalListWidget title={widget.title} />;
-    case 'calendar':
-      return <CalendarWidget title={widget.title} />;
-    default:
-      return <div>Unknown widget</div>;
+    case 'line-chart': return <LineChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case 'bar-chart': return <BarChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case 'pie-chart': return <PieChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case 'stat-card': return <StatCardWidget title={widget.title} value="0" />;
+    case 'proposal-list': return <ProposalListWidget title={widget.title} />;
+    case 'calendar': return <CalendarWidget title={widget.title} />;
+    default: return <div className="flex items-center justify-center h-full text-gray-500 text-sm">Unknown widget</div>;
   }
 }
 
-// Sortable wrapper used inside DndContext
-const SortableWidgetItem = memo(({ widget, editMode, onRemove, onDrillDown }: WidgetItemProps) => {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: widget.id });
+/** Convert persisted layout items to react-grid-layout layout */
+function toRGLLayout(items: DashboardLayoutItem[]): GridLayoutType {
+  return items.map((item) => ({
+    i: item.i,
+    x: item.x,
+    y: item.y,
+    w: item.w,
+    h: item.h,
+    minW: item.minW ?? 2,
+    minH: item.minH ?? 2,
+  }));
+}
 
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
+/** Convert react-grid-layout layout back to persisted items */
+function fromRGLLayout(layout: GridLayoutType): DashboardLayoutItem[] {
+  return layout.map((item) => ({
+    i: item.i,
+    x: item.x,
+    y: item.y,
+    w: item.w,
+    h: item.h,
+    minW: item.minW,
+    minH: item.minH,
+  }));
+}
+
+/** Default layout for a widget not in any template */
+function defaultLayoutItem(widgetId: string, index: number): DashboardLayoutItem {
+  return {
+    i: widgetId,
+    x: (index * 4) % COLS,
+    y: Math.floor(index / 3) * 4,
+    w: 4,
+    h: 4,
+    minW: 2,
+    minH: 2,
   };
-
-  const handleDrillDown = useCallback(
-    (data: unknown) => onDrillDown(widget.title, data),
-    [widget.title, onDrillDown]
-  );
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="bg-gray-800 rounded-lg border border-gray-700 p-3 min-h-[300px]"
-    >
-      {editMode && (
-        <div className="flex items-center justify-between mb-2">
-          {/* Drag handle — keyboard + pointer accessible */}
-          <button
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
-            aria-label={`Drag handle for ${widget.title}. Use arrow keys to reorder.`}
-            className={[
-              'p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 cursor-grab active:cursor-grabbing',
-              'focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800',
-            ].join(' ')}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => onRemove(widget.id)}
-            aria-label={`Remove ${widget.title}`}
-            className="p-1 hover:bg-gray-700 rounded text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
-      {renderWidgetContent(widget, handleDrillDown)}
-    </div>
-  );
-});
-SortableWidgetItem.displayName = 'SortableWidgetItem';
-
-// Static (non-sortable) version used in DragOverlay
-const WidgetOverlay = memo(({ widget }: { widget: WidgetConfig }) => (
-  <div className="bg-gray-800 rounded-lg border border-purple-500 p-3 min-h-[300px] shadow-2xl opacity-90 cursor-grabbing">
-    <div className="flex items-center justify-between mb-2">
-      <GripVertical className="h-4 w-4 text-purple-400" />
-    </div>
-    {renderWidgetContent(widget, () => {})}
-  </div>
-));
-WidgetOverlay.displayName = 'WidgetOverlay';
+}
 
 const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = [] }) => {
+  const { address: walletAddress } = useWallet();
   const [editMode, setEditMode] = useState(false);
-  const [widgets, setWidgets] = useState<WidgetConfig[]>(initialWidgets);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showWidgetSystem, setShowWidgetSystem] = useState(false);
   const [drillDownData, setDrillDownData] = useState<{ widget: string; data: unknown } | null>(null);
   const [exportingFormat, setExportingFormat] = useState<'png' | 'pdf' | null>(null);
-  const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
-  const [announcement, setAnnouncement] = useState('');
   const dashboardRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Both pointer (mouse/touch) and keyboard sensors
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  const [widgets, setWidgets] = useState<WidgetConfig[]>(() => {
+    try {
+      const stored = localStorage.getItem(WIDGET_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : initialWidgets;
+    } catch {
+      return initialWidgets;
+    }
+  });
+
+  const [layout, setLayout] = useState<GridLayoutType>(() => {
+    try {
+      const saved = loadDashboardLayout(walletAddress ?? undefined) as { layout?: DashboardLayoutItem[] } | null;
+      if (saved?.layout) return toRGLLayout(saved.layout);
+    } catch {
+      /* ignore */
+    }
+    const tpl = dashboardTemplates[0];
+    if (tpl) return toRGLLayout(tpl.layout.layout);
+    return [];
+  });
+
+  useEffect(() => {
+    if (!walletAddress) return;
+    try {
+      const saved = loadDashboardLayout(walletAddress) as { layout?: DashboardLayoutItem[] } | null;
+      if (saved?.layout) {
+        setLayout(toRGLLayout(saved.layout));
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    const tpl = dashboardTemplates[0];
+    if (tpl) setLayout(toRGLLayout(tpl.layout.layout));
+  }, [walletAddress]);
+
+  const persistLayout = useCallback(
+    (newLayout: GridLayoutType, newWidgets: WidgetConfig[]) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        localStorage.setItem(WIDGET_STORAGE_KEY, JSON.stringify(newWidgets));
+        saveDashboardLayout(
+          { layout: fromRGLLayout(newLayout), widgets: newWidgets },
+          walletAddress ?? undefined,
+        );
+      }, 500);
+    },
+    [walletAddress],
   );
 
-  const handleDragStart = useCallback(({ active }: DragStartEvent) => {
-    setActiveId(active.id);
-    const widget = widgets.find((w) => w.id === active.id);
-    if (widget) {
-      const pos = widgets.indexOf(widget) + 1;
-      setAnnouncement(`Picked up ${widget.title}, position ${pos} of ${widgets.length}.`);
-    }
-  }, [widgets]);
+  const handleLayoutChange = useCallback(
+    (newLayout: GridLayoutType) => {
+      setLayout(newLayout);
+      persistLayout(newLayout, widgets);
+    },
+    [widgets, persistLayout],
+  );
 
-  const handleDragEnd = useCallback(({ active, over }: DragEndEvent) => {
-    setActiveId(null);
-    if (!over || active.id === over.id) {
-      setAnnouncement('Drag cancelled.');
-      return;
-    }
-    setWidgets((prev) => {
-      const oldIndex = prev.findIndex((w) => w.id === active.id);
-      const newIndex = prev.findIndex((w) => w.id === over.id);
-      const reordered = arrayMove(prev, oldIndex, newIndex);
-      const widget = reordered[newIndex];
-      setAnnouncement(
-        `${widget.title} moved to position ${newIndex + 1} of ${reordered.length}.`
-      );
-      return reordered;
-    });
-  }, []);
+  const addWidget = useCallback(
+    (type: WidgetType) => {
+      const id = `widget-${Date.now()}`;
+      const newWidget: WidgetConfig = {
+        id,
+        type,
+        title: type.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+      };
+      const newLayoutItem = defaultLayoutItem(id, widgets.length);
+      setWidgets((prev) => {
+        const updated = [...prev, newWidget];
+        const nextLayout = [...layout, ...toRGLLayout([newLayoutItem])];
+        persistLayout(nextLayout, updated);
+        return updated;
+      });
+      setLayout((prev) => [...prev, ...toRGLLayout([newLayoutItem])]);
+      setShowLibrary(false);
+    },
+    [widgets.length, layout, persistLayout],
+  );
 
-  const handleDrillDown = useCallback((widget: string, data: unknown) => {
-    setDrillDownData({ widget, data });
-  }, []);
+  const removeWidget = useCallback(
+    (id: string) => {
+      setWidgets((prev) => {
+        const updated = prev.filter((w) => w.id !== id);
+        const newLayout = layout.filter((l) => l.i !== id);
+        persistLayout(newLayout, updated);
+        return updated;
+      });
+      setLayout((prev) => prev.filter((l) => l.i !== id));
+    },
+    [layout, persistLayout],
+  );
 
-  const handleRemoveWidget = useCallback((id: string) => {
-    setWidgets((prev) => prev.filter((w) => w.id !== id));
-  }, []);
-
-  const addWidget = useCallback((type: WidgetType) => {
-    const id = `widget-${Date.now()}`;
-    const newWidget: WidgetConfig = {
-      id,
-      type,
-      title: type.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-    };
-    setWidgets((prev) => [...prev, newWidget]);
-    setShowLibrary(false);
-  }, []);
-
-  const handleSaveLayout = useCallback(() => {
-    setWidgets((prev) => {
-      saveDashboardLayout({ widgets: prev });
-      return prev;
-    });
+  const handleSave = useCallback(() => {
+    localStorage.setItem(WIDGET_STORAGE_KEY, JSON.stringify(widgets));
+    saveDashboardLayout({ layout: fromRGLLayout(layout), widgets }, walletAddress ?? undefined);
     setEditMode(false);
-  }, []);
+  }, [layout, widgets, walletAddress]);
 
-  const loadTemplate = useCallback((templateId: string) => {
-    const template = dashboardTemplates.find((t) => t.id === templateId);
-    if (template) {
-      setWidgets(template.layout.widgets);
-      setShowTemplates(false);
+  const handleReset = useCallback(() => {
+    clearDashboardLayout(walletAddress ?? undefined);
+    localStorage.removeItem(WIDGET_STORAGE_KEY);
+    const tpl = dashboardTemplates[0];
+    if (tpl) {
+      setWidgets(tpl.layout.widgets);
+      setLayout(toRGLLayout(tpl.layout.layout));
     }
-  }, []);
+  }, [walletAddress]);
 
-  const exportDashboard = useCallback(async (format: 'png' | 'pdf') => {
-    if (!dashboardRef.current || exportingFormat) return;
-    setExportingFormat(format);
-    try {
-      const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(dashboardRef.current);
-      if (format === 'png') {
-        const link = document.createElement('a');
-        link.download = `dashboard-${Date.now()}.png`;
-        link.href = canvas.toDataURL();
-        link.click();
-      } else {
-        const { default: jsPDF } = await import('jspdf');
-        const pdf = new jsPDF('l', 'mm', 'a4');
-        const imgData = canvas.toDataURL('image/png');
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-        pdf.save(`dashboard-${Date.now()}.pdf`);
+  const loadTemplate = useCallback(
+    (templateId: string) => {
+      const tpl = dashboardTemplates.find((t) => t.id === templateId);
+      if (tpl) {
+        setWidgets(tpl.layout.widgets);
+        const nextLayout = toRGLLayout(tpl.layout.layout);
+        setLayout(nextLayout);
+        persistLayout(nextLayout, tpl.layout.widgets);
+        setShowTemplates(false);
       }
-    } finally {
-      setExportingFormat(null);
-    }
-  }, [exportingFormat]);
+    },
+    [persistLayout],
+  );
 
-  const activeWidget = activeId ? widgets.find((w) => w.id === activeId) : null;
+  const exportDashboard = useCallback(
+    async (format: 'png' | 'pdf') => {
+      if (!dashboardRef.current || exportingFormat) return;
+      setExportingFormat(format);
+      try {
+        const { default: html2canvas } = await import('html2canvas');
+        const canvas = await html2canvas(dashboardRef.current);
+        if (format === 'png') {
+          const link = document.createElement('a');
+          link.download = `dashboard-${Date.now()}.png`;
+          link.href = canvas.toDataURL();
+          link.click();
+        } else {
+          const { default: jsPDF } = await import('jspdf');
+          const pdf = new jsPDF('l', 'mm', 'a4');
+          const imgData = canvas.toDataURL('image/png');
+          const w = pdf.internal.pageSize.getWidth();
+          const h = (canvas.height * w) / canvas.width;
+          pdf.addImage(imgData, 'PNG', 0, 0, w, h);
+          pdf.save(`dashboard-${Date.now()}.pdf`);
+        }
+      } finally {
+        setExportingFormat(null);
+      }
+    },
+    [exportingFormat],
+  );
+
+  const safeLayout: GridLayoutType = widgets.map((w, i) => {
+    const existing = layout.find((l) => l.i === w.id);
+    return existing ?? defaultLayoutItem(w.id, i);
+  });
 
   return (
     <div className="space-y-4">
-      {/* Screen-reader live region for drag announcements */}
-      <div
-        role="status"
-        aria-live="assertive"
-        aria-atomic="true"
-        className="sr-only"
-      >
-        {announcement}
-      </div>
-
-      {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-gray-800 rounded-lg border border-gray-700 p-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => editMode ? handleSaveLayout() : setEditMode(true)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-              editMode ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
+            onClick={() => (editMode ? handleSave() : setEditMode(true))}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${editMode ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
           >
-            {editMode ? <Save className="h-4 w-4" /> : <Edit3 className="h-4 w-4" />}
-            <span className="text-sm">{editMode ? 'Save' : 'Edit'}</span>
+            <Edit3 className="h-4 w-4" />
+            {editMode ? 'Save Layout' : 'Edit Layout'}
           </button>
           {editMode && (
             <>
               <button
-                onClick={() => setShowLibrary(!showLibrary)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                onClick={() => setShowLibrary(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm"
               >
-                <Grid3x3 className="h-4 w-4" />
-                <span className="text-sm">Add Widget</span>
+                <Package className="h-4 w-4" />
+                Add Widget
               </button>
               <button
-                onClick={() => setShowTemplates(!showTemplates)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                onClick={() => setShowTemplates(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm"
               >
-                <Grid3x3 className="h-4 w-4" />
-                <span className="text-sm">Templates</span>
+                Templates
+              </button>
+              <button
+                onClick={handleReset}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reset
               </button>
             </>
           )}
           <button
-            onClick={() => setShowWidgetSystem(!showWidgetSystem)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors"
-          >
-            <Package className="h-4 w-4" />
-            <span className="text-sm">Widget Marketplace</span>
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
             onClick={() => exportDashboard('png')}
             disabled={!!exportingFormat}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm disabled:opacity-50"
           >
             <Download className="h-4 w-4" />
-            <span className="text-sm">{exportingFormat === 'png' ? 'Exporting…' : 'PNG'}</span>
+            {exportingFormat === 'png' ? 'Exporting…' : 'PNG'}
           </button>
           <button
-            onClick={() => exportDashboard('pdf')}
-            disabled={!!exportingFormat}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors disabled:opacity-50"
+            onClick={() => setShowWidgetSystem(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm"
           >
-            <Download className="h-4 w-4" />
-            <span className="text-sm">{exportingFormat === 'pdf' ? 'Exporting…' : 'PDF'}</span>
+            <PanelRight className="h-4 w-4" />
+            Widget System
           </button>
         </div>
       </div>
 
-      {/* Widget Library */}
-      {showLibrary && editMode && (
-        <WidgetLibrary onAddWidget={addWidget} />
-      )}
-
-      {/* Templates */}
-      {showTemplates && editMode && (
+      {showTemplates && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-          <h3 className="text-sm font-semibold text-white mb-3">Dashboard Templates</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {dashboardTemplates.map((template) => (
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-gray-300">Dashboard Templates</h3>
+            <button onClick={() => setShowTemplates(false)} className="text-gray-400 hover:text-white">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {dashboardTemplates.map((tpl) => (
               <button
-                key={template.id}
-                onClick={() => loadTemplate(template.id)}
-                className="text-left p-4 bg-gray-900 rounded-lg border border-gray-700 hover:border-purple-500 transition-colors"
+                key={tpl.id}
+                onClick={() => loadTemplate(tpl.id)}
+                className="text-left p-3 rounded-lg border border-gray-600 hover:border-purple-500 hover:bg-gray-700/50 transition-colors"
               >
-                <p className="text-sm font-medium text-white">{template.name}</p>
-                <p className="text-xs text-gray-400 mt-1">{template.description}</p>
-                <p className="text-xs text-purple-400 mt-2">Role: {template.role}</p>
+                <p className="font-medium text-white text-sm">{tpl.name}</p>
+                <p className="text-xs text-gray-400 mt-1">{tpl.description}</p>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {/* Dashboard Grid */}
-      <div ref={dashboardRef} className="bg-gray-900 rounded-lg border border-gray-700 p-4">
-        {editMode ? (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={widgets.map((w) => w.id)} strategy={rectSortingStrategy}>
-              <div
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-                role="list"
-                aria-label="Dashboard widgets — use drag handles to reorder"
-              >
-                {widgets.map((widget) => (
-                  <div key={widget.id} role="listitem">
-                    <SortableWidgetItem
-                      widget={widget}
-                      editMode={editMode}
-                      onRemove={handleRemoveWidget}
-                      onDrillDown={handleDrillDown}
-                    />
-                  </div>
-                ))}
-              </div>
-            </SortableContext>
-
-            {/* Floating drag preview */}
-            <DragOverlay>
-              {activeWidget ? <WidgetOverlay widget={activeWidget} /> : null}
-            </DragOverlay>
-          </DndContext>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {widgets.map((widget) => (
-              <SortableWidgetItem
-                key={widget.id}
-                widget={widget}
-                editMode={false}
-                onRemove={handleRemoveWidget}
-                onDrillDown={handleDrillDown}
-              />
-            ))}
+      {showLibrary && (
+        <div className="fixed inset-y-0 right-0 z-50 w-80 bg-gray-900 border-l border-gray-700 shadow-xl flex flex-col">
+          <div className="flex items-center justify-between p-4 border-b border-gray-700">
+            <h3 className="font-medium text-white">Widget Library</h3>
+            <button onClick={() => setShowLibrary(false)} className="text-gray-400 hover:text-white">
+              <X className="h-5 w-5" />
+            </button>
           </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            <WidgetLibrary onAddWidget={addWidget} />
+          </div>
+        </div>
+      )}
+
+      <div ref={dashboardRef} className="bg-gray-900 rounded-lg border border-gray-700 p-2 min-h-[400px]">
+        {widgets.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <p className="text-gray-400 mb-4">No widgets yet. Click &quot;Edit Layout&quot; → &quot;Add Widget&quot; to get started.</p>
+          </div>
+        ) : (
+          <GridLayout
+            className="layout"
+            layout={safeLayout}
+            cols={COLS}
+            rowHeight={ROW_HEIGHT}
+            width={1200}
+            isDraggable={editMode}
+            isResizable={editMode}
+            onLayoutChange={handleLayoutChange}
+            draggableHandle=".drag-handle"
+            margin={[8, 8]}
+          >
+            {widgets.map((widget) => (
+              <div key={widget.id} className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col">
+                {editMode && (
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-gray-700/50 border-b border-gray-700 flex-shrink-0">
+                    <span className="drag-handle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200 text-xs select-none flex items-center gap-1">
+                      ⠿ {widget.title}
+                    </span>
+                    <button
+                      onClick={() => removeWidget(widget.id)}
+                      aria-label={`Remove ${widget.title}`}
+                      className="p-0.5 hover:bg-gray-600 rounded text-red-400 hover:text-red-300"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex-1 min-h-0 p-2">
+                  <DashboardErrorBoundary widgetTitle={widget.title}>
+                    {renderWidgetContent(widget, (data) => setDrillDownData({ widget: widget.title, data }))}
+                  </DashboardErrorBoundary>
+                </div>
+              </div>
+            ))}
+          </GridLayout>
         )}
       </div>
 
-      {/* Widget System Modal */}
-      {showWidgetSystem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-6xl h-[90vh] rounded-xl border border-gray-700 bg-gray-900 overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between p-6 border-b border-gray-700">
-              <h2 className="text-2xl font-semibold text-white">Widget System</h2>
-              <button
-                onClick={() => setShowWidgetSystem(false)}
-                className="p-2 hover:bg-gray-800 rounded-lg text-gray-400"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <WidgetSystem />
-            </div>
+      {drillDownData && (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-gray-300">Drill-down: {drillDownData.widget}</h3>
+            <button onClick={() => setDrillDownData(null)} className="text-gray-400 hover:text-white">
+              <X className="h-4 w-4" />
+            </button>
           </div>
+          <pre className="text-xs text-gray-400 overflow-auto max-h-40">{JSON.stringify(drillDownData.data, null, 2)}</pre>
         </div>
       )}
 
-      {/* Drill-down Modal */}
-      {drillDownData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-2xl rounded-xl border border-gray-700 bg-gray-900 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">{drillDownData.widget} - Details</h3>
-              <button
-                onClick={() => setDrillDownData(null)}
-                className="p-1 hover:bg-gray-700 rounded text-gray-400"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="text-gray-300">
-              <pre className="bg-gray-800 p-4 rounded-lg overflow-auto">
-                {JSON.stringify(drillDownData.data, null, 2)}
-              </pre>
-            </div>
+      {showWidgetSystem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-gray-900 rounded-xl border border-gray-700 max-w-2xl w-full max-h-[80vh] overflow-y-auto p-4 relative">
+            <button
+              type="button"
+              onClick={() => setShowWidgetSystem(false)}
+              className="absolute top-3 right-3 text-gray-400 hover:text-white"
+              aria-label="Close widget system"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <WidgetSystem />
           </div>
         </div>
       )}

@@ -11,7 +11,7 @@ import { ProposalActivityType } from "./types.js";
 function createNormalizedEvent(
   type: EventType,
   data: Record<string, any> = {},
-  overrides: Partial<NormalizedEvent> = {}
+  overrides: Partial<NormalizedEvent> = {},
 ): NormalizedEvent {
   return {
     type,
@@ -101,7 +101,7 @@ function createProposalRejectedEvent(): NormalizedEvent {
 }
 
 function createNonProposalEvent(): NormalizedEvent {
-  return createNormalizedEvent(EventType.SNAPSHOT_CREATED, {
+  return createNormalizedEvent(EventType.INITIALIZED, {
     snapshotId: "snapshot-123",
   });
 }
@@ -248,10 +248,10 @@ test("ProposalEventTransformer", async (t) => {
     const result = ProposalEventTransformer.transform(event);
 
     assert.ok(result !== null);
-    assert.equal(result.data.proposer, event.data.proposer);
-    assert.equal(result.data.recipient, event.data.recipient);
-    assert.equal(result.data.token, event.data.token);
-    assert.equal(result.data.amount, event.data.amount);
+    assert.equal((result.data as any).proposer, event.data.proposer);
+    assert.equal((result.data as any).recipient, event.data.recipient);
+    assert.equal((result.data as any).token, event.data.token);
+    assert.equal((result.data as any).amount, event.data.amount);
   });
 });
 
@@ -270,17 +270,20 @@ test("transformEventBatch", async (t) => {
     assert.ok(results.every((r) => r !== null));
   });
 
-  await t.test("returns empty array for batch with only non-proposal events", () => {
-    const events = [
-      createNonProposalEvent(),
-      createNonProposalEvent(),
-      createNormalizedEvent(EventType.UNKNOWN),
-    ];
+  await t.test(
+    "returns empty array for batch with only non-proposal events",
+    () => {
+      const events = [
+        createNonProposalEvent(),
+        createNonProposalEvent(),
+        createNormalizedEvent(EventType.UNKNOWN),
+      ];
 
-    const results = transformEventBatch(events);
+      const results = transformEventBatch(events);
 
-    assert.equal(results.length, 0);
-  });
+      assert.equal(results.length, 0);
+    },
+  );
 
   await t.test("returns all events for batch with only proposal events", () => {
     const events = [
@@ -317,14 +320,14 @@ test("transformEventBatch", async (t) => {
       const nonProposalCount = Math.floor(Math.random() * 10);
 
       const proposalEvents = Array.from({ length: proposalCount }, () =>
-        createProposalCreatedEvent()
+        createProposalCreatedEvent(),
       );
       const nonProposalEvents = Array.from({ length: nonProposalCount }, () =>
-        createNonProposalEvent()
+        createNonProposalEvent(),
       );
 
       const events = [...proposalEvents, ...nonProposalEvents].sort(
-        () => Math.random() - 0.5
+        () => Math.random() - 0.5,
       );
       const results = transformEventBatch(events);
 
@@ -337,7 +340,7 @@ test("transformEventBatch", async (t) => {
 test("ProposalEventTransformer Properties", async (t) => {
   await t.test("Property 1: Null Return for Non-Proposal Events", () => {
     const nonProposalTypes = [
-      EventType.SNAPSHOT_CREATED,
+      EventType.INITIALIZED,
       EventType.UNKNOWN,
       EventType.INITIALIZED,
       EventType.ROLE_ASSIGNED,
@@ -351,24 +354,51 @@ test("ProposalEventTransformer Properties", async (t) => {
     }
   });
 
-  await t.test("Property 2: Valid Transformation for Each Proposal Type", () => {
-    const testCases = [
-      { event: createProposalCreatedEvent(), expectedType: ProposalActivityType.CREATED },
-      { event: createProposalApprovedEvent(), expectedType: ProposalActivityType.APPROVED },
-      { event: createProposalAbstainedEvent(), expectedType: ProposalActivityType.ABSTAINED },
-      { event: createProposalReadyEvent(), expectedType: ProposalActivityType.READY },
-      { event: createProposalExecutedEvent(), expectedType: ProposalActivityType.EXECUTED },
-      { event: createProposalExpiredEvent(), expectedType: ProposalActivityType.EXPIRED },
-      { event: createProposalCancelledEvent(), expectedType: ProposalActivityType.CANCELLED },
-      { event: createProposalRejectedEvent(), expectedType: ProposalActivityType.REJECTED },
-    ];
+  await t.test(
+    "Property 2: Valid Transformation for Each Proposal Type",
+    () => {
+      const testCases = [
+        {
+          event: createProposalCreatedEvent(),
+          expectedType: ProposalActivityType.CREATED,
+        },
+        {
+          event: createProposalApprovedEvent(),
+          expectedType: ProposalActivityType.APPROVED,
+        },
+        {
+          event: createProposalAbstainedEvent(),
+          expectedType: ProposalActivityType.ABSTAINED,
+        },
+        {
+          event: createProposalReadyEvent(),
+          expectedType: ProposalActivityType.READY,
+        },
+        {
+          event: createProposalExecutedEvent(),
+          expectedType: ProposalActivityType.EXECUTED,
+        },
+        {
+          event: createProposalExpiredEvent(),
+          expectedType: ProposalActivityType.EXPIRED,
+        },
+        {
+          event: createProposalCancelledEvent(),
+          expectedType: ProposalActivityType.CANCELLED,
+        },
+        {
+          event: createProposalRejectedEvent(),
+          expectedType: ProposalActivityType.REJECTED,
+        },
+      ];
 
-    for (const { event, expectedType } of testCases) {
-      const result = ProposalEventTransformer.transform(event);
-      assert.ok(result !== null, `${expectedType} should not be null`);
-      assert.equal(result.type, expectedType);
-    }
-  });
+      for (const { event, expectedType } of testCases) {
+        const result = ProposalEventTransformer.transform(event);
+        assert.ok(result !== null, `${expectedType} should not be null`);
+        assert.equal(result.type, expectedType);
+      }
+    },
+  );
 
   await t.test("Property 3: Batch Filtering Removes Nulls", () => {
     for (let iteration = 0; iteration < 10; iteration++) {
@@ -376,14 +406,14 @@ test("ProposalEventTransformer Properties", async (t) => {
       const nonProposalCount = Math.floor(Math.random() * 20) + 1;
 
       const proposalEvents = Array.from({ length: proposalCount }, () =>
-        createProposalCreatedEvent()
+        createProposalCreatedEvent(),
       );
       const nonProposalEvents = Array.from({ length: nonProposalCount }, () =>
-        createNonProposalEvent()
+        createNonProposalEvent(),
       );
 
       const events = [...proposalEvents, ...nonProposalEvents].sort(
-        () => Math.random() - 0.5
+        () => Math.random() - 0.5,
       );
       const results = transformEventBatch(events);
 
@@ -416,7 +446,10 @@ test("ProposalEventTransformer Properties", async (t) => {
       // Verify metadata matches event
       assert.equal(result.metadata.contractId, event.metadata.contractId);
       assert.equal(result.metadata.ledger, event.metadata.ledger);
-      assert.equal(result.metadata.ledgerClosedAt, event.metadata.ledgerClosedAt);
+      assert.equal(
+        result.metadata.ledgerClosedAt,
+        event.metadata.ledgerClosedAt,
+      );
     }
   });
 });
