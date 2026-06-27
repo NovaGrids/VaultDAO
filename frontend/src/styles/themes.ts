@@ -1,66 +1,78 @@
+import type { Theme } from '../context/themeContextDefinition';
+
+export const THEME_STORAGE_KEY = 'vaultdao_theme_preference';
+
 export const themeStyles = {
   light: {
-    background: 'bg-white',
-    foreground: 'text-gray-900',
-    card: 'bg-gray-50',
-    border: 'border-gray-200',
-    muted: 'text-gray-500',
-    accent: 'text-purple-600',
-    /** Glassmorphism panel — light mode uses white with subtle blur */
-    glass: 'bg-white/80 backdrop-blur-md border border-gray-200/80 shadow-sm',
+    background: 'bg-slate-50',
+    foreground: 'text-slate-900',
+    card: 'bg-white',
+    border: 'border-slate-200',
+    muted: 'text-slate-500',
+    accent: 'text-emerald-700',
+    glass:
+      'bg-white/80 border border-slate-200/80 backdrop-blur-md shadow-sm contrast-more:bg-white contrast-more:border-slate-900',
   },
   dark: {
-    background: 'bg-gray-900',
-    foreground: 'text-white',
-    card: 'bg-gray-800',
-    border: 'border-gray-700',
-    muted: 'text-gray-400',
-    accent: 'text-purple-400',
-    /** Glassmorphism panel — dark mode */
-    glass: 'bg-gray-800/50 backdrop-blur-md border border-gray-700/50',
+    background: 'bg-slate-950',
+    foreground: 'text-slate-100',
+    card: 'bg-slate-900',
+    border: 'border-slate-700',
+    muted: 'text-slate-400',
+    accent: 'text-emerald-300',
+    glass:
+      'bg-slate-900/50 border border-slate-700/60 backdrop-blur-md contrast-more:bg-black contrast-more:border-white',
   },
-  'high-contrast': {
-    background: 'bg-black',
-    foreground: 'text-white',
-    card: 'bg-black border-white',
-    border: 'border-white',
-    muted: 'text-yellow-400',
-    accent: 'text-yellow-400',
-    glass: 'bg-black border-2 border-white',
-  },
-};
+} as const;
 
-/**
- * Tailwind utility classes for glassmorphism panels that work in both
- * light and dark mode. Use these instead of raw bg-gray-800/50 classes.
- *
- * Usage:
- *   <div className={glassPanel}>...</div>
- */
 export const glassPanel =
-  'bg-white/80 dark:bg-gray-800/50 backdrop-blur-md border border-gray-200/80 dark:border-gray-700/50 shadow-sm dark:shadow-none';
+  'bg-white/80 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-700/60 backdrop-blur-md shadow-sm dark:shadow-none contrast-more:bg-white contrast-more:border-slate-900';
 
 export const glassCard =
-  'bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl';
+  'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl contrast-more:bg-white contrast-more:border-slate-900';
 
 export const glassModal =
-  'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl';
+  'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl contrast-more:bg-black contrast-more:border-white';
 
-// CSS Variables to be injected or used in style props if needed
-export const themeVariables = {
-  light: {
-    '--bg-main': '#ffffff',
-    '--text-main': '#111827',
-    '--border-main': '#e5e7eb',
-  },
-  dark: {
-    '--bg-main': '#111827',
-    '--text-main': '#ffffff',
-    '--border-main': '#374151',
-  },
-  'high-contrast': {
-    '--bg-main': '#000000',
-    '--text-main': '#ffffff',
-    '--border-main': '#ffffff',
+export function resolveInitialTheme(theme: Theme | null): 'light' | 'dark' {
+  if (theme === 'light' || theme === 'dark') return theme;
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark';
   }
-};
+  return 'light';
+}
+
+export function getThemeInitScript(): string {
+  return `(() => {
+    try {
+      const key = '${THEME_STORAGE_KEY}';
+      const raw = localStorage.getItem(key);
+      const pref = raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system';
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const resolved = pref === 'system' ? (systemDark ? 'dark' : 'light') : pref;
+      const root = document.documentElement;
+      root.classList.remove('light', 'dark');
+      root.classList.add(resolved);
+      root.style.colorScheme = resolved;
+    } catch {
+      document.documentElement.classList.add('light');
+      document.documentElement.style.colorScheme = 'light';
+    }
+  })();`;
+}
+
+export function applyThemeBeforeMount() {
+  try {
+    const raw = localStorage.getItem(THEME_STORAGE_KEY);
+    const pref = raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system';
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const resolved = pref === 'system' ? (systemDark ? 'dark' : 'light') : pref;
+    const root = document.documentElement;
+    root.classList.remove('light', 'dark');
+    root.classList.add(resolved);
+    root.style.colorScheme = resolved;
+  } catch {
+    document.documentElement.classList.add('light');
+    document.documentElement.style.colorScheme = 'light';
+  }
+}
