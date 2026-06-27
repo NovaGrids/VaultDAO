@@ -32,6 +32,8 @@ import {
 import { createRequestLogger } from "./shared/http/requestLogger.js";
 import { createErrorMiddleware } from "./shared/errors/handleError.js";
 import { CorsAllowlist } from "./shared/http/corsAllowlist.js";
+import { initFeatureFlags, getFeatureFlags } from "./shared/feature-flags.js";
+import { initRpcPool } from "./shared/rpc-pool.js";
 
 export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
@@ -40,6 +42,15 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     next: env.apiKeyNext,
   };
   const corsAllowlist = new CorsAllowlist(env.nodeEnv, env.corsOrigin);
+
+  // Initialize feature flags from env
+  initFeatureFlags(process.env["FEATURE_FLAGS"]);
+
+  // Initialize RPC pool (STELLAR_RPC_URLS=url1,url2 or fall back to sorobanRpcUrl)
+  const rpcUrls = process.env["STELLAR_RPC_URLS"]
+    ? process.env["STELLAR_RPC_URLS"].split(",").map((u) => u.trim()).filter(Boolean)
+    : [env.sorobanRpcUrl];
+  const rpcPool = initRpcPool(rpcUrls);
 
   // Remove X-Powered-By header
   app.disable("x-powered-by");
@@ -322,6 +333,28 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
         code: ErrorCode.INTERNAL_ERROR,
       });
     }
+  });
+
+  // ── Feature Flags Admin ──────────────────────────────────────────────────────
+  v1Router.get("/admin/features", adminAuthMiddleware, (_req, res) => {
+    success(res, getFeatureFlags().list());
+  });
+
+  v1Router.post("/admin/features/:flag/enable", adminAuthMiddleware, (req, res) => {
+    const { flag } = req.params as { flag: string };
+    getFeatureFlags().enable(flag);
+    success(res, { flag, enabled: true });
+  });
+
+  v1Router.post("/admin/features/:flag/disable", adminAuthMiddleware, (req, res) => {
+    const { flag } = req.params as { flag: string };
+    getFeatureFlags().disable(flag);
+    success(res, { flag, enabled: false });
+  });
+
+  // ── RPC Pool Status ──────────────────────────────────────────────────────────
+  v1Router.get("/rpc/pool/status", adminAuthMiddleware, (_req, res) => {
+    success(res, { endpoints: rpcPool.getStatus() });
   });
 
   v1Router.use(

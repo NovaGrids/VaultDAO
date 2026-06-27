@@ -8,6 +8,8 @@ import {
   getOverdueRecurringController,
   getRecurringHistoryController,
   triggerSyncController,
+  checkConflictController,
+  createRecurringController,
 } from "./recurring.controller.js";
 
 /**
@@ -38,6 +40,19 @@ export function createRecurringRouter(
    * Triggers a manual sync cycle immediately.
    */
   router.post("/sync", triggerSyncController(service));
+
+  /**
+   * POST /api/v1/recurring/check-conflict
+   * Returns conflicts for proposed payment params.
+   */
+  router.post("/check-conflict", checkConflictController(service));
+
+  /**
+   * POST /api/v1/recurring
+   * Creates a new recurring payment; sets X-Conflict-Warning header if duplicates found.
+   * Use ?force=true to bypass.
+   */
+  router.post("/", createRecurringController(service));
 
   /**
    * GET /api/v1/recurring

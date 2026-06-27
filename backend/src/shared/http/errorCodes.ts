@@ -9,6 +9,7 @@ export enum ErrorCode {
   UNAUTHORIZED = "UNAUTHORIZED",
   FORBIDDEN = "FORBIDDEN",
   BAD_REQUEST = "BAD_REQUEST",
+  NOT_IMPLEMENTED = "NOT_IMPLEMENTED",
 }
 
 export interface ErrorResponse {
