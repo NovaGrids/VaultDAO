@@ -1,23 +1,11 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Notification } from '../../types/notification';
 import NotificationItem from '../NotificationItem';
+import type { Notification } from '../../types/notification';
 
-// Mock useWallet
 vi.mock('../../hooks/useWallet', () => ({
-  useWallet: () => ({
-    address: 'GBTESTWALLET',
-    isConnected: true,
-    signTransaction: vi.fn().mockResolvedValue('mock_sig'),
-  }),
-}));
-
-// Mock useNotifications
-vi.mock('../../context/NotificationContext', () => ({
-  useNotifications: () => ({
-    acknowledgeNotification: vi.fn(),
-  }),
+  useWallet: () => ({ address: 'GABCDE234567ABCDE234567ABCDE234567ABCDE234567ABCDE234567' }),
 }));
 
 describe('NotificationItem', () => {

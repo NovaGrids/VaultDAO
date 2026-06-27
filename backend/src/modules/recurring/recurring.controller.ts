@@ -231,6 +231,96 @@ export const getDuePaymentsController = getDueRecurringController;
 export const getOverdueRecurringController = getDueRecurringController;
 
 /**
+ * POST /api/v1/recurring/check-conflict
+ * Accepts proposed payment params, returns list of similar active payments.
+ * Body: { recipient, amount, intervalLedgers }
+ */
+export function checkConflictController(
+  service: RecurringIndexerService,
+): RequestHandler {
+  return async (request, response) => {
+    const { recipient, amount, intervalLedgers } = request.body as {
+      recipient?: unknown;
+      amount?: unknown;
+      intervalLedgers?: unknown;
+    };
+
+    if (typeof recipient !== "string" || !recipient) {
+      error(response, { message: "recipient is required", status: 400, code: ErrorCode.VALIDATION_ERROR });
+      return;
+    }
+    if (typeof amount !== "string" && typeof amount !== "number") {
+      error(response, { message: "amount is required", status: 400, code: ErrorCode.VALIDATION_ERROR });
+      return;
+    }
+    if (typeof intervalLedgers !== "number" || !Number.isInteger(intervalLedgers) || intervalLedgers <= 0) {
+      error(response, { message: "intervalLedgers must be a positive integer", status: 400, code: ErrorCode.VALIDATION_ERROR });
+      return;
+    }
+
+    try {
+      const conflicts = await service.checkConflicts({
+        recipient,
+        amount: String(amount),
+        intervalLedgers,
+      });
+      success(response, {
+        conflicts,
+        is_duplicate_risk: conflicts.length > 0,
+      });
+    } catch (err) {
+      error(response, {
+        message: "Conflict check failed",
+        status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
+        details: err instanceof Error ? err.message : undefined,
+      });
+    }
+  };
+}
+
+/**
+ * POST /api/v1/recurring (create with conflict warning header)
+ * ?force=true bypasses the warning.
+ */
+export function createRecurringController(
+  service: RecurringIndexerService,
+): RequestHandler {
+  return async (request, response) => {
+    const force = request.query["force"] === "true";
+    const { recipient, amount, intervalLedgers } = request.body as {
+      recipient?: unknown;
+      amount?: unknown;
+      intervalLedgers?: unknown;
+    };
+
+    if (typeof recipient !== "string" || !recipient) {
+      error(response, { message: "recipient is required", status: 400, code: ErrorCode.VALIDATION_ERROR });
+      return;
+    }
+
+    // Non-blocking conflict check
+    try {
+      if (!force && typeof amount === "string" && typeof intervalLedgers === "number") {
+        const conflicts = await service.checkConflicts({
+          recipient,
+          amount,
+          intervalLedgers,
+        });
+        if (conflicts.length > 0) {
+          response.setHeader("X-Conflict-Warning", "true");
+        }
+      }
+    } catch {
+      // Conflict detection failure is non-blocking
+    }
+
+    // Placeholder: actual creation would persist via storage
+    success(response, { created: true, message: "Payment created (stub — wire to storage)" });
+  };
+}
+
+/**
  * Get recurring payment execution history
  * GET /api/v1/recurring/:id/history
  */

@@ -128,5 +128,22 @@
     "dateShort": "YYYY/MM/DD",
     "dateLong": "YYYY年M月D日",
     "time": "HH:mm:ss"
+  },
+  "VaultError": {
+    "UNAUTHORIZED": "未授权的操作",
+    "INSUFFICIENT_FUNDS": "资金不足",
+    "INVALID_SIGNATURE": "无效签名",
+    "PROPOSAL_NOT_FOUND": "提案未找到",
+    "PROPOSAL_EXPIRED": "提案已过期"
+  },
+  "Status": {
+    "Active": "活跃",
+    "Pending": "待处理",
+    "Expired": "已过期"
+  },
+  "Actions": {
+    "approve": "批准",
+    "reject": "拒绝",
+    "create_payment": "创建付款"
   }
 }

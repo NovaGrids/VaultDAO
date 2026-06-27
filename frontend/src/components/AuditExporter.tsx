@@ -14,7 +14,7 @@ interface AuditExporterProps {
   entries: BackendAuditEntry[];
 }
 
-type ExportFormat = 'CSV' | 'PDF';
+type ExportFormat = 'CSV' | 'PDF' | 'JSON';
 
 /** Build a CSV blob client-side from the provided entries (fallback). */
 function buildCSV(entries: BackendAuditEntry[]): Blob {
@@ -49,7 +49,9 @@ const AuditExporter: React.FC<AuditExporterProps> = ({ entries }) => {
       const filename = `audit_export_${timestamp}.${format.toLowerCase()}`;
       let blob: Blob;
 
-      if (format === 'CSV') {
+      if (format === 'JSON') {
+        blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+      } else if (format === 'CSV') {
         // Prefer the backend CSV endpoint (includes hash verification column)
         try {
           const params = new URLSearchParams({
@@ -102,7 +104,7 @@ const AuditExporter: React.FC<AuditExporterProps> = ({ entries }) => {
     <div className="flex items-center gap-3" data-testid="audit-exporter">
       {/* Format toggle */}
       <div className="flex rounded-lg overflow-hidden border border-gray-700">
-        {(['CSV', 'PDF'] as ExportFormat[]).map((f) => (
+        {(['CSV', 'JSON', 'PDF'] as ExportFormat[]).map((f) => (
           <button
             key={f}
             onClick={() => setFormat(f)}

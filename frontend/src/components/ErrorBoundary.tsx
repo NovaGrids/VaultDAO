@@ -2,8 +2,62 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Copy, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { recordError } from '../utils/errorAnalytics';
 
+export type ErrorBoundaryContext = 'payment' | 'proposal' | 'dashboard' | 'generic';
+
+export const ERROR_DETAIL_KEY = 'vaultdao_last_error_detail';
+
+export interface ErrorDetail {
+  message: string;
+  stack?: string;
+  componentStack?: string;
+  context: ErrorBoundaryContext;
+  timestamp: string;
+}
+
+export function storeErrorDetail(detail: ErrorDetail): void {
+  try {
+    localStorage.setItem(ERROR_DETAIL_KEY, JSON.stringify(detail));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export interface ContextAction {
+  label: string;
+  handler: () => void;
+}
+
+export function getContextActions(
+  context: ErrorBoundaryContext,
+  onAction?: (action: string) => void,
+): ContextAction[] {
+  const dispatch = (action: string) => onAction?.(action);
+  switch (context) {
+    case 'payment':
+      return [
+        { label: 'Retry', handler: () => dispatch('retry') },
+        { label: 'Save Draft', handler: () => dispatch('save-draft') },
+        { label: 'Contact Support', handler: () => dispatch('contact-support') },
+      ];
+    case 'proposal':
+      return [
+        { label: 'Clear Form', handler: () => dispatch('clear-form') },
+        { label: 'Load Last Autosave', handler: () => dispatch('load-autosave') },
+      ];
+    case 'dashboard':
+      return [
+        { label: 'Reset Widget Layout', handler: () => dispatch('reset-layout') },
+        { label: 'Reload', handler: () => window.location.reload() },
+      ];
+    default:
+      return [];
+  }
+}
+
 interface ErrorBoundaryProps {
   children: ReactNode;
+  context?: ErrorBoundaryContext;
+  onRecoveryAction?: (action: string) => void;
 }
 
 interface ErrorBoundaryState {
@@ -40,7 +94,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    const isReportingEnabled = (import.meta as any).env?.VITE_ERROR_REPORTING_ENABLED;
+    const isReportingEnabled = import.meta.env.VITE_ERROR_REPORTING_ENABLED;
 
     const redactedMessage = redactWalletAddresses(error.message || 'Unknown error');
     const redactedStack = error.stack ? redactWalletAddresses(error.stack) : undefined;
@@ -49,6 +103,15 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       : undefined;
 
     this.setState({ componentStack: redactedContext || null });
+
+    // Store error detail in localStorage for debugging
+    storeErrorDetail({
+      message: redactedMessage,
+      stack: redactedStack,
+      componentStack: redactedContext,
+      context: this.props.context ?? 'generic',
+      timestamp: new Date().toISOString(),
+    });
 
     if (isReportingEnabled) {
       let errorId = '';
@@ -65,7 +128,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       }
     }
 
-    if ((import.meta as any).env?.DEV) {
+    if (import.meta.env.DEV) {
       console.error('ErrorBoundary caught an error:', error);
       console.error('Component stack:', errorInfo.componentStack);
     }
@@ -123,6 +186,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     if (this.state.hasError) {
       const { error, errorId, componentStack, showComponentStack, copied } = this.state;
       const redactedMessage = error ? redactWalletAddresses(error.message || 'Unknown error') : '';
+      const ctx = this.props.context ?? 'generic';
+      const contextActions = getContextActions(ctx, this.props.onRecoveryAction);
 
       return (
         <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center px-4">
@@ -181,6 +246,24 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
                 Go Home
               </button>
             </div>
+
+            {contextActions.length > 0 && (
+              <div className="mt-3 flex flex-col gap-2">
+                <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">Recovery Options</p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  {contextActions.map((action) => (
+                    <button
+                      key={action.label}
+                      type="button"
+                      onClick={action.handler}
+                      className="min-h-[44px] flex-1 px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium border border-white/10 transition-colors"
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-3 flex flex-col sm:flex-row gap-3">
               <button

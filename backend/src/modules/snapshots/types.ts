@@ -203,6 +203,37 @@ export interface SnapshotFieldChange {
 }
 
 /**
+ * Severity levels for semantic changes.
+ * - critical: security-relevant changes (e.g. threshold reduction)
+ * - warning:  notable but not immediately dangerous (e.g. new signer)
+ * - info:     informational/cosmetic changes (e.g. label update)
+ */
+export type SemanticChangeSeverity = "critical" | "warning" | "info";
+
+/**
+ * A semantically classified change between two snapshots.
+ */
+export interface SemanticChange {
+  readonly field: string;
+  readonly old_value: unknown;
+  readonly new_value: unknown;
+  readonly severity: SemanticChangeSeverity;
+  readonly description: string;
+}
+
+/**
+ * Result of a semantic diff operation between two ledger snapshots.
+ */
+export interface SemanticDiffResult {
+  readonly vaultAddress: string;
+  readonly fromLedger: number;
+  readonly toLedger: number;
+  readonly changes: SemanticChange[];
+  readonly hasCritical: boolean;
+  readonly computedAt: string;
+}
+
+/**
  * Incremental diff between two consecutive snapshots.
  * Only fields that changed since the previous snapshot are stored.
  */

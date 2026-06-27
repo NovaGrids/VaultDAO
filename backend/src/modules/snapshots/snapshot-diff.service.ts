@@ -17,11 +17,18 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../../shared/logging/logger.js";
 import type {
+  SemanticChange,
+  SemanticDiffResult,
   SerializableContractSnapshot,
   SnapshotDiff,
   SnapshotDiffStorageAdapter,
   SnapshotFieldChange,
 } from "./types.js";
+import {
+  DEFAULT_SEMANTIC_RULES,
+  type SemanticRule,
+} from "./semantic-diff-config.js";
+import type { WebhookDeliveryService } from "../notifications/webhook.service.js";
 
 const logger = createLogger("snapshot-diff-service");
 
@@ -103,7 +110,7 @@ function applyChanges(
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export class SnapshotDiffService {
-  constructor(private readonly storage: SnapshotDiffStorageAdapter) {}
+  constructor(protected readonly storage: SnapshotDiffStorageAdapter) {}
 
   /**
    * Record a base snapshot (full state). Call this every 24 hours or on first
@@ -300,5 +307,222 @@ export class SnapshotDiffService {
 
     logger.info("compact completed", { contractId, deleted });
     return deleted;
+  }
+}
+
+// ── Semantic Diff Service ──────────────────────────────────────────────────────────────
+
+/**
+ * SemanticSnapshotDiffService
+ *
+ * Extends SnapshotDiffService with semantic change classification.
+ * Rules are loaded from semantic-diff-config.ts; adding new rules
+ * requires no code changes here (open/closed principle).
+ *
+ * Critical changes trigger an immediate webhook delivery (not batched).
+ */
+export class SemanticSnapshotDiffService extends SnapshotDiffService {
+  private readonly rules: SemanticRule[];
+
+  constructor(
+    storage: SnapshotDiffStorageAdapter,
+    private readonly webhookService?: WebhookDeliveryService,
+    rules: SemanticRule[] = DEFAULT_SEMANTIC_RULES,
+  ) {
+    super(storage);
+    this.rules = rules;
+  }
+
+  // ── Classification ──────────────────────────────────────────────────────────
+
+  /**
+   * Classify a list of raw field changes into SemanticChange entries.
+   *
+   * Rules are evaluated in declaration order; the first matching rule wins.
+   * The special "*" field acts as a catch-all for unmatched fields.
+   */
+  public classifyChanges(changes: SnapshotFieldChange[]): SemanticChange[] {
+    return changes.map((change) => {
+      // Find the first matching rule for this specific field
+      const rule =
+        this.rules.find(
+          (r) =>
+            r.field === change.field &&
+            (r.when === undefined || r.when(change.before, change.after)),
+        ) ??
+        // Fall back to catch-all
+        this.rules.find(
+          (r) =>
+            r.field === "*" &&
+            (r.when === undefined || r.when(change.before, change.after)),
+        );
+
+      if (!rule) {
+        return {
+          field: change.field,
+          old_value: change.before,
+          new_value: change.after,
+          severity: "info" as const,
+          description: `Field "${change.field}" changed.`,
+        };
+      }
+
+      return {
+        field: change.field,
+        old_value: change.before,
+        new_value: change.after,
+        severity: rule.severity,
+        description: rule.describe(change.before, change.after),
+      };
+    });
+  }
+
+  // ── Semantic diff between two ledger snapshots ─────────────────────────────────
+
+  /**
+   * Compute the semantic diff between snapshots spanning fromLedger to toLedger
+   * for a given vault.
+   *
+   * - Reconstructs the "from" and "to" states from the diff chain.
+   * - Classifies each field change with a semantic rule.
+   * - Fires webhook immediately for any critical changes.
+   *
+   * @param vaultAddress - Stellar contract address (vault)
+   * @param fromLedger   - Starting ledger (inclusive)
+   * @param toLedger     - Ending ledger (inclusive)
+   * @returns SemanticDiffResult or null if snapshots are not found
+   */
+  public async computeSemanticDiff(
+    vaultAddress: string,
+    fromLedger: number,
+    toLedger: number,
+  ): Promise<SemanticDiffResult | null> {
+    const allDiffs = await this.storage.listDiffs(vaultAddress);
+
+    // Find the most recent diff at or before each ledger boundary
+    const fromCandidates = allDiffs.filter((d) => d.ledger <= fromLedger);
+    const toCandidates = allDiffs.filter((d) => d.ledger <= toLedger);
+
+    if (fromCandidates.length === 0 || toCandidates.length === 0) {
+      logger.warn("computeSemanticDiff: no snapshots found in ledger range", {
+        vaultAddress,
+        fromLedger,
+        toLedger,
+      });
+      return null;
+    }
+
+    const fromSnap = fromCandidates[fromCandidates.length - 1]!;
+    const toSnap = toCandidates[toCandidates.length - 1]!;
+
+    const [fromState, toState] = await Promise.all([
+      this.reconstructSnapshot(fromSnap.snapshotId),
+      this.reconstructSnapshot(toSnap.snapshotId),
+    ]);
+
+    if (!fromState || !toState) {
+      logger.warn("computeSemanticDiff: could not reconstruct snapshot states", {
+        vaultAddress,
+        fromSnapshotId: fromSnap.snapshotId,
+        toSnapshotId: toSnap.snapshotId,
+      });
+      return null;
+    }
+
+    const rawChanges = computeChangedFields(fromState, toState);
+    const semanticChanges = this.classifyChanges(rawChanges);
+    const hasCritical = semanticChanges.some((c) => c.severity === "critical");
+
+    const result: SemanticDiffResult = {
+      vaultAddress,
+      fromLedger: fromSnap.ledger,
+      toLedger: toSnap.ledger,
+      changes: semanticChanges,
+      hasCritical,
+      computedAt: new Date().toISOString(),
+    };
+
+    // Fire webhook immediately for critical changes (not batched)
+    if (hasCritical && this.webhookService) {
+      const criticals = semanticChanges.filter((c) => c.severity === "critical");
+      logger.warn("critical semantic changes detected — triggering webhook", {
+        vaultAddress,
+        fromLedger,
+        toLedger,
+        criticalCount: criticals.length,
+      });
+      void this.webhookService.deliver({
+        id: randomUUID(),
+        topic: "snapshot:critical-change",
+        source: "snapshot-diff-service",
+        createdAt: new Date().toISOString(),
+        payload: result as unknown as Record<string, unknown>,
+      });
+    }
+
+    return result;
+  }
+
+  // ── Critical change endpoint support ──────────────────────────────────────────────
+
+  /**
+   * Scan recent diffs across all known vaults and return only those
+   * containing at least one critical semantic change.
+   *
+   * Intended for: GET /api/v1/snapshots/diff/critical (admin endpoint).
+   *
+   * @param knownVaults   - List of vault addresses to scan
+   * @param currentLedger - Current ledger for age filtering
+   * @param maxAgeLedgers - How many ledgers back to scan (default: all)
+   */
+  public async getCriticalChanges(
+    knownVaults: string[],
+    currentLedger?: number,
+    maxAgeLedgers?: number,
+  ): Promise<SemanticDiffResult[]> {
+    const results: SemanticDiffResult[] = [];
+
+    for (const vault of knownVaults) {
+      const diffs = await this.storage.listDiffs(vault);
+      if (diffs.length < 2) continue;
+
+      const relevant =
+        currentLedger !== undefined && maxAgeLedgers !== undefined
+          ? diffs.filter((d) => d.ledger >= currentLedger - maxAgeLedgers)
+          : diffs;
+
+      if (relevant.length < 2) continue;
+
+      for (let i = 1; i < relevant.length; i++) {
+        const prev = relevant[i - 1]!;
+        const curr = relevant[i]!;
+
+        const [prevState, currState] = await Promise.all([
+          this.reconstructSnapshot(prev.snapshotId),
+          this.reconstructSnapshot(curr.snapshotId),
+        ]);
+
+        if (!prevState || !currState) continue;
+
+        const rawChanges = computeChangedFields(prevState, currState);
+        const semanticChanges = this.classifyChanges(rawChanges);
+        const criticals = semanticChanges.filter(
+          (c) => c.severity === "critical",
+        );
+
+        if (criticals.length > 0) {
+          results.push({
+            vaultAddress: vault,
+            fromLedger: prev.ledger,
+            toLedger: curr.ledger,
+            changes: criticals,
+            hasCritical: true,
+            computedAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    return results;
   }
 }

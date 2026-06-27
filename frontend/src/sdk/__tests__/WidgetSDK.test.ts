@@ -3,16 +3,18 @@
  * Template for testing widget SDK functionality
  */
 
+import { vi } from 'vitest';
+
 import { WidgetSDK, createWidgetSDK, WidgetUtils } from '../WidgetSDK';
 import type { WidgetPermissions } from '../../types/widget';
 
 describe('WidgetSDK', () => {
   let sdk: WidgetSDK;
-  let mockPostMessage: jest.Mock;
+  let mockPostMessage: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     // Mock window.postMessage
-    mockPostMessage = jest.fn();
+    mockPostMessage = vi.fn();
     window.parent.postMessage = mockPostMessage;
 
     // Create SDK instance
@@ -26,7 +28,7 @@ describe('WidgetSDK', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('Initialization', () => {
@@ -152,7 +154,7 @@ describe('WidgetSDK', () => {
 
   describe('Events', () => {
     it('should register event handler', () => {
-      const handler = jest.fn();
+      const handler = vi.fn();
       sdk.on('test-event', handler);
 
       window.dispatchEvent(
@@ -235,10 +237,9 @@ describe('WidgetUtils', () => {
   });
 
   describe('debounce', () => {
-    jest.useFakeTimers();
-
     it('should debounce function calls', () => {
-      const fn = jest.fn();
+      vi.useFakeTimers();
+      const fn = vi.fn();
       const debounced = WidgetUtils.debounce(fn, 100);
 
       debounced();
@@ -247,12 +248,11 @@ describe('WidgetUtils', () => {
 
       expect(fn).not.toHaveBeenCalled();
 
-      jest.advanceTimersByTime(100);
+      vi.advanceTimersByTime(100);
 
       expect(fn).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
     });
-
-    jest.useRealTimers();
   });
 });
 
