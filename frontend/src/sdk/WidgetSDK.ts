@@ -43,11 +43,27 @@ export class WidgetSDK implements WidgetAPI {
         case 'response':
           this.handleResponse(message);
           break;
+        // Support legacy type-specific responses (e.g. 'config-response', 'data-response')
+        case 'config-response':
+        case 'data-response':
+        case 'permission-response': {
+          // Resolve the oldest pending request for this widgetId
+          const firstKey = [...this.pendingRequests.keys()][0];
+          if (firstKey) {
+            this.pendingRequests.get(firstKey)!.resolve(message.payload);
+            this.pendingRequests.delete(firstKey);
+          }
+          break;
+        }
         case 'event':
           this.handleEvent(message);
           break;
         case 'error':
           console.error(`[WidgetSDK:${this.widgetId}] Error:`, message.payload);
+          break;
+        default:
+          // Dispatch to registered on() handlers
+          this.dispatchToHandlers(message.type, message.payload);
           break;
       }
     });
@@ -67,7 +83,16 @@ export class WidgetSDK implements WidgetAPI {
   }
 
   /**
-   * Handles incoming events from the host.
+   * Dispatches a message to registered on() handlers.
+   * @private
+   */
+  private dispatchToHandlers(type: string, data: unknown) {
+    const handler = this.messageHandlers.get(type);
+    if (handler) handler(data);
+  }
+
+  /**
+   * Handles event messages from the host.
    * @private
    */
   private handleEvent(message: WidgetMessage) {
@@ -126,7 +151,7 @@ export class WidgetSDK implements WidgetAPI {
    * @param config - The new configuration object.
    */
   async setConfig(config: Record<string, unknown>): Promise<void> {
-    return this.request('config', { action: 'set', config });
+    window.parent.postMessage({ widgetId: this.widgetId, type: 'config', payload: config }, '*');
   }
 
   /**
@@ -204,6 +229,47 @@ export class WidgetSDK implements WidgetAPI {
       }
     }
   }
+  /**
+   * Fetches data by key.
+   */
+  async getData(key: string): Promise<unknown> {
+    if (!this.permissions.network) {
+      throw new Error('Network permission not granted');
+    }
+    return this.request('data', { action: 'getData', key });
+  }
+
+  /**
+   * Sends a notification via the host.
+   */
+  async sendNotification(message: string): Promise<void> {
+    if (!this.permissions.notifications) {
+      throw new Error('Notification permission not granted');
+    }
+    window.parent.postMessage({
+      widgetId: this.widgetId,
+      type: 'action',
+      payload: { action: 'notify', message },
+    }, '*');
+  }
+
+  /**
+   * Registers a handler for a named message type.
+   */
+  on(type: string, handler: (data: unknown) => void) {
+    this.messageHandlers.set(type, handler);
+  }
+
+  /**
+   * Emits a custom event to the host.
+   */
+  emit(event: string, data: unknown) {
+    window.parent.postMessage({
+      widgetId: this.widgetId,
+      type: 'action',
+      payload: { event, data },
+    }, '*');
+  }
 }
 
 /**
@@ -215,3 +281,34 @@ export class WidgetSDK implements WidgetAPI {
 export function createWidgetSDK(widgetId: string, permissions: WidgetPermissions): WidgetSDK {
   return new WidgetSDK(widgetId, permissions);
 }
+
+/**
+ * Utility helpers for widget development.
+ */
+export const WidgetUtils = {
+  validateManifest(manifest: unknown): boolean {
+    if (!manifest || typeof manifest !== 'object') return false;
+    const m = manifest as Record<string, unknown>;
+    if (!m.metadata || typeof m.metadata !== 'object') return false;
+    const meta = m.metadata as Record<string, unknown>;
+    if (!meta.id || !meta.name || !meta.version) return false;
+    if (!m.entryPoint) return false;
+    return true;
+  },
+
+  sanitizeHTML(html: string): string {
+    return html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
+  },
+
+  formatDate(date: Date): string {
+    return date.toLocaleDateString('en-US');
+  },
+
+  debounce<T extends (...args: unknown[]) => unknown>(fn: T, ms: number): (...args: Parameters<T>) => void {
+    let timer: ReturnType<typeof setTimeout>;
+    return (...args: Parameters<T>) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), ms);
+    };
+  },
+};

@@ -1,3 +1,5 @@
+import type { NotificationPriority } from '../types/notification';
+
 /**
  * Notification preferences and helpers for issue #25.
  * Centralizes preference persistence, filtering, browser API, and digest queue.
@@ -56,6 +58,7 @@ export interface NotificationPreferences {
   methods: Partial<Record<NotificationMethod, boolean>>;
   frequency: NotificationFrequency;
   dnd: DoNotDisturbConfig;
+  priorities: Record<NotificationEventKey, NotificationPriority>;
 }
 
 // ---- Defaults ----
@@ -63,6 +66,29 @@ const DEFAULT_DND: DoNotDisturbConfig = {
   enabled: false,
   start: '22:00',
   end: '08:00',
+};
+
+export const DEFAULT_EVENT_PRIORITIES: Record<NotificationEventKey, NotificationPriority> = {
+  new_proposal: 'high',
+  proposal_approved: 'high',
+  proposal_executed: 'normal',
+  proposal_rejected: 'high',
+  signer_updated: 'high',
+  config_updated: 'normal',
+  spending_limit_warning: 'high',
+  audit_error: 'critical',
+  audit_tamper: 'critical',
+  audit_fetch_error: 'critical',
+  audit_verify_error: 'critical',
+  no_data: 'normal',
+  preview_ready: 'normal',
+  preview_error: 'normal',
+  report_downloaded: 'normal',
+  report_error: 'normal',
+  export_success: 'normal',
+  export_error: 'normal',
+  approval_failed: 'high',
+  approval_success: 'normal',
 };
 
 export const DEFAULT_PREFERENCES: NotificationPreferences = {
@@ -74,6 +100,7 @@ export const DEFAULT_PREFERENCES: NotificationPreferences = {
   },
   frequency: 'real-time',
   dnd: { ...DEFAULT_DND },
+  priorities: { ...DEFAULT_EVENT_PRIORITIES },
 };
 
 // ---- Storage ----
@@ -141,7 +168,15 @@ function validatePreferences(raw: unknown): NotificationPreferences {
       end: typeof d.end === 'string' ? d.end : DEFAULT_DND.end,
     };
   }
-  return { events, methods, frequency, dnd };
+  const priorities: Record<NotificationEventKey, NotificationPriority> = { ...DEFAULT_EVENT_PRIORITIES };
+  if (obj.priorities && typeof obj.priorities === 'object') {
+    for (const [k, v] of Object.entries(obj.priorities as Record<string, unknown>)) {
+      if (isEventKey(k) && (v === 'critical' || v === 'high' || v === 'normal' || v === 'low')) {
+        priorities[k] = v;
+      }
+    }
+  }
+  return { events, methods, frequency, dnd, priorities };
 }
 
 /** Load preferences from localStorage with validation and fallback to defaults. */

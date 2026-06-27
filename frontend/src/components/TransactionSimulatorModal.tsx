@@ -36,15 +36,12 @@ import {
   parseSimulationError,
   extractStateChanges,
   formatFeeBreakdown,
-  stroopsToXLM,
 } from '../utils/simulation';
 import { getDiffSegments } from '../utils/diffHighlighting';
 import { getUserFriendlyError } from '../utils/errorMapping';
 import { env } from '../config/env';
 import { useWallet } from '../hooks/useWallet';
-import { SorobanRpc, Address, Operation, TransactionBuilder } from 'stellar-sdk';
-import CostBreakdownCard from './CostBreakdownCard';
-import type { CostBreakdown } from './CostBreakdownCard';
+import { SorobanRpc, Address, Operation, TransactionBuilder, xdr as xdrModule } from 'stellar-sdk';
 
 const server = new SorobanRpc.Server(env.sorobanRpcUrl);
 
@@ -151,11 +148,7 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [cpuInsns, setCpuInsns] = useState('0');
   const [memBytes, setMemBytes] = useState('0');
-  const [ledgerReads, setLedgerReads] = useState(0);
-  const [ledgerWrites, setLedgerWrites] = useState(0);
-  const [baseFee, setBaseFee] = useState('0');
   const [showDetails, setShowDetails] = useState(false);
-  const [bufferApplied, setBufferApplied] = useState(false);
 
   // Reset state when modal opens
   useEffect(() => {
@@ -163,12 +156,6 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
       setResult(null);
       setShowDetails(false);
       setProceeding(false);
-      setBufferApplied(false);
-      setCpuInsns('0');
-      setMemBytes('0');
-      setLedgerReads(0);
-      setLedgerWrites(0);
-      setBaseFee('0');
     }
   }, [isOpen]);
 
@@ -185,7 +172,6 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
 
       const source = address ?? env.feesAccount;
       const account = await server.getAccount(source);
-      const { xdr: xdrModule } = await import('stellar-sdk');
       const tx = new TransactionBuilder(account, { fee: '100' })
         .setNetworkPassphrase(env.networkPassphrase)
         .setTimeout(30)
@@ -224,24 +210,14 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
       const fee = formatFeeBreakdown(simulation);
       const changes = extractStateChanges(simulation, functionName, params);
       const cost = (simulation as { cost?: { cpuInsns?: string; memBytes?: string } }).cost;
-      const cpuVal = cost?.cpuInsns ?? '0';
-      const memVal = cost?.memBytes ?? '0';
-      setCpuInsns(cpuVal);
-      setMemBytes(memVal);
-      setLedgerReads(fee.ledgerReads);
-      setLedgerWrites(fee.ledgerWrites);
-      setBaseFee(fee.baseFee);
+      setCpuInsns(cost?.cpuInsns ?? '0');
+      setMemBytes(cost?.memBytes ?? '0');
 
       const success: SimulationResult = {
         success: true,
         fee: fee.totalFee,
         feeXLM: fee.totalFeeXLM,
         resourceFee: fee.resourceFee,
-        baseFee: fee.baseFee,
-        cpuInsns: cpuVal,
-        memBytes: memVal,
-        ledgerReads: fee.ledgerReads,
-        ledgerWrites: fee.ledgerWrites,
         stateChanges: changes,
         timestamp: Date.now(),
       };
@@ -270,14 +246,6 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
     } finally {
       setProceeding(false);
     }
-  };
-
-  const handleAddBuffer = () => {
-    if (!result || !result.success) return;
-    const base = parseFloat(result.feeXLM);
-    const buffered = (base * 1.2).toFixed(7);
-    setResult({ ...result, bufferedFeeXLM: buffered });
-    setBufferApplied(true);
   };
 
   if (!isOpen) return null;
@@ -403,23 +371,42 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
                   </div>
                 )}
 
-                {/* Cost breakdown card */}
+                {/* Fee summary */}
                 {result.success && (
-                  <CostBreakdownCard
-                    breakdown={{
-                      feeXLM: result.feeXLM,
-                      baseFee: baseFee,
-                      resourceFee: result.resourceFee,
-                      cpuInsns: cpuInsns,
-                      memBytes: memBytes,
-                      ledgerReads: ledgerReads,
-                      ledgerWrites: ledgerWrites,
-                      bufferedFeeXLM: result.bufferedFeeXLM,
-                    }}
-                    highFeeThreshold={env.highFeeThreshold}
-                    onAddBuffer={!bufferApplied ? handleAddBuffer : undefined}
-                    bufferApplied={bufferApplied}
-                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-gray-800/60 rounded-lg p-3">
+                      <p className="text-xs text-gray-400 mb-1">Estimated Fee</p>
+                      <p className="text-lg font-bold text-white">{result.feeXLM} XLM</p>
+                    </div>
+                    <div className="bg-gray-800/60 rounded-lg p-3">
+                      <p className="text-xs text-gray-400 mb-1">Resource Fee</p>
+                      <p className="text-lg font-bold text-white">{result.resourceFee} XLM</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Resource usage toggle */}
+                {result.success && (
+                  <button
+                    onClick={() => setShowDetails(!showDetails)}
+                    className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+                  >
+                    {showDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {showDetails ? 'Hide' : 'Show'} resource usage
+                  </button>
+                )}
+
+                {showDetails && result.success && (
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-gray-800/40 rounded p-2">
+                      <p className="text-gray-500">CPU Instructions</p>
+                      <p className="text-gray-200 font-mono">{Number(cpuInsns).toLocaleString()}</p>
+                    </div>
+                    <div className="bg-gray-800/40 rounded p-2">
+                      <p className="text-gray-500">Memory Bytes</p>
+                      <p className="text-gray-200 font-mono">{Number(memBytes).toLocaleString()}</p>
+                    </div>
+                  </div>
                 )}
 
                 {/* State changes diff */}
@@ -436,15 +423,7 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
 
                 {/* Re-simulate */}
                 <button
-                  onClick={() => {
-                    setResult(null);
-                    setCpuInsns('0');
-                    setMemBytes('0');
-                    setLedgerReads(0);
-                    setLedgerWrites(0);
-                    setBaseFee('0');
-                    setBufferApplied(false);
-                  }}
+                  onClick={() => { setResult(null); setCpuInsns('0'); setMemBytes('0'); }}
                   className="text-xs text-gray-400 hover:text-gray-200 underline transition-colors"
                 >
                   Re-simulate

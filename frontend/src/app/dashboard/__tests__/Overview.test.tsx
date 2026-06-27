@@ -38,6 +38,10 @@ vi.mock('../../../components/Layout/StatCard', () => ({
 }));
 vi.mock('../../../components/TokenBalanceCard', () => ({
   default: () => <div data-testid="token-balance-card" />,
+  TokenBalanceCardSkeleton: () => <div data-testid="token-balance-card-skeleton" />,
+}));
+vi.mock('../../../components/TokenPortfolioView', () => ({
+  TokenPortfolioView: () => <div data-testid="token-portfolio-view" />,
 }));
 
 import { useVaultContract } from '../../../hooks/useVaultContract';

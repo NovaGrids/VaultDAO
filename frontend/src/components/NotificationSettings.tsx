@@ -18,6 +18,7 @@ import {
 } from '../utils/notifications';
 import { useToast } from '../hooks/useToast';
 import { Bell } from 'lucide-react';
+import type { NotificationPriority } from '../types/notification';
 
 // ---- Labels ----
 const EVENT_LABELS: Record<NotificationEventKey, string> = {
@@ -173,6 +174,14 @@ const NotificationSettings: React.FC = () => {
     save(next);
   };
 
+  const setEventPriority = (key: NotificationEventKey, priority: NotificationPriority) => {
+    const next = {
+      ...prefs,
+      priorities: { ...prefs.priorities, [key]: priority },
+    };
+    save(next);
+  };
+
   const setMethod = (method: NotificationMethod, enabled: boolean) => {
     const next = {
       ...prefs,
@@ -211,17 +220,33 @@ const NotificationSettings: React.FC = () => {
       <section className="min-w-0">
         <h4 className="text-base font-semibold text-white mb-2">Notification events</h4>
         <p className="text-sm text-gray-400 mb-4">
-          Choose which events trigger notifications. Disabled events are never notified.
+          Choose which events trigger notifications and assign their priority levels. Disabled events are never notified.
         </p>
         <div className="space-y-1 divide-y divide-gray-700">
           {NOTIFICATION_EVENTS.map((key) => (
-            <Toggle
-              key={key}
-              id={`event-${key}`}
-              label={EVENT_LABELS[key]}
-              checked={eventEnabled(key)}
-              onChange={(v) => setEvent(key, v)}
-            />
+            <div key={key} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 py-3">
+              <div className="min-w-0 flex-1">
+                <span className="font-medium text-white">{EVENT_LABELS[key]}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <select
+                  aria-label={`${EVENT_LABELS[key]} priority`}
+                  value={prefs.priorities?.[key] || 'normal'}
+                  onChange={(e) => setEventPriority(key, e.target.value as NotificationPriority)}
+                  className="bg-gray-800 border border-gray-700 rounded-lg text-xs text-white px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="normal">Normal</option>
+                </select>
+                <Toggle
+                  id={`event-${key}`}
+                  label=""
+                  checked={eventEnabled(key)}
+                  onChange={(v) => setEvent(key, v)}
+                />
+              </div>
+            </div>
           ))}
         </div>
       </section>

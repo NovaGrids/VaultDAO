@@ -31,6 +31,8 @@ export interface BackendEnv {
   readonly rateLimitProposalsPerMin: number;
   readonly rateLimitExecutePerMin: number;
   readonly rateLimitDefaultPerMin: number;
+  /** Maximum ledger jitter window for due-payment queries (default: 10 ledgers). */
+  readonly jitterWindowMax: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -236,6 +238,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     rateLimitProposalsPerMin: 100,
     rateLimitExecutePerMin: 10,
     rateLimitDefaultPerMin: 60,
+    jitterWindowMax: 10,
     ...overrides,
   };
 }
@@ -322,6 +325,7 @@ export function loadEnv(): BackendEnv {
     60,
     issues,
   );
+  const jitterWindowMax = readPort("JITTER_WINDOW_MAX", 10, issues);
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -405,5 +409,6 @@ export function loadEnv(): BackendEnv {
     rateLimitProposalsPerMin,
     rateLimitExecutePerMin,
     rateLimitDefaultPerMin,
+    jitterWindowMax,
   };
 }

@@ -19,6 +19,7 @@ import { createCacheRouter } from "./shared/cache/cache.routes.js";
 import { createVaultRouter } from "./modules/vault/vault.routes.js";
 import { createCursorsRouter } from "./modules/events/cursor/cursors.routes.js";
 import { createEventsRouter } from "./modules/events/events.routes.js";
+import { createJobsRouter } from "./modules/jobs/jobs.routes.js";
 import { error, success } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
@@ -31,6 +32,8 @@ import {
 import { createRequestLogger } from "./shared/http/requestLogger.js";
 import { createErrorMiddleware } from "./shared/errors/handleError.js";
 import { CorsAllowlist } from "./shared/http/corsAllowlist.js";
+import { initFeatureFlags, getFeatureFlags } from "./shared/feature-flags.js";
+import { initRpcPool } from "./shared/rpc-pool.js";
 
 export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
@@ -39,6 +42,15 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     next: env.apiKeyNext,
   };
   const corsAllowlist = new CorsAllowlist(env.nodeEnv, env.corsOrigin);
+
+  // Initialize feature flags from env
+  initFeatureFlags(process.env["FEATURE_FLAGS"]);
+
+  // Initialize RPC pool (STELLAR_RPC_URLS=url1,url2 or fall back to sorobanRpcUrl)
+  const rpcUrls = process.env["STELLAR_RPC_URLS"]
+    ? process.env["STELLAR_RPC_URLS"].split(",").map((u) => u.trim()).filter(Boolean)
+    : [env.sorobanRpcUrl];
+  const rpcPool = initRpcPool(rpcUrls);
 
   // Remove X-Powered-By header
   app.disable("x-powered-by");
@@ -323,10 +335,40 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     }
   });
 
+  // ── Feature Flags Admin ──────────────────────────────────────────────────────
+  v1Router.get("/admin/features", adminAuthMiddleware, (_req, res) => {
+    success(res, getFeatureFlags().list());
+  });
+
+  v1Router.post("/admin/features/:flag/enable", adminAuthMiddleware, (req, res) => {
+    const { flag } = req.params as { flag: string };
+    getFeatureFlags().enable(flag);
+    success(res, { flag, enabled: true });
+  });
+
+  v1Router.post("/admin/features/:flag/disable", adminAuthMiddleware, (req, res) => {
+    const { flag } = req.params as { flag: string };
+    getFeatureFlags().disable(flag);
+    success(res, { flag, enabled: false });
+  });
+
+  // ── RPC Pool Status ──────────────────────────────────────────────────────────
+  v1Router.get("/rpc/pool/status", adminAuthMiddleware, (_req, res) => {
+    success(res, { endpoints: rpcPool.getStatus() });
+  });
+
   v1Router.use(
     "/contracts",
-    createContractsRouter(registry, adminAuthMiddleware),
+    createContractsRouter(registry, adminAuthMiddleware, (runtime as any).contractStateValidator),
   );
+
+  // Job Dashboard API (Issue #1161)
+  if (runtime.jobManager && runtime.scheduledJobRunner) {
+    v1Router.use(
+      "/jobs",
+      createJobsRouter(runtime.jobManager, runtime.scheduledJobRunner, adminAuthMiddleware),
+    );
+  }
 
   if (runtime.notificationQueue) {
     v1Router.use(
@@ -354,6 +396,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       runtime.snapshotService,
       adminAuthMiddleware,
       runtime.snapshotDiffService,
+      (runtime as any).governanceSnapshotJob,
     ),
   );
 
@@ -420,7 +463,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/vault",
     authMiddleware,
-    createVaultRouter(env.sorobanRpcUrl, passphrase, runtime.cacheManager),
+    createVaultRouter(env.sorobanRpcUrl, passphrase, runtime.cacheManager, (runtime as any).vaultRegistry, adminAuthMiddleware),
   );
 
   app.use("/api/v1", v1Router);

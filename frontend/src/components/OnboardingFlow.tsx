@@ -1,366 +1,291 @@
-/**
- * OnboardingFlow — role-specific guided onboarding with react-joyride product tour.
- *
- * Steps:
- *  1. Connect wallet (auto-advances when wallet connects)
- *  2. Role explanation card with permissions summary
- *  3. Interactive demo — create a test proposal (optional, skippable)
- *  4. Set notification preferences via NotificationSettings
- *  5. Completion with confetti animation and "You're ready!" message
- *
- * Persists completion state per wallet address in localStorage.
- * Can be re-triggered from Settings page via startOnboarding().
- */
-
-import React, { useEffect, useState, useCallback } from 'react';
-import Joyride, { type CallBackProps, STATUS, EVENTS } from 'react-joyride';
-import { ChevronRight, ChevronLeft, X, CheckCircle } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Link2, SkipForward } from 'lucide-react';
+import {
+  ONBOARDING_METRICS_KEY_PREFIX,
+  ROLE_ONBOARDING_STEPS,
+  type OnboardingRole,
+  type RoleOnboardingStep,
+  type StoredOnboardingMetrics,
+} from '../constants/onboarding';
 import { useOnboarding } from '../context/OnboardingProvider';
 import { useWallet } from '../hooks/useWallet';
-
-// ─── Per-wallet completion storage ───────────────────────────────────────────
-
-const ONBOARDING_DONE_PREFIX = 'vaultdao_onboarding_done_';
-
-function isOnboardingDone(address: string | null): boolean {
-  if (!address) return false;
-  try { return localStorage.getItem(`${ONBOARDING_DONE_PREFIX}${address}`) === 'true'; } catch { return false; }
-}
-
-function markOnboardingDone(address: string | null): void {
-  if (!address) return;
-  try { localStorage.setItem(`${ONBOARDING_DONE_PREFIX}${address}`, 'true'); } catch { /* ignore */ }
-}
-
-// ─── Role-specific step definitions ──────────────────────────────────────────
-
-interface RoleStep {
-  id: string;
-  title: string;
-  description: string;
-  skippable?: boolean;
-  joyrideTarget?: string;
-}
-
-const COMMON_STEPS: RoleStep[] = [
-  {
-    id: 'connect',
-    title: 'Connect Your Wallet',
-    description: 'Connect your Freighter, Albedo, or Rabet wallet to get started with VaultDAO.',
-    joyrideTarget: '[data-tour="wallet-connect"]',
-  },
-];
-
-const ROLE_STEPS: Record<string, RoleStep[]> = {
-  Admin: [
-    {
-      id: 'role-admin',
-      title: 'You are an Admin',
-      description: 'As Admin you can manage signers, update vault configuration, set spending limits, and execute emergency controls.',
-      joyrideTarget: '[data-tour="role-badge"]',
-    },
-    {
-      id: 'demo-admin',
-      title: 'Manage Signers',
-      description: 'Head to Settings → Role Management to add or remove signers. You can also set M-of-N thresholds.',
-      skippable: true,
-      joyrideTarget: '[data-tour="settings-nav"]',
-    },
-  ],
-  Treasurer: [
-    {
-      id: 'role-treasurer',
-      title: 'You are a Treasurer',
-      description: 'As Treasurer you can create proposals, approve transfers, and monitor spending limits.',
-      joyrideTarget: '[data-tour="role-badge"]',
-    },
-    {
-      id: 'demo-treasurer',
-      title: 'Create Your First Proposal',
-      description: 'Click "New Proposal" to create a test transfer on testnet. This step is optional.',
-      skippable: true,
-      joyrideTarget: '[data-tour="new-proposal-btn"]',
-    },
-  ],
-  Member: [
-    {
-      id: 'role-member',
-      title: 'You are a Member',
-      description: 'As Member you can view proposals and cast votes. Your vote counts toward the M-of-N threshold.',
-      joyrideTarget: '[data-tour="role-badge"]',
-    },
-    {
-      id: 'demo-member',
-      title: 'Cast Your First Vote',
-      description: 'Browse the Proposals page and approve or reject pending proposals.',
-      skippable: true,
-      joyrideTarget: '[data-tour="proposals-nav"]',
-    },
-  ],
-};
-
-const NOTIFICATION_STEP: RoleStep = {
-  id: 'notifications',
-  title: 'Set Notification Preferences',
-  description: 'Choose how you want to be notified about proposals, approvals, and executions.',
-  joyrideTarget: '[data-tour="notification-settings"]',
-};
-
-const COMPLETE_STEP: RoleStep = {
-  id: 'complete',
-  title: "You're Ready! 🎉",
-  description: 'You have completed the VaultDAO onboarding. Explore the dashboard and start managing your treasury.',
-};
-
-function buildSteps(role: string | null, walletConnected: boolean): RoleStep[] {
-  const steps: RoleStep[] = [];
-  if (!walletConnected) steps.push(COMMON_STEPS[0]);
-  const roleKey = role && ROLE_STEPS[role] ? role : 'Member';
-  steps.push(...ROLE_STEPS[roleKey]);
-  steps.push(NOTIFICATION_STEP);
-  steps.push(COMPLETE_STEP);
-  return steps;
-}
-
-// ─── Role permissions summary ─────────────────────────────────────────────────
-
-const ROLE_PERMISSIONS: Record<string, string[]> = {
-  Admin: ['Manage signers', 'Update vault config', 'Set spending limits', 'Emergency controls', 'Create & approve proposals'],
-  Treasurer: ['Create proposals', 'Approve transfers', 'Monitor spending limits', 'View analytics'],
-  Member: ['View proposals', 'Cast votes', 'View treasury balance'],
-};
-
-// ─── Confetti component ───────────────────────────────────────────────────────
-
-const Confetti: React.FC = () => (
-  <div aria-hidden className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
-    {Array.from({ length: 30 }).map((_, i) => (
-      <span
-        key={i}
-        className="absolute block h-2 w-2 rounded-sm opacity-0"
-        style={{
-          left: `${Math.random() * 100}%`,
-          top: '-8px',
-          backgroundColor: ['#a855f7', '#ec4899', '#3b82f6', '#10b981', '#f59e0b'][i % 5],
-          animation: `confetti-fall ${1.5 + Math.random()}s ease-in ${Math.random() * 0.8}s forwards`,
-          transform: `rotate(${Math.random() * 360}deg)`,
-        }}
-      />
-    ))}
-    <style>{`
-      @keyframes confetti-fall {
-        0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
-        100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
-      }
-    `}</style>
-  </div>
-);
-
-// ─── Main component ───────────────────────────────────────────────────────────
 
 interface OnboardingFlowProps {
   onComplete?: () => void;
 }
 
+function normalizeRole(role: string | null): OnboardingRole {
+  if (role === 'Admin' || role === 'Treasurer' || role === 'Member') return role;
+  return 'Member';
+}
+
+function getMetricsKey(address: string | null): string | null {
+  if (!address) return null;
+  return `${ONBOARDING_METRICS_KEY_PREFIX}${address}`;
+}
+
+function readStoredMetrics(address: string | null): StoredOnboardingMetrics | null {
+  const key = getMetricsKey(address);
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as StoredOnboardingMetrics;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredMetrics(address: string | null, metrics: StoredOnboardingMetrics): void {
+  const key = getMetricsKey(address);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(metrics));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function markOnboardingDone(address: string | null): void {
+  const key = getMetricsKey(address);
+  if (!key) return;
+  try {
+    localStorage.setItem(`${key}_done`, 'true');
+  } catch {
+    // ignore
+  }
+}
+
+function hasCompletedOnboarding(address: string | null): boolean {
+  const key = getMetricsKey(address);
+  if (!key) return false;
+  try {
+    return localStorage.getItem(`${key}_done`) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function getTargetRect(selector: string): DOMRect | null {
+  const node = document.querySelector(selector);
+  if (!node) return null;
+  return node.getBoundingClientRect();
+}
+
 export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) => {
-  const { isOnboardingActive, skipOnboarding, completeStep, restartOnboarding } = useOnboarding();
+  const { isOnboardingActive, skipOnboarding, completeStep } = useOnboarding();
   const { isConnected, address, accountRole } = useWallet();
 
-  const steps = buildSteps(accountRole ?? null, isConnected);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [runTour, setRunTour] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
+  const role = useMemo(() => normalizeRole(accountRole), [accountRole]);
+  const steps = useMemo(() => ROLE_ONBOARDING_STEPS[role], [role]);
 
-  // Auto-advance step 0 (connect wallet) when wallet connects
-  useEffect(() => {
-    if (isConnected && steps[currentIdx]?.id === 'connect') {
-      setCurrentIdx(1);
-    }
-  }, [isConnected, currentIdx, steps]);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [completedStepIds, setCompletedStepIds] = useState<string[]>([]);
+  const [skippedStepIds, setSkippedStepIds] = useState<string[]>([]);
+  const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
 
-  // Skip onboarding for returning wallets
+  const currentStep: RoleOnboardingStep | undefined = steps[currentStepIndex];
+  const isWalletStep = currentStep?.id === 'wallet-link';
+  const canSkipCurrent = Boolean(currentStep?.allowSkip) && !isWalletStep;
+
+  const persistMetrics = useCallback(
+    (nextStepIndex: number, nextCompleted: string[], nextSkipped: string[]) => {
+      const metrics: StoredOnboardingMetrics = {
+        role,
+        currentStepIndex: nextStepIndex,
+        completedStepIds: nextCompleted,
+        skippedStepIds: nextSkipped,
+        updatedAt: Date.now(),
+      };
+      writeStoredMetrics(address, metrics);
+    },
+    [address, role],
+  );
+
   useEffect(() => {
-    if (isOnboardingActive && address && isOnboardingDone(address)) {
+    if (!isOnboardingActive || !address) return;
+
+    if (hasCompletedOnboarding(address)) {
       skipOnboarding();
+      return;
     }
-  }, [isOnboardingActive, address, skipOnboarding]);
 
-  const currentStep = steps[currentIdx];
-  const isLastStep = currentIdx === steps.length - 1;
-  const isFirstStep = currentIdx === 0;
+    const stored = readStoredMetrics(address);
+    if (!stored) return;
 
-  const handleNext = useCallback(() => {
-    if (currentStep) completeStep(currentStep.id);
-    if (isLastStep) {
-      markOnboardingDone(address ?? null);
-      setShowConfetti(true);
-      setTimeout(() => {
-        skipOnboarding();
-        onComplete?.();
-      }, 2500);
-    } else {
-      setCurrentIdx((i) => i + 1);
+    if (stored.role !== role) {
+      setCurrentStepIndex(0);
+      setCompletedStepIds([]);
+      setSkippedStepIds([]);
+      persistMetrics(0, [], []);
+      return;
     }
-  }, [currentStep, isLastStep, address, completeStep, skipOnboarding, onComplete]);
 
-  const handleBack = () => setCurrentIdx((i) => Math.max(0, i - 1));
+    setCurrentStepIndex(Math.min(stored.currentStepIndex, steps.length - 1));
+    setCompletedStepIds(stored.completedStepIds);
+    setSkippedStepIds(stored.skippedStepIds);
+  }, [address, isOnboardingActive, role, steps.length, persistMetrics, skipOnboarding]);
 
-  const handleSkip = () => {
+  useEffect(() => {
+    if (!isOnboardingActive || !currentStep) return;
+
+    const updateRect = () => {
+      setTargetRect(getTargetRect(currentStep.target));
+    };
+
+    updateRect();
+    window.addEventListener('resize', updateRect);
+    window.addEventListener('scroll', updateRect, true);
+
+    const node = document.querySelector(currentStep.target);
+    node?.classList.add('ring-2', 'ring-emerald-400', 'ring-offset-2', 'ring-offset-gray-950');
+
+    return () => {
+      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('scroll', updateRect, true);
+      node?.classList.remove('ring-2', 'ring-emerald-400', 'ring-offset-2', 'ring-offset-gray-950');
+    };
+  }, [currentStep, isOnboardingActive]);
+
+  useEffect(() => {
+    if (!isOnboardingActive || !isConnected || !isWalletStep) return;
+    setCurrentStepIndex((idx) => {
+      const next = Math.min(idx + 1, steps.length - 1);
+      persistMetrics(next, completedStepIds, skippedStepIds);
+      return next;
+    });
+  }, [isConnected, isOnboardingActive, isWalletStep, steps.length, persistMetrics, completedStepIds, skippedStepIds]);
+
+  if (!isOnboardingActive || !currentStep) return null;
+
+  const totalSteps = steps.length;
+  const isLastStep = currentStepIndex === totalSteps - 1;
+
+  const finishFlow = () => {
+    markOnboardingDone(address);
     skipOnboarding();
     onComplete?.();
   };
 
-  // Joyride steps for the product tour
-  const joyrideSteps = steps
-    .filter((s) => s.joyrideTarget)
-    .map((s) => ({
-      target: s.joyrideTarget!,
-      content: s.description,
-      title: s.title,
-      disableBeacon: true,
-    }));
+  const handleNext = () => {
+    if (!currentStep) return;
 
-  const handleJoyrideCallback = (data: CallBackProps) => {
-    const { status, type } = data;
-    if (status === STATUS.FINISHED || status === STATUS.SKIPPED) setRunTour(false);
-    if (type === EVENTS.STEP_AFTER) setCurrentIdx((i) => Math.min(i + 1, steps.length - 1));
+    const nextCompleted = completedStepIds.includes(currentStep.id)
+      ? completedStepIds
+      : [...completedStepIds, currentStep.id];
+
+    setCompletedStepIds(nextCompleted);
+    completeStep(currentStep.id);
+
+    if (isLastStep) {
+      persistMetrics(currentStepIndex, nextCompleted, skippedStepIds);
+      finishFlow();
+      return;
+    }
+
+    const nextIndex = currentStepIndex + 1;
+    setCurrentStepIndex(nextIndex);
+    persistMetrics(nextIndex, nextCompleted, skippedStepIds);
   };
 
-  if (!isOnboardingActive) return null;
-  if (!currentStep) return null;
+  const handleBack = () => {
+    const nextIndex = Math.max(0, currentStepIndex - 1);
+    setCurrentStepIndex(nextIndex);
+    persistMetrics(nextIndex, completedStepIds, skippedStepIds);
+  };
 
-  const roleKey = accountRole && ROLE_PERMISSIONS[accountRole] ? accountRole : null;
-  const isRoleStep = currentStep.id.startsWith('role-');
-  const isCompleteStep = currentStep.id === 'complete';
+  const handleSkipForNow = () => {
+    if (!canSkipCurrent || !currentStep) return;
+
+    const nextSkipped = skippedStepIds.includes(currentStep.id)
+      ? skippedStepIds
+      : [...skippedStepIds, currentStep.id];
+
+    setSkippedStepIds(nextSkipped);
+
+    if (isLastStep) {
+      persistMetrics(currentStepIndex, completedStepIds, nextSkipped);
+      finishFlow();
+      return;
+    }
+
+    const nextIndex = currentStepIndex + 1;
+    setCurrentStepIndex(nextIndex);
+    persistMetrics(nextIndex, completedStepIds, nextSkipped);
+  };
+
+  const tooltipTop = targetRect ? Math.max(targetRect.bottom + 12, 24) : 96;
+  const tooltipLeft = targetRect ? Math.max(Math.min(targetRect.left, window.innerWidth - 360), 24) : 24;
 
   return (
-    <>
-      {showConfetti && <Confetti />}
+    <div className="fixed inset-0 z-50" aria-live="polite" data-testid="onboarding-flow">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-[2px]" />
 
-      {/* Joyride product tour */}
-      <Joyride
-        steps={joyrideSteps}
-        run={runTour}
-        continuous
-        showSkipButton
-        showProgress
-        callback={handleJoyrideCallback}
-        styles={{
-          options: {
-            primaryColor: '#9333ea',
-            backgroundColor: '#1f2937',
-            textColor: '#f9fafb',
-            arrowColor: '#1f2937',
-          },
-        }}
-      />
+      {targetRect && (
+        <div
+          className="pointer-events-none fixed rounded-xl border border-emerald-400/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.65)]"
+          style={{
+            top: targetRect.top - 8,
+            left: targetRect.left - 8,
+            width: targetRect.width + 16,
+            height: targetRect.height + 16,
+          }}
+        />
+      )}
 
-      {/* Modal overlay */}
-      <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleSkip} />
-        <div className="relative w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 shadow-2xl backdrop-blur-xl">
-          {/* Close */}
+      <div
+        className="fixed w-[min(92vw,22rem)] rounded-xl border border-gray-700 bg-gray-900/95 p-5 text-gray-100 shadow-2xl contrast-more:border-white contrast-more:bg-black"
+        style={{ top: tooltipTop, left: tooltipLeft }}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wide text-emerald-300">{role} onboarding</span>
+          <span className="text-xs text-gray-400">{currentStepIndex + 1}/{totalSteps}</span>
+        </div>
+
+        <h2 className="text-lg font-semibold leading-tight">{currentStep.title}</h2>
+        <p className="mt-2 text-sm text-gray-300">{currentStep.description}</p>
+
+        {!targetRect && (
+          <p className="mt-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-300">
+            Target element is not visible yet. Navigate to the related section and continue.
+          </p>
+        )}
+
+        <div className="mt-5 flex items-center gap-2">
           <button
-            onClick={handleSkip}
-            className="absolute right-4 top-4 rounded-lg p-2 text-white/70 hover:bg-white/10 transition-colors"
-            aria-label="Skip onboarding"
+            type="button"
+            onClick={handleBack}
+            disabled={currentStepIndex === 0}
+            className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-3 py-2 text-xs font-medium text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <X className="h-5 w-5" />
+            <ChevronLeft size={14} />
+            Back
           </button>
 
-          <div className="p-8">
-            {/* Progress */}
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm font-medium text-purple-400">
-                Step {currentIdx + 1} of {steps.length}
-              </span>
-              <span className="text-sm text-white/50">
-                {Math.round(((currentIdx + 1) / steps.length) * 100)}%
-              </span>
-            </div>
-            <div className="mb-6 h-1 w-full overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300"
-                style={{ width: `${((currentIdx + 1) / steps.length) * 100}%` }}
-              />
-            </div>
+          {canSkipCurrent && (
+            <button
+              type="button"
+              onClick={handleSkipForNow}
+              className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-3 py-2 text-xs font-medium text-gray-200 hover:bg-gray-800"
+            >
+              <SkipForward size={14} />
+              Skip for now
+            </button>
+          )}
 
-            {/* Step content */}
-            {isCompleteStep ? (
-              <div className="text-center">
-                <CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-400" />
-                <h2 className="mb-3 text-2xl font-bold text-white">{currentStep.title}</h2>
-                <p className="mb-6 leading-relaxed text-white/70">{currentStep.description}</p>
-              </div>
-            ) : (
-              <>
-                <h2 className="mb-3 text-2xl font-bold text-white">{currentStep.title}</h2>
-                <p className="mb-4 leading-relaxed text-white/70">{currentStep.description}</p>
-
-                {/* Role permissions card */}
-                {isRoleStep && roleKey && (
-                  <div className="mb-4 rounded-xl border border-purple-500/30 bg-purple-500/10 p-4">
-                    <p className="mb-2 text-sm font-semibold text-purple-300">Your permissions:</p>
-                    <ul className="space-y-1">
-                      {ROLE_PERMISSIONS[roleKey].map((perm) => (
-                        <li key={perm} className="flex items-center gap-2 text-sm text-white/80">
-                          <CheckCircle className="h-3.5 w-3.5 shrink-0 text-green-400" />
-                          {perm}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* Actions */}
-            <div className="flex gap-3">
-              {!isFirstStep && (
-                <button
-                  onClick={handleBack}
-                  className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-white transition-colors hover:bg-white/20"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Back
-                </button>
-              )}
-              {currentStep.skippable && (
-                <button
-                  onClick={() => setCurrentIdx((i) => i + 1)}
-                  className="rounded-lg bg-white/10 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/20"
-                >
-                  Skip step
-                </button>
-              )}
-              <button
-                onClick={handleSkip}
-                className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-white/70 transition-colors hover:bg-white/20"
-              >
-                Skip Tour
-              </button>
-              <button
-                onClick={handleNext}
-                disabled={currentStep.id === 'connect' && !isConnected}
-                className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-2 font-semibold text-white transition-all hover:from-purple-700 hover:to-pink-700 disabled:opacity-40"
-              >
-                {isLastStep ? 'Finish' : 'Next'}
-                {!isLastStep && <ChevronRight className="h-4 w-4" />}
-              </button>
-            </div>
-
-            {/* Product tour trigger */}
-            {joyrideSteps.length > 0 && !isCompleteStep && (
-              <button
-                onClick={() => setRunTour(true)}
-                className="mt-3 w-full text-center text-xs text-purple-400 hover:text-purple-300 underline"
-              >
-                Start interactive tour
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={handleNext}
+            disabled={isWalletStep && !isConnected}
+            className="ml-auto inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isWalletStep ? <Link2 size={14} /> : <ChevronRight size={14} />}
+            {isLastStep ? 'Finish' : 'Next'}
+          </button>
         </div>
       </div>
-    </>
+    </div>
   );
 };
+
+export default OnboardingFlow;

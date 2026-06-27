@@ -2238,4 +2238,164 @@ pub struct CapabilityToken {
     pub revoked: bool,
 }
 
+// ============================================================================
+// Issue #1077: Hierarchical Tag Taxonomy
+// ============================================================================
+
+/// A hierarchical tag node with optional parent linkage (max depth 3).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Tag {
+    /// Unique tag ID
+    pub id: u64,
+    /// Human-readable tag name (unique within same parent scope)
+    pub name: Symbol,
+    /// Parent tag ID (None = root tag)
+    pub parent_id: Option<u64>,
+    /// Hierarchy depth: 0 = root, 1 = child, 2 = grandchild (max)
+    pub level: u8,
+}
+
+// ============================================================================
+// Issue #1085: Gas Cost Estimation Oracle
+// ============================================================================
+
+/// Estimated compute cost breakdown for a proposal's execution.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CostEstimate {
+    /// Estimated Soroban compute units (with 10% buffer applied)
+    pub compute_units: u64,
+    /// Estimated ledger entry reads
+    pub ledger_reads: u32,
+    /// Estimated ledger entry writes
+    pub ledger_writes: u32,
+    /// Fee estimate in stroops (XLM * 10^7)
+    pub fee_estimate_xlm: i128,
+}
+
+/// Per-operation cost weights stored on-chain and updatable by admin.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CostModel {
+    /// Base compute units for any proposal execution
+    pub base_compute_units: u64,
+    /// Additional compute units per execution condition
+    pub per_condition_compute_units: u64,
+    /// Additional compute units per attachment reference
+    pub per_attachment_compute_units: u64,
+    /// Additional compute units per phase (for multi-phase proposals)
+    pub per_phase_compute_units: u64,
+    /// Base number of ledger reads per execution
+    pub base_ledger_reads: u32,
+    /// Base number of ledger writes per execution
+    pub base_ledger_writes: u32,
+    /// Cost in stroops per 10 000 compute units
+    pub stroops_per_10k_compute_units: i128,
+}
+
+impl Default for CostModel {
+    fn default() -> Self {
+        CostModel {
+            base_compute_units: 500_000,
+            per_condition_compute_units: 50_000,
+            per_attachment_compute_units: 10_000,
+            per_phase_compute_units: 100_000,
+            base_ledger_reads: 5,
+            base_ledger_writes: 3,
+            stroops_per_10k_compute_units: 100,
+        }
+    }
+}
+
+// ============================================================================
+// Issue #1083: Proposal Template System with Variable Substitution
+// ============================================================================
+
+/// A variable-substitution proposal template.
+///
+/// Stores the description as raw bytes with `{{variable_name}}` placeholders.
+/// Actual substitution is performed off-chain; the on-chain record stores
+/// the template reference and the provided variable map.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VarTemplate {
+    /// Unique template ID
+    pub id: u64,
+    /// Human-readable template name (unique per vault)
+    pub name: Symbol,
+    /// Description bytes containing `{{variable_name}}` placeholders
+    pub description_template: soroban_sdk::Bytes,
+    /// Ordered list of variable names recognised in the template (max 10)
+    pub variables: Vec<Symbol>,
+    /// Subset of `variables` that must be supplied by the caller
+    pub required_fields: Vec<Symbol>,
+    /// Address that created the template
+    pub creator: soroban_sdk::Address,
+    /// Monotonically increasing version counter (starts at 1)
+    pub version: u32,
+    /// Whether the template is active and may be used for new proposals
+    pub is_active: bool,
+    /// Ledger when the template was created
+    pub created_at: u64,
+    /// Ledger when the template was last updated
+    pub updated_at: u64,
+}
+
+/// Linkage stored with a proposal created from a VarTemplate.
+/// The caller supplies the resolved variable values; the on-chain record
+/// preserves the template ID, version, and the raw value map.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TemplateVarRef {
+    /// ID of the VarTemplate used
+    pub template_id: u64,
+    /// Version of the template at the time the proposal was created
+    pub template_version: u32,
+    /// Variable map supplied by the caller (variable_name -> value bytes)
+    pub values: soroban_sdk::Map<Symbol, soroban_sdk::Bytes>,
+}
+
+// ============================================================================
+// Issue #1086: Threshold Signature Scheme for Cold Storage
+// ============================================================================
+
+/// A single cold-storage Ed25519 signature over a proposal hash.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ColdSignatureRecord {
+    /// Proposal this signature covers
+    pub proposal_id: u64,
+    /// On-chain address of the cold signer (for bookkeeping / quorum checks)
+    pub signer: soroban_sdk::Address,
+    /// Raw Ed25519 signature bytes (64 bytes)
+    pub signature: BytesN<64>,
+    /// Ledger sequence at which the signature was submitted
+    pub signed_at_ledger: u32,
+}
+
+/// Admin-configurable cold-signer policy stored separately from Config.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ColdSignerConfig {
+    /// Registered cold signer public keys (Ed25519, 32 bytes each; max 5)
+    pub cold_signers: Vec<BytesN<32>>,
+    /// Corresponding on-chain addresses for each cold signer (same order)
+    pub cold_signer_addresses: Vec<soroban_sdk::Address>,
+    /// Number of cold signatures required to count toward quorum
+    pub cold_sig_threshold: u32,
+    /// Ledgers after submission before a cold signature expires
+    pub cold_sig_expiry: u32,
+}
+
+impl ColdSignerConfig {
+    pub fn default(env: &soroban_sdk::Env) -> Self {
+        ColdSignerConfig {
+            cold_signers: Vec::new(env),
+            cold_signer_addresses: Vec::new(env),
+            cold_sig_threshold: 0,
+            cold_sig_expiry: 17280, // ~1 day at 5 s/ledger
+        }
+    }
+}
 

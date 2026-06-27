@@ -6,6 +6,7 @@ import QRSignature from '../QRSignature';
 import ProposalPhaseTimeline, { type ProposalPhase } from '../proposals/ProposalPhaseTimeline';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
+import VersionHistory from '../collaborative/VersionHistory';
 
 export interface Proposal {
     id: string;
@@ -34,12 +35,13 @@ interface ProposalDetailModalProps {
 const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClose, proposal }) => {
     const [activeTab, setActiveTab] = useState<'details' | 'comments'>('details');
     const { getProposalSignatures, approveProposal, rejectProposal, exportSignatures } = useVaultContract();
-    const { address } = useWallet();
+    const { address, accountRole } = useWallet();
     const [signers, setSigners] = useState<Signer[]>([]);
     const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
     const [signaturesLoading, setSignaturesLoading] = useState(false);
     const [showQR, setShowQR] = useState(false);
+    const [restoredDraft, setRestoredDraft] = useState<Partial<{ recipient: string; token: string; amount: string; memo: string }> | null>(null);
 
     const signingPayload = proposal
         ? `${window.location.origin}/sign?proposal=${proposal.id}&recipient=${encodeURIComponent(proposal.recipient)}&amount=${encodeURIComponent(proposal.amount ?? '0')}&token=${encodeURIComponent(proposal.token ?? 'NATIVE')}`
@@ -242,6 +244,26 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                                 </div>
                             ))}
                         </div>
+                    </div>
+
+                    {/* Draft Version History */}
+                    <div>
+                        <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Draft History</h3>
+                        <VersionHistory
+                            draftId={`proposal-${proposal.id}`}
+                            proposalAuthor={proposal.proposer ?? ''}
+                            viewerAddress={address}
+                            viewerRole={accountRole}
+                            onRestore={(version) => setRestoredDraft(version)}
+                        />
+                        {restoredDraft && (
+                            <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+                                <p className="font-semibold">Restored snapshot loaded</p>
+                                <p className="mt-1 text-emerald-200/90">
+                                    Recipient: {restoredDraft.recipient || '—'} | Token: {restoredDraft.token || '—'} | Amount: {restoredDraft.amount || '—'}
+                                </p>
+                            </div>
+                        )}
                     </div>
 
                     {/* Phase Timeline (#1106) */}

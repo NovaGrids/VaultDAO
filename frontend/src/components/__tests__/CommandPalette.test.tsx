@@ -16,6 +16,36 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CommandPalette, modKey } from '../CommandPalette';
 import type { PaletteAction } from '../CommandPalette';
+import { useProposals } from '../../hooks/useProposals';
+import { useVaultContract } from '../../hooks/useVaultContract';
+import { useToast } from '../../hooks/useToast';
+
+const mockApproveProposal = vi.fn().mockResolvedValue(true);
+const mockRejectProposal = vi.fn().mockResolvedValue(true);
+const mockShowToast = vi.fn();
+
+vi.mock('../../hooks/useProposals', () => ({
+  useProposals: vi.fn(() => ({
+    proposals: [
+      { id: 42, status: 'Pending', recipient: 'GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR', amount: '100', memo: 'Approve proposal memo' },
+      { id: 43, status: 'active', recipient: 'GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR', amount: '200', memo: 'Reject proposal memo' },
+    ],
+  })),
+}));
+
+vi.mock('../../hooks/useVaultContract', () => ({
+  useVaultContract: vi.fn(() => ({
+    approveProposal: mockApproveProposal,
+    rejectProposal: mockRejectProposal,
+  })),
+}));
+
+vi.mock('../../hooks/useToast', () => ({
+  useToast: vi.fn(() => ({
+    showToast: mockShowToast,
+  })),
+}));
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -336,9 +366,76 @@ describe('CommandPalette', () => {
     dispatchKey('k', { ctrlKey: true });
 
     // The shortcut parts should be rendered as kbd elements
-    const kbds = screen.getAllByRole('term').concat(
-      Array.from(document.querySelectorAll('kbd')),
-    );
+    const kbds = Array.from(document.querySelectorAll('kbd'));
     expect(kbds.length).toBeGreaterThan(0);
   });
+
+  // ── Action Palette features ────────────────────────────────────────────────
+  it('filters active proposals when typing approve:', async () => {
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'approve:' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Approve Proposal #42')).toBeInTheDocument();
+      expect(screen.getByText('Approve Proposal #43')).toBeInTheDocument();
+    });
+  });
+
+  it('triggers confirmation modal for approve action and calls approveProposal on confirmation', async () => {
+    mockApproveProposal.mockClear();
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'approve:42' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Approve Proposal #42')).toBeInTheDocument();
+    });
+
+    // Execute the action (click it)
+    fireEvent.click(screen.getByText('Approve Proposal #42'));
+
+    // Modal should be open
+    expect(screen.getByText(/confirm approve action/i)).toBeInTheDocument();
+    expect(screen.getByText(/are you sure you want to approve proposal #42/i)).toBeInTheDocument();
+
+    // Click confirm
+    fireEvent.click(screen.getByText(/confirm & sign/i));
+
+    await waitFor(() => {
+      expect(mockApproveProposal).toHaveBeenCalledWith(42);
+      expect(screen.queryByText(/confirm approve action/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('triggers confirmation modal for reject action and calls rejectProposal on confirmation', async () => {
+    mockRejectProposal.mockClear();
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'reject:43' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Reject Proposal #43')).toBeInTheDocument();
+    });
+
+    // Execute the action (click it)
+    fireEvent.click(screen.getByText('Reject Proposal #43'));
+
+    // Modal should be open
+    expect(screen.getByText(/confirm reject action/i)).toBeInTheDocument();
+
+    // Click confirm
+    fireEvent.click(screen.getByText(/confirm & sign/i));
+
+    await waitFor(() => {
+      expect(mockRejectProposal).toHaveBeenCalledWith(43);
+    });
+  });
 });
+

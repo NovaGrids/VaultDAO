@@ -17,6 +17,10 @@ import { RealtimeNotificationBridge } from './components/RealtimeNotificationBri
 import { registerServiceWorker } from './utils/pwa';
 import { AccessibilityProvider } from './contexts/AccessibilityContext';
 import { SkipLinks } from './components/SkipLinks';
+import { applyThemeBeforeMount } from './styles/themes';
+
+// Prevent flash of incorrect theme before React mounts.
+applyThemeBeforeMount();
 
 // Register service worker for PWA support
 registerServiceWorker().catch((error) => {

@@ -18,6 +18,19 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
   const [wakeWord, setWakeWord] = useState('vault');
   const [timedOut, setTimedOut] = useState(false);
   const [commandMatched, setCommandMatched] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (pendingAction) {
+      timer = setTimeout(() => {
+        setPendingAction(null);
+        setTimedOut(true);
+        setTimeout(() => setTimedOut(false), 3000);
+      }, 10000);
+    }
+    return () => clearTimeout(timer);
+  }, [pendingAction]);
   const navigate = useNavigate();
 
   const flashMatch = useCallback(() => {
@@ -70,19 +83,37 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
 
     if (onApprove) {
       voiceService.registerCommand('approve proposal', {
-        command: 'Approving',
-        action: () => { onApprove(); flashMatch(); },
-        aliases: ['approve', 'accept', 'confirm'],
+        command: 'Confirm approve?',
+        action: () => { setPendingAction(() => onApprove); flashMatch(); },
+        aliases: ['approve', 'accept'],
       });
     }
 
     if (onReject) {
       voiceService.registerCommand('reject proposal', {
-        command: 'Rejecting',
-        action: () => { onReject(); flashMatch(); },
+        command: 'Confirm reject?',
+        action: () => { setPendingAction(() => onReject); flashMatch(); },
         aliases: ['reject', 'decline', 'deny'],
       });
     }
+    
+    voiceService.registerCommand('confirm action', {
+        command: 'Confirmed',
+        action: () => { 
+            if (pendingAction) {
+                pendingAction();
+                setPendingAction(null);
+                flashMatch();
+            }
+        },
+        aliases: ['yes', 'confirm', 'do it'],
+    });
+
+    voiceService.registerCommand('cancel action', {
+        command: 'Cancelled',
+        action: () => { setPendingAction(null); flashMatch(); },
+        aliases: ['no', 'cancel', 'stop'],
+    });
 
     return () => { voiceService.stop(); };
   }, [navigate, onCreateProposal, onApprove, onReject, wakeWord, t, flashMatch]);
@@ -113,6 +144,12 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
+      {pendingAction && (
+        <div className="bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg max-w-xs animate-bounce">
+          <p className="text-sm font-medium">Action pending confirmation</p>
+          <p className="text-xs mt-1">Say "yes" to confirm or "no" to cancel</p>
+        </div>
+      )}
       {timedOut && !isListening && (
         <div className="bg-yellow-600 text-white px-4 py-2 rounded-lg shadow-lg max-w-xs">
           <p className="text-sm font-medium">{t('voice.timedOut')}</p>

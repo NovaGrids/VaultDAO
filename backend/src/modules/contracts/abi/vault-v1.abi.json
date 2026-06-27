@@ -1,0 +1,87 @@
+{
+  "version": "1.0.0",
+  "functions": {
+    "initialize": {
+      "args": [
+        { "name": "admin", "type": "Address" },
+        { "name": "signers", "type": "Vec" },
+        { "name": "threshold", "type": "u32" }
+      ]
+    },
+    "propose": {
+      "args": [
+        { "name": "proposer", "type": "Address" },
+        { "name": "recipient", "type": "Address" },
+        { "name": "token", "type": "Address" },
+        { "name": "amount", "type": "i128" },
+        { "name": "memo", "type": "Symbol" }
+      ]
+    },
+    "approve": {
+      "args": [
+        { "name": "signer", "type": "Address" },
+        { "name": "proposal_id", "type": "u32" }
+      ]
+    },
+    "execute": {
+      "args": [
+        { "name": "caller", "type": "Address" },
+        { "name": "proposal_id", "type": "u32" }
+      ]
+    },
+    "cancel": {
+      "args": [
+        { "name": "caller", "type": "Address" },
+        { "name": "proposal_id", "type": "u32" }
+      ]
+    },
+    "add_signer": {
+      "args": [
+        { "name": "admin", "type": "Address" },
+        { "name": "signer", "type": "Address" }
+      ]
+    },
+    "remove_signer": {
+      "args": [
+        { "name": "admin", "type": "Address" },
+        { "name": "signer", "type": "Address" }
+      ]
+    },
+    "set_threshold": {
+      "args": [
+        { "name": "admin", "type": "Address" },
+        { "name": "threshold", "type": "u32" }
+      ]
+    },
+    "set_spending_limit": {
+      "args": [
+        { "name": "admin", "type": "Address" },
+        { "name": "limit", "type": "i128" }
+      ]
+    },
+    "get_config": {
+      "args": []
+    },
+    "get_proposal": {
+      "args": [
+        { "name": "proposal_id", "type": "u32" }
+      ]
+    },
+    "schedule_recurring": {
+      "args": [
+        { "name": "proposer", "type": "Address" },
+        { "name": "recipient", "type": "Address" },
+        { "name": "token", "type": "Address" },
+        { "name": "amount", "type": "i128" },
+        { "name": "memo", "type": "Symbol" },
+        { "name": "interval", "type": "u32" }
+      ]
+    },
+    "cancel_recurring": {
+      "args": [
+        { "name": "caller", "type": "Address" },
+        { "name": "payment_id", "type": "u32" }
+      ]
+    }
+  }
+}
