@@ -128,5 +128,22 @@
     "dateShort": "DD/MM/YYYY",
     "dateLong": "D MMMM YYYY",
     "time": "HH:mm:ss"
+  },
+  "VaultError": {
+    "UNAUTHORIZED": "Action non autorisée",
+    "INSUFFICIENT_FUNDS": "Fonds de trésorerie insuffisants",
+    "INVALID_SIGNATURE": "Signature invalide",
+    "PROPOSAL_NOT_FOUND": "Proposition introuvable",
+    "PROPOSAL_EXPIRED": "La proposition a expiré"
+  },
+  "Status": {
+    "Active": "Actif",
+    "Pending": "En attente",
+    "Expired": "Expiré"
+  },
+  "Actions": {
+    "approve": "Approuver",
+    "reject": "Rejeter",
+    "create_payment": "Créer un paiement"
   }
 }
