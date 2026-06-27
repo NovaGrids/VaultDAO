@@ -146,6 +146,7 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onClick={handleClick}
       role="article"
       aria-label={`${notification.category} notification: ${notification.title}`}
     >

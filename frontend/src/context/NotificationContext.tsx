@@ -9,7 +9,7 @@ import type {
 import { createWebSocketClient } from '../utils/websocket';
 
 const STORAGE_KEY = 'vaultdao_notifications';
-const MAX_STORED_NOTIFICATIONS = 50;
+const MAX_STORED_NOTIFICATIONS = 500;
 
 /** Per-wallet read-state key */
 export function notificationReadKey(walletAddress: string): string {

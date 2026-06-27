@@ -41,7 +41,7 @@ import { getDiffSegments } from '../utils/diffHighlighting';
 import { getUserFriendlyError } from '../utils/errorMapping';
 import { env } from '../config/env';
 import { useWallet } from '../hooks/useWallet';
-import { SorobanRpc, Address, Operation, TransactionBuilder } from 'stellar-sdk';
+import { SorobanRpc, Address, Operation, TransactionBuilder, xdr as xdrModule } from 'stellar-sdk';
 
 const server = new SorobanRpc.Server(env.sorobanRpcUrl);
 
@@ -172,7 +172,6 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
 
       const source = address ?? env.feesAccount;
       const account = await server.getAccount(source);
-      const { xdr: xdrModule } = await import('stellar-sdk');
       const tx = new TransactionBuilder(account, { fee: '100' })
         .setNetworkPassphrase(env.networkPassphrase)
         .setTimeout(30)
