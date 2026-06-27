@@ -108,6 +108,9 @@ const CollaborativeProposalModal: React.FC<CollaborativeProposalModalProps> = ({
           {activeTab === 'history' && (
             <VersionHistory
               draftId={draftId}
+              proposalAuthor={userId}
+              viewerAddress={userId}
+              viewerRole={null}
               onRestore={handleRestore}
             />
           )}
