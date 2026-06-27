@@ -19,18 +19,35 @@ import React, {
 } from 'react';
 import Fuse from 'fuse.js';
 import { Search, Command, ArrowRight } from 'lucide-react';
+import { useVaultContract } from '../hooks/useVaultContract';
+import { useProposals } from '../hooks/useProposals';
+import { useToast } from '../hooks/useToast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface PaletteAction {
+export interface NavigationCommand {
   id: string;
   label: string;
   description?: string;
-  category: 'navigation' | 'actions' | 'accessibility';
+  category: 'navigation' | 'accessibility';
   icon?: React.ReactNode;
   shortcut?: string;
   action: () => void;
 }
+
+export interface ActionCommand {
+  id: string;
+  label: string;
+  description?: string;
+  category: 'actions';
+  actionType?: 'approve' | 'reject' | 'create-payment' | 'view-audit';
+  proposalId?: string;
+  icon?: React.ReactNode;
+  shortcut?: string;
+  action: () => void;
+}
+
+export type PaletteAction = NavigationCommand | ActionCommand;
 
 interface CommandPaletteProps {
   actions: PaletteAction[];
@@ -41,7 +58,7 @@ interface CommandPaletteProps {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const RECENT_KEY = 'vaultdao_recent_commands';
-const MAX_RECENT_DEFAULT = 5;
+const MAX_RECENT_DEFAULT = 10;
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,31 +95,122 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
-  // ── Fuse.js fuzzy search ──────────────────────────────────────────────────
+  const { proposals } = useProposals();
+  const { approveProposal, rejectProposal } = useVaultContract();
+  const toast = useToast();
+  const showToast = toast?.showToast || (toast as any)?.notify;
 
-  const fuse = useMemo(
-    () =>
-      new Fuse(actions, {
-        keys: ['label', 'description', 'category'],
-        threshold: 0.4,
-        includeScore: true,
-      }),
-    [actions],
-  );
+  const [confirmation, setConfirmation] = useState<{
+    type: 'approve' | 'reject';
+    proposalId: string;
+    memo?: string;
+    amount?: string;
+  } | null>(null);
+  const [executing, setExecuting] = useState(false);
+
+  const handleConfirmAction = async () => {
+    if (!confirmation) return;
+    setExecuting(true);
+    try {
+      if (confirmation.type === 'approve') {
+        await approveProposal(parseInt(confirmation.proposalId, 10) || 0);
+        showToast?.('Proposal approved successfully', 'success');
+      } else {
+        await rejectProposal(parseInt(confirmation.proposalId, 10) || 0);
+        showToast?.('Proposal rejected successfully', 'success');
+      }
+      setConfirmation(null);
+      close();
+    } catch (e) {
+      console.error(e);
+      showToast?.(e instanceof Error ? e.message : 'Action failed', 'error');
+    } finally {
+      setExecuting(false);
+    }
+  };
 
   // ── Filtered + sorted results ─────────────────────────────────────────────
 
   const results = useMemo<PaletteAction[]>(() => {
-    if (!query.trim()) {
-      // No query: show recent first, then all others
-      const recentActions = recentIds
-        .map((id) => actions.find((a) => a.id === id))
-        .filter((a): a is PaletteAction => Boolean(a));
-      const rest = actions.filter((a) => !recentIds.includes(a.id));
-      return [...recentActions, ...rest];
+    const queryLower = query.trim().toLowerCase();
+    
+    // Autocomplete proposal actions
+    if (queryLower.startsWith('approve:') || queryLower.startsWith('reject:')) {
+      const isApprove = queryLower.startsWith('approve:');
+      const searchId = queryLower.split(':')[1]?.trim() || '';
+      
+      const activeProposals = proposals.filter(p => p.status === 'Pending' || p.status === 'active');
+      const filteredProposals = searchId 
+        ? activeProposals.filter(p => p.id.toString().includes(searchId) || p.memo?.toLowerCase().includes(searchId))
+        : activeProposals;
+        
+      return filteredProposals.map(p => ({
+        id: `${isApprove ? 'approve' : 'reject'}-${p.id}`,
+        label: `${isApprove ? 'Approve' : 'Reject'} Proposal #${p.id}`,
+        description: `Recipient: ${p.recipient} | Amount: ${p.amount} XLM | Memo: ${p.memo}`,
+        category: 'actions' as const,
+        actionType: isApprove ? ('approve' as const) : ('reject' as const),
+        proposalId: p.id.toString(),
+        action: () => {
+          setConfirmation({
+            type: isApprove ? 'approve' : 'reject',
+            proposalId: p.id.toString(),
+            memo: p.memo,
+            amount: p.amount
+          });
+        }
+      }));
     }
-    return fuse.search(query).map((r) => r.item);
-  }, [query, actions, fuse, recentIds]);
+
+    const defaultActions = [...actions];
+
+    const approveHelper: PaletteAction = {
+      id: 'action-approve-trigger',
+      label: 'approve:',
+      description: 'Approve a proposal by ID (autocomplete)',
+      category: 'actions' as const,
+      actionType: 'approve',
+      action: () => {
+        setQuery('approve:');
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+    };
+    
+    const rejectHelper: PaletteAction = {
+      id: 'action-reject-trigger',
+      label: 'reject:',
+      description: 'Reject a proposal by ID (autocomplete)',
+      category: 'actions' as const,
+      actionType: 'reject',
+      action: () => {
+        setQuery('reject:');
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+    };
+
+    const allActions = [approveHelper, rejectHelper, ...defaultActions];
+
+    if (!query.trim()) {
+      const recentActions = recentIds
+        .map((id) => allActions.find((a) => a.id === id))
+        .filter((a): a is PaletteAction => Boolean(a));
+      const rest = allActions.filter((a) => !recentIds.includes(a.id));
+      const combined = [...recentActions, ...rest];
+      const categoriesOrder = ['navigation', 'actions', 'accessibility'] as const;
+      const sorted: PaletteAction[] = [];
+      for (const cat of categoriesOrder) {
+        sorted.push(...combined.filter(a => a.category === cat));
+      }
+      return sorted;
+    }
+    
+    const fuseInstance = new Fuse(allActions, {
+      keys: ['label', 'description', 'category'],
+      threshold: 0.4,
+      includeScore: true,
+    });
+    return fuseInstance.search(query).map((r) => r.item);
+  }, [query, actions, recentIds, proposals]);
 
   // ── Open / close ──────────────────────────────────────────────────────────
 
@@ -145,7 +253,6 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
 
   useEffect(() => {
     if (isOpen) {
-      // Small delay to let the DOM settle
       const t = setTimeout(() => inputRef.current?.focus(), 50);
       return () => clearTimeout(t);
     }
@@ -181,19 +288,22 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
     const list = listRef.current;
     if (!list) return;
     const active = list.children[activeIndex] as HTMLElement | undefined;
-    active?.scrollIntoView({ block: 'nearest' });
+    active?.scrollIntoView?.({ block: 'nearest' });
   }, [activeIndex]);
 
   // ── Execute action ────────────────────────────────────────────────────────
 
   const executeAction = useCallback(
     (item: PaletteAction) => {
-      // Update recent list
       setRecentIds((prev) => {
         const next = [item.id, ...prev.filter((id) => id !== item.id)].slice(0, maxRecent);
         saveRecent(next);
         return next;
       });
+      if (item.id === 'action-approve-trigger' || item.id === 'action-reject-trigger') {
+        item.action();
+        return;
+      }
       close();
       item.action();
     },
@@ -206,7 +316,7 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
     setActiveIndex(0);
   }, [results.length]);
 
-  if (!isOpen) return null;
+  if (!isOpen && !confirmation) return null;
 
   const categoryLabels: Record<PaletteAction['category'], string> = {
     navigation: 'Navigation',
@@ -220,19 +330,22 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
   return (
     <>
       {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
-        aria-hidden="true"
-        onClick={close}
-      />
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+          aria-hidden="true"
+          onClick={close}
+        />
+      )}
 
       {/* Palette */}
-      <div
-        className="fixed inset-x-0 top-[15%] z-50 mx-auto w-full max-w-xl px-4"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Command palette"
-      >
+      {isOpen && (
+        <div
+          className="fixed inset-x-0 top-[15%] z-50 mx-auto w-full max-w-xl px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Command palette"
+        >
         <div className="overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
           {/* Search input */}
           <div className="flex items-center gap-3 border-b border-gray-700 px-4 py-3">
@@ -332,6 +445,39 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
           </div>
         </div>
       </div>
+    )}
+
+      {confirmation && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl text-white" role="dialog" aria-modal="true" aria-labelledby="confirm-action-title">
+            <h3 id="confirm-action-title" className="text-lg font-bold mb-2 capitalize text-red-400">
+              Confirm {confirmation.type} action
+            </h3>
+            <p className="text-sm text-gray-300 mb-4">
+              Are you sure you want to {confirmation.type} proposal #{confirmation.proposalId}?
+              {confirmation.memo && <span className="block mt-2 text-xs text-gray-400">Memo: {confirmation.memo}</span>}
+              {confirmation.amount && <span className="block text-xs text-gray-400">Amount: {confirmation.amount} XLM</span>}
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmation(null)}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors text-gray-300 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmAction}
+                disabled={executing}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-white ${
+                  confirmation.type === 'approve' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                {executing ? 'Executing...' : 'Confirm & Sign'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

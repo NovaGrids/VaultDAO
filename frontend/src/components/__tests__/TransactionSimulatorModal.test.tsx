@@ -21,14 +21,16 @@ vi.mock('../../config/env', () => ({
 
 vi.mock('stellar-sdk', () => ({
   SorobanRpc: {
-    Server: vi.fn().mockImplementation(() => ({
-      getAccount: vi.fn().mockResolvedValue({ id: 'GABC', sequence: '100' }),
-      simulateTransaction: vi.fn().mockResolvedValue({
-        minResourceFee: '1000',
-        cost: { cpuInsns: '500000', memBytes: '32768' },
-        result: { retval: null },
-      }),
-    })),
+    Server: vi.fn().mockImplementation(function () {
+      return {
+        getAccount: vi.fn().mockResolvedValue({ id: 'GABC', sequence: '100' }),
+        simulateTransaction: vi.fn().mockResolvedValue({
+          minResourceFee: '1000',
+          cost: { cpuInsns: '500000', memBytes: '32768' },
+          result: { retval: null },
+        }),
+      };
+    }),
     Api: {
       isSimulationError: vi.fn().mockReturnValue(false),
       isSimulationSuccess: vi.fn().mockReturnValue(true),
@@ -43,6 +45,10 @@ vi.mock('stellar-sdk', () => ({
   Operation: { invokeHostFunction: vi.fn().mockReturnValue({}) },
   Address: { fromString: vi.fn().mockReturnValue({ toScAddress: () => ({}) }) },
   xdr: {
+    HostFunction: { hostFunctionTypeInvokeContract: vi.fn().mockReturnValue({}) },
+    InvokeContractArgs: vi.fn().mockImplementation(() => ({})),
+  },
+  xdrModule: {
     HostFunction: { hostFunctionTypeInvokeContract: vi.fn().mockReturnValue({}) },
     InvokeContractArgs: vi.fn().mockImplementation(() => ({})),
   },

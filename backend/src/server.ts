@@ -41,6 +41,11 @@ import type { Server } from "node:http";
 import { CircuitBreaker } from "./shared/http/circuit-breaker.js";
 
 import { LifecycleManager } from "./app/lifecycle/lifecycle-manager.js";
+import { GovernanceSnapshotJob } from "./modules/jobs/governance-snapshot.job.js";
+import { VaultRegistry } from "./modules/vault/vault-registry.service.js";
+import { ContractStateValidator } from "./modules/contracts/contract-state-validator.js";
+import { VaultService } from "./modules/vault/vault.service.js";
+import { DatabaseSync } from "node:sqlite";
 
 export interface BackendRuntime {
   readonly startedAt: string;
@@ -64,6 +69,9 @@ export interface BackendRuntime {
   readonly snapshotDiffService?: SnapshotDiffService;
   readonly webhookDeliveryService?: WebhookDeliveryService;
   readonly lifecycleManager: LifecycleManager;
+  readonly governanceSnapshotJob?: import("./modules/jobs/governance-snapshot.job.js").GovernanceSnapshotJob;
+  readonly vaultRegistry?: import("./modules/vault/vault-registry.service.js").VaultRegistry;
+  readonly contractStateValidator?: import("./modules/contracts/contract-state-validator.js").ContractStateValidator;
 }
 
 export interface BackendServer {
@@ -354,6 +362,47 @@ export async function startServer(
     },
     { replace: true },
   );
+
+  // ── Governance Snapshot Job (Issue #1173) ─────────────────────────────────
+  const governanceDb = new DatabaseSync(env.databasePath ?? ":memory:");
+  const governanceSnapshotJob = new GovernanceSnapshotJob(governanceDb, {
+    rpcUrl: env.sorobanRpcUrl,
+  });
+  jobManager.registerJob(governanceSnapshotJob, { replace: true });
+  runtime.governanceSnapshotJob = governanceSnapshotJob;
+
+  // ── Vault Registry (Issue #1164) ──────────────────────────────────────────
+  const initialVaultAddresses = env.contractIds?.length
+    ? env.contractIds
+    : env.contractId
+    ? [env.contractId]
+    : [];
+  const vaultRegistry = new VaultRegistry(initialVaultAddresses);
+  runtime.vaultRegistry = vaultRegistry;
+
+  // ── Contract State Validator (Issue #1171) ────────────────────────────────
+  const serverNetworkPassphrases: Record<string, string> = {
+    testnet: "Test SDF Network ; September 2015",
+    mainnet: "Public Global Stellar Network ; October 2015",
+    futurenet: "Test SDF Future Network ; October 2022",
+    standalone: "Standalone Network ; Latitude 0",
+  };
+  const ContractRegistryClass = (
+    await import("./modules/contracts/contract-registry.js")
+  ).default;
+  const contractRegistryForValidator = new ContractRegistryClass(env);
+  const vaultServiceForValidator = new VaultService(
+    env.sorobanRpcUrl,
+    serverNetworkPassphrases[env.stellarNetwork?.toLowerCase() ?? "testnet"] ??
+      serverNetworkPassphrases["testnet"]!,
+  );
+  const contractStateValidator = new ContractStateValidator(
+    contractRegistryForValidator,
+    vaultServiceForValidator,
+    webhookDeliveryService,
+  );
+  contractStateValidator.start();
+  runtime.contractStateValidator = contractStateValidator;
 
   void jobManager.startAll();
   scheduledJobRunner.start();

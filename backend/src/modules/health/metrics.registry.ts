@@ -139,3 +139,52 @@ export class MetricsRegistry {
     return PrometheusFormatter.format(this.snapshot());
   }
 }
+
+// ── Due-Payment Keeper Metric Names ──────────────────────────────────────────
+
+/** Counter: payments triggered with exact ledger match. */
+export const DUE_PAYMENT_EXACT_COUNTER = "due_payments_triggered_exact_total";
+/** Counter: payments triggered via early jitter window. */
+export const DUE_PAYMENT_JITTER_EARLY_COUNTER =
+  "due_payments_triggered_jitter_early_total";
+/** Counter: payments triggered via late jitter window. */
+export const DUE_PAYMENT_JITTER_LATE_COUNTER =
+  "due_payments_triggered_jitter_late_total";
+/** Counter: payments skipped due to idempotency set hit. */
+export const DUE_PAYMENT_IDEMPOTENCY_HIT_COUNTER =
+  "due_payments_idempotency_hits_total";
+/** Gauge: number of payments processed in the last batch. */
+export const DUE_PAYMENT_BATCH_SIZE_GAUGE = "due_payments_batch_size";
+
+/**
+ * Register all due-payment keeper metrics on the given registry.
+ *
+ * Call once at startup (idempotent — re-registration overwrites metadata).
+ */
+export function registerDuePaymentMetrics(registry: MetricsRegistry): void {
+  registry.register(
+    DUE_PAYMENT_EXACT_COUNTER,
+    "Total recurring payments triggered at their exact due ledger",
+    "counter",
+  );
+  registry.register(
+    DUE_PAYMENT_JITTER_EARLY_COUNTER,
+    "Total recurring payments triggered early via on-chain jitter window",
+    "counter",
+  );
+  registry.register(
+    DUE_PAYMENT_JITTER_LATE_COUNTER,
+    "Total recurring payments triggered late via on-chain jitter window",
+    "counter",
+  );
+  registry.register(
+    DUE_PAYMENT_IDEMPOTENCY_HIT_COUNTER,
+    "Total payment triggers skipped due to idempotency set (duplicate prevention)",
+    "counter",
+  );
+  registry.register(
+    DUE_PAYMENT_BATCH_SIZE_GAUGE,
+    "Number of due payments processed in the most recent keeper invocation",
+    "gauge",
+  );
+}

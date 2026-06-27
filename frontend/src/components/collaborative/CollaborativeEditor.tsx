@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Wifi, WifiOff, AlertTriangle, Save, Clock } from 'lucide-react';
+import ConflictResolutionPanel from './ConflictResolutionPanel';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import { useVersionHistory } from '../../hooks/useVersionHistory';
 import { useChangeTracking } from '../../hooks/useChangeTracking';
@@ -26,7 +27,7 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const { isConnected, collaborators, hasConflict, updateField } = useCollaboration({
+  const { isConnected, collaborators, hasConflict, updateField, getDraftState, resolveConflict } = useCollaboration({
     draftId,
     userId,
     userName,
@@ -146,15 +147,14 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
       {/* Conflict Warning */}
       {hasConflict && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
-          <AlertTriangle size={16} className="text-yellow-500 mt-0.5 flex-shrink-0" />
-          <div className="text-sm text-yellow-300">
-            <p className="font-medium">Potential conflict detected</p>
-            <p className="text-xs text-yellow-400 mt-1">
-              Another user recently edited this field. Changes are being merged automatically.
-            </p>
-          </div>
-        </div>
+        <ConflictResolutionPanel 
+          localData={formData} 
+          remoteData={getDraftState() as any} 
+          onResolve={(resolved) => {
+            setFormData(prev => ({ ...prev, ...resolved }));
+            resolveConflict(resolved);
+          }} 
+        />
       )}
 
       {/* Form Fields */}

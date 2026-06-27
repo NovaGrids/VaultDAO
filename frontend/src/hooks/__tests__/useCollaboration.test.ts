@@ -2,6 +2,7 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useCollaboration } from '../useCollaboration';
 import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
 
 // Mock y-websocket
 vi.mock('y-websocket', () => ({
@@ -68,8 +69,6 @@ describe('useCollaboration', () => {
   });
 
   it('should detect typing indicator and state syncs', () => {
-    const { WebsocketProvider } = require('y-websocket');
-    
     const { result } = renderHook(() =>
       useCollaboration({
         draftId: 'test-draft',
@@ -81,7 +80,7 @@ describe('useCollaboration', () => {
 
     // Trigger the mock awareness change
     act(() => {
-      const providerInstance = WebsocketProvider.mock.results[0].value;
+      const providerInstance = vi.mocked(WebsocketProvider).mock.results[0]?.value;
       providerInstance._triggerAwarenessChange();
     });
 
