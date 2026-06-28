@@ -1,19 +1,68 @@
-import React from 'react';
-import { BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon, Activity, FileText, Calendar, ShieldCheck } from 'lucide-react';
-import type { WidgetType } from '../types/dashboard';
+import React from "react";
+import {
+  BarChart3,
+  LineChart as LineChartIcon,
+  PieChart as PieChartIcon,
+  Activity,
+  FileText,
+  Calendar,
+  ShieldCheck,
+} from "lucide-react";
+import type { WidgetType } from "../types/dashboard";
 
 interface WidgetLibraryProps {
   onAddWidget: (type: WidgetType) => void;
 }
 
 const widgetTypes = [
-  { type: 'line-chart' as WidgetType, name: 'Line Chart', icon: LineChartIcon, description: 'Trend analysis' },
-  { type: 'bar-chart' as WidgetType, name: 'Bar Chart', icon: BarChart3, description: 'Compare values' },
-  { type: 'pie-chart' as WidgetType, name: 'Pie Chart', icon: PieChartIcon, description: 'Distribution' },
-  { type: 'stat-card' as WidgetType, name: 'Stat Card', icon: Activity, description: 'Key metrics' },
-  { type: 'proposal-list' as WidgetType, name: 'Proposals', icon: FileText, description: 'Recent proposals' },
-  { type: 'calendar' as WidgetType, name: 'Calendar', icon: Calendar, description: 'Events & deadlines' },
-  { type: 'governance-health' as WidgetType, name: 'Gov. Health', icon: ShieldCheck, description: 'Participation & compliance' },
+  {
+    type: "line-chart" as WidgetType,
+    name: "Line Chart",
+    icon: LineChartIcon,
+    description: "Trend analysis",
+  },
+  {
+    type: "bar-chart" as WidgetType,
+    name: "Bar Chart",
+    icon: BarChart3,
+    description: "Compare values",
+  },
+  {
+    type: "pie-chart" as WidgetType,
+    name: "Pie Chart",
+    icon: PieChartIcon,
+    description: "Distribution",
+  },
+  {
+    type: "stat-card" as WidgetType,
+    name: "Stat Card",
+    icon: Activity,
+    description: "Key metrics",
+  },
+  {
+    type: "proposal-list" as WidgetType,
+    name: "Proposals",
+    icon: FileText,
+    description: "Recent proposals",
+  },
+  {
+    type: "calendar" as WidgetType,
+    name: "Calendar",
+    icon: Calendar,
+    description: "Events & deadlines",
+  },
+  {
+    type: "governance-health" as WidgetType,
+    name: "Gov. Health",
+    icon: ShieldCheck,
+    description: "Participation & compliance",
+  },
+  {
+    type: "doc-info" as WidgetType,
+    name: "Doc Info",
+    icon: FileText,
+    description: "Contributor documentation",
+  },
 ];
 
 const WidgetLibrary: React.FC<WidgetLibraryProps> = ({ onAddWidget }) => {
