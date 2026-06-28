@@ -92,7 +92,7 @@ pub struct InitConfig {
     pub pre_execution_hooks: Vec<Address>,
     /// Post-execution hook addresses
     pub post_execution_hooks: Vec<Address>,
-    pub staking_config: StakingConfig,
+    
     /// Proposal ID namespace prefix for multi-vault coordination (must be multiple of 1_000_000)
     pub proposal_id_prefix: u64,
     /// Whether recipient whitelist enforcement is enabled (issue #1094)
