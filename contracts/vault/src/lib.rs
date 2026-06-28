@@ -640,6 +640,7 @@ impl VaultDAO {
         // 2b. Reject if no signers at creation time (issue #1095)
         if config.signers.is_empty() {
             return Err(VaultError::EmptySignerSnapshot);
+        } 
         // 2a. Reject if vault is paused (#1084)
         if storage::get_pause_state(&env).is_paused {
             return Err(VaultError::VaultPaused);
@@ -3790,19 +3791,6 @@ impl VaultDAO {
             return Err(VaultError::InsurancePoolInsufficient);
         }
 
-        let mut attachments = storage::get_attachments(&env, proposal_id);
-        if attachments.contains(attachment.clone()) {
-            return Err(VaultError::AlreadyApproved); // duplicate attachment
-        }
-        attachments.push_back(attachment);
-        storage::set_attachments(&env, proposal_id, &attachments);
-
-        // Issue #1063: Recompute Merkle root whenever attachments change.
-        let leaves = Self::attachments_to_leaves(&env, &attachments);
-        proposal.attachment_merkle_root = Self::compute_merkle_root(&env, leaves);
-        storage::set_proposal(&env, &proposal);
-
-        storage::extend_instance_ttl(&env);
         // Atomically deduct from pool and transfer
         storage::subtract_from_insurance_pool(&env, &proposal.token, proposal.amount);
         token::transfer(&env, &proposal.token, &proposal.recipient, proposal.amount);
@@ -3815,7 +3803,6 @@ impl VaultDAO {
         let execution_time = current_ledger.saturating_sub(proposal.created_at);
         storage::metrics_on_execution(&env, 0, execution_time);
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)?;
         events::emit_proposal_executed(
             &env,
             proposal_id,
@@ -3828,19 +3815,6 @@ impl VaultDAO {
 
         Ok(())
     }
-
-        let mut attachments = storage::get_attachments(&env, proposal_id);
-        if index >= attachments.len() {
-            return Err(VaultError::ProposalNotFound); // reuse as "index out of range"
-        }
-        attachments.remove(index);
-        storage::set_attachments(&env, proposal_id, &attachments);
-
-        // Issue #1063: Recompute Merkle root after removal
-        let leaves = Self::attachments_to_leaves(&env, &attachments);
-        proposal.attachment_merkle_root = Self::compute_merkle_root(&env, leaves);
-        storage::set_proposal(&env, &proposal);
-
     /// Get the current vault configuration.
     ///
     /// Returns the full [`Config`] struct so that frontends and SDKs can read
@@ -14339,6 +14313,7 @@ impl VaultDAO {
     /// Get a capability token by ID.
     pub fn get_capability(env: Env, token_id: BytesN<32>) -> Option<CapabilityToken> {
         storage::get_capability_token(&env, &token_id)
+    } 
     // Signer tiers
     // ========================================================================
 
