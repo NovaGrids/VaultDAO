@@ -8,6 +8,10 @@ Thank you for your interest in contributing to VaultDAO! We're building the "Gno
 
 Before contributing, ensure you have the following installed:
 
+> For a step-by-step, hands-on first-issue walkthrough (including verified environment setup for Linux/macOS/Windows (WSL2), a worked Soroban contract example, and PR/code-review expectations), see:
+>
+> - [docs/guides/FIRST_CONTRIBUTION.md](docs/guides/FIRST_CONTRIBUTION.md)
+
 - **Rust** (1.70 or later): [Install Rust](https://rustup.rs/)
 - **wasm32 target**: `rustup target add wasm32-unknown-unknown`
 - **Stellar CLI** (latest): [Installation Guide](https://developers.stellar.org/docs/tools/developer-tools)
@@ -169,6 +173,21 @@ Then create a PR on GitHub with:
 ## 🧪 Testing
 
 For the full testing guide — including how to run tests, write new ones, set up coverage, and understand CI requirements — see **[docs/reference/TESTING.md](docs/reference/TESTING.md)**.
+
+## 🎯 Frontend contribution guide
+
+For frontend-specific design system + widget development conventions, see **[docs/guides/FRONTEND_CONTRIBUTION.md](docs/guides/FRONTEND_CONTRIBUTION.md)**.
+
+## 🎯 First contribution walkthrough
+
+New contributors should start with the hands-on guide: **[docs/guides/FIRST_CONTRIBUTION.md](docs/guides/FIRST_CONTRIBUTION.md)**.
+
+It includes:
+
+- Verified environment setup (Linux/macOS/Windows via WSL2)
+- How to pick your first issue
+- A worked example adding a small contract getter
+- What reviewers look for during code review
 
 ### Testing Requirements
 

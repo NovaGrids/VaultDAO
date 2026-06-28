@@ -8,24 +8,45 @@
  * WidgetLibrary slides in from the right.
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import GridLayout, { type Layout as GridLayoutType } from 'react-grid-layout/legacy';
-import 'react-grid-layout/css/styles.css';
-import 'react-resizable/css/styles.css';
-import { Edit3, Save, Download, X, Package, RotateCcw, PanelRight } from 'lucide-react';
-import WidgetLibrary from './WidgetLibrary';
-import WidgetSystem from './WidgetSystem';
-import LineChartWidget from './widgets/LineChartWidget';
-import BarChartWidget from './widgets/BarChartWidget';
-import PieChartWidget from './widgets/PieChartWidget';
-import StatCardWidget from './widgets/StatCardWidget';
-import ProposalListWidget from './widgets/ProposalListWidget';
-import CalendarWidget from './widgets/CalendarWidget';
-import GovernanceHealthWidget from './widgets/GovernanceHealthWidget';
-import DashboardErrorBoundary from './DashboardErrorBoundary';
-import type { WidgetConfig, WidgetType, LayoutItem as DashboardLayoutItem } from '../types/dashboard';
-import { dashboardTemplates, saveDashboardLayout, loadDashboardLayout, clearDashboardLayout } from '../utils/dashboardTemplates';
-import { useWallet } from '../hooks/useWallet';
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import GridLayout, {
+  type Layout as GridLayoutType,
+} from "react-grid-layout/legacy";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
+import {
+  Edit3,
+  Save,
+  Download,
+  X,
+  Package,
+  RotateCcw,
+  PanelRight,
+} from "lucide-react";
+import WidgetLibrary from "./WidgetLibrary";
+import WidgetSystem from "./WidgetSystem";
+import LineChartWidget from "./widgets/LineChartWidget";
+import BarChartWidget from "./widgets/BarChartWidget";
+import PieChartWidget from "./widgets/PieChartWidget";
+import StatCardWidget from "./widgets/StatCardWidget";
+import ProposalListWidget from "./widgets/ProposalListWidget";
+import CalendarWidget from "./widgets/CalendarWidget";
+import GovernanceHealthWidget from "./widgets/GovernanceHealthWidget";
+import DocInfoWidget from "./widgets/DocInfoWidget";
+import DashboardErrorBoundary from "./DashboardErrorBoundary";
+import type {
+  WidgetConfig,
+  WidgetType,
+  LayoutItem as DashboardLayoutItem,
+} from "../types/dashboard";
+
+import {
+  dashboardTemplates,
+  saveDashboardLayout,
+  loadDashboardLayout,
+  clearDashboardLayout,
+} from "../utils/dashboardTemplates";
+import { useWallet } from "../hooks/useWallet";
 
 interface DashboardBuilderProps {
   initialWidgets?: WidgetConfig[];
@@ -33,18 +54,35 @@ interface DashboardBuilderProps {
 
 const COLS = 12;
 const ROW_HEIGHT = 80;
-const WIDGET_STORAGE_KEY = 'vaultdao-dashboard-widgets';
+const WIDGET_STORAGE_KEY = "vaultdao-dashboard-widgets";
 
-function renderWidgetContent(widget: WidgetConfig, onDrillDown: (data: unknown) => void): React.ReactNode {
+function renderWidgetContent(
+  widget: WidgetConfig,
+  onDrillDown: (data: unknown) => void,
+): React.ReactNode {
   switch (widget.type) {
-    case 'line-chart': return <LineChartWidget title={widget.title} onDrillDown={onDrillDown} />;
-    case 'bar-chart': return <BarChartWidget title={widget.title} onDrillDown={onDrillDown} />;
-    case 'pie-chart': return <PieChartWidget title={widget.title} onDrillDown={onDrillDown} />;
-    case 'stat-card': return <StatCardWidget title={widget.title} value="0" />;
-    case 'proposal-list': return <ProposalListWidget title={widget.title} />;
-    case 'calendar': return <CalendarWidget title={widget.title} />;
-    case 'governance-health': return <GovernanceHealthWidget title={widget.title} />;
-    default: return <div className="flex items-center justify-center h-full text-gray-500 text-sm">Unknown widget</div>;
+    case "line-chart":
+      return <LineChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case "bar-chart":
+      return <BarChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case "pie-chart":
+      return <PieChartWidget title={widget.title} onDrillDown={onDrillDown} />;
+    case "stat-card":
+      return <StatCardWidget title={widget.title} value="0" />;
+    case "proposal-list":
+      return <ProposalListWidget title={widget.title} />;
+    case "calendar":
+      return <CalendarWidget title={widget.title} />;
+    case "governance-health":
+      return <GovernanceHealthWidget title={widget.title} />;
+    case "doc-info":
+      return <DocInfoWidget title={widget.title} />;
+    default:
+      return (
+        <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+          Unknown widget
+        </div>
+      );
   }
 }
 
@@ -75,7 +113,10 @@ function fromRGLLayout(layout: GridLayoutType): DashboardLayoutItem[] {
 }
 
 /** Default layout for a widget not in any template */
-function defaultLayoutItem(widgetId: string, index: number): DashboardLayoutItem {
+function defaultLayoutItem(
+  widgetId: string,
+  index: number,
+): DashboardLayoutItem {
   return {
     i: widgetId,
     x: (index * 4) % COLS,
@@ -87,14 +128,21 @@ function defaultLayoutItem(widgetId: string, index: number): DashboardLayoutItem
   };
 }
 
-const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = [] }) => {
+const DashboardBuilder: React.FC<DashboardBuilderProps> = ({
+  initialWidgets = [],
+}) => {
   const { address: walletAddress } = useWallet();
   const [editMode, setEditMode] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showWidgetSystem, setShowWidgetSystem] = useState(false);
-  const [drillDownData, setDrillDownData] = useState<{ widget: string; data: unknown } | null>(null);
-  const [exportingFormat, setExportingFormat] = useState<'png' | 'pdf' | null>(null);
+  const [drillDownData, setDrillDownData] = useState<{
+    widget: string;
+    data: unknown;
+  } | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<"png" | "pdf" | null>(
+    null,
+  );
   const dashboardRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -109,7 +157,9 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
 
   const [layout, setLayout] = useState<GridLayoutType>(() => {
     try {
-      const saved = loadDashboardLayout(walletAddress ?? undefined) as { layout?: DashboardLayoutItem[] } | null;
+      const saved = loadDashboardLayout(walletAddress ?? undefined) as {
+        layout?: DashboardLayoutItem[];
+      } | null;
       if (saved?.layout) return toRGLLayout(saved.layout);
     } catch {
       /* ignore */
@@ -122,7 +172,9 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
   useEffect(() => {
     if (!walletAddress) return;
     try {
-      const saved = loadDashboardLayout(walletAddress) as { layout?: DashboardLayoutItem[] } | null;
+      const saved = loadDashboardLayout(walletAddress) as {
+        layout?: DashboardLayoutItem[];
+      } | null;
       if (saved?.layout) {
         setLayout(toRGLLayout(saved.layout));
         return;
@@ -162,7 +214,10 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
       const newWidget: WidgetConfig = {
         id,
         type,
-        title: type.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+        title: type
+          .split("-")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" "),
       };
       const newLayoutItem = defaultLayoutItem(id, widgets.length);
       setWidgets((prev) => {
@@ -192,7 +247,10 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
 
   const handleSave = useCallback(() => {
     localStorage.setItem(WIDGET_STORAGE_KEY, JSON.stringify(widgets));
-    saveDashboardLayout({ layout: fromRGLLayout(layout), widgets }, walletAddress ?? undefined);
+    saveDashboardLayout(
+      { layout: fromRGLLayout(layout), widgets },
+      walletAddress ?? undefined,
+    );
     setEditMode(false);
   }, [layout, widgets, walletAddress]);
 
@@ -221,24 +279,24 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
   );
 
   const exportDashboard = useCallback(
-    async (format: 'png' | 'pdf') => {
+    async (format: "png" | "pdf") => {
       if (!dashboardRef.current || exportingFormat) return;
       setExportingFormat(format);
       try {
-        const { default: html2canvas } = await import('html2canvas');
+        const { default: html2canvas } = await import("html2canvas");
         const canvas = await html2canvas(dashboardRef.current);
-        if (format === 'png') {
-          const link = document.createElement('a');
+        if (format === "png") {
+          const link = document.createElement("a");
           link.download = `dashboard-${Date.now()}.png`;
           link.href = canvas.toDataURL();
           link.click();
         } else {
-          const { default: jsPDF } = await import('jspdf');
-          const pdf = new jsPDF('l', 'mm', 'a4');
-          const imgData = canvas.toDataURL('image/png');
+          const { default: jsPDF } = await import("jspdf");
+          const pdf = new jsPDF("l", "mm", "a4");
+          const imgData = canvas.toDataURL("image/png");
           const w = pdf.internal.pageSize.getWidth();
           const h = (canvas.height * w) / canvas.width;
-          pdf.addImage(imgData, 'PNG', 0, 0, w, h);
+          pdf.addImage(imgData, "PNG", 0, 0, w, h);
           pdf.save(`dashboard-${Date.now()}.pdf`);
         }
       } finally {
@@ -259,10 +317,10 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => (editMode ? handleSave() : setEditMode(true))}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${editMode ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${editMode ? "bg-purple-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
           >
             <Edit3 className="h-4 w-4" />
-            {editMode ? 'Save Layout' : 'Edit Layout'}
+            {editMode ? "Save Layout" : "Edit Layout"}
           </button>
           {editMode && (
             <>
@@ -289,12 +347,12 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
             </>
           )}
           <button
-            onClick={() => exportDashboard('png')}
+            onClick={() => exportDashboard("png")}
             disabled={!!exportingFormat}
             className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm disabled:opacity-50"
           >
             <Download className="h-4 w-4" />
-            {exportingFormat === 'png' ? 'Exporting…' : 'PNG'}
+            {exportingFormat === "png" ? "Exporting…" : "PNG"}
           </button>
           <button
             onClick={() => setShowWidgetSystem(true)}
@@ -309,8 +367,13 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
       {showTemplates && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-gray-300">Dashboard Templates</h3>
-            <button onClick={() => setShowTemplates(false)} className="text-gray-400 hover:text-white">
+            <h3 className="text-sm font-medium text-gray-300">
+              Dashboard Templates
+            </h3>
+            <button
+              onClick={() => setShowTemplates(false)}
+              className="text-gray-400 hover:text-white"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
@@ -333,7 +396,10 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
         <div className="fixed inset-y-0 right-0 z-50 w-80 bg-gray-900 border-l border-gray-700 shadow-xl flex flex-col">
           <div className="flex items-center justify-between p-4 border-b border-gray-700">
             <h3 className="font-medium text-white">Widget Library</h3>
-            <button onClick={() => setShowLibrary(false)} className="text-gray-400 hover:text-white">
+            <button
+              onClick={() => setShowLibrary(false)}
+              className="text-gray-400 hover:text-white"
+            >
               <X className="h-5 w-5" />
             </button>
           </div>
@@ -343,10 +409,16 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
         </div>
       )}
 
-      <div ref={dashboardRef} className="bg-gray-900 rounded-lg border border-gray-700 p-2 min-h-[400px]">
+      <div
+        ref={dashboardRef}
+        className="bg-gray-900 rounded-lg border border-gray-700 p-2 min-h-[400px]"
+      >
         {widgets.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
-            <p className="text-gray-400 mb-4">No widgets yet. Click &quot;Edit Layout&quot; → &quot;Add Widget&quot; to get started.</p>
+            <p className="text-gray-400 mb-4">
+              No widgets yet. Click &quot;Edit Layout&quot; → &quot;Add
+              Widget&quot; to get started.
+            </p>
           </div>
         ) : (
           <GridLayout
@@ -362,7 +434,10 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
             margin={[8, 8]}
           >
             {widgets.map((widget) => (
-              <div key={widget.id} className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col">
+              <div
+                key={widget.id}
+                className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col"
+              >
                 {editMode && (
                   <div className="flex items-center justify-between px-3 py-1.5 bg-gray-700/50 border-b border-gray-700 flex-shrink-0">
                     <span className="drag-handle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200 text-xs select-none flex items-center gap-1">
@@ -379,7 +454,9 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
                 )}
                 <div className="flex-1 min-h-0 p-2">
                   <DashboardErrorBoundary widgetTitle={widget.title}>
-                    {renderWidgetContent(widget, (data) => setDrillDownData({ widget: widget.title, data }))}
+                    {renderWidgetContent(widget, (data) =>
+                      setDrillDownData({ widget: widget.title, data }),
+                    )}
                   </DashboardErrorBoundary>
                 </div>
               </div>
@@ -391,12 +468,19 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({ initialWidgets = []
       {drillDownData && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-gray-300">Drill-down: {drillDownData.widget}</h3>
-            <button onClick={() => setDrillDownData(null)} className="text-gray-400 hover:text-white">
+            <h3 className="text-sm font-medium text-gray-300">
+              Drill-down: {drillDownData.widget}
+            </h3>
+            <button
+              onClick={() => setDrillDownData(null)}
+              className="text-gray-400 hover:text-white"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <pre className="text-xs text-gray-400 overflow-auto max-h-40">{JSON.stringify(drillDownData.data, null, 2)}</pre>
+          <pre className="text-xs text-gray-400 overflow-auto max-h-40">
+            {JSON.stringify(drillDownData.data, null, 2)}
+          </pre>
         </div>
       )}
 

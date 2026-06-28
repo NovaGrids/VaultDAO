@@ -1,4 +1,13 @@
-export type WidgetType = 'line-chart' | 'bar-chart' | 'pie-chart' | 'stat-card' | 'proposal-list' | 'calendar' | 'governance-health' | 'custom';
+export type WidgetType =
+  | "line-chart"
+  | "bar-chart"
+  | "pie-chart"
+  | "stat-card"
+  | "proposal-list"
+  | "calendar"
+  | "governance-health"
+  | "doc-info"
+  | "custom";
 
 export interface WidgetConfig {
   id: string;
@@ -7,7 +16,7 @@ export interface WidgetConfig {
   dataSource?: string;
   settings?: Record<string, any>;
   // For custom/third-party widgets
-  source?: 'built-in' | 'third-party' | 'custom';
+  source?: "built-in" | "third-party" | "custom";
   manifestUrl?: string;
 }
 
