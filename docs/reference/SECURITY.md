@@ -37,4 +37,4 @@ VaultDAO handles treasury funds, making security our highest priority. The follo
 
 VaultDAO has **not yet undergone a formal third-party security audit**. Users should interact with the platform at their own risk and avoid depositing significant funds until an audit is completed.
 
-We plan to engage security auditors once the core feature set is finalized.
+We plan to engage security auditors once the core feature set is finalized. See [`AUDIT_SCOPE.md`](./AUDIT_SCOPE.md) for the attack surface catalogue, known invariants, and current findings that will guide that audit.
