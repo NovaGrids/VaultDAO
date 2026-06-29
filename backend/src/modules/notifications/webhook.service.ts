@@ -14,7 +14,7 @@
  * - Delivery timeout is 10 seconds per attempt.
  */
 
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createLogger } from "../../shared/logging/logger.js";
 import type { NotificationEvent } from "./notification.types.js";
 import type { DeliveryRecord, WebhookRegistration } from "./notification.types.js";
@@ -58,12 +58,52 @@ function hashSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("hex");
 }
 
-function signPayload(secret: string, body: string): string {
-  return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+function signPayload(secret: string, body: string, timestamp: number): string {
+  const message = `${timestamp}.${body}`;
+  return `sha256=${createHmac("sha256", secret).update(message).digest("hex")}`;
+}
+
+/**
+ * Verify an incoming webhook signature. Receivers call this to confirm
+ * the payload originated from VaultDAO.
+ * Rejects payloads older than `maxAgeMs` (default 5 minutes) to prevent replay attacks.
+ */
+export function verifyWebhookSignature(
+  secret: string,
+  body: string,
+  signature: string,
+  timestamp: number,
+  maxAgeMs: number = 300_000,
+): boolean {
+  const age = Math.abs(Date.now() - timestamp);
+  if (age > maxAgeMs) return false;
+
+  const expected = signPayload(secret, body, timestamp);
+  if (expected.length !== signature.length) return false;
+
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  try {
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ── Dead-letter entry ─────────────────────────────────────────────────────────
+
+export interface DeadLetterEntry {
+  readonly id: string;
+  readonly webhookId: string;
+  readonly event: NotificationEvent;
+  readonly lastError: string;
+  readonly attempts: number;
+  readonly failedAt: string;
+  replayed: boolean;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -71,6 +111,7 @@ function sleep(ms: number): Promise<void> {
 export class WebhookDeliveryService {
   private readonly webhooks = new Map<string, StoredWebhookRegistration>();
   private readonly deliveryStore: StorageAdapter<StoredDeliveryRecord & { id: string }>;
+  private readonly deadLetters: Map<string, DeadLetterEntry> = new Map();
 
   constructor(
     deliveryStore?: StorageAdapter<StoredDeliveryRecord & { id: string }>,
@@ -160,6 +201,79 @@ export class WebhookDeliveryService {
     );
   }
 
+  // ── Dead-letter queue ─────────────────────────────────────────────────────
+
+  /**
+   * Return all entries in the dead-letter queue.
+   */
+  public getDeadLetters(): DeadLetterEntry[] {
+    return Array.from(this.deadLetters.values());
+  }
+
+  /**
+   * Return dead-letter entries for a specific webhook.
+   */
+  public getDeadLettersForWebhook(webhookId: string): DeadLetterEntry[] {
+    return Array.from(this.deadLetters.values()).filter(
+      (dl) => dl.webhookId === webhookId,
+    );
+  }
+
+  /**
+   * Replay a dead-letter entry: re-deliver the original event to its webhook.
+   * Marks the entry as replayed on success, or updates the error on failure.
+   * @returns true if the replay delivery succeeded.
+   */
+  public async replayDeadLetter(deadLetterId: string): Promise<boolean> {
+    const entry = this.deadLetters.get(deadLetterId);
+    if (!entry) {
+      throw new Error(`Dead-letter entry not found: ${deadLetterId}`);
+    }
+
+    const webhook = this.webhooks.get(entry.webhookId);
+    if (!webhook) {
+      throw new Error(`Webhook no longer registered: ${entry.webhookId}`);
+    }
+
+    logger.info("replaying dead-letter entry", {
+      deadLetterId,
+      webhookId: webhook.id,
+      eventId: entry.event.id,
+    });
+
+    try {
+      await this.deliverToWebhook(entry.event, webhook);
+      entry.replayed = true;
+      this.deadLetters.delete(deadLetterId);
+      return true;
+    } catch (err) {
+      logger.warn("dead-letter replay failed", {
+        deadLetterId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Remove all entries from the dead-letter queue.
+   * @returns the number of entries purged.
+   */
+  public purgeDeadLetters(): number {
+    const count = this.deadLetters.size;
+    this.deadLetters.clear();
+    if (count > 0) logger.info("dead-letter queue purged", { count });
+    return count;
+  }
+
+  /**
+   * Remove a single dead-letter entry.
+   * @returns true if found and removed.
+   */
+  public removeDeadLetter(deadLetterId: string): boolean {
+    return this.deadLetters.delete(deadLetterId);
+  }
+
   // ── Internal ──────────────────────────────────────────────────────────────
 
   private validateHttpsUrl(url: string): void {
@@ -181,7 +295,9 @@ export class WebhookDeliveryService {
     webhook: StoredWebhookRegistration,
   ): Promise<void> {
     const body = JSON.stringify(event);
-    const signature = signPayload(webhook.secretRaw, body);
+    const timestamp = Date.now();
+    const signature = signPayload(webhook.secretRaw, body, timestamp);
+    const deliveryId = randomUUID();
 
     let lastError: string | null = null;
 
@@ -208,6 +324,8 @@ export class WebhookDeliveryService {
             headers: {
               "Content-Type": "application/json",
               "X-VaultDAO-Signature": signature,
+              "X-VaultDAO-Timestamp": String(timestamp),
+              "X-VaultDAO-Delivery-Id": deliveryId,
               "X-VaultDAO-Event": event.topic,
             },
             body,
@@ -241,10 +359,23 @@ export class WebhookDeliveryService {
       }
     }
 
-    // All attempts exhausted
+    // All attempts exhausted — move to dead-letter queue
     await this.recordDelivery(webhook.id, event.id, "failed", MAX_ATTEMPTS, lastError);
-    logger.error("webhook delivery exhausted", {
+
+    const dlEntry: DeadLetterEntry = {
+      id: randomUUID(),
       webhookId: webhook.id,
+      event,
+      lastError: lastError ?? "unknown error",
+      attempts: MAX_ATTEMPTS,
+      failedAt: new Date().toISOString(),
+      replayed: false,
+    };
+    this.deadLetters.set(dlEntry.id, dlEntry);
+
+    logger.error("webhook delivery exhausted, moved to dead-letter queue", {
+      webhookId: webhook.id,
+      deadLetterId: dlEntry.id,
       url: webhook.url,
       eventId: event.id,
       error: lastError,

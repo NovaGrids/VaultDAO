@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { FileText, Download, Calendar, Eye, CheckSquare, X, Table } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { FileText, Download, Calendar, Eye, CheckSquare, X, Table, Clock, Trash2, Mail } from 'lucide-react';
 import { generateSOC2Report, generateISO27001Report } from '../utils/reportGenerator';
 import { exportCompliancePDF, exportComplianceCSV } from '../utils/reportExport';
 import { useVaultContract } from '../hooks/useVaultContract';
@@ -9,12 +9,51 @@ import { prepareChainedAuditLog } from '../utils/auditVerification';
 import { env } from '../config/env';
 
 type ReportType = 'SOC2' | 'ISO27001' | 'Custom';
+type ScheduleFrequency = 'weekly' | 'monthly';
 
 interface ReportConfig {
   type: ReportType;
   startDate: string;
   endDate: string;
   sections: string[];
+}
+
+interface ReportSchedule {
+  id: string;
+  reportType: ReportType;
+  frequency: ScheduleFrequency;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+  recipients: string[];
+  sections: string[];
+  enabled: boolean;
+  createdAt: string;
+  lastRunAt?: string;
+  nextRunAt: string;
+}
+
+interface ScheduleFormState {
+  frequency: ScheduleFrequency;
+  dayOfWeek: number;
+  dayOfMonth: number;
+  recipients: string;
+}
+
+function computeNextRun(frequency: ScheduleFrequency, dayOfWeek: number, dayOfMonth: number): string {
+  const now = new Date();
+  const next = new Date(now);
+
+  if (frequency === 'weekly') {
+    const currentDay = now.getDay();
+    const daysUntil = (dayOfWeek - currentDay + 7) % 7 || 7;
+    next.setDate(now.getDate() + daysUntil);
+  } else {
+    next.setMonth(now.getMonth() + 1);
+    next.setDate(Math.min(dayOfMonth, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+  }
+
+  next.setHours(8, 0, 0, 0);
+  return next.toISOString();
 }
 
 const SOC2_SECTIONS = [
@@ -51,6 +90,74 @@ const ComplianceReports: React.FC = () => {
     endDate: new Date().toISOString().split('T')[0],
     sections: SOC2_SECTIONS,
   });
+
+  const [schedules, setSchedules] = useState<ReportSchedule[]>(() => {
+    try {
+      const saved = localStorage.getItem('vaultdao_report_schedules');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>({
+    frequency: 'weekly',
+    dayOfWeek: 1,
+    dayOfMonth: 1,
+    recipients: '',
+  });
+
+  const [showSchedulePanel, setShowSchedulePanel] = useState(false);
+
+  const persistSchedules = useCallback((updated: ReportSchedule[]) => {
+    setSchedules(updated);
+    localStorage.setItem('vaultdao_report_schedules', JSON.stringify(updated));
+  }, []);
+
+  const handleCreateSchedule = () => {
+    const recipients = scheduleForm.recipients
+      .split(',')
+      .map(r => r.trim())
+      .filter(r => r.length > 0);
+
+    if (recipients.length === 0) {
+      notify('schedule_error', 'At least one recipient email is required', 'error');
+      return;
+    }
+
+    if (config.sections.length === 0) {
+      notify('schedule_error', 'Select at least one report section', 'error');
+      return;
+    }
+
+    const schedule: ReportSchedule = {
+      id: crypto.randomUUID(),
+      reportType: config.type,
+      frequency: scheduleForm.frequency,
+      dayOfWeek: scheduleForm.frequency === 'weekly' ? scheduleForm.dayOfWeek : undefined,
+      dayOfMonth: scheduleForm.frequency === 'monthly' ? scheduleForm.dayOfMonth : undefined,
+      recipients,
+      sections: [...config.sections],
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      nextRunAt: computeNextRun(scheduleForm.frequency, scheduleForm.dayOfWeek, scheduleForm.dayOfMonth),
+    };
+
+    persistSchedules([...schedules, schedule]);
+    setScheduleForm({ frequency: 'weekly', dayOfWeek: 1, dayOfMonth: 1, recipients: '' });
+    notify('schedule_created', `${config.type} ${scheduleForm.frequency} schedule created`, 'success');
+  };
+
+  const handleDeleteSchedule = (id: string) => {
+    persistSchedules(schedules.filter(s => s.id !== id));
+    notify('schedule_deleted', 'Schedule removed', 'success');
+  };
+
+  const handleToggleSchedule = (id: string) => {
+    persistSchedules(
+      schedules.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s)
+    );
+  };
 
   useEffect(() => {
     fetchAuditData();
@@ -559,6 +666,147 @@ const ComplianceReports: React.FC = () => {
             <div className="text-gray-400 text-sm mb-1">Report Sections</div>
             <div className="text-2xl font-bold text-white">{config.sections.length}</div>
           </div>
+        </div>
+
+        {/* Automated Report Scheduling */}
+        <div className="mt-6 bg-gray-800/50 rounded-xl border border-gray-700 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Clock className="text-purple-500" size={20} />
+              Automated Report Delivery
+            </h2>
+            <button
+              onClick={() => setShowSchedulePanel(!showSchedulePanel)}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-purple-600 hover:bg-purple-700 transition-colors"
+            >
+              {showSchedulePanel ? 'Hide' : 'New Schedule'}
+            </button>
+          </div>
+
+          {showSchedulePanel && (
+            <div className="bg-gray-900/50 rounded-lg border border-gray-600 p-4 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Frequency</label>
+                  <select
+                    value={scheduleForm.frequency}
+                    onChange={(e) => setScheduleForm(prev => ({ ...prev, frequency: e.target.value as ScheduleFrequency }))}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+
+                {scheduleForm.frequency === 'weekly' ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Day of Week</label>
+                    <select
+                      value={scheduleForm.dayOfWeek}
+                      onChange={(e) => setScheduleForm(prev => ({ ...prev, dayOfWeek: Number(e.target.value) }))}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+                    >
+                      {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, i) => (
+                        <option key={day} value={i}>{day}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Day of Month</label>
+                    <select
+                      value={scheduleForm.dayOfMonth}
+                      onChange={(e) => setScheduleForm(prev => ({ ...prev, dayOfMonth: Number(e.target.value) }))}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+                    >
+                      {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  <Mail size={14} className="inline mr-1" />
+                  Recipients (comma-separated emails)
+                </label>
+                <input
+                  type="text"
+                  value={scheduleForm.recipients}
+                  onChange={(e) => setScheduleForm(prev => ({ ...prev, recipients: e.target.value }))}
+                  placeholder="alice@example.com, bob@example.com"
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-gray-400">
+                  Report type: <span className="text-purple-400">{config.type}</span> &middot; {config.sections.length} sections selected
+                </p>
+                <button
+                  onClick={handleCreateSchedule}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-green-600 hover:bg-green-700 transition-colors"
+                >
+                  Create Schedule
+                </button>
+              </div>
+            </div>
+          )}
+
+          {schedules.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-4">
+              No scheduled reports. Create one to automate weekly or monthly delivery.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {schedules.map(schedule => (
+                <div
+                  key={schedule.id}
+                  className={`flex items-center justify-between p-4 rounded-lg border ${
+                    schedule.enabled
+                      ? 'bg-gray-900/50 border-gray-600'
+                      : 'bg-gray-900/30 border-gray-700 opacity-60'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-semibold text-purple-400">{schedule.reportType}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-300">
+                        {schedule.frequency}
+                      </span>
+                      {!schedule.enabled && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-900 text-yellow-300">paused</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 truncate">
+                      To: {schedule.recipients.join(', ')}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Next run: {new Date(schedule.nextRunAt).toLocaleDateString()}
+                      {schedule.lastRunAt && ` · Last: ${new Date(schedule.lastRunAt).toLocaleDateString()}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 ml-3">
+                    <button
+                      onClick={() => handleToggleSchedule(schedule.id)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-700 hover:bg-gray-600 transition-colors"
+                    >
+                      {schedule.enabled ? 'Pause' : 'Resume'}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSchedule(schedule.id)}
+                      className="p-1.5 rounded-lg text-red-400 hover:bg-red-900/30 transition-colors"
+                      aria-label="Delete schedule"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
