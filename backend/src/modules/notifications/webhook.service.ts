@@ -94,11 +94,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ── Dead-letter entry ─────────────────────────────────────────────────────────
+
+export interface DeadLetterEntry {
+  readonly id: string;
+  readonly webhookId: string;
+  readonly event: NotificationEvent;
+  readonly lastError: string;
+  readonly attempts: number;
+  readonly failedAt: string;
+  replayed: boolean;
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export class WebhookDeliveryService {
   private readonly webhooks = new Map<string, StoredWebhookRegistration>();
   private readonly deliveryStore: StorageAdapter<StoredDeliveryRecord & { id: string }>;
+  private readonly deadLetters: Map<string, DeadLetterEntry> = new Map();
 
   constructor(
     deliveryStore?: StorageAdapter<StoredDeliveryRecord & { id: string }>,
@@ -188,6 +201,79 @@ export class WebhookDeliveryService {
     );
   }
 
+  // ── Dead-letter queue ─────────────────────────────────────────────────────
+
+  /**
+   * Return all entries in the dead-letter queue.
+   */
+  public getDeadLetters(): DeadLetterEntry[] {
+    return Array.from(this.deadLetters.values());
+  }
+
+  /**
+   * Return dead-letter entries for a specific webhook.
+   */
+  public getDeadLettersForWebhook(webhookId: string): DeadLetterEntry[] {
+    return Array.from(this.deadLetters.values()).filter(
+      (dl) => dl.webhookId === webhookId,
+    );
+  }
+
+  /**
+   * Replay a dead-letter entry: re-deliver the original event to its webhook.
+   * Marks the entry as replayed on success, or updates the error on failure.
+   * @returns true if the replay delivery succeeded.
+   */
+  public async replayDeadLetter(deadLetterId: string): Promise<boolean> {
+    const entry = this.deadLetters.get(deadLetterId);
+    if (!entry) {
+      throw new Error(`Dead-letter entry not found: ${deadLetterId}`);
+    }
+
+    const webhook = this.webhooks.get(entry.webhookId);
+    if (!webhook) {
+      throw new Error(`Webhook no longer registered: ${entry.webhookId}`);
+    }
+
+    logger.info("replaying dead-letter entry", {
+      deadLetterId,
+      webhookId: webhook.id,
+      eventId: entry.event.id,
+    });
+
+    try {
+      await this.deliverToWebhook(entry.event, webhook);
+      entry.replayed = true;
+      this.deadLetters.delete(deadLetterId);
+      return true;
+    } catch (err) {
+      logger.warn("dead-letter replay failed", {
+        deadLetterId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Remove all entries from the dead-letter queue.
+   * @returns the number of entries purged.
+   */
+  public purgeDeadLetters(): number {
+    const count = this.deadLetters.size;
+    this.deadLetters.clear();
+    if (count > 0) logger.info("dead-letter queue purged", { count });
+    return count;
+  }
+
+  /**
+   * Remove a single dead-letter entry.
+   * @returns true if found and removed.
+   */
+  public removeDeadLetter(deadLetterId: string): boolean {
+    return this.deadLetters.delete(deadLetterId);
+  }
+
   // ── Internal ──────────────────────────────────────────────────────────────
 
   private validateHttpsUrl(url: string): void {
@@ -273,10 +359,23 @@ export class WebhookDeliveryService {
       }
     }
 
-    // All attempts exhausted
+    // All attempts exhausted — move to dead-letter queue
     await this.recordDelivery(webhook.id, event.id, "failed", MAX_ATTEMPTS, lastError);
-    logger.error("webhook delivery exhausted", {
+
+    const dlEntry: DeadLetterEntry = {
+      id: randomUUID(),
       webhookId: webhook.id,
+      event,
+      lastError: lastError ?? "unknown error",
+      attempts: MAX_ATTEMPTS,
+      failedAt: new Date().toISOString(),
+      replayed: false,
+    };
+    this.deadLetters.set(dlEntry.id, dlEntry);
+
+    logger.error("webhook delivery exhausted, moved to dead-letter queue", {
+      webhookId: webhook.id,
+      deadLetterId: dlEntry.id,
       url: webhook.url,
       eventId: event.id,
       error: lastError,
