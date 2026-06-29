@@ -117,6 +117,13 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     requestIdStorage.run(id, next);
   });
 
+  // Global rate limiter — catch-all DoS protection for all endpoints (1000 req/min per IP)
+  const globalRateLimiter = createRateLimitMiddleware({
+    windowMs: 60 * 1000,
+    maxRequests: 1000,
+  });
+  app.use(globalRateLimiter);
+
   // Rate limiting middleware — different limits per endpoint type
   // Health/readiness probes: 300 req/min (high-frequency monitoring)
   const healthRateLimiter = createRateLimitMiddleware({
@@ -159,6 +166,10 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     },
   );
   const adminAuthMiddleware = requireApiKey(() => authKeyState.primary);
+
+  // API key authentication for external integration endpoints (webhooks, notifications)
+  app.use("/api/v1/webhooks", authMiddleware);
+  app.use("/api/v1/notifications", authMiddleware);
 
   app.use(createHealthRouter(env, runtime));
 
