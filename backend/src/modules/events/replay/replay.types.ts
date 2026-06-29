@@ -18,6 +18,8 @@ export type ReplayBatchConsumer = (
 /**
  * Configuration options for the replay command.
  */
+export type ReplayOutputFormat = "human" | "json";
+
 export interface ReplayOptions {
   /** Starting ledger for backfill (inclusive). Defaults to 0. */
   readonly startLedger: number;
@@ -37,6 +39,10 @@ export interface ReplayOptions {
   readonly verbose: boolean;
   /** Clear existing state before replay. */
   readonly clear: boolean;
+  /** Filter by event types (e.g. PROPOSAL_CREATED, SIGNER_ADDED). */
+  readonly eventTypes?: string[];
+  /** Output format: human-readable or JSON. Defaults to human. */
+  readonly outputFormat?: ReplayOutputFormat;
 }
 
 /**
