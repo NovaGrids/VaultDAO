@@ -191,6 +191,17 @@ export interface SnapshotStorageAdapter {
   getStats(contractId: string): Promise<SnapshotStats | null>;
 }
 
+export interface GovernanceSnapshotData {
+  readonly contractId: string;
+  readonly totalSigners: number;
+  readonly activeSigners: number;
+  readonly participationRate: number;
+  readonly complianceScore: number;
+  readonly roleDistribution: Record<string, number>;
+  readonly lastProcessedLedger: number;
+  readonly computedAt: string;
+}
+
 // ── Incremental Diff Types ────────────────────────────────────────────────────
 
 /**

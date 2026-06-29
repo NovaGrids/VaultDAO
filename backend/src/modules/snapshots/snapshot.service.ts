@@ -19,6 +19,7 @@ import type {
   SignerRemovedData,
   SnapshotStats,
   SnapshotFilter,
+  GovernanceSnapshotData,
 } from "./types.js";
 import { Role } from "./types.js";
 import { SnapshotNormalizer } from "./normalizer.js";
@@ -614,6 +615,57 @@ export class SnapshotService {
     rolesUpdated++;
 
     return { signersUpdated, rolesUpdated };
+  }
+
+  /**
+   * Compute a governance snapshot by aggregating participation, compliance,
+   * and proposal activity from the current contract snapshot state.
+   */
+  async getGovernanceSnapshot(
+    contractId: string,
+  ): Promise<GovernanceSnapshotData | null> {
+    const snapshot = await this.getSnapshot(contractId);
+    if (!snapshot) return null;
+
+    const signers = Array.from(snapshot.signers.values());
+    const activeSigners = signers.filter((s) => s.isActive);
+    const totalSigners = signers.length;
+    const activeCount = activeSigners.length;
+
+    const signersWithActivity = activeSigners.filter(
+      (s) => s.lastActivityLedger && s.lastActivityLedger > 0,
+    );
+    const participationRate =
+      activeCount > 0 ? signersWithActivity.length / activeCount : 0;
+
+    const roles = Array.from(snapshot.roles.values());
+    const assignedRoles = roles.length;
+    const complianceScore =
+      totalSigners > 0
+        ? Math.min(1, assignedRoles / totalSigners)
+        : 1.0;
+
+    return {
+      contractId,
+      totalSigners,
+      activeSigners: activeCount,
+      participationRate: Math.round(participationRate * 10000) / 10000,
+      complianceScore: Math.round(complianceScore * 10000) / 10000,
+      roleDistribution: this.computeRoleDistribution(roles),
+      lastProcessedLedger: snapshot.lastProcessedLedger,
+      computedAt: new Date().toISOString(),
+    };
+  }
+
+  private computeRoleDistribution(
+    roles: RoleSnapshot[],
+  ): Record<string, number> {
+    const dist: Record<string, number> = {};
+    for (const r of roles) {
+      const key = Role[r.role] ?? String(r.role);
+      dist[key] = (dist[key] ?? 0) + 1;
+    }
+    return dist;
   }
 
   /**
