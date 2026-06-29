@@ -5,7 +5,7 @@
  * Provides a user-friendly way to configure and execute replay operations.
  */
 
-import type { ReplayOptions } from "./replay.types.js";
+import type { ReplayOptions, ReplayOutputFormat } from "./replay.types.js";
 import { EventReplayService } from "./replay.service.js";
 import { loadEnv } from "../../../config/env.js";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,8 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
     contractId: undefined as string | undefined,
     rpcUrl: undefined as string | undefined,
     outputDir: undefined as string | undefined,
+    eventTypes: undefined as string[] | undefined,
+    outputFormat: undefined as ReplayOutputFormat | undefined,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -132,6 +134,31 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
         options.clear = true;
         break;
 
+      case "--type":
+        if (nextArg !== undefined && !nextArg.startsWith("-")) {
+          const types = nextArg.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
+          if (types.length === 0) {
+            throw new Error(`--type requires at least one event type.`);
+          }
+          options.eventTypes = types;
+          i++;
+        } else {
+          throw new Error(`--type requires a comma-separated list of event types.`);
+        }
+        break;
+
+      case "--format":
+        if (nextArg !== undefined && !nextArg.startsWith("-")) {
+          if (nextArg !== "json" && nextArg !== "human") {
+            throw new Error(`Invalid format: ${nextArg}. Must be 'json' or 'human'.`);
+          }
+          options.outputFormat = nextArg as ReplayOutputFormat;
+          i++;
+        } else {
+          throw new Error(`--format requires 'json' or 'human'.`);
+        }
+        break;
+
       case "--verbose":
       case "-v":
         options.verbose = true;
@@ -187,6 +214,8 @@ Options:
   -w, --clear                Wipe existing proposal and snapshot state before replay
   -d, --dry-run              Run without persisting state or processing events
   -v, --verbose              Enable verbose logging output
+      --type <types>         Filter by event types (comma-separated, e.g. PROPOSAL_CREATED,SIGNER_ADDED)
+      --format <fmt>         Output format: 'human' (default) or 'json'
   -h, --help                 Show this help message
 
 Examples:
@@ -204,6 +233,12 @@ Examples:
 
   # Backfill from a specific contract on a different RPC
   npm run replay -- --contract CDABC123... --rpc https://custom-rpc.example.com
+
+  # Filter by event type and output as JSON
+  npm run replay -- --type PROPOSAL_CREATED,PROPOSAL_EXECUTED --format json
+
+  # Replay only signer events in human-readable format
+  npm run replay -- --type SIGNER_ADDED,SIGNER_REMOVED --format human
 
 Environment Variables:
   CONTRACT_ID              Contract ID for the VaultDAO contract
@@ -275,6 +310,29 @@ export async function executeReplay(args: string[]): Promise<void> {
       "[replay-cli] Use --from-ledger to override or let replay continue from cursor position",
     );
   }
+
+  if (options.eventTypes) {
+    console.log(`[replay-cli] Filtering event types: ${options.eventTypes.join(", ")}`);
+  }
+  if (options.outputFormat) {
+    console.log(`[replay-cli] Output format: ${options.outputFormat}`);
+  }
+
+  const typeFilter = options.eventTypes
+    ? new Set(options.eventTypes.map((t) => t.toUpperCase()))
+    : null;
+  const isJsonOutput = options.outputFormat === "json";
+
+  service.registerConsumer(async (event) => {
+    if (typeFilter && !typeFilter.has(event.type)) return;
+    if (isJsonOutput) {
+      console.log(JSON.stringify(event));
+    } else if (options.verbose) {
+      console.log(
+        `[${event.metadata.ledger}] ${event.type} | ${JSON.stringify(event.data)}`,
+      );
+    }
+  });
 
   console.log("[replay-cli] Starting replay operation...");
   console.log("");
