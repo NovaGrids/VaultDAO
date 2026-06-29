@@ -62,11 +62,16 @@ export class ProposalActivityConsumer {
   private readonly maxRetries: number;
   private readonly initialBackoffMs: number;
 
+  // Idempotency: track processed event IDs to prevent duplicate processing
+  private readonly processedEventIds = new Set<string>();
+  private readonly maxDedupeSize: number;
+
   constructor(options?: {
     batchSize?: number;
     flushIntervalMs?: number;
     maxRetries?: number;
     initialBackoffMs?: number;
+    maxDedupeSize?: number;
     metricsRegistry?: MetricsRegistry;
     notificationQueue?: NotificationPublisher;
     /** Broadcast hook — called synchronously after each record is produced. */
@@ -77,9 +82,31 @@ export class ProposalActivityConsumer {
       options?.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.maxRetries = options?.maxRetries ?? 5;
     this.initialBackoffMs = options?.initialBackoffMs ?? 1000;
+    this.maxDedupeSize = options?.maxDedupeSize ?? 100_000;
     this.metrics = options?.metricsRegistry;
     this.notificationQueue = options?.notificationQueue;
     this.onActivity = options?.onActivity;
+  }
+
+  private deriveEventKey(event: NormalizedEvent): string {
+    const meta = event.metadata as any;
+    if (meta.transactionHash && meta.eventIndex !== undefined) {
+      return `${meta.transactionHash}:${meta.eventIndex}`;
+    }
+    return `${meta.id ?? ""}:${meta.ledger ?? ""}:${event.type}`;
+  }
+
+  private isDuplicate(event: NormalizedEvent): boolean {
+    const key = this.deriveEventKey(event);
+    if (this.processedEventIds.has(key)) {
+      return true;
+    }
+    if (this.processedEventIds.size >= this.maxDedupeSize) {
+      const first = this.processedEventIds.values().next().value;
+      if (first !== undefined) this.processedEventIds.delete(first);
+    }
+    this.processedEventIds.add(key);
+    return false;
   }
 
   /**
@@ -143,6 +170,11 @@ export class ProposalActivityConsumer {
    * Processes a single normalized event.
    */
   public async process(event: NormalizedEvent): Promise<void> {
+    if (this.isDuplicate(event)) {
+      this.logger.debug(`skipping duplicate event: ${this.deriveEventKey(event)}`);
+      return;
+    }
+
     const record = this.toRecord(event);
 
     if (!record) {
@@ -190,6 +222,10 @@ export class ProposalActivityConsumer {
     const records: ProposalActivityRecord[] = [];
 
     for (const event of events) {
+      if (this.isDuplicate(event)) {
+        this.logger.debug(`skipping duplicate event in batch: ${this.deriveEventKey(event)}`);
+        continue;
+      }
       const record = this.toRecord(event);
       if (record) {
         records.push(record);
