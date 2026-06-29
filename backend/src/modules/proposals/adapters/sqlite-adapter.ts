@@ -27,6 +27,35 @@ const CREATE_TABLE_SQL = `
     ON proposal_activity (contract_id, timestamp ASC);
 `;
 
+const CREATE_FTS_SQL = `
+  CREATE VIRTUAL TABLE IF NOT EXISTS proposal_activity_fts
+    USING fts5(
+      proposal_id,
+      activity_type,
+      actor,
+      data,
+      content='proposal_activity',
+      content_rowid='id'
+    );
+
+  CREATE TRIGGER IF NOT EXISTS proposal_activity_ai AFTER INSERT ON proposal_activity BEGIN
+    INSERT INTO proposal_activity_fts(rowid, proposal_id, activity_type, actor, data)
+    VALUES (new.id, new.proposal_id, new.activity_type, new.actor, new.data);
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS proposal_activity_ad AFTER DELETE ON proposal_activity BEGIN
+    INSERT INTO proposal_activity_fts(proposal_activity_fts, rowid, proposal_id, activity_type, actor, data)
+    VALUES ('delete', old.id, old.proposal_id, old.activity_type, old.actor, old.data);
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS proposal_activity_au AFTER UPDATE ON proposal_activity BEGIN
+    INSERT INTO proposal_activity_fts(proposal_activity_fts, rowid, proposal_id, activity_type, actor, data)
+    VALUES ('delete', old.id, old.proposal_id, old.activity_type, old.actor, old.data);
+    INSERT INTO proposal_activity_fts(rowid, proposal_id, activity_type, actor, data)
+    VALUES (new.id, new.proposal_id, new.activity_type, new.actor, new.data);
+  END;
+`;
+
 // ─── Row type (raw from SQLite) ───────────────────────────────────────────
 
 interface ActivityRow {
@@ -76,6 +105,8 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
   private readonly stmtGetByProposalId: any;
   private readonly stmtGetByContractId: any;
   private readonly stmtSummary: any;
+  private readonly stmtFtsSearch: any;
+  private readonly stmtFtsSearchByProposal: any;
 
   constructor(databasePath: string) {
     this.db = new Database(databasePath);
@@ -84,8 +115,9 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
 
-    // Create table and indexes (idempotent)
+    // Create table, indexes, and FTS virtual table (idempotent)
     this.db.exec(CREATE_TABLE_SQL);
+    this.db.exec(CREATE_FTS_SQL);
 
     // Prepare statements
     this.stmtInsert = this.db.prepare(`
@@ -122,6 +154,25 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
       FROM proposal_activity
       WHERE proposal_id = ?
       GROUP BY proposal_id, contract_id
+    `);
+
+    this.stmtFtsSearch = this.db.prepare(`
+      SELECT pa.*
+      FROM proposal_activity_fts fts
+      JOIN proposal_activity pa ON pa.id = fts.rowid
+      WHERE proposal_activity_fts MATCH ?
+      ORDER BY fts.rank
+      LIMIT ?
+    `);
+
+    this.stmtFtsSearchByProposal = this.db.prepare(`
+      SELECT pa.*
+      FROM proposal_activity_fts fts
+      JOIN proposal_activity pa ON pa.id = fts.rowid
+      WHERE proposal_activity_fts MATCH ?
+        AND pa.proposal_id = ?
+      ORDER BY fts.rank
+      LIMIT ?
     `);
   }
 
@@ -194,6 +245,34 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
       | ProposalActivitySyncSummary
       | undefined;
     return row ?? null;
+  }
+
+  // ── search (full-text) ───────────────────────────────────────────────────
+
+  /**
+   * Full-text search across proposal activity records.
+   * Searches proposal_id, activity_type, actor, and data fields.
+   * Uses FTS5 ranking for relevance ordering.
+   */
+  search(query: string, limit: number = 50): ProposalActivity[] {
+    const rows = this.stmtFtsSearch.all(query, limit) as ActivityRow[];
+    return rows.map(rowToActivity);
+  }
+
+  /**
+   * Full-text search scoped to a single proposal.
+   */
+  searchByProposal(proposalId: string, query: string, limit: number = 50): ProposalActivity[] {
+    const rows = this.stmtFtsSearchByProposal.all(query, proposalId, limit) as ActivityRow[];
+    return rows.map(rowToActivity);
+  }
+
+  /**
+   * Rebuild the FTS index from scratch. Useful after bulk imports that
+   * bypass the trigger-based sync (e.g. restoring from a backup).
+   */
+  rebuildFtsIndex(): void {
+    this.db.exec(`INSERT INTO proposal_activity_fts(proposal_activity_fts) VALUES ('rebuild')`);
   }
 
   // ── close ────────────────────────────────────────────────────────────────
