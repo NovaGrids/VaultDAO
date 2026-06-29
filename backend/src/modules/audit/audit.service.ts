@@ -4,6 +4,8 @@ import type {
   AuditEntry,
   AuditPage,
   AuditVerificationResult,
+  MerkleProof,
+  ArchiveResult,
 } from "./audit.types.js";
 import { AUDIT_ACTION_DISCRIMINANT } from "./audit.types.js";
 
@@ -131,6 +133,87 @@ export function streamAuditCsv(
   }
 
   res.end();
+}
+
+function hashLeaf(entry: AuditEntry): string {
+  const data = `${entry.id}:${entry.action}:${entry.actor}:${entry.target}:${entry.timestamp}:${entry.hash}`;
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function hashPair(left: string, right: string): string {
+  const sorted = left < right ? left + right : right + left;
+  return createHash("sha256").update(sorted).digest("hex");
+}
+
+function buildMerkleTree(leaves: string[]): string[][] {
+  if (leaves.length === 0) return [[]];
+  const levels: string[][] = [leaves];
+  let current = leaves;
+  while (current.length > 1) {
+    const next: string[] = [];
+    for (let i = 0; i < current.length; i += 2) {
+      const left = current[i]!;
+      const right = current[i + 1] ?? left;
+      next.push(hashPair(left, right));
+    }
+    levels.push(next);
+    current = next;
+  }
+  return levels;
+}
+
+export function generateMerkleRoot(entries: AuditEntry[]): string {
+  if (entries.length === 0) return "";
+  const leaves = entries.map(hashLeaf);
+  const tree = buildMerkleTree(leaves);
+  return tree[tree.length - 1]![0]!;
+}
+
+export function generateMerkleProof(
+  entries: AuditEntry[],
+  targetIndex: number,
+): MerkleProof {
+  if (targetIndex < 0 || targetIndex >= entries.length) {
+    throw new Error(`Index ${targetIndex} out of range [0, ${entries.length})`);
+  }
+  const leaves = entries.map(hashLeaf);
+  const tree = buildMerkleTree(leaves);
+  const proof: string[] = [];
+  let idx = targetIndex;
+
+  for (let level = 0; level < tree.length - 1; level++) {
+    const layer = tree[level]!;
+    const siblingIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
+    if (siblingIdx < layer.length) {
+      proof.push(layer[siblingIdx]!);
+    } else {
+      proof.push(layer[idx]!);
+    }
+    idx = Math.floor(idx / 2);
+  }
+
+  return {
+    entryId: entries[targetIndex]!.id,
+    root: tree[tree.length - 1]![0]!,
+    proof,
+    leafHash: leaves[targetIndex]!,
+    index: targetIndex,
+    totalLeaves: entries.length,
+  };
+}
+
+export function archiveEntries(entries: AuditEntry[]): ArchiveResult {
+  if (entries.length === 0) {
+    throw new Error("Cannot archive empty entries");
+  }
+  const merkleRoot = generateMerkleRoot(entries);
+  return {
+    archivedCount: entries.length,
+    merkleRoot,
+    archiveTimestamp: new Date().toISOString(),
+    fromEntryId: entries[0]!.id,
+    toEntryId: entries[entries.length - 1]!.id,
+  };
 }
 
 export class AuditService {

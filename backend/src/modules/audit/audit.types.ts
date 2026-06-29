@@ -52,3 +52,20 @@ export interface AuditPage {
   limit: number;
   verification?: AuditVerificationResult;
 }
+
+export interface MerkleProof {
+  entryId: string;
+  root: string;
+  proof: string[];
+  leafHash: string;
+  index: number;
+  totalLeaves: number;
+}
+
+export interface ArchiveResult {
+  archivedCount: number;
+  merkleRoot: string;
+  archiveTimestamp: string;
+  fromEntryId: string;
+  toEntryId: string;
+}
