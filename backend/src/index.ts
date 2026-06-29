@@ -47,6 +47,17 @@ const unsubscribeNotificationBridge = notificationQueue.subscribe((event) => {
 const { server, runtime } = await startServer(env, notificationQueue);
 const lifecycle = runtime.lifecycleManager;
 
+runtime.proposalActivityConsumer.registerConsumer((record) => {
+  realtimeServer.broadcastProposalActivity({
+    proposalId: record.proposalId,
+    type: record.type,
+    metadata: { contractId: record.metadata.contractId },
+    data: record.data,
+  });
+});
+
+
+
 realtimeServer.start(server);
 
 lifecycle.onShutdown({
