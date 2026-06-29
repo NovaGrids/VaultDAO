@@ -9,6 +9,8 @@ import {
 } from "./modules/health/health.routes.js";
 import { createContractsRouter } from "./modules/contracts/contracts.controller.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
+import { getCorsOriginsController, addCorsOriginController, removeCorsOriginController } from "./modules/admin/cors.controller.js";
+import { triggerCursorMigrationController, rollbackCursorMigrationController } from "./modules/admin/cursor.controller.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
@@ -206,67 +208,12 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     });
   });
 
-  v1Router.get("/admin/cors/origins", adminAuthMiddleware, (_req, res) => {
-    res.status(200).json({
-      success: true,
-      data: {
-        origins: corsAllowlist.list(),
-      },
-    });
-  });
+  v1Router.get("/admin/cors/origins", adminAuthMiddleware, getCorsOriginsController(corsAllowlist));
+  v1Router.post("/admin/cors/origins", adminAuthMiddleware, addCorsOriginController(corsAllowlist));
+  v1Router.delete("/admin/cors/origins", adminAuthMiddleware, removeCorsOriginController(corsAllowlist));
 
-  v1Router.post("/admin/cors/origins", adminAuthMiddleware, (req, res) => {
-    const origin = String(req.body?.origin ?? "").trim();
-
-    if (!origin) {
-      error(res, {
-        message: "Bad Request: origin is required",
-        status: 400,
-        code: ErrorCode.VALIDATION_ERROR,
-      });
-      return;
-    }
-
-    const added = corsAllowlist.add(origin);
-    if (added.reason) {
-      error(res, {
-        message: `Bad Request: ${added.reason}`,
-        status: 400,
-        code: ErrorCode.VALIDATION_ERROR,
-      });
-      return;
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        changed: added.changed,
-        origins: corsAllowlist.list(),
-      },
-    });
-  });
-
-  v1Router.delete("/admin/cors/origins", adminAuthMiddleware, (req, res) => {
-    const origin = String(req.body?.origin ?? "").trim();
-
-    if (!origin) {
-      error(res, {
-        message: "Bad Request: origin is required",
-        status: 400,
-        code: ErrorCode.VALIDATION_ERROR,
-      });
-      return;
-    }
-
-    const removed = corsAllowlist.remove(origin);
-    res.status(200).json({
-      success: true,
-      data: {
-        changed: removed,
-        origins: corsAllowlist.list(),
-      },
-    });
-  });
+  v1Router.post("/admin/cursor/migrate", adminAuthMiddleware, triggerCursorMigrationController(runtime.dbCursorAdapter));
+  v1Router.post("/admin/cursor/rollback", adminAuthMiddleware, rollbackCursorMigrationController(runtime.dbCursorAdapter));
 
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime, adminAuthMiddleware));
