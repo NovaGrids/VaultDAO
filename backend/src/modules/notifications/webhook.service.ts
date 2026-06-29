@@ -14,7 +14,7 @@
  * - Delivery timeout is 10 seconds per attempt.
  */
 
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createLogger } from "../../shared/logging/logger.js";
 import type { NotificationEvent } from "./notification.types.js";
 import type { DeliveryRecord, WebhookRegistration } from "./notification.types.js";
@@ -58,8 +58,36 @@ function hashSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("hex");
 }
 
-function signPayload(secret: string, body: string): string {
-  return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+function signPayload(secret: string, body: string, timestamp: number): string {
+  const message = `${timestamp}.${body}`;
+  return `sha256=${createHmac("sha256", secret).update(message).digest("hex")}`;
+}
+
+/**
+ * Verify an incoming webhook signature. Receivers call this to confirm
+ * the payload originated from VaultDAO.
+ * Rejects payloads older than `maxAgeMs` (default 5 minutes) to prevent replay attacks.
+ */
+export function verifyWebhookSignature(
+  secret: string,
+  body: string,
+  signature: string,
+  timestamp: number,
+  maxAgeMs: number = 300_000,
+): boolean {
+  const age = Math.abs(Date.now() - timestamp);
+  if (age > maxAgeMs) return false;
+
+  const expected = signPayload(secret, body, timestamp);
+  if (expected.length !== signature.length) return false;
+
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  try {
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -181,7 +209,9 @@ export class WebhookDeliveryService {
     webhook: StoredWebhookRegistration,
   ): Promise<void> {
     const body = JSON.stringify(event);
-    const signature = signPayload(webhook.secretRaw, body);
+    const timestamp = Date.now();
+    const signature = signPayload(webhook.secretRaw, body, timestamp);
+    const deliveryId = randomUUID();
 
     let lastError: string | null = null;
 
@@ -208,6 +238,8 @@ export class WebhookDeliveryService {
             headers: {
               "Content-Type": "application/json",
               "X-VaultDAO-Signature": signature,
+              "X-VaultDAO-Timestamp": String(timestamp),
+              "X-VaultDAO-Delivery-Id": deliveryId,
               "X-VaultDAO-Event": event.topic,
             },
             body,
