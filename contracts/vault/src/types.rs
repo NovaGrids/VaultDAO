@@ -92,7 +92,7 @@ pub struct InitConfig {
     pub pre_execution_hooks: Vec<Address>,
     /// Post-execution hook addresses
     pub post_execution_hooks: Vec<Address>,
-    
+
     /// Proposal ID namespace prefix for multi-vault coordination (must be multiple of 1_000_000)
     pub proposal_id_prefix: u64,
     /// Whether recipient whitelist enforcement is enabled (issue #1094)
@@ -939,7 +939,7 @@ impl Default for StakingConfig {
             reputation_discount_percentage: 0,
             slash_percentage: 50,
             compound_lock_period: 17280, // ~1 day at 5s/ledger
-            compound_epoch: 17280, // ~1 day at 5s/ledger
+            compound_epoch: 17280,       // ~1 day at 5s/ledger
         }
     }
 }
@@ -2425,3 +2425,58 @@ impl ColdSignerConfig {
     }
 }
 
+// ============================================================================
+// Issue #1064: Streaming Rate Limiter
+// ============================================================================
+
+/// Rolling-window tracker for cumulative stream outflow.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StreamRateWindow {
+    pub total_streamed_in_window: i128,
+    pub window_start_ledger: u32,
+}
+
+// ============================================================================
+// Issue #1075: Insurance Pool Governance — Claim Voting
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum InsuranceClaimStatus {
+    Pending = 0,
+    Approved = 1,
+    Rejected = 2,
+    Expired = 3,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InsuranceClaim {
+    pub id: u64,
+    pub claimant: soroban_sdk::Address,
+    pub amount: i128,
+    pub evidence_hash: soroban_sdk::BytesN<32>,
+    pub vote_deadline: u64,
+    pub approve_weight: i128,
+    pub reject_weight: i128,
+    pub token: soroban_sdk::Address,
+    pub bond_amount: i128,
+    pub bond_settled: bool,
+    pub status: InsuranceClaimStatus,
+    pub created_at: u64,
+}
+
+// ============================================================================
+// Issue #1081: Multi-Token Vault Support
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TokenSpendingConfig {
+    pub token: soroban_sdk::Address,
+    pub daily_limit: i128,
+    pub weekly_limit: i128,
+    pub is_default: bool,
+}

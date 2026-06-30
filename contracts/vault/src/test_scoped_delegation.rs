@@ -20,7 +20,9 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) 
     signers.push_back(signer_a.clone());
     signers.push_back(signer_b.clone());
 
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let sac = StellarAssetClient::new(env, &token);
     sac.mint(&contract_id, &10_000);
 
@@ -34,12 +36,20 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) 
         weekly_limit: 50000,
         timelock_threshold: 100_000,
         timelock_delay: 0,
-        velocity_limit: VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         veto_addresses: Vec::new(env),
         veto_window_ledgers: 0,
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: crate::types::StakingConfig::default(),
         proposal_id_prefix: 0,
@@ -91,16 +101,19 @@ fn test_admin_can_revoke() {
 fn test_delegate_within_scope() {
     let env = Env::default();
     let (client, admin, signer_a, signer_b, recipient) = setup(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&env.register(VaultDAO, ()).address(), &10_000);
 
-    env.ledger().with_mut(|li| { li.sequence_number = 100; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+    });
     let id = client.create_scoped_delegation(&signer_a, &signer_b, &5000, &10000, &Vec::new(&env));
 
-    let proposal_id = client.propose_transfer(
-        &admin, &recipient, &token, &500, &Symbol::new(&env, "test"),
-    );
+    let proposal_id =
+        client.propose_transfer(&admin, &recipient, &token, &500, &Symbol::new(&env, "test"));
 
     client.vote_as_delegate(&signer_b, &id, &proposal_id, &true);
 }
@@ -110,16 +123,19 @@ fn test_delegate_within_scope() {
 fn test_reject_out_of_scope_amount() {
     let env = Env::default();
     let (client, admin, signer_a, signer_b, recipient) = setup(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&env.register(VaultDAO, ()).address(), &10_000);
 
-    env.ledger().with_mut(|li| { li.sequence_number = 100; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+    });
     let id = client.create_scoped_delegation(&signer_a, &signer_b, &100, &10000, &Vec::new(&env));
 
-    let proposal_id = client.propose_transfer(
-        &admin, &recipient, &token, &500, &Symbol::new(&env, "test"),
-    );
+    let proposal_id =
+        client.propose_transfer(&admin, &recipient, &token, &500, &Symbol::new(&env, "test"));
 
     client.vote_as_delegate(&signer_b, &id, &proposal_id, &true);
 }
@@ -129,16 +145,21 @@ fn test_reject_out_of_scope_amount() {
 fn test_reject_after_expiry() {
     let env = Env::default();
     let (client, admin, signer_a, signer_b, recipient) = setup(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
-    env.ledger().with_mut(|li| { li.sequence_number = 100; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+    });
     let id = client.create_scoped_delegation(&signer_a, &signer_b, &5000, &150, &Vec::new(&env));
 
-    let proposal_id = client.propose_transfer(
-        &admin, &recipient, &token, &500, &Symbol::new(&env, "test"),
-    );
+    let proposal_id =
+        client.propose_transfer(&admin, &recipient, &token, &500, &Symbol::new(&env, "test"));
 
-    env.ledger().with_mut(|li| { li.sequence_number = 200; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+    });
     client.vote_as_delegate(&signer_b, &id, &proposal_id, &true);
 }
 

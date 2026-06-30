@@ -1,6 +1,7 @@
 use super::*;
 use crate::types::{
-    AmountTier, BatchStatus, ConditionLogic, Priority, RetryConfig, ThresholdStrategy, TransferDetails, VelocityConfig,
+    AmountTier, BatchStatus, ConditionLogic, Priority, RetryConfig, ThresholdStrategy,
+    TransferDetails, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -28,7 +29,9 @@ fn init_config(
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: strategy,
         pre_execution_hooks: Vec::new(env),
         post_execution_hooks: Vec::new(env),
@@ -411,7 +414,10 @@ fn test_validate_dependencies_direct_cycle_detected() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
-    client.initialize(&admin, &init_config(&env, signers, 1, ThresholdStrategy::Fixed));
+    client.initialize(
+        &admin,
+        &init_config(&env, signers, 1, ThresholdStrategy::Fixed),
+    );
 
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -475,7 +481,10 @@ fn test_validate_dependencies_indirect_cycle_detected() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
-    client.initialize(&admin, &init_config(&env, signers, 1, ThresholdStrategy::Fixed));
+    client.initialize(
+        &admin,
+        &init_config(&env, signers, 1, ThresholdStrategy::Fixed),
+    );
 
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -547,7 +556,10 @@ fn test_validate_dependencies_diamond_dag_valid() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
-    client.initialize(&admin, &init_config(&env, signers, 1, ThresholdStrategy::Fixed));
+    client.initialize(
+        &admin,
+        &init_config(&env, signers, 1, ThresholdStrategy::Fixed),
+    );
 
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -586,11 +598,19 @@ fn test_validate_dependencies_diamond_dag_valid() {
 
     let mut d2 = Vec::new(&env);
     d2.push_back(1u64);
-    let proposal_2 = crate::types::Proposal { id: 2u64, depends_on: d2, ..base.clone() };
+    let proposal_2 = crate::types::Proposal {
+        id: 2u64,
+        depends_on: d2,
+        ..base.clone()
+    };
 
     let mut d3 = Vec::new(&env);
     d3.push_back(1u64);
-    let proposal_3 = crate::types::Proposal { id: 3u64, depends_on: d3, ..base.clone() };
+    let proposal_3 = crate::types::Proposal {
+        id: 3u64,
+        depends_on: d3,
+        ..base.clone()
+    };
 
     env.as_contract(&contract_id, || {
         crate::storage::set_proposal(&env, &base);
@@ -617,7 +637,10 @@ fn test_validate_dependencies_max_depth_exceeded() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
-    client.initialize(&admin, &init_config(&env, signers, 1, ThresholdStrategy::Fixed));
+    client.initialize(
+        &admin,
+        &init_config(&env, signers, 1, ThresholdStrategy::Fixed),
+    );
 
     let proposer = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -648,7 +671,7 @@ fn test_validate_dependencies_max_depth_exceeded() {
                 expires_at: 0,
                 unlock_ledger: 0,
                 execution_time: None,
-        execution_window_ledgers: 0,
+                execution_window_ledgers: 0,
                 insurance_amount: 0,
                 stake_amount: 0,
                 gas_limit: 0,
@@ -983,7 +1006,9 @@ fn test_execute_before_timelock_expires_fails() {
         timelock_delay: 200,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         pre_execution_hooks: Vec::new(&env),
         post_execution_hooks: Vec::new(&env),
@@ -1041,9 +1066,13 @@ fn test_atomic_batch_execution_with_rollback() {
     let recipient3 = Address::generate(&env);
 
     // Create two different tokens
-    let token1 = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token2 = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    
+    let token1 = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token2 = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
     // Mint tokens to vault
     StellarAssetClient::new(&env, &token1).mint(&contract_id, &100_000);
     StellarAssetClient::new(&env, &token2).mint(&contract_id, &100_000);
@@ -1102,11 +1131,16 @@ fn test_atomic_batch_execution_with_rollback() {
 
     // Test Case 1: Successful atomic execution
     // Record initial balances
-    let initial_vault_balance1 = soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
-    let initial_vault_balance2 = soroban_sdk::token::Client::new(&env, &token2).balance(&contract_id);
-    let initial_recipient1_balance = soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1);
-    let initial_recipient2_balance = soroban_sdk::token::Client::new(&env, &token2).balance(&recipient2);
-    let initial_recipient3_balance = soroban_sdk::token::Client::new(&env, &token1).balance(&recipient3);
+    let initial_vault_balance1 =
+        soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
+    let initial_vault_balance2 =
+        soroban_sdk::token::Client::new(&env, &token2).balance(&contract_id);
+    let initial_recipient1_balance =
+        soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1);
+    let initial_recipient2_balance =
+        soroban_sdk::token::Client::new(&env, &token2).balance(&recipient2);
+    let initial_recipient3_balance =
+        soroban_sdk::token::Client::new(&env, &token1).balance(&recipient3);
 
     // Execute batch successfully
     client.execute_batch(&admin, &batch_id);
@@ -1156,9 +1190,11 @@ fn test_atomic_batch_execution_with_rollback() {
     // Test Case 2: Batch execution with rollback
     // Create another batch where one proposal will fail due to insufficient balance
     // We'll create a third token with very little balance to force a failure
-    let token3 = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token3 = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     StellarAssetClient::new(&env, &token3).mint(&contract_id, &100); // Only 100 tokens
-    
+
     let mut transfers2 = Vec::new(&env);
     transfers2.push_back(TransferDetails {
         recipient: recipient1.clone(),
@@ -1191,10 +1227,14 @@ fn test_atomic_batch_execution_with_rollback() {
     assert_eq!(batch2.status, BatchStatus::Pending);
 
     // Record balances before failed batch execution
-    let pre_fail_vault_balance1 = soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
-    let pre_fail_vault_balance3 = soroban_sdk::token::Client::new(&env, &token3).balance(&contract_id);
-    let pre_fail_recipient1_balance = soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1);
-    let pre_fail_recipient2_balance = soroban_sdk::token::Client::new(&env, &token3).balance(&recipient2);
+    let pre_fail_vault_balance1 =
+        soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
+    let pre_fail_vault_balance3 =
+        soroban_sdk::token::Client::new(&env, &token3).balance(&contract_id);
+    let pre_fail_recipient1_balance =
+        soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1);
+    let pre_fail_recipient2_balance =
+        soroban_sdk::token::Client::new(&env, &token3).balance(&recipient2);
 
     // Execute batch - should fail and rollback
     client.execute_batch(&admin, &batch_id2);
@@ -1255,7 +1295,9 @@ fn test_batch_size_limit_enforced() {
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -1300,8 +1342,10 @@ fn test_batch_status_transitions() {
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
     StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
 
     let mut signers = Vec::new(&env);
@@ -1330,7 +1374,7 @@ fn test_batch_status_transitions() {
     );
 
     let batch_id = 1u64;
-    
+
     // Initial status should be Pending
     let batch = client.get_batch(&batch_id);
     assert_eq!(batch.status, BatchStatus::Pending);
@@ -1360,26 +1404,64 @@ fn test_valid_status_transitions() {
     use crate::VaultDAO;
 
     // Pending → valid targets
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Pending, ProposalStatus::Approved).is_ok());
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Pending, ProposalStatus::Expired).is_ok());
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Pending, ProposalStatus::Cancelled).is_ok());
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Pending, ProposalStatus::Rejected).is_ok());
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Pending, ProposalStatus::Vetoed).is_ok());
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Pending,
+        ProposalStatus::Approved
+    )
+    .is_ok());
+    assert!(
+        VaultDAO::validate_status_transition(ProposalStatus::Pending, ProposalStatus::Expired)
+            .is_ok()
+    );
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Pending,
+        ProposalStatus::Cancelled
+    )
+    .is_ok());
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Pending,
+        ProposalStatus::Rejected
+    )
+    .is_ok());
+    assert!(
+        VaultDAO::validate_status_transition(ProposalStatus::Pending, ProposalStatus::Vetoed)
+            .is_ok()
+    );
 
     // Approved → valid targets
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Approved, ProposalStatus::Executed).is_ok());
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Approved, ProposalStatus::Scheduled).is_ok());
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Approved, ProposalStatus::Cancelled).is_ok());
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Approved,
+        ProposalStatus::Executed
+    )
+    .is_ok());
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Approved,
+        ProposalStatus::Scheduled
+    )
+    .is_ok());
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Approved,
+        ProposalStatus::Cancelled
+    )
+    .is_ok());
 
     // Scheduled → valid targets
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Scheduled, ProposalStatus::Executed).is_ok());
-    assert!(VaultDAO::validate_status_transition(ProposalStatus::Scheduled, ProposalStatus::Cancelled).is_ok());
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Scheduled,
+        ProposalStatus::Executed
+    )
+    .is_ok());
+    assert!(VaultDAO::validate_status_transition(
+        ProposalStatus::Scheduled,
+        ProposalStatus::Cancelled
+    )
+    .is_ok());
 }
 
 #[test]
 fn test_invalid_status_transitions() {
     use crate::types::ProposalStatus;
-    use crate::{VaultDAO, errors::VaultError};
+    use crate::{errors::VaultError, VaultDAO};
 
     // Executed is terminal
     assert_eq!(
@@ -1439,11 +1521,16 @@ fn setup_dependency_env(env: &Env) -> (VaultDAOClient, Address, Address, Address
     let admin = Address::generate(env);
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
-    client.initialize(&admin, &init_config(env, signers, 1, ThresholdStrategy::Fixed));
+    client.initialize(
+        &admin,
+        &init_config(env, signers, 1, ThresholdStrategy::Fixed),
+    );
     client.set_role(&admin, &admin, &Role::Treasurer);
 
     let token_admin = Address::generate(env);
-    let token = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
     StellarAssetClient::new(env, &token).mint(&contract_id, &1_000_000);
 
     let recipient = Address::generate(env);
@@ -1457,8 +1544,13 @@ fn test_same_ledger_dependency_rejected() {
 
     // Create dependency proposal (proposal 1)
     let dep_id = client.propose_transfer(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "dep"), &Priority::Normal, &Vec::new(&env),
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "dep"),
+        &Priority::Normal,
+        &Vec::new(&env),
     );
     client.approve_proposal(&admin, &dep_id);
 
@@ -1466,8 +1558,14 @@ fn test_same_ledger_dependency_rejected() {
     let mut deps = Vec::new(&env);
     deps.push_back(dep_id);
     let dep2_id = client.propose_transfer_with_deps(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "dep2"), &Priority::Normal, &Vec::new(&env), &deps,
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "dep2"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &deps,
     );
     client.approve_proposal(&admin, &dep2_id);
 
@@ -1485,16 +1583,27 @@ fn test_cross_ledger_dependency_succeeds() {
     let (client, admin, token, recipient) = setup_dependency_env(&env);
 
     let dep_id = client.propose_transfer(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "dep"), &Priority::Normal, &Vec::new(&env),
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "dep"),
+        &Priority::Normal,
+        &Vec::new(&env),
     );
     client.approve_proposal(&admin, &dep_id);
 
     let mut deps = Vec::new(&env);
     deps.push_back(dep_id);
     let dep2_id = client.propose_transfer_with_deps(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "dep2"), &Priority::Normal, &Vec::new(&env), &deps,
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "dep2"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &deps,
     );
     client.approve_proposal(&admin, &dep2_id);
 
@@ -1518,8 +1627,13 @@ fn test_execution_ledger_set_on_execute() {
     let (client, admin, token, recipient) = setup_dependency_env(&env);
 
     let id = client.propose_transfer(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "p"), &Priority::Normal, &Vec::new(&env),
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "p"),
+        &Priority::Normal,
+        &Vec::new(&env),
     );
     client.approve_proposal(&admin, &id);
 

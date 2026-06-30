@@ -6,7 +6,6 @@ import { once } from "node:events";
 import { MetricsRegistry } from "./modules/health/metrics.registry.js";
 import {
   createMemoryPersistence,
-  createProposalConsumer,
   createProposalAggregator,
   ProposalActivityType,
 } from "./modules/proposals/index.js";

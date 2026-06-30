@@ -368,7 +368,14 @@ pub fn emit_auto_compound_enabled(env: &Env, proposal_id: u64, staker: &Address)
 }
 
 /// Emit when a stake is compounded
-pub fn emit_stake_compounded(env: &Env, proposal_id: u64, staker: &Address, reward_amount: i128, new_stake_amount: i128, lock_until: u64) {
+pub fn emit_stake_compounded(
+    env: &Env,
+    proposal_id: u64,
+    staker: &Address,
+    reward_amount: i128,
+    new_stake_amount: i128,
+    lock_until: u64,
+) {
     env.events().publish(
         (Symbol::new(env, "stake_compounded"), proposal_id),
         (staker.clone(), reward_amount, new_stake_amount, lock_until),
@@ -481,7 +488,13 @@ pub fn emit_hook_removed(env: &Env, hook: &Address, is_pre: bool) {
 }
 
 /// Emit when a hook is executed
-pub fn emit_hook_executed(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool, success: bool) {
+pub fn emit_hook_executed(
+    env: &Env,
+    hook: &Address,
+    proposal_id: u64,
+    is_pre: bool,
+    success: bool,
+) {
     env.events().publish(
         (Symbol::new(env, "hook_executed"), proposal_id),
         (hook.clone(), is_pre, success),
@@ -779,7 +792,12 @@ pub fn emit_subscription_paused(env: &Env, subscription_id: u64, paused_by: &Add
     );
 }
 
-pub fn emit_subscription_resumed(env: &Env, subscription_id: u64, resumed_by: &Address, pause_duration: u64) {
+pub fn emit_subscription_resumed(
+    env: &Env,
+    subscription_id: u64,
+    resumed_by: &Address,
+    pause_duration: u64,
+) {
     env.events().publish(
         (Symbol::new(env, "subscription_resumed"), subscription_id),
         (resumed_by.clone(), pause_duration),
@@ -1087,7 +1105,14 @@ pub fn emit_swap_executed(
 ) {
     env.events().publish(
         (Symbol::new(env, "swap_executed"),),
-        (proposal_id, dex.clone(), token_in.clone(), token_out.clone(), amount_in, amount_out),
+        (
+            proposal_id,
+            dex.clone(),
+            token_in.clone(),
+            token_out.clone(),
+            amount_in,
+            amount_out,
+        ),
     );
 }
 
@@ -1104,14 +1129,24 @@ pub fn emit_liquidity_added(
 ) {
     env.events().publish(
         (Symbol::new(env, "liquidity_added"),),
-        (proposal_id, dex.clone(), token_a.clone(), token_b.clone(), amount_a, amount_b, lp_tokens),
+        (
+            proposal_id,
+            dex.clone(),
+            token_a.clone(),
+            token_b.clone(),
+            amount_a,
+            amount_b,
+            lp_tokens,
+        ),
     );
 }
 
 /// Emit event when LP tokens are unstaked
 pub fn emit_lp_unstaked(env: &Env, proposal_id: u64, farm: &Address, amount: i128) {
-    env.events()
-        .publish((Symbol::new(env, "lp_unstaked"),), (proposal_id, farm.clone(), amount));
+    env.events().publish(
+        (Symbol::new(env, "lp_unstaked"),),
+        (proposal_id, farm.clone(), amount),
+    );
 }
 
 pub fn emit_stream_created(
@@ -1136,7 +1171,13 @@ pub fn emit_stream_created(
 }
 
 /// Emit when a stream rate is adjusted
-pub fn emit_stream_rate_adjusted(env: &Env, stream_id: u64, old_rate: i128, new_rate: i128, adjusted_by: &Address) {
+pub fn emit_stream_rate_adjusted(
+    env: &Env,
+    stream_id: u64,
+    old_rate: i128,
+    new_rate: i128,
+    adjusted_by: &Address,
+) {
     env.events().publish(
         (Symbol::new(env, "stream_rate_adj"), stream_id),
         (old_rate, new_rate, adjusted_by.clone()),
@@ -1231,7 +1272,13 @@ pub fn emit_dispute_resolved(env: &Env, dispute_id: u64, admin: &Address, resolu
 }
 
 /// Emit when a dispute bond is posted
-pub fn emit_dispute_bond_posted(env: &Env, dispute_id: u64, disputer: &Address, token: &Address, amount: i128) {
+pub fn emit_dispute_bond_posted(
+    env: &Env,
+    dispute_id: u64,
+    disputer: &Address,
+    token: &Address,
+    amount: i128,
+) {
     env.events().publish(
         (Symbol::new(env, "dispute_bond_posted"), dispute_id),
         (disputer.clone(), token.clone(), amount),
@@ -1247,7 +1294,13 @@ pub fn emit_dispute_outcome(env: &Env, dispute_id: u64, arbitrator: &Address, ou
 }
 
 /// Emit when a dispute bond is slashed
-pub fn emit_dispute_bond_slashed(env: &Env, dispute_id: u64, token: &Address, slashed_amount: i128, treasury_amount: i128) {
+pub fn emit_dispute_bond_slashed(
+    env: &Env,
+    dispute_id: u64,
+    token: &Address,
+    slashed_amount: i128,
+    treasury_amount: i128,
+) {
     env.events().publish(
         (Symbol::new(env, "dispute_bond_slashed"), dispute_id),
         (token.clone(), slashed_amount, treasury_amount),
@@ -1294,7 +1347,10 @@ pub fn emit_bridge_to_vault_initiated(
     deadline_ledger: u64,
 ) {
     env.events().publish(
-        (Symbol::new(env, "bridge_to_vault_initiated"), bridge_id.clone()),
+        (
+            Symbol::new(env, "bridge_to_vault_initiated"),
+            bridge_id.clone(),
+        ),
         (
             source_vault.clone(),
             target_vault.clone(),
@@ -1314,7 +1370,10 @@ pub fn emit_bridge_receipt_confirmed(
     actual_amount: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "bridge_receipt_confirmed"), bridge_id.clone()),
+        (
+            Symbol::new(env, "bridge_receipt_confirmed"),
+            bridge_id.clone(),
+        ),
         (target_vault.clone(), actual_amount),
     );
 }
@@ -1328,7 +1387,10 @@ pub fn emit_bridge_slippage_rejected(
     min_received: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "bridge_slippage_rejected"), bridge_id.clone()),
+        (
+            Symbol::new(env, "bridge_slippage_rejected"),
+            bridge_id.clone(),
+        ),
         (target_vault.clone(), actual_amount, min_received),
     );
 }

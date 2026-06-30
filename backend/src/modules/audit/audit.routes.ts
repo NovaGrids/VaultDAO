@@ -42,7 +42,11 @@ export function createAuditRouter(
 
   router.get("/merkle-proof/:index", async (req: Request, res: Response) => {
     const contractId = req.query["contractId"] as string | undefined;
-    const index = parseInt(req.params["index"] ?? "", 10);
+    const indexParam = req.params["index"];
+    const index = parseInt(
+      Array.isArray(indexParam) ? (indexParam[0] ?? "") : (indexParam ?? ""),
+      10,
+    );
     if (!contractId) {
       error(res, { message: "contractId query parameter is required", status: 400, code: ErrorCode.VALIDATION_ERROR });
       return;

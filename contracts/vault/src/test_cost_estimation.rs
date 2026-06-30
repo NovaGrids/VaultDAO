@@ -1,5 +1,7 @@
 use super::*;
-use crate::types::{ConditionLogic, CostModel, Priority, RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{
+    ConditionLogic, CostModel, Priority, RetryConfig, ThresholdStrategy, VelocityConfig,
+};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Symbol, Vec};
 
@@ -28,7 +30,11 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             weekly_limit: 10_000_000,
             timelock_threshold: 999_999,
             timelock_delay: 0,
-            velocity_limit: VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+            velocity_limit: VelocityConfig {
+                limit: 100,
+                window: 3600,
+                per_token_limit: 0,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),

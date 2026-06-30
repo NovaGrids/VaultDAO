@@ -35,7 +35,9 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             timelock_delay: 0,
             velocity_limit: VelocityConfig {
                 limit: 100,
-                window: 3600, per_token_limit: 0 },
+                window: 3600,
+                per_token_limit: 0,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -47,7 +49,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
+            proposal_id_prefix: 0,
             quorum_percentage: 0,
         },
     );
@@ -403,12 +405,8 @@ fn test_upgrade_cancelled_subscription_fails() {
     );
 
     client.cancel_subscription(&subscriber, &id);
-    let res = client.try_upgrade_subscription(
-        &subscriber,
-        &id,
-        &SubscriptionTier::Premium,
-        &300i128,
-    );
+    let res =
+        client.try_upgrade_subscription(&subscriber, &id, &SubscriptionTier::Premium, &300i128);
     assert_eq!(res, Err(Ok(VaultError::SubscriptionNotActive)));
 }
 
@@ -435,8 +433,7 @@ fn test_upgrade_by_non_subscriber_fails() {
         &0u64,
     );
 
-    let res =
-        client.try_upgrade_subscription(&other, &id, &SubscriptionTier::Premium, &300i128);
+    let res = client.try_upgrade_subscription(&other, &id, &SubscriptionTier::Premium, &300i128);
     assert_eq!(res, Err(Ok(VaultError::NotSubscriberOrAdmin)));
 }
 
@@ -666,10 +663,13 @@ fn test_subscription_created_event_emitted() {
 
     let found = events.iter().any(|e| {
         let topics = e.1;
-        topics.len() >= 1
-            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+        topics.len() >= 1 && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
     });
-    assert!(found, "subscription_created event not emitted for id={}", id);
+    assert!(
+        found,
+        "subscription_created event not emitted for id={}",
+        id
+    );
 }
 
 #[test]
@@ -706,8 +706,7 @@ fn test_subscription_renewed_event_emitted() {
 
     let found = events.iter().any(|e| {
         let topics = e.1;
-        topics.len() >= 1
-            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+        topics.len() >= 1 && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
     });
     assert!(found, "subscription_renewed event not emitted");
 }
@@ -745,8 +744,7 @@ fn test_subscription_cancelled_event_emitted() {
 
     let found = events.iter().any(|e| {
         let topics = e.1;
-        topics.len() >= 1
-            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+        topics.len() >= 1 && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
     });
     assert!(found, "subscription_cancelled event not emitted");
 }
@@ -784,8 +782,7 @@ fn test_subscription_upgraded_event_emitted() {
 
     let found = events.iter().any(|e| {
         let topics = e.1;
-        topics.len() >= 1
-            && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
+        topics.len() >= 1 && topics.get(0).unwrap().get_payload() == expected_topic.get_payload()
     });
     assert!(found, "subscription_upgraded event not emitted");
 }
@@ -817,11 +814,17 @@ fn test_status_transitions_create_cancel() {
     );
 
     // After creation: Active
-    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Active);
+    assert_eq!(
+        client.get_subscription(&id).status,
+        SubscriptionStatus::Active
+    );
 
     // After cancel: Cancelled
     client.cancel_subscription(&subscriber, &id);
-    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Cancelled);
+    assert_eq!(
+        client.get_subscription(&id).status,
+        SubscriptionStatus::Cancelled
+    );
 }
 
 #[test]
@@ -981,7 +984,8 @@ fn test_renew_at_exact_renewal_ledger_succeeds() {
     // Advance exactly to next_renewal_ledger
     let sub = client.get_subscription(&id);
     let advance = sub.next_renewal_ledger - env.ledger().sequence() as u64;
-    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number += advance as u32);
 
     // Should succeed at the exact boundary
     client.renew_subscription(&subscriber, &id);
@@ -1067,7 +1071,8 @@ fn test_renew_on_time_succeeds() {
 
     let sub = client.get_subscription(&id);
     let advance = sub.next_renewal_ledger - env.ledger().sequence() as u64;
-    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number += advance as u32);
 
     client.renew_subscription(&subscriber, &id);
     assert_eq!(client.get_subscription(&id).total_payments, 2);
@@ -1098,11 +1103,15 @@ fn test_renew_within_grace_period_succeeds() {
     let sub = client.get_subscription(&id);
     // Advance to next_renewal_ledger + 100 (inside grace period)
     let advance = sub.next_renewal_ledger + 100 - env.ledger().sequence() as u64;
-    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number += advance as u32);
 
     client.renew_subscription(&subscriber, &id);
     assert_eq!(client.get_subscription(&id).total_payments, 2);
-    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Active);
+    assert_eq!(
+        client.get_subscription(&id).status,
+        SubscriptionStatus::Active
+    );
 }
 
 #[test]
@@ -1129,9 +1138,10 @@ fn test_renew_after_grace_period_fails_and_expires() {
 
     let sub = client.get_subscription(&id);
     // Advance past next_renewal_ledger + grace_period_ledgers
-    let advance = sub.next_renewal_ledger + sub.grace_period_ledgers + 1
-        - env.ledger().sequence() as u64;
-    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+    let advance =
+        sub.next_renewal_ledger + sub.grace_period_ledgers + 1 - env.ledger().sequence() as u64;
+    env.ledger()
+        .with_mut(|l| l.sequence_number += advance as u32);
 
     let res = client.try_renew_subscription(&subscriber, &id);
     assert_eq!(res, Err(Ok(VaultError::SubscriptionAlreadyExpired)));
@@ -1178,13 +1188,20 @@ fn test_expire_overdue_subscriptions_batch() {
     let sub1 = client.get_subscription(&id1);
     // Advance past both grace deadlines
     let advance = sub1.next_renewal_ledger + 51 - env.ledger().sequence() as u64;
-    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number += advance as u32);
 
     let expired = client.expire_overdue_subscriptions(&subscriber);
     assert_eq!(expired, 2);
 
-    assert_eq!(client.get_subscription(&id1).status, SubscriptionStatus::Expired);
-    assert_eq!(client.get_subscription(&id2).status, SubscriptionStatus::Expired);
+    assert_eq!(
+        client.get_subscription(&id1).status,
+        SubscriptionStatus::Expired
+    );
+    assert_eq!(
+        client.get_subscription(&id2).status,
+        SubscriptionStatus::Expired
+    );
 }
 
 #[test]
@@ -1212,9 +1229,13 @@ fn test_reactivate_expired_subscription() {
     let sub = client.get_subscription(&id);
     // Expire it
     let advance = sub.next_renewal_ledger + 51 - env.ledger().sequence() as u64;
-    env.ledger().with_mut(|l| l.sequence_number += advance as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number += advance as u32);
     client.expire_overdue_subscriptions(&subscriber);
-    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Expired);
+    assert_eq!(
+        client.get_subscription(&id).status,
+        SubscriptionStatus::Expired
+    );
 
     // Reactivate
     client.reactivate_subscription(&subscriber, &id);

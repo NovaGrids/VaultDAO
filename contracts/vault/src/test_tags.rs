@@ -30,7 +30,9 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             timelock_delay: 0,
             velocity_limit: VelocityConfig {
                 limit: 100,
-                window: 3600, per_token_limit: 0 },
+                window: 3600,
+                per_token_limit: 0,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -43,7 +45,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
+            proposal_id_prefix: 0,
         },
     );
 
@@ -125,8 +127,7 @@ fn test_add_tag_max_tags_enforced() {
     }
 
     // 11th tag must fail with TooManyTags
-    let result =
-        client.try_add_proposal_tag(&admin, &proposal_id, &Symbol::new(&env, "tag11"));
+    let result = client.try_add_proposal_tag(&admin, &proposal_id, &Symbol::new(&env, "tag11"));
     assert_eq!(result, Err(Ok(VaultError::TooManyTags)));
 }
 
@@ -139,8 +140,7 @@ fn test_add_tag_unauthorized() {
     let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
 
     let stranger = Address::generate(&env);
-    let result =
-        client.try_add_proposal_tag(&stranger, &proposal_id, &Symbol::new(&env, "hack"));
+    let result = client.try_add_proposal_tag(&stranger, &proposal_id, &Symbol::new(&env, "hack"));
     assert_eq!(result, Err(Ok(VaultError::Unauthorized)));
 }
 
@@ -171,8 +171,7 @@ fn test_remove_tag_not_found() {
     let (client, admin, token, vault) = setup(&env);
     let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
 
-    let result =
-        client.try_remove_proposal_tag(&admin, &proposal_id, &Symbol::new(&env, "ghost"));
+    let result = client.try_remove_proposal_tag(&admin, &proposal_id, &Symbol::new(&env, "ghost"));
     assert_eq!(result, Err(Ok(VaultError::TagNotFound)));
 }
 

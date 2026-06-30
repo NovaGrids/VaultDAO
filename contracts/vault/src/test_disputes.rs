@@ -1,5 +1,7 @@
 use super::*;
-use crate::types::{ConditionLogic, DisputeResolution, DisputeStatus, EscrowStatus, Priority, Role};
+use crate::types::{
+    ConditionLogic, DisputeResolution, DisputeStatus, EscrowStatus, Priority, Role,
+};
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, Symbol, Vec};
 
@@ -24,7 +26,9 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             timelock_delay: 0,
             velocity_limit: crate::types::VelocityConfig {
                 limit: 1_000_000,
-                window: 3600, per_token_limit: 0 },
+                window: 3600,
+                per_token_limit: 0,
+            },
             threshold_strategy: crate::types::ThresholdStrategy::Fixed,
             default_voting_deadline: 0,
             veto_addresses: Vec::new(env),
@@ -35,7 +39,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
+            proposal_id_prefix: 0,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
             quorum_percentage: 0,
@@ -192,7 +196,10 @@ fn test_resolve_dispute_dismiss_with_slash() {
 
     let dispute = client.get_dispute(&dispute_id);
     assert_eq!(dispute.status, DisputeStatus::Dismissed);
-    assert_eq!(dispute.outcome, crate::types::DisputeOutcome::DismissDispute);
+    assert_eq!(
+        dispute.outcome,
+        crate::types::DisputeOutcome::DismissDispute
+    );
 
     // Should have half bond returned
     let final_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
@@ -329,7 +336,10 @@ fn test_arbitrator_cannot_resolve_own_dispute() {
         &dispute_id,
         &crate::types::DisputeOutcome::UpholdDispute,
     );
-    assert_eq!(result, Err(Ok(VaultError::ArbitratorCannotResolveOwnDispute)));
+    assert_eq!(
+        result,
+        Err(Ok(VaultError::ArbitratorCannotResolveOwnDispute))
+    );
 }
 
 #[test]

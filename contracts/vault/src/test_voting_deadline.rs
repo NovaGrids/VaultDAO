@@ -39,7 +39,9 @@ fn deadline_init_config(env: &Env, signers: Vec<Address>, deadline_offset: u64) 
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         pre_execution_hooks: Vec::new(env),
         post_execution_hooks: Vec::new(env),
@@ -565,7 +567,9 @@ fn test_other_rejection_already_approved() {
         timelock_delay: 100,
         velocity_limit: crate::types::VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: crate::types::ThresholdStrategy::Fixed,
         pre_execution_hooks: Vec::new(&env),
         post_execution_hooks: Vec::new(&env),
@@ -863,7 +867,9 @@ fn test_time_based_threshold_before_reduction() {
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
 
@@ -886,7 +892,9 @@ fn test_time_based_threshold_before_reduction() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 3, // Requires 3 approvals initially
             reduced_threshold: 2, // Reduces to 2 after delay
@@ -951,7 +959,9 @@ fn test_time_based_threshold_after_reduction() {
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
 
@@ -974,7 +984,9 @@ fn test_time_based_threshold_after_reduction() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 3,
             reduced_threshold: 2,
@@ -1044,7 +1056,9 @@ fn test_time_based_threshold_respects_quorum() {
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
 
@@ -1067,7 +1081,9 @@ fn test_time_based_threshold_respects_quorum() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 3,
             reduced_threshold: 2,
@@ -1132,7 +1148,9 @@ fn test_time_based_threshold_reduction_irreversible() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
 
@@ -1154,7 +1172,9 @@ fn test_time_based_threshold_reduction_irreversible() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 2,
             reduced_threshold: 1,
@@ -1249,7 +1269,9 @@ fn test_time_based_threshold_config_validation() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 2,
             reduced_threshold: 3, // Invalid: greater than initial
@@ -1285,7 +1307,9 @@ fn test_time_based_threshold_config_validation() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 2,
             reduced_threshold: 0, // Invalid: less than 1
@@ -1321,7 +1345,9 @@ fn test_time_based_threshold_config_validation() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 2, // Invalid: less than global threshold
             reduced_threshold: 1,
@@ -1357,7 +1383,9 @@ fn test_time_based_threshold_config_validation() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 3, // Valid: >= global threshold
             reduced_threshold: 2, // Valid: <= initial_threshold and >= 1
@@ -1431,15 +1459,17 @@ fn test_extend_voting_deadline_once_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposal_id, expires_at) =
-        setup_for_extend_deadline(&env, 1000, 20);
+    let (client, admin, proposal_id, expires_at) = setup_for_extend_deadline(&env, 1000, 20);
 
     let old_deadline = client.get_proposal(&proposal_id).voting_deadline;
     let new_deadline = (old_deadline + 10).min(expires_at);
 
     let result = client.try_extend_voting_deadline(&admin, &proposal_id, &new_deadline);
     assert!(result.is_ok(), "first extension must succeed");
-    assert_eq!(client.get_proposal(&proposal_id).voting_deadline, new_deadline);
+    assert_eq!(
+        client.get_proposal(&proposal_id).voting_deadline,
+        new_deadline
+    );
 }
 
 #[test]
@@ -1447,14 +1477,15 @@ fn test_extend_voting_deadline_up_to_max_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposal_id, expires_at) =
-        setup_for_extend_deadline(&env, 1000, 20);
+    let (client, admin, proposal_id, expires_at) = setup_for_extend_deadline(&env, 1000, 20);
 
     let base = client.get_proposal(&proposal_id).voting_deadline;
     for i in 1u64..=3 {
         let current = client.get_proposal(&proposal_id).voting_deadline;
         let next = (current + 5).min(expires_at);
-        if next <= current { break; }
+        if next <= current {
+            break;
+        }
         let res = client.try_extend_voting_deadline(&admin, &proposal_id, &next);
         assert!(res.is_ok(), "extension {} of 3 must succeed", i);
     }
@@ -1466,13 +1497,14 @@ fn test_extend_voting_deadline_exceeds_max_returns_error() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposal_id, expires_at) =
-        setup_for_extend_deadline(&env, 1000, 10);
+    let (client, admin, proposal_id, expires_at) = setup_for_extend_deadline(&env, 1000, 10);
 
     for _ in 0..3 {
         let current = client.get_proposal(&proposal_id).voting_deadline;
         let next = (current + 5).min(expires_at);
-        if next <= current { return; }
+        if next <= current {
+            return;
+        }
         let _ = client.try_extend_voting_deadline(&admin, &proposal_id, &next);
     }
 
@@ -1489,8 +1521,7 @@ fn test_extend_voting_deadline_past_expiry_returns_invalid_deadline() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposal_id, expires_at) =
-        setup_for_extend_deadline(&env, 1000, 20);
+    let (client, admin, proposal_id, expires_at) = setup_for_extend_deadline(&env, 1000, 20);
 
     let res = client.try_extend_voting_deadline(&admin, &proposal_id, &(expires_at + 1));
     assert_eq!(res, Err(Ok(VaultError::InvalidDeadline)));
@@ -1501,8 +1532,7 @@ fn test_extend_voting_deadline_non_admin_returns_insufficient_role() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, proposal_id, expires_at) =
-        setup_for_extend_deadline(&env, 1000, 20);
+    let (client, _admin, proposal_id, expires_at) = setup_for_extend_deadline(&env, 1000, 20);
 
     let non_admin = Address::generate(&env);
     let current = client.get_proposal(&proposal_id).voting_deadline;
@@ -1517,8 +1547,7 @@ fn test_extend_voting_deadline_non_pending_returns_error() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposal_id, expires_at) =
-        setup_for_extend_deadline(&env, 1000, 20);
+    let (client, admin, proposal_id, expires_at) = setup_for_extend_deadline(&env, 1000, 20);
 
     client.approve_proposal(&admin, &proposal_id);
 

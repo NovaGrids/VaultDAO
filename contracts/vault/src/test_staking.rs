@@ -41,7 +41,11 @@ fn setup_with_staking(
             weekly_limit: 100_000_000,
             timelock_threshold: 9_999_999,
             timelock_delay: 0,
-            velocity_limit: VelocityConfig { limit: 1000, window: 3600, per_token_limit: 0 },
+            velocity_limit: VelocityConfig {
+                limit: 1000,
+                window: 3600,
+                per_token_limit: 0,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -188,11 +192,13 @@ fn test_slash_stake_on_rejection_correct_percentage() {
 
     // Verify stake record was created
     let record = client.get_stake_record(&proposal_id);
-    assert!(record.is_some(), "stake record must exist after proposal creation");
+    assert!(
+        record.is_some(),
+        "stake record must exist after proposal creation"
+    );
     assert_eq!(record.unwrap().amount, 100);
 
-    let proposer_balance_before =
-        soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+    let proposer_balance_before = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
 
     // Admin cancels another proposer's proposal → rejection semantics → slash 50%
     client.cancel_proposal(&admin, &proposal_id, &Symbol::new(&env, "bad"));
@@ -204,8 +210,7 @@ fn test_slash_stake_on_rejection_correct_percentage() {
     assert!(!record.refunded, "refunded must remain false");
 
     // Remainder (50) returned to proposer
-    let proposer_balance_after =
-        soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+    let proposer_balance_after = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
     assert_eq!(proposer_balance_after, proposer_balance_before + 50);
 }
 
@@ -250,14 +255,15 @@ fn test_slash_stake_zero_when_staking_disabled_on_rejection() {
         },
     );
 
-    let proposer_balance_before =
-        soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+    let proposer_balance_before = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
     client.cancel_proposal(&admin, &proposal_id, &Symbol::new(&env, "bad"));
 
     // Full stake returned when staking disabled
-    let proposer_balance_after =
-        soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
-    assert_eq!(proposer_balance_after, proposer_balance_before + stake_amount);
+    let proposer_balance_after = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+    assert_eq!(
+        proposer_balance_after,
+        proposer_balance_before + stake_amount
+    );
 
     // Pool stays empty
     assert_eq!(client.get_stake_pool_balance(&token), 0);
@@ -280,7 +286,10 @@ fn test_refund_stake_on_execution_sets_refunded_flag() {
     client.execute_proposal(&admin, &proposal_id);
 
     let record = client.get_stake_record(&proposal_id).unwrap();
-    assert!(record.refunded, "stake_record.refunded must be true after execution");
+    assert!(
+        record.refunded,
+        "stake_record.refunded must be true after execution"
+    );
     assert!(!record.slashed, "slashed must remain false");
     assert_eq!(record.slashed_amount, 0);
 }
@@ -294,15 +303,16 @@ fn test_refund_stake_returns_full_amount_to_proposer() {
     let (proposal_id, stake_amount) =
         create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
 
-    let proposer_balance_before =
-        soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+    let proposer_balance_before = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
 
     client.approve_proposal(&admin, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
-    let proposer_balance_after =
-        soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
-    assert_eq!(proposer_balance_after, proposer_balance_before + stake_amount);
+    let proposer_balance_after = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+    assert_eq!(
+        proposer_balance_after,
+        proposer_balance_before + stake_amount
+    );
 }
 
 // ============================================================================
@@ -368,8 +378,7 @@ fn test_withdraw_stake_pool_transfers_and_decrements() {
 
     assert_eq!(client.get_stake_pool_balance(&token), 0);
 
-    let target_balance =
-        soroban_sdk::token::Client::new(&env, &token).balance(&withdraw_target);
+    let target_balance = soroban_sdk::token::Client::new(&env, &token).balance(&withdraw_target);
     assert_eq!(target_balance, stake_amount);
 }
 
@@ -445,7 +454,10 @@ fn test_compound_stake() {
     let stake_record = client.get_stake_record(&proposal_id).unwrap();
     assert_eq!(stake_record.amount, stake_amount * 101 / 100); // 1% reward
     assert_eq!(stake_record.last_compounded, current_ledger + 17281);
-    assert_eq!(stake_record.reinvestment_lock_until, current_ledger + 17281 + 17280);
+    assert_eq!(
+        stake_record.reinvestment_lock_until,
+        current_ledger + 17281 + 17280
+    );
 }
 
 #[test]

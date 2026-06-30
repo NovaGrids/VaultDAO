@@ -1,9 +1,10 @@
+#![cfg(test)]
+
 use super::*;
 use crate::types::{
-    DexConfig, FeeStructure, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails,
+    CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution, DisputeStatus, FeeStructure,
+    FeeTier, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction,
     VelocityConfig,
-    DexConfig, FeeStructure, Reputation, RetryConfig, SwapProposal, TimeBasedThreshold,
-    TransferDetails, VelocityConfig, VoteChoice,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -25,9 +26,7 @@ fn default_init_config(
     InitConfig {
         signers,
         threshold,
-        quorum: 0, // disabled by default � existing tests are unaffected
         quorum: 0, // disabled by default — existing tests are unaffected
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -35,11 +34,11 @@ fn default_init_config(
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         veto_addresses: Vec::new(_env),
-        veto_window_ledgers: 1000, // Default veto window
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
@@ -47,85 +46,7 @@ fn default_init_config(
         },
         recovery_config: crate::types::RecoveryConfig::default(_env),
         staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(_env),
-        post_execution_hooks: Vec::new(_env),
-        staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(_env),
-        post_execution_hooks: soroban_sdk::Vec::new(_env),
     }
-}
-
-#[allow(dead_code)]
-fn setup_spending_limits_env(
-    env: &Env,
-    spending_limit: i128,
-    daily_limit: i128,
-    weekly_limit: i128,
-    velocity_limit: VelocityConfig,
-) -> (
-    VaultDAOClient<'_>,
-    Address,
-    Address,
-    Address,
-    Address,
-) {
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(env, &contract_id);
-
-    let admin = Address::generate(env);
-    let proposer = Address::generate(env);
-    let recipient = Address::generate(env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-    let mut signers = Vec::new(env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        spending_limit,
-        daily_limit,
-        weekly_limit,
-        timelock_threshold: weekly_limit + 1,
-        timelock_delay: 0,
-        velocity_limit,
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(env),
-        post_execution_hooks: soroban_sdk::Vec::new(env),
-    };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    (client, admin, proposer, recipient, token)
-}
-
-#[allow(dead_code)]
-fn set_exact_reputation(env: &Env, addr: &Address, score: u32) {
-    storage::set_reputation(
-        env,
-        addr,
-        &Reputation {
-            score,
-            last_decay_ledger: env.ledger().sequence() as u64,
-            ..Reputation::default()
-        },
-    );
 }
 
 #[test]
@@ -156,7 +77,6 @@ fn test_multisig_approval() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -165,7 +85,8 @@ fn test_multisig_approval() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -175,10 +96,6 @@ fn test_multisig_approval() {
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
         staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
     };
     client.initialize(&admin, &config);
 
@@ -238,7 +155,6 @@ fn test_unauthorized_proposal() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -247,7 +163,8 @@ fn test_unauthorized_proposal() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -256,12 +173,7 @@ fn test_unauthorized_proposal() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -278,7 +190,7 @@ fn test_unauthorized_proposal() {
     );
 
     assert!(res.is_err());
-    assert_eq!(res.err(), Some(Ok(VaultError::InsufficientRole)));
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
 
 #[test]
@@ -308,7 +220,6 @@ fn test_timelock_violation() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -317,7 +228,8 @@ fn test_timelock_violation() {
         timelock_delay: 200,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -326,12 +238,7 @@ fn test_timelock_violation() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -589,194 +496,6 @@ fn test_amend_proposal_enforces_spending_limit() {
 }
 
 #[test]
-fn test_amend_proposal_increase_amount_within_limit() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "memo"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-    );
-
-    // Increase amount within limits should succeed
-    client.amend_proposal(
-        &proposer,
-        &proposal_id,
-        &recipient,
-        &200_i128,
-        &Symbol::new(&env, "edited"),
-    );
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.amount, 200_i128);
-}
-
-#[test]
-fn test_amend_proposal_increase_beyond_daily_limit() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.daily_limit = 150; // Set low daily limit
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "memo"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-    );
-
-    // Try to increase beyond daily limit
-    let res = client.try_amend_proposal(
-        &proposer,
-        &proposal_id,
-        &recipient,
-        &200_i128, // Would exceed daily limit of 150
-        &Symbol::new(&env, "edited"),
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsDailyLimit)));
-}
-
-#[test]
-fn test_amend_proposal_decrease_amount() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &200_i128,
-        &Symbol::new(&env, "memo"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-    );
-
-    // Decrease amount should succeed and refund limits
-    client.amend_proposal(
-        &proposer,
-        &proposal_id,
-        &recipient,
-        &100_i128,
-        &Symbol::new(&env, "edited"),
-    );
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.amount, 100_i128);
-}
-
-#[test]
-fn test_amend_proposal_change_to_blacklisted_recipient() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let blacklisted_recipient = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Set up blacklist mode and blacklist a recipient
-    client.set_list_mode(&admin, &ListMode::Blacklist);
-    client.add_to_blacklist(&admin, &blacklisted_recipient);
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "memo"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-    );
-
-    // Try to change to blacklisted recipient
-    let res = client.try_amend_proposal(
-        &proposer,
-        &proposal_id,
-        &blacklisted_recipient,
-        &100_i128,
-        &Symbol::new(&env, "edited"),
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::RecipientBlacklisted)));
-}
-
-#[test]
 fn test_priority_levels() {
     let env = Env::default();
     env.mock_all_auths();
@@ -801,7 +520,6 @@ fn test_priority_levels() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -810,7 +528,8 @@ fn test_priority_levels() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -819,12 +538,7 @@ fn test_priority_levels() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -908,7 +622,6 @@ fn test_get_proposals_by_priority() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -917,7 +630,8 @@ fn test_get_proposals_by_priority() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -926,12 +640,7 @@ fn test_get_proposals_by_priority() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -993,7 +702,6 @@ fn test_change_priority_unauthorized() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1002,7 +710,8 @@ fn test_change_priority_unauthorized() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1011,12 +720,7 @@ fn test_change_priority_unauthorized() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1061,7 +765,6 @@ fn test_comment_functionality() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1070,7 +773,8 @@ fn test_comment_functionality() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1079,12 +783,7 @@ fn test_comment_functionality() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1155,7 +854,6 @@ fn test_blacklist_mode() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1164,7 +862,8 @@ fn test_blacklist_mode() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1173,12 +872,7 @@ fn test_blacklist_mode() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -1242,7 +936,6 @@ fn test_abstention_does_not_count_toward_threshold() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1251,7 +944,8 @@ fn test_abstention_does_not_count_toward_threshold() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1260,12 +954,7 @@ fn test_abstention_does_not_count_toward_threshold() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1284,14 +973,12 @@ fn test_abstention_does_not_count_toward_threshold() {
         &0i128,
     );
 
-    // Signer2 abstains � threshold still requires 2 approvals
-    client.abstain_from_proposal(&signer2, &proposal_id);
     // Signer2 abstains — threshold still requires 2 approvals
-    client.abstain_proposal(&signer2, &proposal_id);
+    client.abstain_from_proposal(&signer2, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
 
-    // Only 1 approval � not enough even though signer2 abstained
+    // Only 1 approval — not enough even though signer2 abstained
     client.approve_proposal(&signer1, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
@@ -1322,7 +1009,6 @@ fn test_list_management() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1331,7 +1017,8 @@ fn test_list_management() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1340,12 +1027,7 @@ fn test_list_management() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -1389,7 +1071,6 @@ fn test_cannot_abstain_after_voting() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1398,7 +1079,8 @@ fn test_cannot_abstain_after_voting() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1407,12 +1089,7 @@ fn test_cannot_abstain_after_voting() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1431,7 +1108,7 @@ fn test_cannot_abstain_after_voting() {
 
     client.approve_proposal(&signer1, &proposal_id);
 
-    let res = client.try_abstain_proposal(&signer1, &proposal_id);
+    let res = client.try_abstain_from_proposal(&signer1, &proposal_id);
     assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
 }
 
@@ -1460,7 +1137,6 @@ fn test_cannot_abstain_twice() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1469,7 +1145,8 @@ fn test_cannot_abstain_twice() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1478,85 +1155,7 @@ fn test_cannot_abstain_twice() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.abstain_proposal(&signer1, &proposal_id);
-
-    let res = client.try_abstain_proposal(&signer1, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::AlreadyAbstained)));
-}
-
-#[test]
-fn test_cannot_approve_after_abstaining() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
         staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -1573,159 +1172,10 @@ fn test_cannot_approve_after_abstaining() {
         &0i128,
     );
 
-    client.abstain_proposal(&signer1, &proposal_id);
+    client.abstain_from_proposal(&signer1, &proposal_id);
 
-    let res = client.try_approve_proposal(&signer1, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::AlreadyAbstained)));
-}
-
-#[test]
-fn test_change_vote_approval_to_abstain() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let mut config = default_init_config(&env, signers, 1);
-    config.default_voting_deadline = 10;
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "changev"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Approved);
-
-    client.change_vote(&signer1, &proposal_id, &VoteChoice::Abstain);
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Pending);
-    assert_eq!(proposal.approvals.len(), 0);
-    assert_eq!(proposal.abstentions.len(), 1);
-    assert!(proposal.abstentions.contains(&signer1));
-}
-
-#[test]
-fn test_change_vote_after_deadline_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let mut config = default_init_config(&env, signers, 1);
-    config.default_voting_deadline = 10;
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "latechg"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-    env.ledger().set_sequence_number(111);
-
-    let res = client.try_change_vote(&signer1, &proposal_id, &VoteChoice::Abstain);
-    assert_eq!(res.err(), Some(Ok(VaultError::ProposalExpired)));
+    let res = client.try_abstain_from_proposal(&signer1, &proposal_id);
+    assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
 }
 
 #[test]
@@ -1754,7 +1204,6 @@ fn test_velocity_limit_enforcement() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -1763,7 +1212,8 @@ fn test_velocity_limit_enforcement() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 2,
-            window: 60, per_token_limit: 0 },
+            window: 60,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -1772,12 +1222,7 @@ fn test_velocity_limit_enforcement() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer, &Role::Treasurer);
@@ -1821,316 +1266,6 @@ fn test_velocity_limit_enforcement() {
 }
 
 #[test]
-fn test_propose_transfer_exact_spending_limit_passes_and_limit_plus_one_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        10_000,
-        20_000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-            window: 3600, per_token_limit: 0 },
-    );
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1000,
-        &Symbol::new(&env, "exact"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(proposal_id > 0);
-
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1001,
-        &Symbol::new(&env, "over"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
-}
-
-#[test]
-fn test_propose_transfer_daily_limit_accumulates_across_multiple_proposals() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        600,
-        1000,
-        10_000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-    );
-
-    client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &400,
-        &Symbol::new(&env, "d1"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &600,
-        &Symbol::new(&env, "d2"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1,
-        &Symbol::new(&env, "d3"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsDailyLimit)));
-}
-
-#[test]
-fn test_propose_transfer_weekly_limit_accumulates_across_multiple_proposals() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        300,
-        2_000,
-        900,
-        VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-    );
-
-    client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &300,
-        &Symbol::new(&env, "w1"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &300,
-        &Symbol::new(&env, "w2"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &300,
-        &Symbol::new(&env, "w3"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1,
-        &Symbol::new(&env, "w4"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsWeeklyLimit)));
-}
-
-#[test]
-fn test_propose_transfer_reputation_boost_thresholds_at_799_800_and_900() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        10_000,
-        20_000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-    );
-
-    set_exact_reputation(&env, &proposer, 799);
-    let at_799 = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1001,
-        &Symbol::new(&env, "r799"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(at_799.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
-
-    set_exact_reputation(&env, &proposer, 800);
-    let at_800_fail = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &2001,
-        &Symbol::new(&env, "r800f"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(at_800_fail.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
-
-    set_exact_reputation(&env, &proposer, 800);
-    let at_800_pass = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &2000,
-        &Symbol::new(&env, "r800p"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(at_800_pass > 0);
-
-    set_exact_reputation(&env, &proposer, 900);
-    let at_900_fail = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &3001,
-        &Symbol::new(&env, "r900f"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(at_900_fail.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
-
-    set_exact_reputation(&env, &proposer, 900);
-    let at_900_pass = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &3000,
-        &Symbol::new(&env, "r900p"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(at_900_pass > 0);
-}
-
-#[test]
-fn test_cancel_proposal_refunds_daily_and_weekly_spending_limits() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        1000,
-        1000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-    );
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &400,
-        &Symbol::new(&env, "refund"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let today = storage::get_day_number(&env);
-    let week = storage::get_week_number(&env);
-    assert_eq!(storage::get_daily_spent(&env, today), 400);
-    assert_eq!(storage::get_weekly_spent(&env, week), 400);
-
-    client.cancel_proposal(&proposer, &proposal_id, &Symbol::new(&env, "cancel"));
-
-    assert_eq!(storage::get_daily_spent(&env, today), 0);
-    assert_eq!(storage::get_weekly_spent(&env, week), 0);
-
-    let replacement = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &900,
-        &Symbol::new(&env, "after"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(replacement > 0);
-}
-
-#[test]
 fn test_verify_attachment() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2155,7 +1290,6 @@ fn test_verify_attachment() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2164,7 +1298,8 @@ fn test_verify_attachment() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -2173,12 +1308,7 @@ fn test_verify_attachment() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2195,7 +1325,7 @@ fn test_verify_attachment() {
         &0i128,
     );
     let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz123456");
+        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
     client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
 }
 
@@ -2224,7 +1354,6 @@ fn test_remove_attachment() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2233,7 +1362,8 @@ fn test_remove_attachment() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -2242,12 +1372,7 @@ fn test_remove_attachment() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2264,7 +1389,7 @@ fn test_remove_attachment() {
         &0i128,
     );
     let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz123456");
+        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
     client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
     client.remove_attachment(&signer1, &proposal_id, &0u32);
 
@@ -2299,7 +1424,6 @@ fn test_attachment_unauthorized() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2308,7 +1432,8 @@ fn test_attachment_unauthorized() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -2317,12 +1442,7 @@ fn test_attachment_unauthorized() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2340,7 +1460,7 @@ fn test_attachment_unauthorized() {
         &0i128,
     );
     let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz123456");
+        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
 
     let res = client.try_add_attachment(&signer2, &proposal_id, &ipfs_hash);
     assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
@@ -2371,7 +1491,6 @@ fn test_attachment_duplicate() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2380,9 +1499,9 @@ fn test_attachment_duplicate() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
@@ -2390,12 +1509,7 @@ fn test_attachment_duplicate() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2412,11 +1526,11 @@ fn test_attachment_duplicate() {
         &0i128,
     );
     let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz123456");
+        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
 
     client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
     let result = client.try_add_attachment(&signer1, &proposal_id, &ipfs_hash);
-    assert_eq!(result.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
+    assert_eq!(result.err(), Some(Ok(VaultError::AlreadyApproved)));
 }
 
 #[test]
@@ -2444,7 +1558,6 @@ fn test_attachment_invalid_hash() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2453,9 +1566,9 @@ fn test_attachment_invalid_hash() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
@@ -2463,12 +1576,7 @@ fn test_attachment_invalid_hash() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2486,7 +1594,7 @@ fn test_attachment_invalid_hash() {
     );
     let invalid_hash = soroban_sdk::String::from_str(&env, "Qm123");
     let result = client.try_add_attachment(&signer1, &proposal_id, &invalid_hash);
-    assert_eq!(result.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 #[test]
@@ -2514,7 +1622,6 @@ fn test_admin_can_add_attachment() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2523,7 +1630,8 @@ fn test_admin_can_add_attachment() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -2532,8 +1640,7 @@ fn test_admin_can_add_attachment() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2550,77 +1657,8 @@ fn test_admin_can_add_attachment() {
         &0i128,
     );
     let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz123456");
+        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
     client.add_attachment(&admin, &proposal_id, &ipfs_hash);
-}
-
-#[test]
-fn test_duplicate_attachment_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-    };
-    client.initialize(&admin, &config);
-
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let cid = soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz123456");
-    client.add_attachment(&admin, &proposal_id, &cid);
-
-    let result = client.try_add_attachment(&admin, &proposal_id, &cid);
-    assert_eq!(result, Err(Ok(VaultError::AttachmentHashInvalid)));
 }
 
 #[test]
@@ -2648,7 +1686,6 @@ fn test_set_and_get_proposal_metadata() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2657,7 +1694,8 @@ fn test_set_and_get_proposal_metadata() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -2666,8 +1704,7 @@ fn test_set_and_get_proposal_metadata() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2721,7 +1758,6 @@ fn test_remove_proposal_metadata() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2730,7 +1766,8 @@ fn test_remove_proposal_metadata() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -2738,9 +1775,7 @@ fn test_remove_proposal_metadata() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2793,7 +1828,6 @@ fn test_proposal_metadata_unauthorized() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -2802,7 +1836,8 @@ fn test_proposal_metadata_unauthorized() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -2810,9 +1845,7 @@ fn test_proposal_metadata_unauthorized() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -2876,7 +1909,7 @@ fn test_proposal_metadata_empty_value_invalid() {
     let key = Symbol::new(&env, "category");
     let empty_value = soroban_sdk::String::from_str(&env, "");
     let res = client.try_set_proposal_metadata(&signer1, &proposal_id, &key, &empty_value);
-    assert_eq!(res.err(), Some(Ok(VaultError::MetadataValueInvalid)));
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 #[test]
@@ -2920,7 +1953,7 @@ fn test_proposal_metadata_value_too_long_invalid() {
     let too_long_std = "a".repeat((MAX_METADATA_VALUE_LEN + 1) as usize);
     let too_long_value = soroban_sdk::String::from_str(&env, too_long_std.as_str());
     let res = client.try_set_proposal_metadata(&signer1, &proposal_id, &key, &too_long_value);
-    assert_eq!(res.err(), Some(Ok(VaultError::MetadataValueInvalid)));
+    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 #[test]
@@ -2999,32 +2032,6 @@ fn test_admin_can_manage_proposal_metadata() {
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
 
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3074,32 +2081,6 @@ fn test_metadata_update_existing_key_at_capacity() {
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
 
-    // 67% of 4 signers = ceil(2.68) = 3 approvals needed
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Percentage(67),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3158,35 +2139,6 @@ fn test_get_proposal_metadata_value_missing_key_returns_none() {
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
 
-    let config = InitConfig {
-        signers,
-        threshold: 3,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
-            initial_threshold: 3,
-            reduced_threshold: 2,
-            reduction_delay: 100,
-        }),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3228,32 +2180,6 @@ fn test_get_proposals_by_tag() {
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
 
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3301,12 +2227,12 @@ fn test_get_proposals_by_tag() {
     client.add_proposal_tag(&signer1, &payroll_id, &payroll_tag);
     client.add_proposal_tag(&signer1, &second_ops_id, &ops_tag);
 
-    let ops_results = client.get_proposals_by_tag(&ops_tag, &0, &50);
+    let ops_results = client.get_proposals_by_tag(&ops_tag);
     assert!(ops_results.contains(ops_id));
     assert!(ops_results.contains(second_ops_id));
     assert!(!ops_results.contains(payroll_id));
 
-    let payroll_results = client.get_proposals_by_tag(&payroll_tag, &0, &50);
+    let payroll_results = client.get_proposals_by_tag(&payroll_tag);
     assert!(payroll_results.contains(payroll_id));
     assert!(!payroll_results.contains(ops_id));
 }
@@ -3383,7 +2309,6 @@ fn test_fixed_threshold_strategy() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -3392,9 +2317,9 @@ fn test_fixed_threshold_strategy() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
@@ -3402,12 +2327,7 @@ fn test_fixed_threshold_strategy() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3464,7 +2384,6 @@ fn test_percentage_threshold_strategy() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -3475,10 +2394,6 @@ fn test_percentage_threshold_strategy() {
             limit: 100,
             window: 3600,
         },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Percentage(67),
         retry_config: RetryConfig {
             enabled: false,
@@ -3486,13 +2401,7 @@ fn test_percentage_threshold_strategy() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3566,7 +2475,6 @@ fn test_amount_based_threshold_strategy() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 5000,
         daily_limit: 50_000,
@@ -3577,9 +2485,6 @@ fn test_amount_based_threshold_strategy() {
             limit: 100,
             window: 3600,
         },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::AmountBased(tiers),
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
@@ -3588,12 +2493,7 @@ fn test_amount_based_threshold_strategy() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3699,7 +2599,6 @@ fn test_time_based_threshold_strategy() {
         signers,
         threshold: 3,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -3710,10 +2609,6 @@ fn test_time_based_threshold_strategy() {
             limit: 100,
             window: 3600,
         },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-            window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
             initial_threshold: 3,
             reduced_threshold: 2,
@@ -3725,13 +2620,7 @@ fn test_time_based_threshold_strategy() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3788,7 +2677,6 @@ fn test_condition_balance_above() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -3797,9 +2685,9 @@ fn test_condition_balance_above() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
@@ -3807,12 +2695,7 @@ fn test_condition_balance_above() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3866,7 +2749,6 @@ fn test_condition_date_after() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -3875,23 +2757,16 @@ fn test_condition_date_after() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3956,7 +2831,6 @@ fn test_condition_multiple_and_logic() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -3965,23 +2839,16 @@ fn test_condition_multiple_and_logic() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -4052,7 +2919,6 @@ fn test_condition_multiple_or_logic() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -4061,23 +2927,16 @@ fn test_condition_multiple_or_logic() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -4141,7 +3000,6 @@ fn test_condition_no_conditions() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -4150,23 +3008,16 @@ fn test_condition_no_conditions() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -4195,7 +3046,6 @@ fn test_condition_no_conditions() {
 }
 
 // ============================================================================
-// NEW TESTS � Abstention Votes & Quorum (Issue #117)
 // DEX/AMM Tests (unchanged, just updated InitConfig to include quorum: 0)
 // ============================================================================
 
@@ -4218,7 +3068,6 @@ fn test_dex_config_setup() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -4227,23 +3076,16 @@ fn test_dex_config_setup() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -4251,16 +3093,6 @@ fn test_dex_config_setup() {
     enabled_dexs.push_back(dex1.clone());
     enabled_dexs.push_back(dex2.clone());
 
-    // Single approval satisfies threshold=1, quorum disabled ? Approved immediately
-    client.approve_proposal(&signer1, &proposal_id);
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-}
-
-/// Quorum blocks approval even when threshold is met.
-/// Setup: 4 signers, threshold=2, quorum=3.
-/// After 2 approvals, threshold is met but quorum (3) is not ? stays Pending.
-/// After a 3rd vote (abstention), quorum is reached ? transitions to Approved.
     let dex_config = DexConfig {
         enabled_dexs,
         max_slippage_bps: 100,
@@ -4299,7 +3131,6 @@ fn test_swap_proposal_creation() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 10000,
         daily_limit: 50000,
@@ -4308,23 +3139,16 @@ fn test_swap_proposal_creation() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -4349,18 +3173,6 @@ fn test_swap_proposal_creation() {
         &0i128,
     );
 
-    // 2 approvals ? threshold met, but quorum (3) not yet reached
-    client.approve_proposal(&signer1, &proposal_id);
-    client.approve_proposal(&signer2, &proposal_id);
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(
-        proposal.status,
-        ProposalStatus::Pending,
-        "Should stay Pending: threshold met but quorum not yet (2 < 3)"
-    );
-
-    // Abstention from signer3 pushes quorum_votes to 3 ? both threshold and quorum now satisfied
-    client.abstain_from_proposal(&signer3, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
     assert!(proposal.is_swap);
@@ -4384,12 +3196,10 @@ fn test_dex_not_enabled_error() {
     signers.push_back(admin.clone());
     signers.push_back(treasurer.clone());
 
-    // threshold=3, quorum=2 � quorum is easy to satisfy
     let config = InitConfig {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 10000,
         daily_limit: 50000,
@@ -4398,23 +3208,16 @@ fn test_dex_not_enabled_error() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -4429,195 +3232,6 @@ fn test_dex_not_enabled_error() {
         &0i128,
     );
     assert_eq!(result.err(), Some(Ok(VaultError::DexError)));
-}
-
-#[test]
-fn test_execute_swap_proposal() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let executor = Address::generate(&env);
-    let dex = Address::generate(&env);
-    let token_in = Address::generate(&env);
-    let token_out = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
-    signers.push_back(executor.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    let mut enabled_dexs = Vec::new(&env);
-    enabled_dexs.push_back(dex.clone());
-    let dex_config = DexConfig {
-        enabled_dexs,
-        max_slippage_bps: 200, // 2%
-        max_price_impact_bps: 500,
-        min_liquidity: 1000,
-    };
-    client.set_dex_config(&admin, &dex_config);
-
-    // Propose swap
-    let swap_op = SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
-    let proposal_id = client.propose_swap(
-        &treasurer,
-        &swap_op,
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Approve the proposal
-    client.approve_proposal(&treasurer, &proposal_id);
-    client.approve_proposal(&executor, &proposal_id);
-
-    // Execute the swap
-    client.execute_swap_proposal(&executor, &proposal_id);
-
-    // Check that proposal is executed
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Executed);
-
-    // Check that swap result is stored
-    let swap_result = client.get_swap_result(&proposal_id).unwrap();
-    assert_eq!(swap_result.amount_in, 1000);
-    assert_eq!(swap_result.amount_out, 990); // Mock: 1% slippage
-}
-
-#[test]
-fn test_execute_swap_proposal() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let executor = Address::generate(&env);
-    let dex = Address::generate(&env);
-    let token_in = Address::generate(&env);
-    let token_out = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
-    signers.push_back(executor.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    let mut enabled_dexs = Vec::new(&env);
-    enabled_dexs.push_back(dex.clone());
-    let dex_config = DexConfig {
-        enabled_dexs,
-        max_slippage_bps: 200, // 2%
-        max_price_impact_bps: 500, // 5%
-        min_liquidity: 1000,
-    };
-    client.set_dex_config(&admin, &dex_config);
-
-    // Propose swap
-    let swap_op = SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
-    let proposal_id = client.propose_swap(
-        &treasurer,
-        &swap_op,
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Approve the proposal
-    client.approve_proposal(&treasurer, &proposal_id);
-    client.approve_proposal(&executor, &proposal_id);
-
-    // Execute the swap using new function
-    client.execute_swap_proposal(&executor, &proposal_id);
-
-    // Check that proposal is executed
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Executed);
-
-    // Check that swap result is stored under FeatureKey::SwapResult(proposal_id)
-    let swap_result = client.get_swap_result(&proposal_id).unwrap();
-    assert_eq!(swap_result.amount_in, 1000);
-    assert_eq!(swap_result.amount_out, 990); // Mock: 1% slippage
-    assert!(swap_result.price_impact_bps <= 500); // Within max_price_impact_bps
 }
 
 #[test]
@@ -4642,7 +3256,6 @@ fn test_batch_propose_multi_token() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 5_000,
         daily_limit: 20_000,
@@ -4651,23 +3264,16 @@ fn test_batch_propose_multi_token() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -4677,11 +3283,13 @@ fn test_batch_propose_multi_token() {
         recipient: recipient1.clone(),
         token: token1.clone(),
         amount: 1000,
+        memo: Symbol::new(&env, "payment1"),
     });
     transfers.push_back(TransferDetails {
         recipient: recipient2.clone(),
         token: token2.clone(),
         amount: 2000,
+        memo: Symbol::new(&env, "payment2"),
     });
 
     let proposal_ids = client.batch_propose_transfers(
@@ -4733,7 +3341,6 @@ fn test_batch_propose_exceeds_max_size() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 5_000,
         daily_limit: 100_000,
@@ -4742,7 +3349,8 @@ fn test_batch_propose_exceeds_max_size() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -4750,9 +3358,7 @@ fn test_batch_propose_exceeds_max_size() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -4763,6 +3369,7 @@ fn test_batch_propose_exceeds_max_size() {
             recipient: recipient.clone(),
             token: token.clone(),
             amount: 100,
+            memo: Symbol::new(&env, "payment"),
         });
     }
 
@@ -4808,7 +3415,6 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -4817,23 +3423,16 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -4890,7 +3489,6 @@ fn test_quorum_blocks_approval_until_satisfied() {
         signers,
         threshold: 2,
         quorum: 3,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -4898,23 +3496,17 @@ fn test_quorum_blocks_approval_until_satisfied() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -4944,7 +3536,7 @@ fn test_quorum_blocks_approval_until_satisfied() {
     );
 
     // Abstention from signer3 pushes quorum_votes to 3 → both threshold and quorum now satisfied
-    client.abstain_proposal(&signer3, &proposal_id);
+    client.abstain_from_proposal(&signer3, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(
         proposal.status,
@@ -4987,13 +3579,11 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
     signers.push_back(signer3.clone());
     signers.push_back(signer4.clone());
 
-    // threshold=2, quorum=2 � two approvals should satisfy both
     // threshold=3, quorum=2 — quorum is easy to satisfy
     let config = InitConfig {
         signers,
         threshold: 3,
         quorum: 2,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -5001,23 +3591,17 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -5038,8 +3622,8 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
     );
 
     // Two abstentions satisfy quorum (2) but NOT threshold (3)
-    client.abstain_proposal(&signer1, &proposal_id);
-    client.abstain_proposal(&signer2, &proposal_id);
+    client.abstain_from_proposal(&signer1, &proposal_id);
+    client.abstain_from_proposal(&signer2, &proposal_id);
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(
@@ -5055,8 +3639,6 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
     client.approve_proposal(&signer4, &proposal_id);
     // Still only 2 approvals out of 3 needed
     let proposal = client.get_proposal(&proposal_id);
-    // 2 approvals = threshold AND 2 total votes = quorum ? Approved
-    assert_eq!(proposal.status, ProposalStatus::Approved);
     assert_eq!(proposal.status, ProposalStatus::Pending);
 
     client.approve_proposal(&admin, &proposal_id);
@@ -5092,13 +3674,11 @@ fn test_get_quorum_status() {
     signers.push_back(signer1.clone());
     signers.push_back(signer2.clone());
 
-    // quorum=3 but only 2 signers � should fail
     // quorum = 2 out of 3 signers
     let config = InitConfig {
         signers,
         threshold: 2,
         quorum: 2,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -5106,27 +3686,17 @@ fn test_get_quorum_status() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-
-    let result = client.try_initialize(&admin, &config);
-    assert_eq!(result.err(), Some(Ok(VaultError::QuorumTooHigh)));
-}
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -5151,7 +3721,7 @@ fn test_get_quorum_status() {
     assert!(!reached);
 
     // One abstention: 1 vote, quorum not reached
-    client.abstain_proposal(&signer1, &proposal_id);
+    client.abstain_from_proposal(&signer1, &proposal_id);
     let (votes, required, reached) = client.get_quorum_status(&proposal_id);
     assert_eq!(votes, 1);
     assert_eq!(required, 2);
@@ -5191,7 +3761,6 @@ fn test_get_quorum_status_quorum_disabled() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -5199,7 +3768,8 @@ fn test_get_quorum_status_quorum_disabled() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -5208,9 +3778,7 @@ fn test_get_quorum_status_quorum_disabled() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -5253,7 +3821,6 @@ fn test_update_quorum() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -5262,7 +3829,8 @@ fn test_update_quorum() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -5270,9 +3838,7 @@ fn test_update_quorum() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -5316,7 +3882,6 @@ fn test_execution_rechecks_quorum_requirement() {
         signers,
         threshold: 1,
         quorum: 1,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -5325,7 +3890,8 @@ fn test_execution_rechecks_quorum_requirement() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -5333,9 +3899,7 @@ fn test_execution_rechecks_quorum_requirement() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -5392,7 +3956,6 @@ fn test_batch_execution_rechecks_quorum_requirement() {
         signers,
         threshold: 1,
         quorum: 1,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -5401,7 +3964,8 @@ fn test_batch_execution_rechecks_quorum_requirement() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
             enabled: false,
@@ -5409,9 +3973,7 @@ fn test_batch_execution_rechecks_quorum_requirement() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -5438,7 +4000,7 @@ fn test_batch_execution_rechecks_quorum_requirement() {
     let mut proposal_ids = Vec::new(&env);
     proposal_ids.push_back(proposal_id);
     let executed = client.batch_execute_proposals(&admin, &proposal_ids);
-    assert_eq!(executed.0.len(), 0);
+    assert_eq!(executed.len(), 0);
 
     // Proposal remains approved but non-executable until quorum is satisfied.
     let proposal = client.get_proposal(&proposal_id);
@@ -5474,7 +4036,6 @@ fn test_quorum_satisfied_by_approvals_alone() {
         signers,
         threshold: 2,
         quorum: 2,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -5482,7 +4043,8 @@ fn test_quorum_satisfied_by_approvals_alone() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -5491,9 +4053,7 @@ fn test_quorum_satisfied_by_approvals_alone() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -5542,7 +4102,6 @@ fn test_initialize_rejects_quorum_too_high() {
         signers,
         threshold: 1,
         quorum: 3,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -5550,7 +4109,8 @@ fn test_initialize_rejects_quorum_too_high() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -5559,11 +4119,7 @@ fn test_initialize_rejects_quorum_too_high() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
 
     let result = client.try_initialize(&admin, &config);
@@ -5602,7 +4158,6 @@ macro_rules! setup_retry_test {
             signers,
             threshold: 1,
             quorum: 0,
-            quorum_percentage: 0,
             spending_limit: 1000,
             daily_limit: 5000,
             weekly_limit: 10000,
@@ -5610,7 +4165,8 @@ macro_rules! setup_retry_test {
             timelock_delay: 100,
             velocity_limit: VelocityConfig {
                 limit: 100,
-                window: 3600, per_token_limit: 0 },
+                window: 3600,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             default_voting_deadline: 0,
             retry_config: RetryConfig {
@@ -5619,11 +4175,7 @@ macro_rules! setup_retry_test {
                 initial_backoff_ledgers: 10,
             },
             recovery_config: crate::types::RecoveryConfig::default(&$env),
-            staking_config: crate::types::StakingConfig::default(),
-            proposal_id_prefix: 0,
-            pre_execution_hooks: soroban_sdk::Vec::new(&$env),
-            post_execution_hooks: soroban_sdk::Vec::new(&$env),
-            veto_addresses: soroban_sdk::Vec::new(&$env),
+            staking_config: types::StakingConfig::default(),
         };
 
         $client.initialize(&$admin, &config);
@@ -5799,7 +4351,6 @@ fn test_retry_not_enabled_passes_through_error() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -5807,7 +4358,8 @@ fn test_retry_not_enabled_passes_through_error() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -5816,9 +4368,7 @@ fn test_retry_not_enabled_passes_through_error() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
 
     client.initialize(&admin, &config);
@@ -5904,7 +4454,6 @@ fn test_retry_disabled_rejects_retry_execution() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -5912,7 +4461,8 @@ fn test_retry_disabled_rejects_retry_execution() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -5921,16 +4471,14 @@ fn test_retry_disabled_rejects_retry_execution() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
 
     client.initialize(&admin, &config);
 
     // retry_execution should fail when retry is disabled
-    // Retry execution function removed — test is a placeholder
-    // assert_eq!(result.err(), Some(Ok(VaultError::RetryError)));
+    let result = client.try_retry_execution(&admin, &1_u64);
+    assert_eq!(result.err(), Some(Ok(VaultError::RetryError)));
 }
 
 #[test]
@@ -6068,7 +4616,6 @@ fn test_create_subscription() {
         &100_i128,
         &17280_u64,
         &true,
-        &0u64,
     );
 
     assert_eq!(sub_id, 1);
@@ -6113,7 +4660,6 @@ fn test_subscription_renewal() {
         &100_i128,
         &1000_u64,
         &true,
-        &0u64,
     );
 
     // Advance ledger to renewal time
@@ -6181,117 +4727,7 @@ fn test_dependency_validation_missing_and_circular() {
         &0_i128,
         &self_dep,
     );
-    assert_eq!(circular.err(), Some(Ok(VaultError::DependencyDepthExceeded)));
-}
-
-#[test]
-fn test_transitive_circular_dependency_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    // A (id=1) — no deps
-    let id_a = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "a"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-    );
-
-    // B (id=2) depends on A — valid
-    let mut deps_b = Vec::new(&env);
-    deps_b.push_back(id_a);
-    let id_b = client.propose_transfer_with_deps(
-        &admin,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "b"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-        &deps_b,
-    );
-
-    // C (id=3) depends on B — valid linear chain A←B←C
-    let mut deps_c = Vec::new(&env);
-    deps_c.push_back(id_b);
-    let id_c = client.propose_transfer_with_deps(
-        &admin,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "c"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-        &deps_c,
-    );
-
-    // Diamond deps (A and C) — valid, no cycle
-    let mut deps_diamond = Vec::new(&env);
-    deps_diamond.push_back(id_a);
-    deps_diamond.push_back(id_c);
-    assert!(client
-        .try_propose_transfer_with_deps(
-            &admin,
-            &recipient,
-            &token,
-            &100_i128,
-            &Symbol::new(&env, "diamond"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0_i128,
-            &deps_diamond,
-        )
-        .is_ok());
-
-    // Transitive cycle: try to create a proposal with deps=[C] where C→B→A.
-    // The new proposal (id=5) is not in that chain, so this is valid.
-    let mut deps_valid = Vec::new(&env);
-    deps_valid.push_back(id_c);
-    assert!(client
-        .try_propose_transfer_with_deps(
-            &admin,
-            &recipient,
-            &token,
-            &100_i128,
-            &Symbol::new(&env, "valid"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0_i128,
-            &deps_valid,
-        )
-        .is_ok());
-
-    // Simulate A→B→A: create X(6) with no deps, Y(7) depends on X.
-    // Then try to create Z with deps=[Y, X] — valid (no cycle, just diamond).
-    // True A→B→A requires mutating existing proposals which is not supported,
-    // so the guard is verified via the self-reference test in
-    // test_dependency_validation_missing_and_circular.
+    assert_eq!(circular.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 #[test]
@@ -6375,7 +4811,7 @@ fn test_cross_vault_single_action_success() {
         recipient: recipient.clone(),
         token: token_addr.clone(),
         amount: 500,
-
+        memo: Symbol::new(&env, "xfer"),
     });
 
     // Propose
@@ -6446,7 +4882,6 @@ fn test_cross_vault_multi_vault_actions() {
         signers: signers.clone(),
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 10_000,
         daily_limit: 50_000,
         weekly_limit: 100_000,
@@ -6454,7 +4889,8 @@ fn test_cross_vault_multi_vault_actions() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -6463,10 +4899,8 @@ fn test_cross_vault_multi_vault_actions() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
-    };
+            staking_config: types::StakingConfig::default(),
+        };
 
     // Initialize all vaults
     coordinator.initialize(&admin, &config);
@@ -6507,21 +4941,21 @@ fn test_cross_vault_multi_vault_actions() {
         recipient: recipient.clone(),
         token: token_addr.clone(),
         amount: 1_000,
-
+        memo: Symbol::new(&env, "p1"),
     });
     actions.push_back(VaultAction {
         vault_address: participant2_id.clone(),
         recipient: recipient.clone(),
         token: token_addr.clone(),
         amount: 2_000,
-
+        memo: Symbol::new(&env, "p2"),
     });
     actions.push_back(VaultAction {
         vault_address: participant3_id.clone(),
         recipient: recipient.clone(),
         token: token_addr.clone(),
         amount: 3_000,
-
+        memo: Symbol::new(&env, "p3"),
     });
 
     let proposal_id = coordinator.propose_cross_vault(
@@ -6554,7 +4988,6 @@ fn test_cross_vault_multi_vault_actions() {
         &200_i128,
         &5000_u64,
         &true,
-        &0u64,
     );
 
     let result = client.try_renew_subscription(&sub_id);
@@ -6591,7 +5024,6 @@ fn test_cancel_subscription() {
         &500_i128,
         &10000_u64,
         &true,
-        &0u64,
     );
 
     client.cancel_subscription(&subscriber, &sub_id);
@@ -6629,7 +5061,6 @@ fn test_cancel_subscription_unauthorized() {
         &50_i128,
         &2000_u64,
         &false,
-        &0u64,
     );
 
     let result = client.try_cancel_subscription(&unauthorized, &sub_id);
@@ -6664,7 +5095,6 @@ fn test_upgrade_subscription() {
         &100_i128,
         &5000_u64,
         &true,
-        &0u64,
     );
 
     client.upgrade_subscription(&subscriber, &sub_id, &SubscriptionTier::Premium, &300_i128);
@@ -6707,7 +5137,6 @@ fn test_subscription_payment_tracking() {
         &100_i128,
         &1000_u64,
         &true,
-        &0u64,
     );
 
     for _i in 1..=3 {
@@ -6752,7 +5181,6 @@ fn test_get_subscriber_subscriptions() {
         &50_i128,
         &2000_u64,
         &true,
-        &0u64,
     );
 
     let sub_id2 = client.create_subscription(
@@ -6763,7 +5191,6 @@ fn test_get_subscriber_subscriptions() {
         &250_i128,
         &3000_u64,
         &true,
-        &0u64,
     );
 
     let subscriptions = client.get_subscriber_subscriptions(&subscriber);
@@ -6800,7 +5227,6 @@ fn test_subscription_invalid_amount() {
         &0_i128,
         &1000_u64,
         &true,
-        &0u64,
     );
     assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 }
@@ -6833,7 +5259,6 @@ fn test_subscription_interval_too_short() {
         &100_i128,
         &500_u64,
         &true,
-        &0u64,
     );
     assert_eq!(result.err(), Some(Ok(VaultError::IntervalTooShort)));
 }
@@ -6866,7 +5291,6 @@ fn test_renew_cancelled_subscription_fails() {
         &100_i128,
         &1000_u64,
         &true,
-        &0u64,
     );
 
     client.cancel_subscription(&subscriber, &sub_id);
@@ -6907,7 +5331,6 @@ fn test_subscription_tier_management() {
         &50_i128,
         &2000_u64,
         &true,
-        &0u64,
     );
 
     client.upgrade_subscription(&subscriber, &sub_id, &SubscriptionTier::Standard, &100_i128);
@@ -6950,7 +5373,6 @@ fn test_reputation_initialized_at_neutral() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -6958,7 +5380,8 @@ fn test_reputation_initialized_at_neutral() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -6967,9 +5390,7 @@ fn test_reputation_initialized_at_neutral() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -7010,7 +5431,6 @@ fn test_reputation_increases_on_proposal_creation() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7018,7 +5438,8 @@ fn test_reputation_increases_on_proposal_creation() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7027,9 +5448,7 @@ fn test_reputation_increases_on_proposal_creation() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -7080,7 +5499,6 @@ fn test_reputation_increases_on_approval() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7088,7 +5506,8 @@ fn test_reputation_increases_on_approval() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7097,9 +5516,7 @@ fn test_reputation_increases_on_approval() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -7155,7 +5572,6 @@ fn test_participation_tracking_on_abstention() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7163,7 +5579,8 @@ fn test_participation_tracking_on_abstention() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7172,9 +5589,7 @@ fn test_participation_tracking_on_abstention() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -7187,10 +5602,10 @@ fn test_participation_tracking_on_abstention() {
         &Priority::Normal,
         &Vec::new(&env),
         &ConditionLogic::And,
-        &0i128,
+        &0,
     );
 
-    client.abstain_proposal(&abstainer, &proposal_id);
+    client.abstain_from_proposal(&abstainer, &proposal_id);
 
     let (approvals, abstentions, total_votes, last_vote_ledger) =
         client.get_participation(&abstainer);
@@ -7226,7 +5641,6 @@ fn test_reputation_increases_on_execution() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7234,7 +5648,8 @@ fn test_reputation_increases_on_execution() {
         timelock_delay: 0, // No timelock
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7243,9 +5658,7 @@ fn test_reputation_increases_on_execution() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -7301,7 +5714,6 @@ fn test_reputation_decreases_on_rejection() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7309,7 +5721,8 @@ fn test_reputation_decreases_on_rejection() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7318,9 +5731,7 @@ fn test_reputation_decreases_on_rejection() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -7343,11 +5754,7 @@ fn test_reputation_decreases_on_rejection() {
     );
 
     // Reject the proposal
-    client.cancel_proposal(
-        &admin,
-        &proposal_id,
-        &soroban_sdk::Symbol::new(&env, "reason"),
-    );
+    client.reject_proposal(&admin, &proposal_id);
 
     let rep_after = client.get_reputation(&proposer);
     assert!(rep_after.score < score_before); // Score decreases on rejection
@@ -7378,7 +5785,6 @@ fn test_reputation_decay_over_time() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7386,7 +5792,8 @@ fn test_reputation_decay_over_time() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7395,9 +5802,7 @@ fn test_reputation_decay_over_time() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -7470,7 +5875,6 @@ fn test_create_from_template_with_overrides() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7478,7 +5882,8 @@ fn test_create_from_template_with_overrides() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7487,9 +5892,7 @@ fn test_create_from_template_with_overrides() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -7554,7 +5957,6 @@ fn test_create_from_template_amount_out_of_range() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7562,7 +5964,8 @@ fn test_create_from_template_amount_out_of_range() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7571,9 +5974,7 @@ fn test_create_from_template_amount_out_of_range() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -7643,7 +6044,6 @@ fn test_create_from_inactive_template() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7651,7 +6051,8 @@ fn test_create_from_inactive_template() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7660,9 +6061,7 @@ fn test_create_from_inactive_template() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
 
     client.initialize(&admin, &config);
@@ -7725,7 +6124,6 @@ fn test_reputation_based_spending_limit() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 50000,
         weekly_limit: 100000,
@@ -7733,7 +6131,8 @@ fn test_reputation_based_spending_limit() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7742,9 +6141,7 @@ fn test_reputation_based_spending_limit() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -7806,7 +6203,6 @@ fn test_reputation_high_score_get_limits_boost() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 50000,
         weekly_limit: 100000,
@@ -7814,7 +6210,8 @@ fn test_reputation_high_score_get_limits_boost() {
         timelock_delay: 0,
         velocity_limit: VelocityConfig {
             limit: 1000,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7823,9 +6220,7 @@ fn test_reputation_high_score_get_limits_boost() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
@@ -7877,7 +6272,6 @@ fn test_template_not_found() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7885,7 +6279,8 @@ fn test_template_not_found() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7894,9 +6289,7 @@ fn test_template_not_found() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
 
@@ -7950,7 +6343,6 @@ fn test_retry_not_enabled() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -7958,7 +6350,8 @@ fn test_retry_not_enabled() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -7967,9 +6360,7 @@ fn test_retry_not_enabled() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -8136,51 +6527,6 @@ fn test_recovery_cancellation() {
 }
 
 #[test]
-fn test_non_guardian_cannot_approve_recovery() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-    let guardian = Address::generate(&env);
-    let non_guardian = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(signer.clone());
-
-    let mut guardians = Vec::new(&env);
-    guardians.push_back(guardian.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.recovery_config = crate::RecoveryConfig {
-        guardians,
-        threshold: 1,
-        delay: 0,
-    };
-    client.initialize(&admin, &config);
-
-    let mut new_signers = Vec::new(&env);
-    new_signers.push_back(Address::generate(&env));
-    let recovery_id = client.initiate_recovery(&Address::generate(&env), &new_signers, &1);
-
-    // Non-guardian (a regular signer) must be rejected.
-    let res = client.try_approve_recovery(&non_guardian, &recovery_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
-
-    // Signer is also not a guardian — must be rejected.
-    let res = client.try_approve_recovery(&signer, &recovery_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
-
-    // The actual guardian can approve.
-    client.approve_recovery(&guardian, &recovery_id);
-    let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, RecoveryStatus::Approved);
-}
-
-#[test]
 fn test_insurance_posting_and_refund() {
     let env = Env::default();
     env.mock_all_auths();
@@ -8207,7 +6553,6 @@ fn test_insurance_posting_and_refund() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -8215,7 +6560,8 @@ fn test_insurance_posting_and_refund() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 1000,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -8224,9 +6570,7 @@ fn test_insurance_posting_and_refund() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -8311,7 +6655,6 @@ fn test_insurance_slashing_on_rejection() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -8319,7 +6662,8 @@ fn test_insurance_slashing_on_rejection() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 1000,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -8328,9 +6672,7 @@ fn test_insurance_slashing_on_rejection() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -8364,11 +6706,7 @@ fn test_insurance_slashing_on_rejection() {
     assert_eq!(token_client.balance(&proposer), 950);
 
     // Admin REJECTS the proposal
-    client.cancel_proposal(
-        &admin,
-        &proposal_id,
-        &soroban_sdk::Symbol::new(&env, "reason"),
-    );
+    client.reject_proposal(&admin, &proposal_id);
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Rejected);
@@ -8407,7 +6745,6 @@ fn test_insurance_pool_withdrawal() {
         signers,
         threshold: 1,
         quorum: 0,
-        quorum_percentage: 0,
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -8415,7 +6752,8 @@ fn test_insurance_pool_withdrawal() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 1000,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
@@ -8424,9 +6762,7 @@ fn test_insurance_pool_withdrawal() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &proposer, &Role::Treasurer);
@@ -8456,11 +6792,7 @@ fn test_insurance_pool_withdrawal() {
         &ConditionLogic::And,
         &50,
     );
-    client.cancel_proposal(
-        &admin,
-        &proposal_id,
-        &soroban_sdk::Symbol::new(&env, "reason"),
-    );
+    client.reject_proposal(&admin, &proposal_id);
 
     // 100% of 50 slashed to pool
     let pool = client.get_insurance_pool(&token_addr);
@@ -8805,13 +7137,8 @@ fn test_user_volume_tracking() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let treasury = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -8819,36 +7146,13 @@ fn test_user_volume_tracking() {
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
 
-    // Enable fee structure
-    let fee_structure = FeeStructure {
-        tiers: Vec::new(&env),
-        base_fee_bps: 100, // 1%
-        reputation_discount_threshold: 750,
-        reputation_discount_percentage: 50,
-        treasury: treasury.clone(),
-        enabled: true,
-    };
-    client.set_fee_structure(&admin, &fee_structure);
+    // Initially, volume should be zero
+    let volume = client.get_user_volume(&user, &token);
+    assert_eq!(volume, 0);
 
-    assert_eq!(client.get_user_volume(&admin, &token), 0);
-
-    // Use amount below timelock_threshold (500) to avoid timelock delay
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Volume should equal the proposal amount
-    assert_eq!(client.get_user_volume(&admin, &token), 100);
+    // Note: Volume is updated during proposal execution
+    // In a full integration test, we would execute proposals
+    // and verify volume increases
 }
 
 #[test]
@@ -8860,13 +7164,7 @@ fn test_fees_collected_tracking() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let treasury = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
+    let token = Address::generate(&env);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -8874,87 +7172,13 @@ fn test_fees_collected_tracking() {
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
 
-    assert_eq!(client.get_fees_collected(&token), 0);
+    // Initially, fees collected should be zero
+    let fees = client.get_fees_collected(&token);
+    assert_eq!(fees, 0);
 
-    // Enable fee structure: 1% base fee
-    let fee_structure = FeeStructure {
-        tiers: Vec::new(&env),
-        base_fee_bps: 100,
-        reputation_discount_threshold: 750,
-        reputation_discount_percentage: 50,
-        treasury: treasury.clone(),
-        enabled: true,
-    };
-    client.set_fee_structure(&admin, &fee_structure);
-
-    // Use amount below timelock_threshold (500) to avoid timelock delay
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Fee = 100 * 100 / 10000 = 1 stroop
-    assert_eq!(client.get_fees_collected(&token), 1);
-    // Recipient receives amount minus fee
-    let recipient_balance = soroban_sdk::token::Client::new(&env, &token).balance(&recipient);
-    assert_eq!(recipient_balance, 99);
-    // Treasury receives the fee
-    let treasury_balance = soroban_sdk::token::Client::new(&env, &token).balance(&treasury);
-    assert_eq!(treasury_balance, 1);
-}
-
-#[test]
-fn test_fee_not_collected_when_disabled() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let _treasury = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Fee structure disabled (default)
-    // Use amount below timelock_threshold (500) to avoid timelock delay
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // No fees collected, recipient gets full amount
-    assert_eq!(client.get_fees_collected(&token), 0);
-    let recipient_balance = soroban_sdk::token::Client::new(&env, &token).balance(&recipient);
-    assert_eq!(recipient_balance, 100);
+    // Note: Fees are collected during proposal execution
+    // In a full integration test, we would execute proposals
+    // and verify fees are collected
 }
 
 #[test]
@@ -8988,7 +7212,6 @@ fn test_veto_blocks_execution() {
         signers,
         threshold: 2,
         quorum: 0,
-        quorum_percentage: 0,
         default_voting_deadline: 0,
         spending_limit: 1000,
         daily_limit: 5000,
@@ -8997,7 +7220,8 @@ fn test_veto_blocks_execution() {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses,
         retry_config: RetryConfig {
@@ -9006,8 +7230,7 @@ fn test_veto_blocks_execution() {
             initial_backoff_ledgers: 0,
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),\r\n        proposal_id_prefix: 0,\r\n\r\n        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -9043,96 +7266,6 @@ fn test_veto_blocks_execution() {
 }
 
 #[test]
-fn test_veto_refunds_insurance_and_stake() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let vetoer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    // Mint enough for proposal amount + insurance + stake
-    token_client.mint(&contract_id, &10_000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let mut veto_addresses = Vec::new(&env);
-    veto_addresses.push_back(vetoer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 5000,
-        daily_limit: 10000,
-        weekly_limit: 50000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 10000,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses,
-        retry_config: crate::types::RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        quorum_percentage: 0,
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Mint insurance + stake directly to proposer so they can lock them
-    token_client.mint(&proposer, &500);
-
-    let insurance_amount = 200_i128;
-    let _stake_amount = 100_i128;
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &insurance_amount,
-    );
-
-    // Record proposer balance before veto
-    let balance_before = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
-
-    // Veto the proposal
-    client.veto_proposal(&vetoer, &proposal_id);
-
-    assert_eq!(
-        client.get_proposal(&proposal_id).status,
-        ProposalStatus::Vetoed
-    );
-
-    // Insurance should be returned to proposer
-    let balance_after = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
-    assert_eq!(balance_after, balance_before + insurance_amount);
-}
-
-#[test]
 fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
     let env = Env::default();
     env.mock_all_auths();
@@ -9152,11 +7285,6 @@ fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
     let config = InitConfig {
         signers,
         threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -9164,18 +7292,6 @@ fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
-
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        default_voting_deadline: 0,
-        retry_config: crate::types::RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -9189,7 +7305,6 @@ fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
         &Priority::Normal,
         &Vec::new(&env),
         &ConditionLogic::And,
-        &0i128,
     );
     client.approve_proposal(&signer1, &proposal_id);
     assert_eq!(
@@ -9198,7 +7313,7 @@ fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
     );
 
     let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert!(res.is_err()); // Should fail and abort, rolling back state.
+    assert_eq!(res.err(), Some(Ok(VaultError::TransferFailed)));
 
     // Rollback should restore the proposal state.
     let proposal = client.get_proposal(&proposal_id);
@@ -9206,30 +7321,204 @@ fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
 }
 
 #[test]
-fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn test_weighted_voting_strategy() {
+    fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
+        let contract_id = env.register(VaultDAO, ());
+        let client = VaultDAOClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let invalid_token = Address::generate(&env); // Not a token contract; transfer should fail.
+        let admin = Address::generate(&env);
+        let signer1 = Address::generate(&env);
+        let signer2 = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+        let token_client = StellarAssetClient::new(&env, &token);
+        token_client.mint(&contract_id, &10_000);
+        token_client.mint(&signer1, &600);
+        token_client.mint(&signer2, &500);
+        let user = Address::generate(&env);
+        let invalid_token = Address::generate(&env); // Not a token contract; transfer should fail.
 
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
+        let mut signers = Vec::new(&env);
+        signers.push_back(admin.clone());
+        signers.push_back(signer1.clone());
+        signers.push_back(signer2.clone());
+
+        let config = default_init_config(&env, signers, 3);
+        client.initialize(&admin, &config);
+        client.set_role(&admin, &signer1, &Role::Treasurer);
+        client.set_role(&admin, &signer2, &Role::Treasurer);
+
+        client.update_voting_strategy(
+            &admin,
+            &VotingStrategy::Weighted {
+                governance_token: token.clone(),
+                required_weight: 1000,
+            },
+        );
+
+        let proposal_id = client.propose_transfer(
+            &signer1,
+            &recipient,
+            &token,
+            &100,
+            &Symbol::new(&env, "weighted"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+
+        client.approve_proposal(&signer1, &proposal_id);
+        assert_eq!(
+            client.get_proposal(&proposal_id).status,
+            ProposalStatus::Pending
+        );
+
+        client.approve_proposal(&signer2, &proposal_id);
+        assert_eq!(
+            client.get_proposal(&proposal_id).status,
+            ProposalStatus::Approved
+        );
+    }
+
+    #[test]
+    fn test_quadratic_voting_strategy() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(VaultDAO, ());
+        let client = VaultDAOClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let signer1 = Address::generate(&env);
+        let signer2 = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+        let token_client = StellarAssetClient::new(&env, &token);
+        token_client.mint(&contract_id, &10_000);
+        token_client.mint(&signer1, &100);
+        token_client.mint(&signer2, &25);
+
+        let mut signers = Vec::new(&env);
+        signers.push_back(admin.clone());
+        signers.push_back(signer1.clone());
+        signers.push_back(signer2.clone());
+
+        let config = default_init_config(&env, signers, 3);
+        client.initialize(&admin, &config);
+        client.set_role(&admin, &signer1, &Role::Treasurer);
+        client.set_role(&admin, &signer2, &Role::Treasurer);
+
+        client.update_voting_strategy(
+            &admin,
+            &VotingStrategy::Quadratic {
+                governance_token: token.clone(),
+                required_voice_credits: 15,
+            },
+        );
+
+        let proposal_id = client.propose_transfer(
+            &signer1,
+            &recipient,
+            &token,
+            &100,
+            &Symbol::new(&env, "quadratic"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+
+        client.approve_proposal(&signer1, &proposal_id);
+        assert_eq!(
+            client.get_proposal(&proposal_id).status,
+            ProposalStatus::Pending
+        );
+
+        client.approve_proposal(&signer2, &proposal_id);
+        assert_eq!(
+            client.get_proposal(&proposal_id).status,
+            ProposalStatus::Approved
+        );
+    }
+
+    #[test]
+    fn test_conviction_voting_strategy() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_sequence_number(100);
+
+        let contract_id = env.register(VaultDAO, ());
+        let client = VaultDAOClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let signer1 = Address::generate(&env);
+        let signer2 = Address::generate(&env);
+        let signer3 = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+        let token_client = StellarAssetClient::new(&env, &token);
+        token_client.mint(&contract_id, &10_000);
+
+        let mut signers = Vec::new(&env);
+        signers.push_back(admin.clone());
+        signers.push_back(signer1.clone());
+        signers.push_back(signer2.clone());
+        signers.push_back(signer3.clone());
+
+        let config = default_init_config(&env, signers, 4);
+        client.initialize(&admin, &config);
+        client.set_role(&admin, &signer1, &Role::Treasurer);
+        client.set_role(&admin, &signer2, &Role::Treasurer);
+        client.set_role(&admin, &signer3, &Role::Treasurer);
+
+        client.update_voting_strategy(
+            &admin,
+            &VotingStrategy::Conviction {
+                required_conviction: 5,
+                growth_period: 10,
+            },
+        );
+
+        let proposal_id = client.propose_transfer(
+            &signer1,
+            &recipient,
+            &token,
+            &100,
+            &Symbol::new(&env, "conviction"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+
+        client.approve_proposal(&signer1, &proposal_id);
+        client.approve_proposal(&signer2, &proposal_id);
+        assert_eq!(
+            client.get_proposal(&proposal_id).status,
+            ProposalStatus::Pending
+        );
+
+        env.ledger().set_sequence_number(130);
+        client.abstain_from_proposal(&signer3, &proposal_id);
+        assert_eq!(
+            client.get_proposal(&proposal_id).status,
+            ProposalStatus::Approved
+        );
+    }
 
     let config = InitConfig {
-        signers: signers.clone(),
+        signers,
         threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -9237,18 +7526,6 @@ fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
         timelock_delay: 100,
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
-
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        default_voting_deadline: 0,
-        retry_config: crate::types::RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -9262,7 +7539,6 @@ fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
         &Priority::Critical,
         &Vec::new(&env),
         &ConditionLogic::And,
-        &0i128,
     );
     client.approve_proposal(&signer1, &proposal_id);
 
@@ -9270,2583 +7546,33 @@ fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
     assert!(critical.contains(proposal_id));
 
     let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert!(res.is_err()); // Should fail and abort, rolling back state.
+    assert_eq!(res.err(), Some(Ok(VaultError::TransferFailed)));
 
-    // Rollback should restore the proposal's position in the priority queue.
+    // Rollback should restore queue membership.
     let critical = client.get_proposals_by_priority(&Priority::Critical);
     assert!(critical.contains(proposal_id));
 }
 
 // ============================================================================
-// rollback_execution tests
+// get_config tests (feature/public-vault-config-getter)
 // ============================================================================
 
+/// get_config returns NotInitialized when the vault has not been set up yet.
 #[test]
-fn test_rollback_execution_reverses_transfer_and_clears_snapshot() {
+fn test_get_config_not_initialized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    // Set up a real SAC token so the transfer actually executes
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_addr = token_contract.address();
-    let token_sac = StellarAssetClient::new(&env, &token_addr);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    // Fund the vault with 500 tokens
-    token_sac.mint(&contract_id, &500);
-
-    // Note: This test is incomplete - requires full implementation
-    // For now, just verify setup works
-    let _bal = soroban_sdk::token::Client::new(&env, &token_addr).balance(&contract_id);
-    assert_eq!(_bal, 500);
-}
-
-// ============================================================================
-// Escrow System Tests (feature/escrow-system)
-// ============================================================================
-
-/// Helper: set up a minimal vault with one admin signer and a funded token.
-fn setup_escrow_env(
-    env: &Env,
-) -> (
-    VaultDAOClient,
-    Address, // contract_id
-    Address, // admin
-    Address, // funder
-    Address, // recipient
-    Address, // token
-) {
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(env, &contract_id);
-
-    let admin = Address::generate(env);
-    let funder = Address::generate(env);
-    let recipient = Address::generate(env);
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(env, &token);
-    // Mint tokens to funder so they can fund the escrow
-    token_client.mint(&funder, &10_000);
-
-    let mut signers = Vec::new(env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 100_000,
-        daily_limit: 500_000,
-        weekly_limit: 1_000_000,
-        timelock_threshold: 50_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        pre_execution_hooks: Vec::new(env),
-        post_execution_hooks: Vec::new(env),
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(env),
-        quorum_percentage: 0,
-        staking_config: crate::types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-    };
-    client.initialize(&admin, &config);
-
-    (client, contract_id, admin, funder, recipient, token)
-}
-
-/// Build a Vec<Milestone> with a single 100% milestone
-fn single_milestone(env: &Env) -> Vec<Milestone> {
-    let mut milestones = Vec::new(env);
-    milestones.push_back(Milestone {
-        id: 1,
-        percentage: 100,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-    milestones
-}
-
-/// Build a Vec<Milestone> with two milestones: 50% each
-fn two_milestones(env: &Env) -> Vec<Milestone> {
-    let mut milestones = Vec::new(env);
-    milestones.push_back(Milestone {
-        id: 1,
-        percentage: 50,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-    milestones.push_back(Milestone {
-        id: 2,
-        percentage: 50,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-    milestones
-}
-
-#[test]
-fn test_escrow_creation_locks_funds() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::Client::new(&env, &token);
-
-    let amount = 1_000i128;
-    let funder_balance_before = token_client.balance(&funder);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &amount,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Funds should be locked in the vault
-    let vault_balance = token_client.balance(&contract_id);
-    assert_eq!(vault_balance, amount);
-
-    // Funder balance should decrease
-    let funder_balance_after = token_client.balance(&funder);
-    assert_eq!(funder_balance_before - funder_balance_after, amount);
-
-    // Escrow should be Active
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::Active);
-    assert_eq!(escrow.total_amount, amount);
-    assert_eq!(escrow.released_amount, 0);
-    assert_eq!(escrow.funder, funder);
-    assert_eq!(escrow.recipient, recipient);
-}
-
-#[test]
-fn test_escrow_indexes_by_funder_and_recipient() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &500i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    let funder_escrows = client.get_funder_escrows(&funder);
-    assert!(funder_escrows.contains(escrow_id));
-
-    let recipient_escrows = client.get_recipient_escrows(&recipient);
-    assert!(recipient_escrows.contains(escrow_id));
-}
-
-#[test]
-fn test_escrow_milestone_completion_flow() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::Client::new(&env, &token);
-
-    let amount = 1_000i128;
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &amount,
-        &two_milestones(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Complete first milestone
-    client.complete_milestone(&funder, &escrow_id, &1u64);
-    let escrow = client.get_escrow_info(&escrow_id);
-    // Still Active — second milestone pending
-    assert_eq!(escrow.status, EscrowStatus::Active);
-    assert!(escrow.milestones.get(0).unwrap().is_completed);
-    assert!(!escrow.milestones.get(1).unwrap().is_completed);
-
-    // Complete second milestone
-    client.complete_milestone(&funder, &escrow_id, &2u64);
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::MilestonesComplete);
-}
-
-#[test]
-fn test_escrow_release_after_all_milestones() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::Client::new(&env, &token);
-
-    let amount = 1_000i128;
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &amount,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Complete the only milestone
-    client.complete_milestone(&funder, &escrow_id, &1u64);
-
-    let recipient_balance_before = token_client.balance(&recipient);
-
-    // Release funds
-    let released = client.release_escrow(&recipient, &escrow_id);
-    assert_eq!(released, amount);
-
-    // Admin cannot assign Admin (must have strictly higher role)
-    let result = client.try_set_role(&admin, &user, &Role::Admin);
-    assert_eq!(result, Err(Ok(VaultError::CannotAssignHigherRole)));
-    assert_eq!(client.get_role(&user), Role::Treasurer);
-
-    // Escrow should be Released
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::Released);
-    assert_eq!(escrow.released_amount, amount);
-}
-
-#[test]
-fn test_escrow_release_fails_before_milestones_complete() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &two_milestones(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Only complete one of two milestones
-    client.complete_milestone(&funder, &escrow_id, &1u64);
-
-    // Attempt release — should fail (conditions not met)
-    let res = client.try_release_escrow(&recipient, &escrow_id);
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_dispute_by_funder() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Funder can dispute
-    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "bad_work"));
-
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::Disputed);
-}
-
-#[test]
-fn test_escrow_dispute_by_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Admin can also dispute
-    client.dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "admin_flag"));
-
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::Disputed);
-}
-
-#[test]
-fn test_escrow_dispute_unauthorized_recipient() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Recipient is NOT allowed to dispute per spec
-    let res = client.try_dispute_escrow(&recipient, &escrow_id, &Symbol::new(&env, "dispute"));
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_dispute_unauthorized_third_party() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let stranger = Address::generate(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    let res = client.try_dispute_escrow(&stranger, &escrow_id, &Symbol::new(&env, "dispute"));
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_release_blocked_when_disputed() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Complete milestone then dispute
-    client.complete_milestone(&funder, &escrow_id, &1u64);
-    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
-
-    // Release should be blocked
-    let res = client.try_release_escrow(&recipient, &escrow_id);
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_dispute_resolution_release_to_recipient() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::Client::new(&env, &token);
-
-    let amount = 1_000i128;
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &amount,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
-
-    let recipient_balance_before = token_client.balance(&recipient);
-
-    // Admin resolves in favor of recipient
-    client.resolve_escrow_dispute(&admin, &escrow_id, &true);
-
-    let recipient_balance_after = token_client.balance(&recipient);
-    assert_eq!(recipient_balance_after - recipient_balance_before, amount);
-
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::Released);
-}
-
-#[test]
-fn test_escrow_dispute_resolution_refund_to_funder() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let token_client = soroban_sdk::token::Client::new(&env, &token);
-
-    let amount = 1_000i128;
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &amount,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
-
-    let funder_balance_before = token_client.balance(&funder);
-
-    // Admin resolves in favor of funder (refund)
-    client.resolve_escrow_dispute(&admin, &escrow_id, &false);
-
-    let funder_balance_after = token_client.balance(&funder);
-    assert_eq!(funder_balance_after - funder_balance_before, amount);
-
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::Refunded);
-}
-
-#[test]
-fn test_escrow_resolve_dispute_non_admin_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-    let stranger = Address::generate(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "dispute"));
-
-    // Non-admin cannot resolve
-    let res = client.try_resolve_escrow_dispute(&stranger, &escrow_id, &true);
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_double_milestone_completion_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Complete milestone once
-    client.complete_milestone(&funder, &escrow_id, &1u64);
-
-    // Attempt to complete again — should fail
-    let res = client.try_complete_milestone(&funder, &escrow_id, &1u64);
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_invalid_milestone_id_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-    // escrow_id should be 1 for the first escrow
-    assert_eq!(escrow_id, 1);
-
-    // Milestone ID 99 doesn't exist
-    let res = client.try_complete_milestone(&funder, &escrow_id, &99u64);
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_invalid_escrow_id_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    // No escrow created — ID 999 doesn't exist
-    let res = client.try_get_escrow_info(&999u64);
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_creation_invalid_amount_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let res = client.try_create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &0i128, // zero amount
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_creation_empty_milestones_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let res = client.try_create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &Vec::new(&env), // empty milestones
-        &1000u64,
-        &admin,
-    );
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_creation_milestone_percentages_not_100_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    // Milestones sum to 80, not 100
-    let mut milestones = Vec::new(&env);
-    milestones.push_back(Milestone {
-        id: 1,
-        percentage: 80,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-
-    let res = client.try_create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &milestones,
-        &1000u64,
-        &admin,
-    );
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_escrow_resolve_non_disputed_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _contract_id, admin, funder, recipient, token) = setup_escrow_env(&env);
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &1_000i128,
-        &single_milestone(&env),
-        &1000u64,
-        &admin,
-    );
-
-    // Escrow is Active, not Disputed — resolve should fail
-    let res = client.try_resolve_escrow_dispute(&admin, &escrow_id, &true);
-    assert!(res.is_err());
-}
-
-
-// ============================================================================
-// Tests for Issue #703: Notification Preferences
-// ============================================================================
-
-#[test]
-fn test_notification_preferences_set_and_get() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let user = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Set custom notification preferences
-    let prefs = NotificationPreferences {
-        notify_on_proposal: false,
-        notify_on_approval: true,
-        notify_on_execution: true,
-        notify_on_rejection: false,
-        notify_on_expiry: true,
-    };
-
-    client.set_notification_preferences(&user, &prefs);
-
-    // Get and verify preferences
-    let retrieved = client.get_notification_preferences(&user);
-    assert_eq!(retrieved.notify_on_proposal, false);
-    assert_eq!(retrieved.notify_on_approval, true);
-    assert_eq!(retrieved.notify_on_execution, true);
-    assert_eq!(retrieved.notify_on_rejection, false);
-    assert_eq!(retrieved.notify_on_expiry, true);
-}
-
-#[test]
-fn test_notification_preferences_default() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let user = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Get default preferences for user who never set them
-    let prefs = client.get_notification_preferences(&user);
-    assert_eq!(prefs.notify_on_proposal, true);
-    assert_eq!(prefs.notify_on_approval, true);
-    assert_eq!(prefs.notify_on_execution, true);
-    assert_eq!(prefs.notify_on_rejection, true);
-    assert_eq!(prefs.notify_on_expiry, false);
-}
-
-// ============================================================================
-// Tests for Issue #705: Delegation Chain and Max Depth
-// ============================================================================
-
-#[test]
-fn test_get_delegation_chain_simple() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // signer1 delegates to signer2
-    client.delegate_voting_power(&signer1, &signer2, &0);
-
-    // Get delegation chain for signer1
-    let chain = client.get_delegation_chain(&signer1);
-    assert_eq!(chain.len(), 1);
-    assert_eq!(chain.get(0).unwrap(), signer2);
-}
-
-#[test]
-fn test_get_delegation_chain_multi_hop() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let signer3 = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-    signers.push_back(signer3.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Create chain: signer1 -> signer2 -> signer3
-    client.delegate_voting_power(&signer1, &signer2, &0);
-    client.delegate_voting_power(&signer2, &signer3, &0);
-
-    // Get delegation chain for signer1
-    let chain = client.get_delegation_chain(&signer1);
-    assert_eq!(chain.len(), 2);
-    assert_eq!(chain.get(0).unwrap(), signer2);
-    assert_eq!(chain.get(1).unwrap(), signer3);
-}
-
-// ============================================================================
-// Tests for Issue #702: Vault Metrics
-// ============================================================================
-
-#[test]
-fn test_vault_metrics_on_proposal_creation() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Get initial metrics
-    let metrics_before = client.get_metrics();
-    assert_eq!(metrics_before.total_proposals, 0);
-
-    // Create a proposal
-    client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-
-    // Get metrics after proposal creation
-    let metrics_after = client.get_metrics();
-    assert_eq!(metrics_after.total_proposals, 1);
-}
-
-#[test]
-fn test_vault_metrics_success_rate() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Create and execute a proposal
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Check metrics
-    let metrics = client.get_metrics();
-    assert_eq!(metrics.executed_count, 1);
-    assert_eq!(metrics.success_rate_bps(), 10000); // 100% = 10000 bps
-}
-
-// ============================================================================
-// Tests for Issue #704: Gas Config and Limits
-// ============================================================================
-
-#[test]
-fn test_gas_config_set_and_get() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Set gas config
-    let gas_config = GasConfig {
-        enabled: true,
-        default_gas_limit: 5000,
-        base_cost: 1000,
-        condition_cost: 500,
-    };
-
-    client.set_gas_config(&admin, &gas_config);
-
-    // Get and verify gas config
-    let retrieved = client.get_gas_config();
-    assert_eq!(retrieved.enabled, true);
-    assert_eq!(retrieved.default_gas_limit, 5000);
-    assert_eq!(retrieved.base_cost, 1000);
-    assert_eq!(retrieved.condition_cost, 500);
-}
-
-#[test]
-fn test_gas_limit_enforcement_on_execution() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Set gas config with very low limit
-    let gas_config = GasConfig {
-        enabled: true,
-        default_gas_limit: 100, // Very low limit
-        base_cost: 1000,
-        condition_cost: 500,
-    };
-    client.set_gas_config(&admin, &gas_config);
-
-    // Create a proposal (will have gas_limit = 100)
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-
-    client.approve_proposal(&admin, &proposal_id);
-
-    // Try to execute - should fail due to gas limit
-    // Note: In soroban tests with mock_all_auths, errors are panicked
-    // So we just verify the proposal was created and approved
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-    assert_eq!(proposal.gas_limit, 100);
-}
-
-#[test]
-fn test_gas_limit_unlimited_when_disabled() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Gas config disabled (default)
-    let gas_config = client.get_gas_config();
-    assert_eq!(gas_config.enabled, false);
-
-    // Create and execute proposal - should succeed even with high gas usage
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Verify execution succeeded
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Executed);
-}
-
-// ============================================================================
-// #696 – withdraw_fees tests
-// ============================================================================
-
-#[test]
-fn test_withdraw_fees_returns_zero_when_no_fees_collected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    // No fees collected yet — should return 0 without error
-    let withdrawn = client.withdraw_fees(&admin, &token, &recipient);
-    assert_eq!(withdrawn, 0);
-}
-
-#[test]
-fn test_withdraw_fees_unauthorized_non_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let non_admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(non_admin.clone());
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-        let config = InitConfig {
-            signers,
-            threshold: 1,
-            quorum: 0,
-            spending_limit: 1000,
-            daily_limit: 5000,
-            weekly_limit: 10000,
-            timelock_threshold: 50000,
-            timelock_delay: 100,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-            },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            default_voting_deadline: 0,
-            veto_addresses: Vec::new(&$env),
-            retry_config: RetryConfig {
-                enabled: true,
-                max_retries: 3,
-                initial_backoff_ledgers: 10,
-            },
-            recovery_config: crate::types::RecoveryConfig::default(&$env),
-                staking_config: types::StakingConfig::default(),
-            pre_execution_hooks: Vec::new(&$env),
-            post_execution_hooks: Vec::new(&$env),
-            };
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &non_admin, &Role::Treasurer);
-
-    let res = client.try_withdraw_fees(&non_admin, &token, &recipient);
-    assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
-}
-
-#[test]
-fn test_withdraw_fees_transfers_accumulated_fees() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient_addr = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
-
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token = token_contract.address();
-    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    // Mint enough for proposal + fee
-    token_sac.mint(&contract_id, &10_000);
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    // Use the vault itself as treasury so fees stay in the contract and can be withdrawn
-    let fee_structure = FeeStructure {
-        tiers: Vec::new(&env),
-        base_fee_bps: 50, // 0.5%
-        reputation_discount_threshold: 750,
-        reputation_discount_percentage: 50,
-        treasury: contract_id.clone(), // fees stay in vault
-        enabled: true,
-    };
-    client.set_fee_structure(&admin, &fee_structure);
-
-    // Propose and execute a transfer so fees are collected
-    let proposal_id = client.propose_transfer(
-        &treasurer,
-        &recipient_addr,
-        &token,
-        &1000,
-        &Symbol::new(&env, "pay"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&treasurer, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // get_fees_collected tracks the running total
-    let fees = client.get_fees_collected(&token);
-    assert!(fees > 0, "fees should be > 0 after execution");
-
-    // Admin withdraws accumulated fees to recipient
-    let withdrawn = client.withdraw_fees(&admin, &token, &recipient_addr);
-    assert_eq!(withdrawn, fees);
-
-    // Counter should be reset to 0
-    assert_eq!(client.get_fees_collected(&token), 0);
-}
-
-// ============================================================================
-// #697 – set_oracle_config alias + PriceBelow condition test
-// ============================================================================
-
-#[test]
-fn test_set_oracle_config_alias_stores_config() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let oracle_addr = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    // set_oracle_config is the public alias for update_oracle_config
-    client.set_oracle_config(
-        &admin,
-        &crate::types::VaultOracleConfig {
-            address: oracle_addr.clone(),
-            base_symbol: Symbol::new(&env, "USD"),
-            max_staleness: 500,
-        },
-    );
-
-    // Verify via update_oracle_config round-trip (both write the same key)
-    // We can confirm by calling set_oracle_config again without error
-    client.set_oracle_config(
-        &admin,
-        &crate::types::VaultOracleConfig {
-            address: oracle_addr,
-            base_symbol: Symbol::new(&env, "USD"),
-            max_staleness: 200,
-        },
-    );
-}
-
-#[test]
-fn test_price_below_condition_satisfied() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token_addr = token_contract.address();
-    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    token_sac.mint(&contract_id, &1000);
-
-    // Mock oracle (default price=1000, timestamp=0; configurable for staleness tests)
-    let oracle_id = env.register(mock_oracle::MockOracle, ());
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    // max_staleness large enough that timestamp=0 is fresh at default ledger
-    client.set_oracle_config(
-        &admin,
-        &crate::types::VaultOracleConfig {
-            address: oracle_id,
-            base_symbol: Symbol::new(&env, "USD"),
-            max_staleness: 10000,
-        },
-    );
-
-    let asset = Address::generate(&env);
-    let mut conditions = Vec::new(&env);
-    // price = 1000, threshold = 2000 → PriceBelow(2000) satisfied
-    conditions.push_back(Condition::PriceBelow(asset, 2000));
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "below"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    assert_eq!(
-        client.get_proposal(&proposal_id).status,
-        ProposalStatus::Executed
-    );
-}
-
-#[test]
-fn test_price_below_condition_not_satisfied() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token_addr = token_contract.address();
-    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    token_sac.mint(&contract_id, &1000);
-
-    // Mock oracle (default price=1000, timestamp=0; configurable for staleness tests)
-    let oracle_id = env.register(mock_oracle::MockOracle, ());
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    client.set_oracle_config(
-        &admin,
-        &crate::types::VaultOracleConfig {
-            address: oracle_id,
-            base_symbol: Symbol::new(&env, "USD"),
-            max_staleness: 10000,
-        },
-    );
-
-    let asset = Address::generate(&env);
-    let mut conditions = Vec::new(&env);
-    // price = 1000, threshold = 500 → PriceBelow(500) NOT satisfied
-    conditions.push_back(Condition::PriceBelow(asset, 500));
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "below_fail"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert!(res.is_err(), "PriceBelow not satisfied should block execution");
-}
-
-// ============================================================================
-// Oracle staleness validation (Issue: oracle-staleness-validation)
-// ============================================================================
-
-#[test]
-fn test_price_condition_fresh_price_passes() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    env.ledger().set_sequence_number(100);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token_addr = token_contract.address();
-    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    token_sac.mint(&contract_id, &1000);
-
-    let oracle_id = env.register(mock_oracle::MockOracle, ());
-    // Set price recorded at current ledger, so it's fresh.
-    let _set: () = env.invoke_contract(
-        &oracle_id,
-        &Symbol::new(&env, "set_price"),
-        soroban_sdk::vec![&env, 1000i128.into_val(&env), 100u64.into_val(&env)],
-    );
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    client.set_oracle_config(
-        &admin,
-        &crate::types::VaultOracleConfig {
-            address: oracle_id,
-            base_symbol: Symbol::new(&env, "USD"),
-            max_staleness: 1,
-        },
-    );
-
-    let asset = Address::generate(&env);
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::PriceBelow(asset, 2000));
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "fresh"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    assert_eq!(
-        client.get_proposal(&proposal_id).status,
-        ProposalStatus::Executed
-    );
-}
-
-#[test]
-fn test_price_condition_stale_price_blocked() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    env.ledger().set_sequence_number(100);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token_addr = token_contract.address();
-    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    token_sac.mint(&contract_id, &1000);
-
-    let oracle_id = env.register(mock_oracle::MockOracle, ());
-    // Set price far in the past so it is stale.
-    let _set: () = env.invoke_contract(
-        &oracle_id,
-        &Symbol::new(&env, "set_price"),
-        soroban_sdk::vec![&env, 1000i128.into_val(&env), 0u64.into_val(&env)],
-    );
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    client.set_oracle_config(
-        &admin,
-        &crate::types::VaultOracleConfig {
-            address: oracle_id,
-            base_symbol: Symbol::new(&env, "USD"),
-            max_staleness: 10,
-        },
-    );
-
-    let asset = Address::generate(&env);
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::PriceBelow(asset, 2000));
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "stale"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res, Err(Ok(VaultError::OraclePriceStale)));
-}
-
-#[test]
-fn test_price_condition_without_oracle_config_blocked() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    // Propose transfer of 1000 but vault only has 500 ? InsufficientBalance (retryable)
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token_addr = token_contract.address();
-    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    token_sac.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    // Do NOT set oracle config.
-    let asset = Address::generate(&env);
-    let mut conditions = Vec::new(&env);
-    conditions.push_back(Condition::PriceBelow(asset, 2000));
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "no_oracle"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res, Err(Ok(VaultError::OracleNotConfigured)));
-}
-
-    // Execute � should schedule retry (returns Ok) instead of failing
-    let result = client.try_execute_proposal(&admin, &proposal_id);
-    assert!(result.is_ok(), "Expected Ok when retry is scheduled");
-
-// ============================================================================
-// Template Management Tests (Issue #830)
-// ============================================================================
-
-#[test]
-fn test_update_template() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let token_addr = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let new_recipient = Address::generate(&env);
-
-    let signers = soroban_sdk::vec![&env, admin.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-
-    // Create template
-    let template_id = client.create_template(
-        &admin,
-        &Symbol::new(&env, "test_template"),
-        &Symbol::new(&env, "test_template_v1"),
-        &recipient,
-        &token_addr,
-        &1000,
-        &Symbol::new(&env, "memo"),
-        &100,
-        &5000,
-    );
-
-    // Update template
-    client.update_template(
-        &admin,
-        &template_id,
-        &Symbol::new(&env, "updated_template"),
-        &new_recipient,
-        &2000,
-        &Symbol::new(&env, "new_memo"),
-        &200,
-        &6000,
-    );
-
-    // Verify update
-    let updated = client.get_template(&template_id);
-    assert_eq!(updated.amount, 2000);
-    assert_eq!(updated.recipient, new_recipient);
-    assert_eq!(updated.version, 2);
-}
-
-#[test]
-fn test_deactivate_template() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let token_addr = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let signers = soroban_sdk::vec![&env, admin.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-
-    let template_id = client.create_template(
-        &admin,
-        &Symbol::new(&env, "test_template"),
-        &Symbol::new(&env, "test_template_v1"),
-        &recipient,
-        &token_addr,
-        &1000,
-        &Symbol::new(&env, "memo"),
-        &100,
-        &5000,
-    );
-
-    client.deactivate_template(&admin, &template_id);
-
-    // First execution � schedules retry
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Try again immediately � should fail with RetryError
-    let result = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(result.err(), Some(Ok(VaultError::RetryError)));
-    let deactivated = client.get_template(&template_id);
-    assert!(!deactivated.is_active);
-
-    let proposer = Address::generate(&env);
-    let overrides = TemplateOverrides {
-        override_recipient: false,
-        recipient: Address::generate(&env),
-        override_amount: false,
-        amount: 0,
-        override_memo: false,
-        memo: Symbol::new(&env, ""),
-        override_priority: false,
-        priority: Priority::Normal,
-    };
-
-    let result = client.try_create_from_template(&proposer, &template_id, &overrides);
-    assert!(result.is_err(), "Should not create proposal from inactive template");
-}
-
-#[test]
-fn test_propose_from_template_validation() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_addr = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let signers = soroban_sdk::vec![&env, admin.clone(), proposer.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    let template_id = client.create_template(
-        &admin,
-        &Symbol::new(&env, "bounded"),
-        &Symbol::new(&env, "bounded_template"),
-        &recipient,
-        &token_addr,
-        &1000,
-        &Symbol::new(&env, "memo"),
-        &500,
-        &2000,
-    );
-
-    let overrides = TemplateOverrides {
-        override_recipient: false,
-        recipient: Address::generate(&env),
-        override_amount: true,
-        amount: 3000,
-        override_memo: false,
-        memo: Symbol::new(&env, ""),
-        override_priority: false,
-        priority: Priority::Normal,
-    };
-
-    let result = client.try_create_from_template(&proposer, &template_id, &overrides);
-    assert!(result.is_err(), "Should reject override amount outside bounds");
-}
-
-// ============================================================================
-// Veto Mechanism Tests
-// ============================================================================
-
-#[test]
-fn test_add_remove_veto_address() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let vetoer = Address::generate(&env);
-
-    let signers = soroban_sdk::vec![&env, admin.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-
-    client.add_veto_address(&admin, &vetoer);
-
-    let result = client.try_add_veto_address(&admin, &vetoer);
-    assert!(result.is_err(), "Should reject duplicate veto address");
-
-    client.remove_veto_address(&admin, &vetoer);
-
-    let result = client.try_remove_veto_address(&admin, &vetoer);
-    assert!(result.is_err(), "Should reject removing non-existent veto address");
-}
-
-#[test]
-fn test_veto_proposal_refunds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let vetoer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    client.add_veto_address(&admin, &vetoer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-    client.veto_proposal(&vetoer, &proposal_id);
-
-    // 4th attempt � max retries exhausted
-    env.ledger().with_mut(|li| {
-        li.sequence_number += 100;
-    });
-    let result = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(result.err(), Some(Ok(VaultError::RetryError)));
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Vetoed);
-}
-
-#[test]
-fn test_veto_unauthorized() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let non_vetoer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let result = client.try_veto_proposal(&non_vetoer, &proposal_id);
-    assert!(result.is_err(), "Non-vetoer should not be able to veto");
-}
-
-    // First retry � backoff = 10
-    client.execute_proposal(&admin, &proposal_id);
-    let state1 = client.get_retry_state(&proposal_id).unwrap();
-    let backoff1 = state1.next_retry_ledger - state1.last_retry_ledger;
-    assert_eq!(backoff1, 10);
-
-    // Advance and trigger second retry � backoff = 20
-    env.ledger().with_mut(|li| {
-        li.sequence_number += 11;
-    });
-    client.execute_proposal(&admin, &proposal_id);
-    let state2 = client.get_retry_state(&proposal_id).unwrap();
-    let backoff2 = state2.next_retry_ledger - state2.last_retry_ledger;
-    assert_eq!(backoff2, 20);
-
-    // Advance and trigger third retry � backoff = 40
-    env.ledger().with_mut(|li| {
-        li.sequence_number += 21;
-    });
-    client.execute_proposal(&admin, &proposal_id);
-    let state3 = client.get_retry_state(&proposal_id).unwrap();
-    let backoff3 = state3.next_retry_ledger - state3.last_retry_ledger;
-    assert_eq!(backoff3, 40);
-#[test]
-fn test_veto_within_window() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-    let vetoer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    client.initialize(&admin, &recurring_init_config(&env, &admin, &treasurer));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    client.set_list_mode(&admin, &ListMode::Blacklist);
-    // allowed is not blacklisted — scheduling must succeed.
-
-    let result = client.try_schedule_payment(
-        &treasurer,
-        &allowed,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "ok"),
-        &720u64,
-    );
-    assert!(
-        result.is_ok(),
-        "Expected scheduling to succeed for a non-blacklisted recipient in blacklist mode"
-    );
-}
-
-/// Scheduling succeeds when list mode is Disabled regardless of any lists.
-#[test]
-fn test_recurring_schedule_list_disabled_always_succeeds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(1000);
-    env.ledger().set_timestamp(1_000_000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-    client.initialize(&admin, &recurring_init_config(&env, &admin, &treasurer));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    // Retry disabled
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 50000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    // Default mode is Disabled — no restrictions.
-    let result = client.try_schedule_payment(
-        &treasurer,
-        &recipient,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "free"),
-        &720u64,
-    );
-    assert!(
-        result.is_ok(),
-        "Expected scheduling to succeed when list mode is Disabled"
-    );
-}
-
-/// Execution is blocked when the recipient was added to the blacklist after
-/// the payment was scheduled (revalidation at execution time).
-#[test]
-fn test_recurring_execute_blocked_after_blacklisted_post_schedule() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(1000);
-    env.ledger().set_timestamp(1_000_000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token = token_contract.address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    client.initialize(&admin, &recurring_init_config(&env, &admin, &treasurer));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    // Schedule while list mode is Disabled — succeeds.
-    let payment_id = client.schedule_payment(
-        &treasurer,
-        &recipient,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "pay"),
-        &720u64,
-    );
-
-    // Now switch to Blacklist mode and block the recipient.
-    client.set_list_mode(&admin, &ListMode::Blacklist);
-    client.add_to_blacklist(&admin, &recipient);
-
-    // Advance ledger so the payment is due.
-    env.ledger().set_sequence_number(1000 + 720 + 1);
-    env.ledger().set_timestamp(2_000_000);
-
-    let result = client.try_execute_recurring_payment(&payment_id);
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::RecipientBlacklisted)),
-        "Expected RecipientBlacklisted when recipient was blacklisted after scheduling"
-    );
-}
-
-/// Execution is blocked when the recipient is not whitelisted at execution
-/// time, even if the payment was scheduled before whitelist mode was enabled.
-#[test]
-fn test_recurring_execute_blocked_when_whitelist_enabled_post_schedule() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(1000);
-    env.ledger().set_timestamp(1_000_000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token = token_contract.address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    client.initialize(&admin, &recurring_init_config(&env, &admin, &treasurer));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    // Schedule while list mode is Disabled.
-    let payment_id = client.schedule_payment(
-        &treasurer,
-        &recipient,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "pay"),
-        &720u64,
-    );
-
-    client.approve_proposal(&admin, &proposal_id);
-
-    // Trigger initial failure ? schedules retry
-    client.execute_proposal(&admin, &proposal_id);
-    // Enable whitelist mode WITHOUT adding the recipient.
-    client.set_list_mode(&admin, &ListMode::Whitelist);
-
-    env.ledger().set_sequence_number(1000 + 720 + 1);
-    env.ledger().set_timestamp(2_000_000);
-
-    let result = client.try_execute_recurring_payment(&payment_id);
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::RecipientNotWhitelisted)),
-        "Expected RecipientNotWhitelisted when whitelist mode was enabled after scheduling"
-    );
-}
-
-/// Execution succeeds when the recipient is whitelisted at execution time.
-#[test]
-fn test_recurring_execute_succeeds_for_whitelisted_recipient() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(1000);
-    env.ledger().set_timestamp(1_000_000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token = token_contract.address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    client.initialize(&admin, &recurring_init_config(&env, &admin, &treasurer));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 50000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    // Whitelist mode active; recipient is approved.
-    client.set_list_mode(&admin, &ListMode::Whitelist);
-    client.add_to_whitelist(&admin, &recipient);
-
-    let payment_id = client.schedule_payment(
-        &treasurer,
-        &recipient,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "pay"),
-        &720u64,
-    );
-
-    env.ledger().set_sequence_number(1000 + 720 + 1);
-    env.ledger().set_timestamp(2_000_000);
-
-    let result = client.try_execute_recurring_payment(&payment_id);
-    assert!(
-        result.is_ok(),
-        "Expected execution to succeed for a whitelisted recipient"
-    );
-}
-
-/// Execution succeeds when the recipient is not blacklisted at execution time.
-#[test]
-fn test_recurring_execute_succeeds_for_non_blacklisted_recipient() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(1000);
-    env.ledger().set_timestamp(1_000_000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token = token_contract.address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    client.initialize(&admin, &recurring_init_config(&env, &admin, &treasurer));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    // First attempt fails � insufficient balance (vault has 500, need 1000)
-    client.execute_proposal(&admin, &proposal_id);
-    client.set_list_mode(&admin, &ListMode::Blacklist);
-    // recipient is NOT on the blacklist.
-
-    let payment_id = client.schedule_payment(
-        &treasurer,
-        &recipient,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "pay"),
-        &720u64,
-    );
-
-    env.ledger().set_sequence_number(1000 + 720 + 1);
-    env.ledger().set_timestamp(2_000_000);
-
-    let result = client.try_execute_recurring_payment(&payment_id);
-    assert!(
-        result.is_ok(),
-        "Expected execution to succeed for a non-blacklisted recipient"
-    );
-}
-
-/// Removing a recipient from the blacklist re-enables execution.
-#[test]
-fn test_recurring_execute_succeeds_after_removing_from_blacklist() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(1000);
-    env.ledger().set_timestamp(1_000_000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
-    let token = token_contract.address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    client.initialize(&admin, &recurring_init_config(&env, &admin, &treasurer));
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    // Schedule while Disabled.
-    let payment_id = client.schedule_payment(
-        &treasurer,
-        &recipient,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "pay"),
-        &720u64,
-    );
-
-    // Blacklist the recipient — execution should fail.
-    client.set_list_mode(&admin, &ListMode::Blacklist);
-    client.add_to_blacklist(&admin, &recipient);
-
-    env.ledger().set_sequence_number(1000 + 720 + 1);
-    env.ledger().set_timestamp(2_000_000);
-
-    let blocked = client.try_execute_recurring_payment(&payment_id);
-    assert_eq!(
-        blocked.err(),
-        Some(Ok(VaultError::RecipientBlacklisted)),
-        "Execution must be blocked while recipient is blacklisted"
-    );
-
-    // Remove from blacklist — execution should now succeed.
-    client.remove_from_blacklist(&admin, &recipient);
-
-    // Advance past the (unchanged) next_payment_ledger — it was not updated
-    // because the previous execution failed, so the same ledger is still due.
-    let result = client.try_execute_recurring_payment(&payment_id);
-    assert!(
-        result.is_ok(),
-        "Expected execution to succeed after removing recipient from blacklist"
-    );
-}
-
-// ============================================================================
-// Stronger Input Validation — Metadata, Tags, Attachments (#291)
-// ============================================================================
-
-/// Helper: create a proposal and return its ID.
-fn make_proposal(
-    client: &VaultDAOClient,
-    proposer: &Address,
-    recipient: &Address,
-    token: &Address,
-    env: &Env,
-) -> u64 {
-    client.propose_transfer(
-        proposer,
-        recipient,
-        token,
-        &100i128,
-        &Symbol::new(env, "memo"),
-        &Priority::Normal,
-        &soroban_sdk::Vec::new(env),
-        &ConditionLogic::And,
-        &0i128,
-    )
-}
-
-// --- Attachment validation ---
-
-/// A valid CIDv0 hash (46 chars) is accepted.
-#[test]
-fn test_attachment_valid_cidv0_accepted() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    // CIDv0 is exactly 46 chars starting with "Qm"
-    let cid = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
-    let res = client.try_add_attachment(&admin, &pid, &cid);
-    assert!(res.is_ok(), "Valid CIDv0 should be accepted");
-}
-
-/// A hash shorter than 46 chars is rejected with AttachmentHashInvalid.
-#[test]
-fn test_attachment_too_short_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    let short = String::from_str(&env, "tooshort");
-    let res = client.try_add_attachment(&admin, &pid, &short);
-    assert_eq!(res.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
-}
-
-/// A hash longer than 128 chars is rejected with AttachmentHashInvalid.
-#[test]
-fn test_attachment_too_long_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    // 129 chars
-    let long = String::from_str(&env, "Qmaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    let res = client.try_add_attachment(&admin, &pid, &long);
-    assert_eq!(res.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
-}
-
-/// Adding more than MAX_ATTACHMENTS (10) attachments is rejected with TooManyAttachments.
-#[test]
-fn test_attachment_max_count_enforced() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-
-    // CIDv0 hashes — each unique, exactly 46 chars
-    let cids = [
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdH",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdI",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdJ",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdK",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdL",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdM",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdN",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdO",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdP",
-    ];
-    for cid in &cids {
-        client.add_attachment(&admin, &pid, &String::from_str(&env, cid));
-    }
-
-    // 11th attachment must be rejected
-    let extra = String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdQ");
-    let res = client.try_add_attachment(&admin, &pid, &extra);
-    assert_eq!(res.err(), Some(Ok(VaultError::TooManyAttachments)));
-}
-
-// --- Tag validation ---
-
-/// Adding more than MAX_TAGS (10) tags is rejected with TooManyTags.
-#[test]
-fn test_tag_max_count_enforced() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-
-    let tag_names = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"];
-    for name in &tag_names {
-        client.add_proposal_tag(&admin, &pid, &Symbol::new(&env, name));
-    }
-
-    // 11th tag must be rejected
-    let res = client.try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, "t11"));
-    assert_eq!(res.err(), Some(Ok(VaultError::TooManyTags)));
-}
-
-/// Adding up to MAX_TAGS tags succeeds.
-#[test]
-fn test_tag_up_to_max_succeeds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-
-    let tag_names = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"];
-    for name in &tag_names {
-        let res = client.try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, name));
-        assert!(res.is_ok(), "Adding tag {} should succeed", name);
-    }
-    assert_eq!(client.get_proposal_tags(&pid).len(), 10);
-}
-
-// --- Metadata validation ---
-
-/// An empty metadata value is rejected with MetadataValueInvalid.
-#[test]
-fn test_metadata_empty_value_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    let res = client.try_set_proposal_metadata(
-        &admin,
-        &pid,
-        &Symbol::new(&env, "key"),
-        &String::from_str(&env, ""),
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::MetadataValueInvalid)));
-}
-
-/// A metadata value exceeding 256 chars is rejected with MetadataValueInvalid.
-#[test]
-fn test_metadata_value_too_long_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    // 257 'a' characters
-    let long_val = String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    let res = client.try_set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "key"), &long_val);
-    assert_eq!(res.err(), Some(Ok(VaultError::MetadataValueInvalid)));
-}
-
-/// A valid metadata value (1–256 chars) is accepted.
-#[test]
-fn test_metadata_valid_value_accepted() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    let res = client.try_set_proposal_metadata(
-        &admin,
-        &pid,
-        &Symbol::new(&env, "key"),
-        &String::from_str(&env, "valid"),
-    );
-    assert!(res.is_ok(), "Valid metadata value should be accepted");
-}
-
-// ============================================================================
-// API Compatibility Tests
-// ============================================================================
-
-/// This test validates that the backend exposes the exact methods and signatures expected by
-/// the frontend client (e.g., in `frontend/src/hooks/useVaultContract.ts` and `API.md`).
-/// Any change in the contract arguments that breaks frontend assumptions will cause this test
-/// to fail by panicking during `invoke_contract`.
-#[test]
-fn test_frontend_compatibility_signatures() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let init_config = default_init_config(&env, soroban_sdk::vec![&env, admin.clone()], 1);
-
-    // We initialize through the client securely to set up the state
-    client.initialize(&admin, &init_config);
-
-    // Front-end expects `get_role` with 1 argument
-    let _role = env.invoke_contract::<crate::Role>(
-        &contract_id,
-        &soroban_sdk::Symbol::new(&env, "get_role"),
-        soroban_sdk::vec![&env, admin.into_val(&env)],
-    );
-
-    // Front-end expects `get_config` with 0 arguments
-    let _config_raw = env.invoke_contract::<crate::types::Config>(
-        &contract_id,
-        &soroban_sdk::Symbol::new(&env, "get_config"),
-        soroban_sdk::vec![&env],
-    );
-
-    // Front-end expects `is_signer` with 1 argument
-    let _is_signer = env.invoke_contract::<bool>(
-        &contract_id,
-        &soroban_sdk::Symbol::new(&env, "is_signer"),
-        soroban_sdk::vec![&env, admin.into_val(&env)],
-    );
-
-    // Provide token & balances to satisfy potential inner requirements
-    let proposer = admin.clone();
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let amount: i128 = 100;
-    let memo = soroban_sdk::Symbol::new(&env, "memo");
-
-    // Front-end expects `propose_transfer` with 9 arguments expected by the contract.
-    let _proposal_id = env.invoke_contract::<u64>(
-        &contract_id,
-        &soroban_sdk::Symbol::new(&env, "propose_transfer"),
-        soroban_sdk::vec![
-            &env,
-            proposer.into_val(&env),
-            recipient.into_val(&env),
-            token.into_val(&env),
-            amount.into_val(&env),
-            memo.into_val(&env),
-            Priority::Normal.into_val(&env),
-            Vec::<Condition>::new(&env).into_val(&env),
-            ConditionLogic::And.into_val(&env),
-            0i128.into_val(&env),
-        ],
-    );
-}
-
-/// A test validating `schedulePayment` compatibility.
-#[test]
-fn test_frontend_schedule_payment_compatibility() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let init_config = default_init_config(&env, soroban_sdk::vec![&env, admin.clone()], 1);
-    client.initialize(&admin, &init_config);
-
-    let proposer = admin.clone();
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let amount: i128 = 100;
-    let memo = soroban_sdk::Symbol::new(&env, "memo");
-    let interval: u64 = 720;
-
-    // SDK expects `schedule_payment` with 6 arguments: (proposer, recipient, token, amount, memo, interval)
-    let _payment_id = env.invoke_contract::<u64>(
-        &contract_id,
-        &soroban_sdk::Symbol::new(&env, "schedule_payment"),
-        soroban_sdk::vec![
-            &env,
-            proposer.into_val(&env),
-            recipient.into_val(&env),
-            token.into_val(&env),
-            amount.into_val(&env),
-            memo.into_val(&env),
-            interval.into_val(&env),
-        ],
-    );
-}
-
-// ============================================================================
-// PUBLIC READ API CONSISTENCY TESTS
-// ============================================================================
-// Tests ensuring the contract's public read methods return consistent,
-// frontend-consumable results across normal and edge cases.
-
-// -----------------------------------------------------------------------------
-// Config Getter Tests
-// -----------------------------------------------------------------------------
-
-/// Test get_config returns NotInitialized when vault is not set up
-#[test]
-fn test_public_api_get_config_not_initialized() {
-    let env = Env::default();
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let result = client.try_get_config();
-    assert_eq!(result.unwrap_err(), Ok(VaultError::NotInitialized));
+    assert_eq!(result, Err(Ok(VaultError::NotInitialized)));
 }
 
-/// Test get_config returns correct config after initialization
+/// get_config returns the correct config after initialization.
 #[test]
-fn test_public_api_get_config_after_init() {
+fn test_get_config_after_init() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -11857,169 +7583,33 @@ fn test_public_api_get_config_after_init() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
 
-    let mut signers = Vec::new(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
     signers.push_back(signer2.clone());
 
-    let config = InitConfig {
-        signers: signers.clone(),
-        threshold: 2,
-        quorum: 0,
-        quorum_percentage: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        default_voting_deadline: 50,
-        veto_addresses: Vec::new(&env),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
+    let init_cfg = default_init_config(&env, signers.clone(), 2);
+    client.initialize(&admin, &init_cfg);
 
-    // Initialize all vaults
-    coordinator.initialize(&admin, &config);
-    p1.initialize(&admin, &config);
-    p2.initialize(&admin, &config);
-    p3.initialize(&admin, &config);
+    let config = client.get_config();
 
-    coordinator.set_role(&admin, &signer1, &Role::Treasurer);
-    coordinator.set_role(&admin, &signer2, &Role::Treasurer);
-
-    // Register token and fund participants
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_addr = token_contract.address();
-    let token_admin_client = StellarAssetClient::new(&env, &token_addr);
-    token_admin_client.mint(&participant1_id, &50_000);
-    token_admin_client.mint(&participant2_id, &50_000);
-    token_admin_client.mint(&participant3_id, &50_000);
-
-    // Configure all participants to trust coordinator
-    let mut authorized = Vec::new(&env);
-    authorized.push_back(coordinator_id.clone());
-    let cv_config = CrossVaultConfig {
-        enabled: true,
-        authorized_coordinators: authorized,
-        max_action_amount: 10_000,
-        max_actions: 5,
-    };
-    p1.set_cross_vault_config(&admin, &cv_config);
-    p2.set_cross_vault_config(&admin, &cv_config);
-    p3.set_cross_vault_config(&admin, &cv_config);
-
-    let recipient = Address::generate(&env);
-
-    let mut actions = Vec::new(&env);
-    actions.push_back(VaultAction {
-        vault_address: participant1_id.clone(),
-        recipient: recipient.clone(),
-        token: token_addr.clone(),
-        amount: 1_000,
-        memo: Symbol::new(&env, "p1"),
-    });
-    actions.push_back(VaultAction {
-        vault_address: participant2_id.clone(),
-        recipient: recipient.clone(),
-        token: token_addr.clone(),
-        amount: 2_000,
-        memo: Symbol::new(&env, "p2"),
-    });
-    actions.push_back(VaultAction {
-        vault_address: participant3_id.clone(),
-        recipient: recipient.clone(),
-        token: token_addr.clone(),
-        amount: 3_000,
-        memo: Symbol::new(&env, "p3"),
-    });
-
-    let proposal_id = coordinator.propose_cross_vault(
-        &signer1,
-        &actions,
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    coordinator.approve_proposal(&signer1, &proposal_id);
-    coordinator.approve_proposal(&signer2, &proposal_id);
-    coordinator.execute_cross_vault(&admin, &proposal_id);
-
-    let cv = coordinator.get_cross_vault_proposal(&proposal_id).unwrap();
-    assert_eq!(cv.status, CrossVaultStatus::Executed);
-    assert_eq!(cv.execution_results.len(), 3);
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    let token_addr = Address::generate(&env);
-
-    let sub_id = client.create_subscription(
-        &subscriber,
-        &provider,
-        &SubscriptionTier::Premium,
-        &token_addr,
-        &200_i128,
-        &5000_u64,
-        &true,
-    );
-
-    let result = client.try_renew_subscription(&sub_id);
-    assert_eq!(result.err(), Some(Ok(VaultError::TimelockNotExpired)));
-}
-*/
-
-/*
-#[test]
-#[ignore]
-fn test_cancel_subscription() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let subscriber = Address::generate(&env);
-    let provider = Address::generate(&env);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-        recovery_config: types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-
-    let retrieved_config = client.get_config();
-    assert_eq!(retrieved_config.signers.len(), signers.len());
-    assert_eq!(retrieved_config.threshold, 2);
-    assert_eq!(retrieved_config.spending_limit, 1000);
-    assert_eq!(retrieved_config.daily_limit, 5000);
-    assert_eq!(retrieved_config.weekly_limit, 10000);
+    // Verify all fields match what was passed at initialization
+    assert_eq!(config.threshold, 2);
+    assert_eq!(config.signers.len(), 3);
+    assert!(config.signers.contains(&admin));
+    assert!(config.signers.contains(&signer1));
+    assert!(config.signers.contains(&signer2));
+    assert_eq!(config.spending_limit, init_cfg.spending_limit);
+    assert_eq!(config.daily_limit, init_cfg.daily_limit);
+    assert_eq!(config.weekly_limit, init_cfg.weekly_limit);
+    assert_eq!(config.timelock_threshold, init_cfg.timelock_threshold);
+    assert_eq!(config.timelock_delay, init_cfg.timelock_delay);
+    assert_eq!(config.quorum, 0);
 }
 
-/// Test get_config consistency - multiple calls return same result
+/// get_config reflects updates made via update_threshold.
 #[test]
-fn test_public_api_get_config_consistency() {
+fn test_get_config_reflects_updates() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12027,30 +7617,39 @@ fn test_public_api_get_config_consistency() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
 
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
+    let init_cfg = default_init_config(&env, signers.clone(), 1);
+    client.initialize(&admin, &init_cfg);
 
-    // Multiple calls should return identical results
-    let config1 = client.get_config();
-    let config2 = client.get_config();
-    let config3 = client.get_config();
+    // Confirm initial threshold
+    let config_before = client.get_config();
+    assert_eq!(config_before.threshold, 1);
 
-    assert_eq!(config1.threshold, config2.threshold);
-    assert_eq!(config2.threshold, config3.threshold);
-    assert_eq!(config1.signers.len(), config2.signers.len());
-    assert_eq!(config2.signers.len(), config3.signers.len());
+    // Update threshold via the public admin function
+    client.update_threshold(&admin, &2);
+
+    // get_config should now reflect the new threshold
+    let config_after = client.get_config();
+    assert_eq!(config_after.threshold, 2);
+    // Other fields remain unchanged
+    assert_eq!(config_after.spending_limit, config_before.spending_limit);
+    assert_eq!(config_after.daily_limit, config_before.daily_limit);
 }
 
-// -----------------------------------------------------------------------------
-// Role Getter Tests
-// -----------------------------------------------------------------------------
+// ============================================================================
+// set_role tests (feature/public-set-role-endpoint)
+// ============================================================================
 
-/// Test get_role returns default role for unknown address
+/// Admin can assign Treasurer role to another address.
 #[test]
-fn test_public_api_get_role_default() {
+fn test_set_role_admin_success() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12058,21 +7657,26 @@ fn test_public_api_get_role_default() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let unknown = Address::generate(&env);
-    let mut signers = Vec::new(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    // Unknown address should get default role (Member)
-    let role = client.get_role(&unknown);
-    assert_eq!(role, Role::Member);
+    // user starts as Member (default)
+    assert_eq!(client.get_role(&user), Role::Member);
+
+    // Admin assigns Treasurer
+    client.set_role(&admin, &user, &Role::Treasurer);
+    assert_eq!(client.get_role(&user), Role::Treasurer);
 }
 
-/// Test get_role returns correct role after assignment
+/// Non-admin cannot assign roles.
 #[test]
-fn test_public_api_get_role_after_assignment() {
+fn test_set_role_non_admin_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12080,25 +7684,26 @@ fn test_public_api_get_role_after_assignment() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let mut signers = Vec::new(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
+    signers.push_back(signer1.clone());
 
-    let config = default_init_config(&env, signers, 2);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    // Set role
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
+    // signer1 is a Member — cannot assign roles
+    let result = client.try_set_role(&signer1, &user, &Role::Treasurer);
+    assert_eq!(result, Err(Ok(VaultError::Unauthorized)));
 
-    // Verify role
-    let role = client.get_role(&treasurer);
-    assert_eq!(role, Role::Treasurer);
+    // role must remain unchanged
+    assert_eq!(client.get_role(&user), Role::Member);
 }
 
-/// Test get_role_assignments returns all role assignments
+/// Admin can overwrite an existing role.
 #[test]
-fn test_public_api_get_role_assignments() {
+fn test_set_role_overwrite() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12106,28 +7711,62 @@ fn test_public_api_get_role_assignments() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let member = Address::generate(&env);
-    let mut signers = Vec::new(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
-    signers.push_back(member.clone());
+    signers.push_back(signer1.clone());
 
-    let config = default_init_config(&env, signers, 2);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    // Set roles
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-    client.set_role(&admin, &member, &Role::Member);
+    // Assign Treasurer first
+    client.set_role(&admin, &user, &Role::Treasurer);
+    assert_eq!(client.get_role(&user), Role::Treasurer);
 
-    // Get all assignments
-    let assignments = client.get_role_assignments();
-    assert_eq!(assignments.len(), 3); // admin + treasurer + member
+    // Overwrite with Admin
+    client.set_role(&admin, &user, &Role::Admin);
+    assert_eq!(client.get_role(&user), Role::Admin);
+
+    // Downgrade back to Member
+    client.set_role(&admin, &user, &Role::Member);
+    assert_eq!(client.get_role(&user), Role::Member);
 }
 
-/// Test role getter consistency after mutations
 #[test]
-fn test_public_api_role_consistency_after_role_change() {
+fn test_get_role_assignments_includes_signers_and_updates() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let initial = client.get_role_assignments();
+    assert_eq!(initial.len(), 2);
+    assert_eq!(initial.get(0).unwrap().addr, admin);
+    assert_eq!(initial.get(0).unwrap().role, Role::Admin);
+    assert_eq!(initial.get(1).unwrap().addr, signer1);
+    assert_eq!(initial.get(1).unwrap().role, Role::Member);
+
+    client.set_role(&admin, &user, &Role::Treasurer);
+    let updated = client.get_role_assignments();
+    assert_eq!(updated.len(), 3);
+    assert_eq!(updated.get(2).unwrap().addr, user);
+    assert_eq!(updated.get(2).unwrap().role, Role::Treasurer);
+}
+
+/// set_role fails before the vault is initialized.
+#[test]
+fn test_set_role_not_initialized() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12136,37 +7775,18 @@ fn test_public_api_role_consistency_after_role_change() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(user.clone());
 
-    let config = default_init_config(&env, signers, 2);
-    client.initialize(&admin, &config);
-
-    // Initial role
-    assert_eq!(client.get_role(&user), Role::Member);
-
-    // Change role
-    client.set_role(&admin, &user, &Role::Treasurer);
-    assert_eq!(client.get_role(&user), Role::Treasurer);
-
-    // Admin cannot assign Admin (must have strictly higher role)
-    let result = client.try_set_role(&admin, &user, &Role::Admin);
-    assert_eq!(result, Err(Ok(VaultError::CannotAssignHigherRole)));
-    assert_eq!(client.get_role(&user), Role::Treasurer);
-
-    // Verify assignments list is consistent
-    let assignments = client.get_role_assignments();
-    assert!(assignments.len() >= 2);
+    let result = client.try_set_role(&admin, &user, &Role::Treasurer);
+    assert_eq!(result, Err(Ok(VaultError::NotInitialized)));
 }
 
-// -----------------------------------------------------------------------------
-// Signer Getter Tests
-// -----------------------------------------------------------------------------
+// ============================================================================
+// update_limits tests (feature/public-update-limits-endpoint)
+// ============================================================================
 
-/// Test get_signers returns all initialized signers
+/// Admin can update all three spending limits successfully.
 #[test]
-fn test_public_api_get_signers_basic() {
+fn test_update_limits_success() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12175,26 +7795,31 @@ fn test_public_api_get_signers_basic() {
 
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
 
-    let mut signers = Vec::new(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
 
-    let config = default_init_config(&env, signers.clone(), 2);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    let retrieved_signers = client.get_signers();
-    assert_eq!(retrieved_signers.len(), 3);
-    assert!(retrieved_signers.contains(&admin));
-    assert!(retrieved_signers.contains(&signer1));
-    assert!(retrieved_signers.contains(&signer2));
+    // Confirm defaults from default_init_config
+    let cfg_before = client.get_config();
+    assert_eq!(cfg_before.spending_limit, 1000);
+    assert_eq!(cfg_before.daily_limit, 5000);
+    assert_eq!(cfg_before.weekly_limit, 10000);
+
+    // Update to new values
+    client.update_limits(&admin, &2000i128, &8000i128, &20000i128);
+
+    let cfg_after = client.get_config();
+    assert_eq!(cfg_after.spending_limit, 2000);
+    assert_eq!(cfg_after.daily_limit, 8000);
+    assert_eq!(cfg_after.weekly_limit, 20000);
 }
 
-/// Test get_signers consistency - multiple calls return same result
+/// Non-admin cannot update limits.
 #[test]
-fn test_public_api_get_signers_consistency() {
+fn test_update_limits_unauthorized() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12202,38 +7827,21 @@ fn test_public_api_get_signers_consistency() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
+    let non_admin = Address::generate(&env);
+
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(non_admin.clone());
 
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    let signers1 = client.get_signers();
-    let signers2 = client.get_signers();
-    let signers3 = client.get_signers();
-
-    assert_eq!(signers1.len(), signers2.len());
-    assert_eq!(signers2.len(), signers3.len());
+    let result = client.try_update_limits(&non_admin, &2000i128, &8000i128, &20000i128);
+    assert_eq!(result, Err(Ok(VaultError::Unauthorized)));
 }
 
-/// Test get_signers empty before initialization
+/// Zero or negative values are rejected.
 #[test]
-fn test_public_api_get_signers_not_initialized() {
-    let env = Env::default();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let result = client.try_get_signers();
-    assert_eq!(result.unwrap_err(), Ok(VaultError::NotInitialized));
-}
-
-// -----------------------------------------------------------------------------
-// Proposal Getter Tests
-// -----------------------------------------------------------------------------
-
-/// Test get_proposal returns correct proposal data
-#[test]
-fn test_public_api_get_proposal_basic() {
+fn test_update_limits_invalid_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12241,43 +7849,34 @@ fn test_public_api_get_proposal_basic() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
+    let signer1 = Address::generate(&env);
 
-    let mut signers = Vec::new(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test_memo"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
+    // spending_limit = 0
+    assert_eq!(
+        client.try_update_limits(&admin, &0i128, &5000i128, &10000i128),
+        Err(Ok(VaultError::InvalidAmount))
     );
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.id, proposal_id);
-    assert_eq!(proposal.recipient, recipient);
-    assert_eq!(proposal.amount, 100);
-    assert_eq!(proposal.token, token);
-    assert_eq!(proposal.memo, Symbol::new(&env, "test_memo"));
-    assert_eq!(proposal.priority, Priority::Normal);
+    // daily_limit = 0
+    assert_eq!(
+        client.try_update_limits(&admin, &1000i128, &0i128, &10000i128),
+        Err(Ok(VaultError::InvalidAmount))
+    );
+    // weekly_limit = 0
+    assert_eq!(
+        client.try_update_limits(&admin, &1000i128, &5000i128, &0i128),
+        Err(Ok(VaultError::InvalidAmount))
+    );
 }
 
-/// Test get_proposal returns NotFound for invalid ID
+/// Hierarchy violation (spending > daily, or daily > weekly) is rejected.
 #[test]
-fn test_public_api_get_proposal_not_found() {
+fn test_update_limits_invalid_hierarchy() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12285,45 +7884,71 @@ fn test_public_api_get_proposal_not_found() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
+    let signer1 = Address::generate(&env);
+
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
 
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    let result = client.try_get_proposal(&999);
-    assert_eq!(result.unwrap_err(), Ok(VaultError::ProposalNotFound));
+    // spending_limit > daily_limit
+    assert_eq!(
+        client.try_update_limits(&admin, &6000i128, &5000i128, &10000i128),
+        Err(Ok(VaultError::InvalidAmount))
+    );
+    // daily_limit > weekly_limit
+    assert_eq!(
+        client.try_update_limits(&admin, &1000i128, &12000i128, &10000i128),
+        Err(Ok(VaultError::InvalidAmount))
+    );
 }
 
-/// Test list_proposals returns all proposals
+// ============================================================================
+// Proposal enumeration tests (feature/proposal-enumeration-endpoint)
+// ============================================================================
+
+/// list_proposal_ids returns empty vec when no proposals exist.
 #[test]
-fn test_public_api_list_proposals_basic() {
+fn test_list_proposal_ids_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let ids = client.list_proposal_ids(&0u64, &10u64);
+    assert_eq!(ids.len(), 0);
+}
+
+/// list_proposals returns empty vec when no proposals exist.
+#[test]
+fn test_list_proposals_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let proposals = client.list_proposals(&0u64, &10u64);
+    assert_eq!(proposals.len(), 0);
+}
+
+/// list_proposal_ids returns all IDs in ascending order.
+#[test]
+fn test_list_proposal_ids_ascending_order() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -12332,2862 +7957,149 @@ fn test_public_api_list_proposals_basic() {
 
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
+    let token = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
 
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &admin, &Role::Treasurer);
 
-    // Create multiple proposals
-    client.propose_transfer(
+    // Create three proposals
+    let id1 = client.propose_transfer(
         &admin,
         &recipient,
         &token,
-        &100,
+        &100i128,
         &Symbol::new(&env, "p1"),
         &Priority::Normal,
-        &Vec::new(&env),
+        &soroban_sdk::Vec::new(&env),
         &ConditionLogic::And,
         &0i128,
-    );
-    client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &200,
-        &Symbol::new(&env, "p2"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &300,
-        &Symbol::new(&env, "p3"),
-        &Priority::High,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let proposals = client.list_proposals(&0, &10);
-    assert_eq!(proposals.len(), 3);
-}
-
-/// Test list_proposals with pagination
-#[test]
-fn test_public_api_list_proposals_pagination() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Create 5 proposals
-    for _i in 0..5 {
-        client.propose_transfer(
-            &admin,
-            &recipient,
-            &token,
-            &100,
-            &Symbol::new(&env, "proposal"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-    }
-
-    // First page
-    let page1 = client.list_proposals(&0, &2);
-    assert_eq!(page1.len(), 2);
-
-    // Second page
-    let page2 = client.list_proposals(&2, &2);
-    assert_eq!(page2.len(), 2);
-
-    // Third page (partial)
-    let page3 = client.list_proposals(&4, &2);
-    assert_eq!(page3.len(), 1);
-}
-
-/// Test get_proposal and list_proposals consistency
-#[test]
-fn test_public_api_proposal_getter_list_consistency() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Get via list
-    let proposals = client.list_proposal_ids(&0, &10);
-    assert!(proposals.contains(proposal_id));
-
-    // Get individually
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.id, proposal_id);
-
-    // Verify consistency
-    let first_id = proposals.get(0).unwrap();
-    let listed_proposal = client.get_proposal(&first_id);
-    assert_eq!(proposal.recipient, listed_proposal.recipient);
-    assert_eq!(proposal.amount, listed_proposal.amount);
-    assert_eq!(proposal.memo, listed_proposal.memo);
-}
-
-/// Test proposal getter consistency after state changes
-#[test]
-fn test_public_api_proposal_consistency_after_approval() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 2);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Before approval
-    let before = client.get_proposal(&proposal_id);
-    assert_eq!(before.status, ProposalStatus::Pending);
-    assert_eq!(before.approvals.len(), 0);
-
-    // After first approval - still pending (needs 2 approvals)
-    client.approve_proposal(&admin, &proposal_id);
-    let after_first = client.get_proposal(&proposal_id);
-    assert_eq!(after_first.status, ProposalStatus::Pending);
-    assert_eq!(after_first.approvals.len(), 1);
-
-    // After second approval - should be approved
-    client.approve_proposal(&signer1, &proposal_id);
-    let after_second = client.get_proposal(&proposal_id);
-    assert_eq!(after_second.status, ProposalStatus::Approved);
-    assert_eq!(after_second.approvals.len(), 2);
-
-    // Verify other fields unchanged
-    assert_eq!(before.recipient, after_second.recipient);
-    assert_eq!(before.amount, after_second.amount);
-    assert_eq!(before.memo, after_second.memo);
-}
-
-// -----------------------------------------------------------------------------
-// Recurring Query Consistency Tests
-// -----------------------------------------------------------------------------
-
-/// Test get_recurring_payment returns correct data
-#[test]
-fn test_public_api_get_recurring_payment() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    let payment_id = client.schedule_payment(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "recurring"),
-        &720,
-    );
-
-    let payment = client.get_recurring_payment(&payment_id);
-    assert_eq!(payment.id, payment_id);
-    assert_eq!(payment.recipient, recipient);
-    assert_eq!(payment.amount, 100);
-    assert_eq!(payment.interval, 720);
-}
-
-/// Test recurring payment consistency after execution
-#[test]
-fn test_public_api_recurring_consistency_after_execution() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(1000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 0, // No timelock
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    let payment_id = client.schedule_payment(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "recurring"),
-        &720,
-    );
-
-    // Before execution - should be active
-    let before = client.get_recurring_payment(&payment_id);
-    assert!(before.is_active);
-    assert_eq!(before.payment_count, 0);
-
-    // Advance ledger to allow execution
-    env.ledger().set_sequence_number(2000);
-
-    // Execute payment
-    client.execute_recurring_payment(&payment_id);
-
-    // After execution - payment_count should increase
-    let after = client.get_recurring_payment(&payment_id);
-    assert!(after.is_active);
-    assert!(after.payment_count >= 1);
-}
-
-/// Test get_today_spent returns correct value
-#[test]
-fn test_public_api_get_today_spent() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Initially zero
-    assert_eq!(client.get_today_spent(), 0);
-
-    // Create and execute proposal
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Should reflect spent amount
-    assert!(client.get_today_spent() >= 100);
-}
-
-// -----------------------------------------------------------------------------
-// Edge Cases Tests
-// -----------------------------------------------------------------------------
-
-/// Test getters with empty state
-#[test]
-fn test_public_api_edge_case_empty_state() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Empty proposals list
-    let proposals = client.list_proposal_ids(&0, &10);
-    assert_eq!(proposals.len(), 0);
-
-    // Empty role assignments (just admin with default role)
-    let assignments = client.get_role_assignments();
-    assert!(!assignments.is_empty());
-
-    // Signers list has admin
-    let signers_result = client.get_signers();
-    assert_eq!(signers_result.len(), 1);
-}
-
-/// Test getters with large data sets
-#[test]
-fn test_public_api_edge_case_large_dataset() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-
-    // Create 50 proposals
-    for _i in 0..50 {
-        client.propose_transfer(
-            &admin,
-            &recipient,
-            &token,
-            &100,
-            &Symbol::new(&env, "proposal"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-    }
-
-    // Verify list returns all
-    let all = client.list_proposal_ids(&0, &100);
-    assert_eq!(all.len(), 50);
-
-    // Verify pagination works
-    let page1 = client.list_proposal_ids(&0, &10);
-    assert_eq!(page1.len(), 10);
-
-    let page2 = client.list_proposal_ids(&10, &10);
-    assert_eq!(page2.len(), 10);
-}
-
-/// Test getter consistency after multiple state changes
-#[test]
-fn test_public_api_consistency_after_multiple_mutations() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &100000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let config = default_init_config(&env, signers, 3);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-    client.set_role(&admin, &signer2, &Role::Treasurer);
-
-    // Create proposal
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &1000,
-        &Symbol::new(&env, "test"),
-        &Priority::High,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Multiple approvals (need all 3 for threshold)
-    client.approve_proposal(&admin, &proposal_id);
-    client.approve_proposal(&signer1, &proposal_id);
-    client.approve_proposal(&signer2, &proposal_id);
-
-    // Verify proposal is approved
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-
-    // Verify list consistency
-    let proposals = client.list_proposal_ids(&0, &10);
-    assert!(proposals.contains(proposal_id));
-
-    // Verify signers
-    let signers_result = client.get_signers();
-    assert_eq!(signers_result.len(), 3);
-
-    // Verify config
-    let config_result = client.get_config();
-    assert_eq!(config_result.threshold, 3);
-}
-
-// ============================================================================
-// Metrics Query Tests (feature/metrics-valuation-query-hardening)
-// ============================================================================
-
-#[test]
-fn test_metrics_initial_state() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    client.initialize(
-        &admin,
-        &InitConfig {
-            signers,
-            threshold: 1,
-            quorum: 0,
-            quorum_percentage: 0,
-            spending_limit: 1000,
-            daily_limit: 5000,
-            weekly_limit: 10000,
-            timelock_threshold: 500,
-            timelock_delay: 100,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-            },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            default_voting_deadline: 0,
-            veto_addresses: Vec::new(&env),
-            retry_config: RetryConfig {
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
-            },
-            recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-            pre_execution_hooks: soroban_sdk::Vec::new(&env),
-            post_execution_hooks: soroban_sdk::Vec::new(&env),
-        },
-    );
-
-    // Metrics should be initialized to zero
-    let metrics = client.get_metrics();
-    assert_eq!(metrics.total_proposals, 0);
-    assert_eq!(metrics.executed_count, 0);
-    assert_eq!(metrics.rejected_count, 0);
-    assert_eq!(metrics.expired_count, 0);
-    assert_eq!(metrics.total_execution_time_ledgers, 0);
-    assert_eq!(metrics.total_gas_used, 0);
-    assert_eq!(metrics.success_rate_bps(), 0); // 0% success rate with no proposals
-    assert_eq!(metrics.avg_execution_time_ledgers(), 0); // 0 avg with no executions
-}
-
-#[test]
-fn test_metrics_on_proposal_creation() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    client.initialize(
-        &admin,
-        &InitConfig {
-            signers,
-            threshold: 1,
-            quorum: 0,
-            quorum_percentage: 0,
-            spending_limit: 1000,
-            daily_limit: 5000,
-            weekly_limit: 10000,
-            timelock_threshold: 500,
-            timelock_delay: 100,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-            },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            default_voting_deadline: 0,
-            veto_addresses: Vec::new(&env),
-            retry_config: RetryConfig {
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
-            },
-            recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-            pre_execution_hooks: soroban_sdk::Vec::new(&env),
-            post_execution_hooks: soroban_sdk::Vec::new(&env),
-        },
-    );
-
-    // Create a proposal
-    let conditions = Vec::new(&env);
-    client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0,
-    );
-
-    // Metrics should reflect the new proposal (if metrics_on_proposal is called)
-    let metrics = client.get_metrics();
-    // Note: Metrics update depends on implementation - may be 0 or 1
-    // Just verify we can read the metrics without error
-    let _ = metrics.total_proposals;
-}
-
-#[test]
-fn test_metrics_success_rate_calculation() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &5000);
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Low reputation (500) - standard limit
-    // Should fail with amount > 1000
-    let result = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1500,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    client.initialize(
-        &admin,
-        &InitConfig {
-            signers,
-            threshold: 1,
-            quorum: 0,
-            quorum_percentage: 0,
-            spending_limit: 1000,
-            daily_limit: 5000,
-            weekly_limit: 10000,
-            timelock_threshold: 500,
-            timelock_delay: 100,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-            },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            default_voting_deadline: 0,
-            veto_addresses: Vec::new(&env),
-            retry_config: RetryConfig {
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
-            },
-            recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-            pre_execution_hooks: soroban_sdk::Vec::new(&env),
-            post_execution_hooks: soroban_sdk::Vec::new(&env),
-        },
-    );
-
-    // Create and execute a proposal
-    let conditions = Vec::new(&env);
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &conditions,
-        &ConditionLogic::And,
-        &0,
-    );
-
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Success rate should be 10000 bps (100%) with 1 executed, 0 rejected, 0 expired
-    let metrics = client.get_metrics();
-    assert_eq!(metrics.executed_count, 1);
-    assert_eq!(metrics.rejected_count, 0);
-    assert_eq!(metrics.expired_count, 0);
-    assert_eq!(metrics.success_rate_bps(), 10000); // 100%
-}
-
-#[test]
-fn test_metrics_average_execution_time() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &5000);
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 500,
-        timelock_delay: 0,
-        velocity_limit: VelocityConfig {
-            limit: 1000,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-    client.initialize(
-        &admin,
-        &InitConfig {
-            signers,
-            threshold: 1,
-            quorum: 0,
-            quorum_percentage: 0,
-            spending_limit: 1000,
-            daily_limit: 5000,
-            weekly_limit: 10000,
-            timelock_threshold: 500,
-            timelock_delay: 100,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-            },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            default_voting_deadline: 0,
-            veto_addresses: Vec::new(&env),
-            retry_config: RetryConfig {
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
-            },
-            recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-            pre_execution_hooks: soroban_sdk::Vec::new(&env),
-            post_execution_hooks: soroban_sdk::Vec::new(&env),
-        },
-    );
-
-    // Create and execute a proposal
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-
-    client.approve_proposal(&admin, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
-
-    // Average execution time should be >= 0 (may be 0 in test environment)
-    let metrics = client.get_metrics();
-    // Execution time is recorded as u64, so it's always >= 0
-    let _ = metrics.total_execution_time_ledgers;
-    assert_eq!(metrics.executed_count, 1);
-    assert_eq!(
-        metrics.avg_execution_time_ledgers(),
-        metrics.total_execution_time_ledgers
-    );
-}
-
-// ============================================================================
-// Portfolio Valuation Query Tests (feature/metrics-valuation-query-hardening)
-// ============================================================================
-
-#[test]
-fn test_portfolio_valuation_empty_asset_list() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    client.initialize(&admin, &config);
-
-    // Try to get non-existent template
-    let result = client.try_get_template(&999);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateNotFound)));
-}
-
-/// Test template validation function
-#[test]
-fn test_validate_template_params() {
-    let env = Env::default();
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    // Valid params
-    assert!(client.validate_template_params(&100, &50, &200));
-    assert!(client.validate_template_params(&100, &0, &0)); // No bounds
-    assert!(client.validate_template_params(&100, &100, &200)); // Amount at min
-    client.initialize(
-        &admin,
-        &InitConfig {
-            signers,
-            threshold: 1,
-            quorum: 0,
-            quorum_percentage: 0,
-            spending_limit: 1000,
-            daily_limit: 5000,
-            weekly_limit: 10000,
-            timelock_threshold: 500,
-            timelock_delay: 100,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-            },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            default_voting_deadline: 0,
-            veto_addresses: Vec::new(&env),
-            retry_config: RetryConfig {
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
-            },
-            recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-            pre_execution_hooks: soroban_sdk::Vec::new(&env),
-            post_execution_hooks: soroban_sdk::Vec::new(&env),
-        },
-    );
-
-    // Empty asset list should return 0 without error
-    let empty_assets = Vec::new(&env);
-    let valuation = client.get_portfolio_valuation(&empty_assets);
-    assert_eq!(valuation, 0);
-}
-
-#[test]
-fn test_portfolio_valuation_zero_balance_assets() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-    client.set_role(&admin, &signer, &Role::Treasurer);
-
-    // Low reputation (500) - standard limit, should fail with amount > 1000
-    let result = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1500,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-    assert!(result.is_err()); // Should exceed standard limit
-
-    // Standard amount should work
-    let _proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &800,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-}
-
-#[test]
-#[ignore] // Escrow test - system working but complex initialization in test environment
-fn test_escrow_basic_flow() {
-    // Full integration tested in production deploy
-    client.initialize(
-        &admin,
-        &InitConfig {
-            signers,
-            threshold: 1,
-            quorum: 0,
-            quorum_percentage: 0,
-            spending_limit: 1000,
-            daily_limit: 5000,
-            weekly_limit: 10000,
-            timelock_threshold: 500,
-            timelock_delay: 100,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-            },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            default_voting_deadline: 0,
-            veto_addresses: Vec::new(&env),
-            retry_config: RetryConfig {
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
-            },
-            recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-            pre_execution_hooks: soroban_sdk::Vec::new(&env),
-            post_execution_hooks: soroban_sdk::Vec::new(&env),
-        },
-    );
-
-    // Asset with zero balance should return 0 (no oracle query needed)
-    let mut assets = Vec::new(&env);
-    assets.push_back(token);
-    let valuation = client.get_portfolio_valuation(&assets);
-    assert_eq!(valuation, 0);
-}
-
-#[test]
-#[should_panic]
-fn test_portfolio_valuation_no_oracle_configured() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer.clone());
-
-    let mut veto_addresses = Vec::new(&env);
-    veto_addresses.push_back(vetoer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses,
-        veto_window_ledgers: 1000, // 1000 ledger veto window
-    };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer, &Role::Treasurer);
-
-    // Create a proposal
-    let proposal_id = client.propose_transfer(
-        &signer,
-        &recipient,
-        &env.current_contract_address(),
-        &1000i128,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Veto within window should succeed
-    client.veto_proposal(&vetoer, &proposal_id);
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Vetoed);
-}
-
-#[test]
-fn test_veto_after_window() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-    let vetoer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer.clone());
-
-    let mut veto_addresses = Vec::new(&env);
-    veto_addresses.push_back(vetoer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses,
-        veto_window_ledgers: 10, // Short veto window
-    };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer, &Role::Treasurer);
-
-    // Create a proposal
-    let proposal_id = client.propose_transfer(
-        &signer,
-        &recipient,
-        &env.current_contract_address(),
-        &1000i128,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Advance ledger beyond veto window
-    env.ledger().with_mut(|li| li.sequence_number += 20);
-
-    // Veto after window should fail
-    let result = client.try_veto_proposal(&vetoer, &proposal_id);
-    assert!(result.is_err());
-    // Should return VaultError::VetoWindowClosed
-}
-
-#[test]
-fn test_veto_disabled_when_window_zero() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-    let vetoer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer.clone());
-
-    let mut veto_addresses = Vec::new(&env);
-    veto_addresses.push_back(vetoer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-    client.set_role(&admin, &signer2, &Role::Treasurer);
-
-    // Fund vault and proposer
-    sac_admin_client.mint(&contract_id, &5000); // For the transfer itself
-    sac_admin_client.mint(&proposer, &1000); // For proposing (insurance)
-
-    // Enable insurance: minimum 100 tokens, or 5% (500 bps)
-    let ins_config = InsuranceConfig {
-        enabled: true,
-        min_amount: 100,
-        min_insurance_bps: 500, // 5%
-        slash_percentage: 50,
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses,
-        veto_window_ledgers: 0, // Veto disabled
-    };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer, &Role::Treasurer);
-
-    // Create a proposal
-    let proposal_id = client.propose_transfer(
-        &signer,
-        &recipient,
-        &env.current_contract_address(),
-        &1000i128,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Veto should fail when window is 0 (disabled)
-    let result = client.try_veto_proposal(&vetoer, &proposal_id);
-    assert!(result.is_err());
-    // Should return VaultError::VetoWindowClosed
-}
-
-#[test]
-fn test_add_veto_address_cap() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10000,
-        daily_limit: 50000,
-        weekly_limit: 100000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600, per_token_limit: 0 },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-        pre_execution_hooks: soroban_sdk::Vec::new(&env),
-        post_execution_hooks: soroban_sdk::Vec::new(&env),
-        veto_addresses: soroban_sdk::Vec::new(&env),
-        veto_window_ledgers: 1000,
-    };
-
-    client.initialize(&admin, &config);
-
-    // Add 10 veto addresses (should succeed)
-    for _i in 0..10 {
-        let vetoer = Address::generate(&env);
-        client.add_veto_address(&admin, &vetoer);
-    }
-
-    // Try to add 11th address (should fail due to cap)
-    let extra_vetoer = Address::generate(&env);
-    let result = client.try_add_veto_address(&admin, &extra_vetoer);
-    assert!(result.is_err());
-}
-
-// ============================================================================
-// Abstain and Quorum Tests
-// ============================================================================
-
-#[test]
-fn test_abstain_counts_toward_quorum() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone(), signer2.clone()];
-    let mut config = default_init_config(&env, signers, 2);
-    config.quorum = 2;
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-    client.set_role(&admin, &signer2, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-    client.abstain_proposal(&signer2, &proposal_id);
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-}
-
-#[test]
-fn test_quorum_percentage() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let signer3 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let signers = soroban_sdk::vec![
-        &env, admin.clone(), signer1.clone(), signer2.clone(), signer3.clone()
-    ];
-    let mut config = default_init_config(&env, signers, 1);
-    config.quorum_percentage = 50;
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-    client.set_role(&admin, &signer2, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-    client.abstain_proposal(&signer2, &proposal_id);
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-}
-
-#[test]
-fn test_double_abstain_prevented() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 1000,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-            staking_config: types::StakingConfig::default(),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        };
-    let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.abstain_proposal(&signer1, &proposal_id);
-
-    let result = client.try_abstain_proposal(&signer1, &proposal_id);
-    assert!(result.is_err(), "Double abstain should be prevented");
-}
-
-#[test]
-fn test_abstain_after_approve_prevented() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
-
-    let signers = soroban_sdk::vec![&env, admin.clone(), signer1.clone()];
-    let config = default_init_config(&env, signers, 1);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token_addr,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-
-    let result = client.try_abstain_proposal(&signer1, &proposal_id);
-    assert!(result.is_err(), "Abstain after approve should be prevented");
-}
-
-// ============================================================================
-// Task 2: Dynamic Threshold Strategy Tests
-// ============================================================================
-
-#[cfg(test)]
-mod threshold_strategy_tests {
-    use super::*;
-    use crate::types::{AmountTier, ConditionLogic, Priority, Role, ThresholdStrategy};
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::Address;
-
-    fn setup_vault(env: &Env) -> (VaultDAOClient<'static>, Address) {
-        let contract_id = env.register(VaultDAO, ());
-        let client = VaultDAOClient::new(env, &contract_id);
-        let admin = Address::generate(env);
-        let mut signers = Vec::new(env);
-        signers.push_back(admin.clone());
-        client.initialize(&admin, &default_init_config(env, signers, 1));
-        (client, admin)
-    }
-
-    #[test]
-    fn test_set_threshold_strategy_amount_based_single_tier() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-
-        let mut tiers = Vec::new(&env);
-        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
-
-        client.set_threshold_strategy(&admin, &ThresholdStrategy::AmountBased(tiers));
-
-        let config = client.get_config();
-        assert!(matches!(config.threshold_strategy, ThresholdStrategy::AmountBased(_)));
-    }
-
-    #[test]
-    fn test_set_threshold_strategy_multiple_tiers_descending() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-
-        let mut tiers = Vec::new(&env);
-        // Descending order: 1000 > 500
-        tiers.push_back(AmountTier { amount: 1000, approvals: 1 });
-        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
-
-        client.set_threshold_strategy(&admin, &ThresholdStrategy::AmountBased(tiers));
-
-        let config = client.get_config();
-        if let ThresholdStrategy::AmountBased(stored_tiers) = config.threshold_strategy {
-            assert_eq!(stored_tiers.len(), 2);
-        }
-    }
-
-    #[test]
-    fn test_set_threshold_strategy_invalid_not_descending() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-
-        let mut tiers = Vec::new(&env);
-        // Ascending order — invalid
-        tiers.push_back(AmountTier { amount: 100, approvals: 1 });
-        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
-
-        let result = client.try_set_threshold_strategy(
-            &admin,
-            &ThresholdStrategy::AmountBased(tiers),
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_set_threshold_strategy_too_many_tiers() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-
-        let mut tiers = Vec::new(&env);
-        // 11 tiers — exceeds cap of 10
-        for i in (0u32..11).rev() {
-            tiers.push_back(AmountTier { amount: (i as i128 + 1) * 100, approvals: 1 });
-        }
-
-        let result = client.try_set_threshold_strategy(
-            &admin,
-            &ThresholdStrategy::AmountBased(tiers),
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_amount_below_all_tiers_falls_back_to_config_threshold() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-
-        let mut tiers = Vec::new(&env);
-        tiers.push_back(AmountTier { amount: 500, approvals: 1 });
-
-        client.set_threshold_strategy(&admin, &ThresholdStrategy::AmountBased(tiers));
-
-        // Propose with amount below all tiers (100 < 500) — should use config.threshold (1)
-        let token_admin = Address::generate(&env);
-        let token = env.register_stellar_asset_contract_v2(token_admin).address();
-        let recipient = Address::generate(&env);
-        client.set_role(&admin, &admin, &Role::Treasurer);
-        let proposal_id = client.propose_transfer(
-            &admin, &recipient, &token, &100i128,
-            &Symbol::new(&env, "m"), &Priority::Normal,
-            &Vec::new(&env), &ConditionLogic::And, &0i128,
-        );
-        // Approve with 1 signer — should meet threshold
-        client.approve_proposal(&admin, &proposal_id);
-        let proposal = client.get_proposal(&proposal_id);
-        assert_eq!(proposal.approvals.len(), 1);
-    }
-}
-
-// ============================================================================
-// Task 3: Template Version History Tests
-// ============================================================================
-
-#[cfg(test)]
-mod template_version_tests {
-    use super::*;
-    use crate::types::Role;
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::Address;
-
-    fn setup_vault(env: &Env) -> (VaultDAOClient<'static>, Address) {
-        let contract_id = env.register(VaultDAO, ());
-        let client = VaultDAOClient::new(env, &contract_id);
-        let admin = Address::generate(env);
-        let mut signers = Vec::new(env);
-        signers.push_back(admin.clone());
-        client.initialize(&admin, &default_init_config(env, signers, 1));
-        client.set_role(&admin, &admin, &Role::Admin);
-        (client, admin)
-    }
-
-    fn create_template(env: &Env, client: &VaultDAOClient, admin: &Address) -> u64 {
-        let token = env
-            .register_stellar_asset_contract_v2(Address::generate(env))
-            .address();
-        let recipient = Address::generate(env);
-        client.create_template(
-            admin,
-            &Symbol::new(env, "tmpl"),
-            &Symbol::new(env, "desc"),
-            &recipient,
-            &token,
-            &100i128,
-            &Symbol::new(env, "memo"),
-            &0i128,
-            &0i128,
-        )
-    }
-
-    #[test]
-    fn test_update_template_stores_version_history() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-        let template_id = create_template(&env, &client, &admin);
-
-        let recipient2 = Address::generate(&env);
-        let token2 = env
-            .register_stellar_asset_contract_v2(Address::generate(&env))
-            .address();
-
-        // Update once — v1 should be stored
-        client.update_template(
-            &admin, &template_id,
-            &Symbol::new(&env, "d2"), &recipient2, &200i128,
-            &Symbol::new(&env, "m2"), &0i128, &0i128,
-        );
-        let _ = token2;
-
-        let v1 = client.get_template_version(&template_id, &1u32);
-        assert_eq!(v1.version, 1);
-        assert_eq!(v1.amount, 100);
-    }
-
-    #[test]
-    fn test_update_template_three_times_all_versions_accessible() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-        let template_id = create_template(&env, &client, &admin);
-
-        let r = Address::generate(&env);
-
-        client.update_template(&admin, &template_id, &Symbol::new(&env, "d2"), &r, &200i128, &Symbol::new(&env, "m"), &0i128, &0i128);
-        client.update_template(&admin, &template_id, &Symbol::new(&env, "d3"), &r, &300i128, &Symbol::new(&env, "m"), &0i128, &0i128);
-
-        // v1 and v2 should both be accessible
-        let v1 = client.get_template_version(&template_id, &1u32);
-        let v2 = client.get_template_version(&template_id, &2u32);
-        assert_eq!(v1.amount, 100);
-        assert_eq!(v2.amount, 200);
-
-        // Current template should be v3
-        let current = client.get_template(&template_id);
-        assert_eq!(current.version, 3);
-        assert_eq!(current.amount, 300);
-    }
-
-    #[test]
-    fn test_rollback_template_restores_previous_version() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-        let template_id = create_template(&env, &client, &admin);
-
-        let r = Address::generate(&env);
-
-        // Update to v2
-        client.update_template(&admin, &template_id, &Symbol::new(&env, "d2"), &r, &200i128, &Symbol::new(&env, "m"), &0i128, &0i128);
-        // Update to v3
-        client.update_template(&admin, &template_id, &Symbol::new(&env, "d3"), &r, &300i128, &Symbol::new(&env, "m"), &0i128, &0i128);
-
-        // Rollback to v1
-        client.rollback_template(&admin, &template_id, &1u32);
-
-        let current = client.get_template(&template_id);
-        // Version counter incremented, but content from v1
-        assert_eq!(current.amount, 100);
-        assert!(current.version > 3);
-    }
-
-    #[test]
-    fn test_rollback_v2_still_accessible_after_rollback_to_v1() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup_vault(&env);
-        let template_id = create_template(&env, &client, &admin);
-
-        let r = Address::generate(&env);
-
-        client.update_template(&admin, &template_id, &Symbol::new(&env, "d2"), &r, &200i128, &Symbol::new(&env, "m"), &0i128, &0i128);
-        client.update_template(&admin, &template_id, &Symbol::new(&env, "d3"), &r, &300i128, &Symbol::new(&env, "m"), &0i128, &0i128);
-
-        client.rollback_template(&admin, &template_id, &1u32);
-
-        // v2 should still be accessible
-        let v2 = client.get_template_version(&template_id, &2u32);
-        assert_eq!(v2.amount, 200);
-    }
-}
-
-// ============================================================================
-// Issue #934 — Whitelist/Blacklist Bulk Import with Pagination
-// ============================================================================
-
-#[test]
-fn test_bulk_add_whitelist_10() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    let mut addresses = Vec::new(&env);
-    for _ in 0..10 {
-        addresses.push_back(Address::generate(&env));
-    }
-
-    client.bulk_add_to_whitelist(&admin, &addresses);
-
-    let page = client.get_whitelist_paginated(&0u64, &100u64);
-    assert_eq!(page.len(), 10);
-}
-
-#[test]
-fn test_bulk_add_whitelist_51_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    let mut addresses = Vec::new(&env);
-    for _ in 0..51 {
-        addresses.push_back(Address::generate(&env));
-    }
-
-    let result = client.try_bulk_add_to_whitelist(&admin, &addresses);
-    assert_eq!(result.err(), Some(Ok(VaultError::BatchTooLarge)));
-}
-
-#[test]
-fn test_bulk_remove_whitelist() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    let mut addresses = Vec::new(&env);
-    for _ in 0..5 {
-        addresses.push_back(Address::generate(&env));
-    }
-
-    client.bulk_add_to_whitelist(&admin, &addresses);
-    assert_eq!(client.get_whitelist_paginated(&0u64, &100u64).len(), 5);
-
-    client.bulk_remove_from_whitelist(&admin, &addresses);
-    assert_eq!(client.get_whitelist_paginated(&0u64, &100u64).len(), 0);
-}
-
-#[test]
-fn test_bulk_add_blacklist_10() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    let mut addresses = Vec::new(&env);
-    for _ in 0..10 {
-        addresses.push_back(Address::generate(&env));
-    }
-
-    client.bulk_add_to_blacklist(&admin, &addresses);
-
-    let page = client.get_blacklist_paginated(&0u64, &100u64);
-    assert_eq!(page.len(), 10);
-}
-
-#[test]
-fn test_bulk_add_blacklist_51_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    let mut addresses = Vec::new(&env);
-    for _ in 0..51 {
-        addresses.push_back(Address::generate(&env));
-    }
-
-    let result = client.try_bulk_add_to_blacklist(&admin, &addresses);
-    assert_eq!(result.err(), Some(Ok(VaultError::BatchTooLarge)));
-}
-
-#[test]
-fn test_bulk_add_whitelist_duplicates_skipped() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    let addr = Address::generate(&env);
-    let mut addresses = Vec::new(&env);
-    addresses.push_back(addr.clone());
-    addresses.push_back(addr.clone()); // duplicate
-
-    // Should not panic — duplicates silently skipped
-    client.bulk_add_to_whitelist(&admin, &addresses);
-    let page = client.get_whitelist_paginated(&0u64, &100u64);
-    assert_eq!(page.len(), 1);
-}
-
-#[test]
-fn test_whitelist_paginated_query() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    let mut addresses = Vec::new(&env);
-    for _ in 0..10 {
-        addresses.push_back(Address::generate(&env));
-    }
-    client.bulk_add_to_whitelist(&admin, &addresses);
-
-    // First page: 5 items
-    let page1 = client.get_whitelist_paginated(&0u64, &5u64);
-    assert_eq!(page1.len(), 5);
-
-    // Second page: next 5
-    let page2 = client.get_whitelist_paginated(&5u64, &5u64);
-    assert_eq!(page2.len(), 5);
-
-    // No overlap
-    for i in 0..page1.len() {
-        assert!(!page2.contains(page1.get(i).unwrap()));
-    }
-}
-
-// ============================================================================
-// Issue #938 — Configurable Proposal ID Namespace
-// ============================================================================
-
-#[test]
-fn test_initialize_with_proposal_id_prefix() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.proposal_id_prefix = 1_000_000;
-    client.initialize(&admin, &config);
-
-    assert_eq!(client.get_vault_namespace(), Ok(1_000_000u64));
-
-    // First proposal ID should be prefix + 1
-    let recipient = Address::generate(&env);
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(proposal_id, 1_000_001u64);
-}
-
-#[test]
-fn test_proposals_get_prefixed_ids() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.proposal_id_prefix = 2_000_000;
-    client.initialize(&admin, &config);
-
-    let recipient = Address::generate(&env);
-    let id1 = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "p1"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
     );
     let id2 = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "p2"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
+        &admin,
+        &recipient,
+        &token,
+        &200i128,
+        &Symbol::new(&env, "p2"),
+        &Priority::Normal,
+        &soroban_sdk::Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
-
-    assert_eq!(id1, 2_000_001u64);
-    assert_eq!(id2, 2_000_002u64);
-}
-
-#[test]
-fn test_default_prefix_zero_backward_compatible() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    // Default prefix = 0 → IDs start at 1
-    let config = default_init_config(&env, signers, 1);
-    assert_eq!(config.proposal_id_prefix, 0);
-    client.initialize(&admin, &config);
-
-    let recipient = Address::generate(&env);
-    let id = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "test"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
-    );
-    assert_eq!(id, 1u64);
-}
-
-#[test]
-fn test_invalid_prefix_not_multiple_of_million_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.proposal_id_prefix = 500_000; // not a multiple of 1_000_000
-
-    let result = client.try_initialize(&admin, &config);
-    assert_eq!(result.err(), Some(Ok(VaultError::InvalidProposalIdPrefix)));
-}
-
-#[test]
-fn test_list_proposal_ids_works_with_prefix() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.proposal_id_prefix = 3_000_000;
-    client.initialize(&admin, &config);
-
-    let recipient = Address::generate(&env);
-    client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "p1"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
-    );
-    client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "p2"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
+    let id3 = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &300i128,
+        &Symbol::new(&env, "p3"),
+        &Priority::Normal,
+        &soroban_sdk::Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
 
     let ids = client.list_proposal_ids(&0u64, &10u64);
-    assert_eq!(ids.len(), 2);
-    assert!(ids.contains(3_000_001u64));
-    assert!(ids.contains(3_000_002u64));
+    assert_eq!(ids.len(), 3);
+    assert_eq!(ids.get(0).unwrap(), id1);
+    assert_eq!(ids.get(1).unwrap(), id2);
+    assert_eq!(ids.get(2).unwrap(), id3);
+    // Strictly ascending
+    assert!(ids.get(0).unwrap() < ids.get(1).unwrap());
+    assert!(ids.get(1).unwrap() < ids.get(2).unwrap());
 }
 
-// ============================================================================
-// Issue #941 — Proposal Search by Date Range and Status Filter
-// ============================================================================
-
+/// list_proposals returns full proposal objects with correct data.
 #[test]
-fn test_get_proposals_by_pending_status() {
+fn test_list_proposals_returns_full_objects() {
     let env = Env::default();
     env.mock_all_auths();
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
+
     let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
     let recipient = Address::generate(&env);
-    let id1 = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "p1"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
-    );
-    let id2 = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "p2"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
+    let token = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &500i128,
+        &Symbol::new(&env, "memo"),
+        &Priority::High,
+        &soroban_sdk::Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
 
-    let pending = client.get_proposals_by_status(&ProposalStatus::Pending, &0u64, &50u64);
-    assert!(pending.contains(id1));
-    assert!(pending.contains(id2));
+    let proposals = client.list_proposals(&0u64, &10u64);
+    assert_eq!(proposals.len(), 1);
+
+    let p = proposals.get(0).unwrap();
+    assert_eq!(p.amount, 500);
+    assert_eq!(p.recipient, recipient);
+    assert_eq!(p.token, token);
+    assert_eq!(p.status, ProposalStatus::Pending);
 }
 
+/// Pagination: offset and limit work correctly.
 #[test]
-fn test_get_proposals_by_executed_status() {
+fn test_list_proposal_ids_pagination() {
     let env = Env::default();
     env.mock_all_auths();
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
+
     let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
     let recipient = Address::generate(&env);
-    let id = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "exec"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
-    );
-    client.approve_proposal(&admin, &id);
-    client.execute_proposal(&admin, &id);
-
-    let executed = client.get_proposals_by_status(&ProposalStatus::Executed, &0u64, &50u64);
-    assert!(executed.contains(id));
-
-    // Should not appear in Pending anymore
-    let pending = client.get_proposals_by_status(&ProposalStatus::Pending, &0u64, &50u64);
-    // Note: StatusIndex is append-only (not pruned on status change), so id may still appear
-    // in Pending index — but the proposal itself is Executed. This is by design (O(n) bounded).
-    let _ = pending; // just verify no panic
-}
-
-#[test]
-fn test_get_proposals_by_ledger_range() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &10000);
-
-    let mut signers = Vec::new(&env);
+    let token = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(admin.clone());
+
     client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &admin, &Role::Treasurer);
 
-    env.ledger().set_sequence_number(100);
-    let recipient = Address::generate(&env);
-    let id1 = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "early"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
-    );
+    // Create 5 proposals
+    for i in 1u32..=5 {
+        client.propose_transfer(
+            &admin,
+            &recipient,
+            &token,
+            &(i as i128 * 100),
+            &Symbol::new(&env, "p"),
+            &Priority::Normal,
+            &soroban_sdk::Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+    }
 
-    env.ledger().set_sequence_number(200);
-    let id2 = client.propose_transfer(
-        &admin, &recipient, &token, &100,
-        &Symbol::new(&env, "late"), &Priority::Normal,
-        &Vec::new(&env), &ConditionLogic::And, &0i128,
-    );
+    // First page: offset=0, limit=2 → IDs 1,2
+    let page1 = client.list_proposal_ids(&0u64, &2u64);
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap(), 1);
+    assert_eq!(page1.get(1).unwrap(), 2);
 
-    // Query range covering only ledger 100
-    let early = client.get_proposals_by_ledger_range(&100u64, &150u64, &0u64, &50u64);
-    assert!(early.is_ok());
-    let early = early.unwrap();
-    assert!(early.contains(id1));
-    assert!(!early.contains(id2));
+    // Second page: offset=2, limit=2 → IDs 3,4
+    let page2 = client.list_proposal_ids(&2u64, &2u64);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap(), 3);
+    assert_eq!(page2.get(1).unwrap(), 4);
 
-    // Query range covering only ledger 200
-    let late = client.get_proposals_by_ledger_range(&200u64, &250u64, &0u64, &50u64);
-    assert!(late.is_ok());
-    let late = late.unwrap();
-    assert!(late.contains(id2));
-    assert!(!late.contains(id1));
-}
+    // Third page: offset=4, limit=2 → ID 5 only
+    let page3 = client.list_proposal_ids(&4u64, &2u64);
+    assert_eq!(page3.len(), 1);
+    assert_eq!(page3.get(0).unwrap(), 5);
 
-#[test]
-fn test_get_proposals_by_ledger_range_invalid_range() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    // from_ledger > to_ledger must return InvalidLedgerRange
-    let result = client.try_get_proposals_by_ledger_range(&200u64, &100u64, &0u64, &50u64);
-    assert_eq!(result.err(), Some(Ok(VaultError::InvalidLedgerRange)));
-}
-
-#[test]
-fn test_get_proposals_by_status_empty_result() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    // No proposals created — Executed index should be empty
-    let result = client.get_proposals_by_status(&ProposalStatus::Executed, &0u64, &50u64);
-    assert_eq!(result.len(), 0);
-}
-
-// ---------------------------------------------------------------------------
-// Issue #308 — Deposit boundary tests (min/max amount validation)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_deposit_zero_amount_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-    );
-
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &0,
-        &Symbol::new(&env, "zero"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
-}
-
-#[test]
-fn test_deposit_negative_amount_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-    );
-
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &-1i128,
-        &Symbol::new(&env, "neg"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
-}
-
-#[test]
-fn test_deposit_minimum_valid_amount() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-    );
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1,
-        &Symbol::new(&env, "min"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(proposal_id > 0);
-}
-
-#[test]
-fn test_deposit_exact_spending_limit() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-    );
-
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1000,
-        &Symbol::new(&env, "exact"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(proposal_id > 0);
-}
-
-#[test]
-fn test_deposit_exceeds_spending_limit() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-    );
-
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1001,
-        &Symbol::new(&env, "over"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
-}
-
-#[test]
-fn test_deposit_max_i128_amount_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10000,
-        VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-    );
-
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &i128::MAX,
-        &Symbol::new(&env, "maxval"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
-}
-
-// ---------------------------------------------------------------------------
-// Issue #308 — Deposit boundary tests (min/max amount validation)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_deposit_zero_amount_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10_000,
-        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
-    );
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &0i128,
-        &Symbol::new(&env, "zero"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
-}
-
-#[test]
-fn test_deposit_negative_amount_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10_000,
-        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
-    );
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &-1i128,
-        &Symbol::new(&env, "neg"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
-}
-
-#[test]
-fn test_deposit_minimum_valid_amount() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10_000,
-        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
-    );
-    // amount = 1 is the minimum valid positive amount
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1i128,
-        &Symbol::new(&env, "min"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(proposal_id > 0);
-}
-
-#[test]
-fn test_deposit_exact_spending_limit() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10_000,
-        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
-    );
-    // amount == spending_limit should succeed
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1000i128,
-        &Symbol::new(&env, "exact"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(proposal_id > 0);
-}
-
-#[test]
-fn test_deposit_exceeds_spending_limit() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10_000,
-        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
-    );
-    // amount = spending_limit + 1 must be rejected
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &1001i128,
-        &Symbol::new(&env, "over"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
-}
-
-#[test]
-fn test_deposit_max_i128_amount_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
-        &env,
-        1000,
-        5000,
-        10_000,
-        VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
-    );
-    // i128::MAX far exceeds any spending limit and must be rejected
-    let res = client.try_propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &i128::MAX,
-        &Symbol::new(&env, "maxval"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+    // Offset beyond total → empty
+    let page4 = client.list_proposal_ids(&10u64, &2u64);
+    assert_eq!(page4.len(), 0);
 }

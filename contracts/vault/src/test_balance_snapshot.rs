@@ -24,12 +24,20 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address) {
         weekly_limit: 10000,
         timelock_threshold: 500,
         timelock_delay: 100,
-        velocity_limit: VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         veto_addresses: Vec::new(env),
         veto_window_ledgers: 0,
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: crate::types::StakingConfig::default(),
         proposal_id_prefix: 0,
@@ -63,7 +71,10 @@ fn test_set_snapshot_interval_too_small() {
 fn test_take_manual_snapshot() {
     let env = Env::default();
     let (client, admin) = setup(&env);
-    env.ledger().with_mut(|li| { li.sequence_number = 200; li.timestamp = 1000; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+        li.timestamp = 1000;
+    });
     let snap = client.take_manual_snapshot(&admin);
     assert_eq!(snap.ledger, 200);
 }
@@ -73,9 +84,13 @@ fn test_take_manual_snapshot() {
 fn test_take_manual_snapshot_too_soon() {
     let env = Env::default();
     let (client, admin) = setup(&env);
-    env.ledger().with_mut(|li| { li.sequence_number = 200; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+    });
     client.take_manual_snapshot(&admin);
-    env.ledger().with_mut(|li| { li.sequence_number = 250; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 250;
+    });
     client.take_manual_snapshot(&admin);
 }
 
@@ -83,9 +98,15 @@ fn test_take_manual_snapshot_too_soon() {
 fn test_get_snapshot_at_exact() {
     let env = Env::default();
     let (client, admin) = setup(&env);
-    env.ledger().with_mut(|li| { li.sequence_number = 200; li.timestamp = 1000; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+        li.timestamp = 1000;
+    });
     client.take_manual_snapshot(&admin);
-    env.ledger().with_mut(|li| { li.sequence_number = 400; li.timestamp = 2000; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 400;
+        li.timestamp = 2000;
+    });
     client.take_manual_snapshot(&admin);
 
     let snap = client.get_snapshot_at(&200).unwrap();
@@ -96,9 +117,15 @@ fn test_get_snapshot_at_exact() {
 fn test_get_snapshot_at_approximate() {
     let env = Env::default();
     let (client, admin) = setup(&env);
-    env.ledger().with_mut(|li| { li.sequence_number = 200; li.timestamp = 1000; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+        li.timestamp = 1000;
+    });
     client.take_manual_snapshot(&admin);
-    env.ledger().with_mut(|li| { li.sequence_number = 400; li.timestamp = 2000; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 400;
+        li.timestamp = 2000;
+    });
     client.take_manual_snapshot(&admin);
 
     let snap = client.get_snapshot_at(&350).unwrap();
@@ -109,9 +136,15 @@ fn test_get_snapshot_at_approximate() {
 fn test_get_latest_snapshot() {
     let env = Env::default();
     let (client, admin) = setup(&env);
-    env.ledger().with_mut(|li| { li.sequence_number = 200; li.timestamp = 1000; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+        li.timestamp = 1000;
+    });
     client.take_manual_snapshot(&admin);
-    env.ledger().with_mut(|li| { li.sequence_number = 400; li.timestamp = 2000; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 400;
+        li.timestamp = 2000;
+    });
     client.take_manual_snapshot(&admin);
 
     let snap = client.get_latest_snapshot().unwrap();
@@ -134,7 +167,10 @@ fn test_snapshot_overflow_eviction() {
 
     for i in 0..95u32 {
         let ledger = (i + 1) as u32 * 100 + 100;
-        env.ledger().with_mut(|li| { li.sequence_number = ledger; li.timestamp = ledger as u64 * 5; });
+        env.ledger().with_mut(|li| {
+            li.sequence_number = ledger;
+            li.timestamp = ledger as u64 * 5;
+        });
         client.take_manual_snapshot(&admin);
     }
 

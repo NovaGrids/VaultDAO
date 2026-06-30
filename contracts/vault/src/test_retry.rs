@@ -3,12 +3,17 @@ mod tests {
     use crate::storage;
     use crate::types;
     use crate::{VaultDAO, VaultDAOClient};
-    use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
-    fn setup_vault_with_retry() -> (Env, Address, VaultDAOClient<'static>, Address, Address, Address, Address) {
+    fn setup_vault_with_retry() -> (
+        Env,
+        Address,
+        VaultDAOClient<'static>,
+        Address,
+        Address,
+        Address,
+        Address,
+    ) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -32,7 +37,9 @@ mod tests {
             timelock_delay: 100,
             velocity_limit: types::VelocityConfig {
                 limit: 10,
-                window: 1000, per_token_limit: 0 },
+                window: 1000,
+                per_token_limit: 0,
+            },
             threshold_strategy: types::ThresholdStrategy::Fixed,
             pre_execution_hooks: soroban_sdk::vec![&env],
             post_execution_hooks: soroban_sdk::vec![&env],
@@ -57,7 +64,7 @@ mod tests {
                 reputation_discount_percentage: 0,
                 slash_percentage: 0,
             },
-        proposal_id_prefix: 0,
+            proposal_id_prefix: 0,
         };
 
         client.initialize(&admin, &init_config);
@@ -67,10 +74,13 @@ mod tests {
 
     #[test]
     fn test_retry_backoff_calculation() {
-        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) = setup_vault_with_retry();
+        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) =
+            setup_vault_with_retry();
 
         // Get retry config and verify backoff math
-        let config = env.as_contract(&contract_id, || storage::get_config(&env)).unwrap();
+        let config = env
+            .as_contract(&contract_id, || storage::get_config(&env))
+            .unwrap();
         let initial_backoff = config.retry_config.initial_backoff_ledgers;
 
         // First retry: 2^0 = 1x
@@ -88,7 +98,8 @@ mod tests {
 
     #[test]
     fn test_retry_state_not_set_initially() {
-        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) = setup_vault_with_retry();
+        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) =
+            setup_vault_with_retry();
 
         // No retry state should exist for a non-existent proposal
         let retry_state = env.as_contract(&contract_id, || storage::get_retry_state(&env, 999u64));
@@ -97,7 +108,8 @@ mod tests {
 
     #[test]
     fn test_retry_max_retries_exhausted() {
-        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) = setup_vault_with_retry();
+        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) =
+            setup_vault_with_retry();
 
         // Manually set retry state with max retries exhausted
         let proposal_id = 1u64;
@@ -106,7 +118,9 @@ mod tests {
             next_retry_ledger: 0,
             last_retry_ledger: 0,
         };
-        env.as_contract(&contract_id, || storage::set_retry_state(&env, proposal_id, &retry_state));
+        env.as_contract(&contract_id, || {
+            storage::set_retry_state(&env, proposal_id, &retry_state)
+        });
 
         // Verify state was stored correctly
         let stored = env.as_contract(&contract_id, || storage::get_retry_state(&env, proposal_id));
@@ -117,8 +131,11 @@ mod tests {
 
     #[test]
     fn test_exponential_backoff_doubles() {
-        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) = setup_vault_with_retry();
-        let config = env.as_contract(&contract_id, || storage::get_config(&env)).unwrap();
+        let (env, contract_id, _client, _admin, _signer1, _signer2, _token) =
+            setup_vault_with_retry();
+        let config = env
+            .as_contract(&contract_id, || storage::get_config(&env))
+            .unwrap();
 
         let initial_backoff = config.retry_config.initial_backoff_ledgers;
 
@@ -158,7 +175,10 @@ mod tests {
             weekly_limit: 10_000_000_000,
             timelock_threshold: 999_999_999,
             timelock_delay: 0,
-            velocity_limit: types::VelocityConfig { limit: 100, window: 3600 },
+            velocity_limit: types::VelocityConfig {
+                limit: 100,
+                window: 3600,
+            },
             threshold_strategy: types::ThresholdStrategy::Fixed,
             pre_execution_hooks: soroban_sdk::vec![&env],
             post_execution_hooks: soroban_sdk::vec![&env],
@@ -248,7 +268,9 @@ mod tests {
     #[test]
     fn test_backoff_doubling_formula() {
         let (env, contract_id, _client, _admin, _s1, _s2, _token) = setup_vault_with_retry();
-        let config = env.as_contract(&contract_id, || storage::get_config(&env)).unwrap();
+        let config = env
+            .as_contract(&contract_id, || storage::get_config(&env))
+            .unwrap();
         let initial = config.retry_config.initial_backoff_ledgers; // 10
 
         // Verify: next = current + initial * 2^(retry_count - 1)
@@ -260,6 +282,12 @@ mod tests {
         assert_eq!(initial.checked_shl(2).unwrap(), 40);
         // Capped at 7 days = 120,960 ledgers
         let max_backoff: u64 = 17_280 * 7;
-        assert!(initial.checked_shl(30).unwrap_or(max_backoff).min(max_backoff) <= max_backoff);
+        assert!(
+            initial
+                .checked_shl(30)
+                .unwrap_or(max_backoff)
+                .min(max_backoff)
+                <= max_backoff
+        );
     }
 }

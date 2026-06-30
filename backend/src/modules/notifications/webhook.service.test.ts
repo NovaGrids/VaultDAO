@@ -89,13 +89,15 @@ test("WebhookDeliveryService: successful delivery records delivered status", asy
   const reg = svc.register("https://example.com/hook", secret, []);
 
   // Mock fetch: always succeeds
-  const originalFetch = globalThis.fetch;
+  let originalFetch = globalThis.fetch;
   let capturedSignature: string | null = null;
   let capturedBody: string | null = null;
+  let capturedTimestamp: string | null = null;
 
   globalThis.fetch = async (_url: any, options: any) => {
     capturedSignature = options.headers["X-VaultDAO-Signature"];
     capturedBody = options.body;
+    capturedTimestamp = options.headers["X-VaultDAO-Timestamp"];
     return new Response("{}", { status: 200 });
   };
 
@@ -105,7 +107,9 @@ test("WebhookDeliveryService: successful delivery records delivered status", asy
 
     // Verify HMAC signature
     assert.ok(capturedSignature !== null, "signature header should be set");
-    const expectedSig = `sha256=${createHmac("sha256", secret).update(capturedBody!).digest("hex")}`;
+    assert.ok(capturedTimestamp !== null, "timestamp header should be set");
+    const message = `${capturedTimestamp}.${capturedBody!}`;
+    const expectedSig = `sha256=${createHmac("sha256", secret).update(message).digest("hex")}`;
     assert.strictEqual(capturedSignature, expectedSig, "HMAC signature should match");
 
     // Verify delivery record
@@ -150,13 +154,13 @@ test("WebhookDeliveryService: failed delivery retries up to 3 times with exponen
 });
 
 test("WebhookDeliveryService: HMAC signature validation", () => {
-  // Verify that the signature format is sha256=<hex>
   const secret = "my-webhook-secret";
   const body = JSON.stringify({ id: "evt-1", topic: "test" });
-  const expected = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+  const timestamp = 1_700_000_000_000;
+  const message = `${timestamp}.${body}`;
+  const expected = `sha256=${createHmac("sha256", secret).update(message).digest("hex")}`;
 
-  // Simulate what the service does
-  const actual = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+  const actual = `sha256=${createHmac("sha256", secret).update(message).digest("hex")}`;
   assert.strictEqual(actual, expected, "HMAC signature format should be sha256=<hex>");
   assert.ok(actual.startsWith("sha256="), "signature should start with sha256=");
   assert.strictEqual(actual.length, 71, "sha256= prefix (7) + 64 hex chars = 71");

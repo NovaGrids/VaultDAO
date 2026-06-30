@@ -36,7 +36,9 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
             limit: 100,
-            window: 3600, per_token_limit: 0 },
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         pre_execution_hooks: Vec::new(env),
         post_execution_hooks: Vec::new(env),
@@ -90,10 +92,7 @@ fn test_schedule_payment_interval_too_short() {
         &0u32,   // jitter_window
     );
 
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::IntervalTooShort))
-    );
+    assert_eq!(result.err(), Some(Ok(VaultError::IntervalTooShort)));
 }
 
 // ============================================================================
@@ -116,7 +115,7 @@ fn test_schedule_payment_valid_interval_sets_next_ledger() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &0u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -144,15 +143,12 @@ fn test_execute_recurring_payment_too_early_fails() {
         &Symbol::new(&env, "payroll"),
         &1000u64,
         &0u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     // Ledger is still at creation time — payment is not due yet
     let result = client.try_execute_recurring_payment(&payment_id);
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::TimelockNotExpired))
-    );
+    assert_eq!(result.err(), Some(Ok(VaultError::TimelockNotExpired)));
 }
 
 // ============================================================================
@@ -175,7 +171,7 @@ fn test_execute_recurring_payment_at_due_ledger_succeeds() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &0u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -212,7 +208,7 @@ fn test_execute_recurring_payment_twice_in_same_window_fails() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &0u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -227,10 +223,7 @@ fn test_execute_recurring_payment_twice_in_same_window_fails() {
 
     // Second execution in the same window (ledger hasn't advanced to next due)
     let result = client.try_execute_recurring_payment(&payment_id);
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::TimelockNotExpired))
-    );
+    assert_eq!(result.err(), Some(Ok(VaultError::TimelockNotExpired)));
 }
 
 // ============================================================================
@@ -250,14 +243,20 @@ fn test_stop_recurring_payment_sets_inactive() {
         &Symbol::new(&env, "payroll"),
         &720u64,
         &0u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
-    assert_eq!(client.get_recurring_payment(&payment_id).status, crate::types::RecurringStatus::Active);
+    assert_eq!(
+        client.get_recurring_payment(&payment_id).status,
+        crate::types::RecurringStatus::Active
+    );
 
     client.stop_recurring_payment(&admin, &payment_id);
 
-    assert_eq!(client.get_recurring_payment(&payment_id).status, crate::types::RecurringStatus::Stopped);
+    assert_eq!(
+        client.get_recurring_payment(&payment_id).status,
+        crate::types::RecurringStatus::Stopped
+    );
 }
 
 // ============================================================================
@@ -279,7 +278,7 @@ fn test_execute_stopped_recurring_payment_fails() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &0u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     client.stop_recurring_payment(&admin, &payment_id);
@@ -292,10 +291,7 @@ fn test_execute_stopped_recurring_payment_fails() {
 
     let result = client.try_execute_recurring_payment(&payment_id);
     // ProposalNotFound is the error returned for inactive payments
-    assert_eq!(
-        result.err(),
-        Some(Ok(VaultError::ProposalNotFound))
-    );
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotFound)));
 }
 
 // ============================================================================
@@ -331,7 +327,7 @@ fn test_execute_recurring_payment_transfers_tokens() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &0u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -374,7 +370,7 @@ fn test_execute_recurring_payment_no_missed_payments() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &3u32, // max_missed_payments
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -408,7 +404,7 @@ fn test_execute_recurring_payment_three_missed_within_cap() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &5u32, // max_missed_payments - allow up to 5 missed
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -449,7 +445,7 @@ fn test_execute_recurring_payment_three_missed_exceeding_cap() {
         &Symbol::new(&env, "payroll"),
         &interval,
         &2u32, // max_missed_payments - only allow 2 missed
-        &0u32,   // jitter_window
+        &0u32, // jitter_window
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -477,8 +473,14 @@ fn test_pause_recurring_payment() {
     let (client, admin, token, recipient) = setup(&env);
 
     let payment_id = client.schedule_payment(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "pay"), &720u64, &0u32, &0u32, // jitter_window
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
     );
 
     client.pause_recurring_payment(&admin, &payment_id);
@@ -494,8 +496,14 @@ fn test_execute_while_paused_fails() {
     let (client, admin, token, recipient) = setup(&env);
 
     let payment_id = client.schedule_payment(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "pay"), &720u64, &0u32, &0u32, // jitter_window
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
     );
 
     // Advance past next_payment_ledger
@@ -513,11 +521,19 @@ fn test_resume_recurring_payment_advances_schedule() {
     let (client, admin, token, recipient) = setup(&env);
 
     let payment_id = client.schedule_payment(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "pay"), &720u64, &0u32, &0u32, // jitter_window
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
     );
 
-    let before_pause = client.get_recurring_payment(&payment_id).next_payment_ledger;
+    let before_pause = client
+        .get_recurring_payment(&payment_id)
+        .next_payment_ledger;
 
     // Pause then advance 100 ledgers
     client.pause_recurring_payment(&admin, &payment_id);
@@ -537,8 +553,14 @@ fn test_stop_then_resume_fails() {
     let (client, admin, token, recipient) = setup(&env);
 
     let payment_id = client.schedule_payment(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "pay"), &720u64, &0u32, &0u32, // jitter_window
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
     );
 
     client.stop_recurring_payment(&admin, &payment_id);
@@ -630,12 +652,16 @@ fn test_jitter_constant_per_payment() {
     let fixed_offset = p.jitter_offset;
 
     // Execute first payment (no jitter applied for first cycle)
-    env.ledger().with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
     client.execute_recurring_payment(&payment_id);
 
     let after_first = client.get_recurring_payment(&payment_id);
     // After first execution, subsequent cycles apply jitter
-    assert_eq!(after_first.jitter_offset, fixed_offset, "Jitter offset must not change");
+    assert_eq!(
+        after_first.jitter_offset, fixed_offset,
+        "Jitter offset must not change"
+    );
 }
 
 #[test]
@@ -644,7 +670,7 @@ fn test_jitter_window_capped_at_10_percent_of_interval() {
     let (client, admin, token, recipient) = setup(&env);
 
     let interval = 1000u64; // 10% = 100
-    // Request a jitter window larger than 10% of interval
+                            // Request a jitter window larger than 10% of interval
     let requested_jitter = 500u32;
 
     let payment_id = client.schedule_payment(
@@ -660,7 +686,10 @@ fn test_jitter_window_capped_at_10_percent_of_interval() {
 
     let p = client.get_recurring_payment(&payment_id);
     // Window is capped to 10% of interval = 100
-    assert_eq!(p.jitter_window, 100u32, "Jitter window should be capped at 10% of interval");
+    assert_eq!(
+        p.jitter_window, 100u32,
+        "Jitter window should be capped at 10% of interval"
+    );
     assert!(p.jitter_offset < 100u32);
 }
 
@@ -674,12 +703,24 @@ fn test_two_payments_same_interval_different_jitter() {
     let jitter_window = 200u32; // 10% of 2000
 
     let id1 = client.schedule_payment(
-        &admin, &recipient, &token, &50i128,
-        &Symbol::new(&env, "pay1"), &interval, &0u32, &jitter_window,
+        &admin,
+        &recipient,
+        &token,
+        &50i128,
+        &Symbol::new(&env, "pay1"),
+        &interval,
+        &0u32,
+        &jitter_window,
     );
     let id2 = client.schedule_payment(
-        &admin, &recipient2, &token, &50i128,
-        &Symbol::new(&env, "pay2"), &interval, &0u32, &jitter_window,
+        &admin,
+        &recipient2,
+        &token,
+        &50i128,
+        &Symbol::new(&env, "pay2"),
+        &interval,
+        &0u32,
+        &jitter_window,
     );
 
     let p1 = client.get_recurring_payment(&id1);
@@ -700,8 +741,14 @@ fn test_jitter_offset_second_cycle_applied() {
     let jitter_window = 100u32;
 
     let payment_id = client.schedule_payment(
-        &admin, &recipient, &token, &100i128,
-        &Symbol::new(&env, "pay"), &interval, &0u32, &jitter_window,
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &interval,
+        &0u32,
+        &jitter_window,
     );
 
     let p = client.get_recurring_payment(&payment_id);
@@ -709,7 +756,8 @@ fn test_jitter_offset_second_cycle_applied() {
     let first_due = p.next_payment_ledger;
 
     // Execute the first payment (no jitter on first)
-    env.ledger().with_mut(|l| l.sequence_number = first_due as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = first_due as u32);
     client.execute_recurring_payment(&payment_id);
 
     let after_first = client.get_recurring_payment(&payment_id);

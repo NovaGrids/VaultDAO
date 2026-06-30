@@ -20,9 +20,17 @@ fn default_config(env: &Env, admin: &Address) -> InitConfig {
         weekly_limit: 50_000_000,
         timelock_threshold: 500_000,
         timelock_delay: 100,
-        velocity_limit: VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+            per_token_limit: 0,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: crate::types::StakingConfig::default(),
         proposal_id_prefix: 0,
@@ -55,11 +63,7 @@ fn test_full_merge_initiate_and_complete() {
     let source_vault = Address::generate(&env);
 
     // Initiate merge (source_vault merges into this target contract)
-    let merge_id = target_client.initiate_merge(
-        &source_admin,
-        &target_admin,
-        &source_vault,
-    );
+    let merge_id = target_client.initiate_merge(&source_admin, &target_admin, &source_vault);
 
     assert_eq!(merge_id, 1u64);
 
@@ -91,12 +95,17 @@ fn test_merge_counts_active_proposals() {
     let source_admin = Address::generate(&env);
 
     // Create some proposals in the target vault
-    let token = env.register_stellar_asset_contract_v2(target_admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(target_admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1_000_000);
     let recipient = Address::generate(&env);
 
     target_client.propose_transfer(
-        &target_admin, &recipient, &token, &100i128,
+        &target_admin,
+        &recipient,
+        &token,
+        &100i128,
         &soroban_sdk::Symbol::new(&env, "m"),
         &crate::types::Priority::Normal,
         &Vec::new(&env),
@@ -160,7 +169,10 @@ fn test_duplicate_merge_attempt_blocked() {
     // A second initiate while the first is active must fail
     let source_vault2 = Address::generate(&env);
     let result = target_client.try_initiate_merge(&source_admin, &target_admin, &source_vault2);
-    assert!(result.is_err(), "Duplicate merge should be blocked while one is active");
+    assert!(
+        result.is_err(),
+        "Duplicate merge should be blocked while one is active"
+    );
 }
 
 // ============================================================================
@@ -177,7 +189,10 @@ fn test_cannot_merge_into_itself() {
 
     // source_vault == target_vault (the contract itself)
     let result = target_client.try_initiate_merge(&source_admin, &target_admin, &contract_id);
-    assert!(result.is_err(), "Should not be able to merge a vault into itself");
+    assert!(
+        result.is_err(),
+        "Should not be able to merge a vault into itself"
+    );
 }
 
 // ============================================================================

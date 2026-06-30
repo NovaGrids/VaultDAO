@@ -1,11 +1,7 @@
 use crate::errors::VaultError;
-use crate::types::{FeeTier, FeeStructure, RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{FeeStructure, FeeTier, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{
-    testutils::Address as _,
-    token::StellarAssetClient,
-    Address, Env, Vec,
-};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Vec};
 
 fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
@@ -32,7 +28,10 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             weekly_limit: 10_000_000_000,
             timelock_threshold: 999_999_999,
             timelock_delay: 0,
-            velocity_limit: VelocityConfig { limit: 100, window: 3600 },
+            velocity_limit: VelocityConfig {
+                limit: 100,
+                window: 3600,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -111,7 +110,10 @@ fn test_fee_volume_discount_tier() {
 
     // Set up a volume tier: >= 500_000 volume → 50 bps (0.5%)
     let mut tiers = Vec::new(&env);
-    tiers.push_back(FeeTier { min_volume: 500_000, fee_bps: 50 });
+    tiers.push_back(FeeTier {
+        min_volume: 500_000,
+        fee_bps: 50,
+    });
 
     let fee_structure = FeeStructure {
         tiers,

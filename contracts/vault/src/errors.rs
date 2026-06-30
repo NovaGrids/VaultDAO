@@ -130,7 +130,6 @@ pub enum VaultError {
     // =========================================================
     // Milestone quorum verification errors
     // =========================================================
-
     /// Milestone has already been verified by this address
     AlreadyVerified = 510,
     /// Milestone does not have enough verifications to proceed
@@ -141,21 +140,18 @@ pub enum VaultError {
     // =========================================================
     // Issue #1094: Recipient Whitelist
     // =========================================================
-
     /// Whitelist entry has expired
     WhitelistEntryExpired = 600,
 
     // =========================================================
     // Issue #1095: Voting Power Snapshot
     // =========================================================
-
     /// Proposal has no signers in snapshot (cannot create)
     EmptySignerSnapshot = 610,
 
     // =========================================================
     // Issue #1096: Multi-Phase Proposals
     // =========================================================
-
     /// Proposal exceeds maximum allowed phase count (5)
     TooManyPhases = 620,
 
@@ -168,7 +164,6 @@ pub enum VaultError {
     // =========================================================
     // Issue #1097: Capability Tokens
     // =========================================================
-
     /// Capability token not found
     CapabilityNotFound = 630,
 
@@ -183,8 +178,6 @@ pub enum VaultError {
 
     /// Requested action not covered by capability
     CapabilityNotGranted = 634,
-
-    PermissionNotFound = 321,
 
     /// Commit phase is closed (past commit_deadline)
     CommitPhaseClosed = 1100,
@@ -206,7 +199,6 @@ pub enum VaultError {
     // =========================================================
     // Dependency graph errors (Issue #1066)
     // =========================================================
-
     /// Circular dependency detected in proposal dependency graph
     CircularDependency = 960,
 
@@ -219,7 +211,6 @@ pub enum VaultError {
     // =========================================================
     // Comment moderation errors (Issue #1076)
     // =========================================================
-
     /// Comment rate limit exceeded (max 10 per signer per proposal per day)
     CommentRateLimited = 970,
 
@@ -229,14 +220,12 @@ pub enum VaultError {
     // =========================================================
     // Vote weight errors (Issue #1061)
     // =========================================================
-
     /// Cannot change vote weight model while proposals are active
     VoteWeightChangeBlocked = 980,
 
     // =========================================================
     // Tag/Metadata errors (previously aliased, now explicit)
     // =========================================================
-
     /// Too many tags on a proposal (max 8 for hierarchical, max 10 for flat)
     TooManyTags = 700,
 
@@ -252,7 +241,6 @@ pub enum VaultError {
     // =========================================================
     // Issue #1077: Hierarchical Tag Taxonomy
     // =========================================================
-
     /// Tag with this name already exists in the same parent scope
     TagAlreadyExists = 710,
 
@@ -268,14 +256,12 @@ pub enum VaultError {
     // =========================================================
     // Issue #1085: Gas Cost Estimation Oracle
     // =========================================================
-
     /// Cost model not configured
     CostModelNotFound = 720,
 
     // =========================================================
     // Issue #1083: Proposal Template with Variable Substitution
     // =========================================================
-
     /// Required template variable is missing from the provided values
     TemplateVariableMissing = 730,
 
@@ -291,7 +277,6 @@ pub enum VaultError {
     // =========================================================
     // Issue #1086: Threshold Signature Scheme (Cold Storage)
     // =========================================================
-
     /// Cold signature is invalid (Ed25519 verification failed)
     InvalidColdSignature = 740,
 

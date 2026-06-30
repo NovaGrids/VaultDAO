@@ -1,5 +1,7 @@
 use super::*;
-use crate::types::{ColdSignerConfig, ConditionLogic, Priority, RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{
+    ColdSignerConfig, ConditionLogic, Priority, RetryConfig, ThresholdStrategy, VelocityConfig,
+};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, BytesN as _},
@@ -32,7 +34,11 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             weekly_limit: 10_000_000,
             timelock_threshold: 999_999,
             timelock_delay: 0,
-            velocity_limit: VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+            velocity_limit: VelocityConfig {
+                limit: 100,
+                window: 3600,
+                per_token_limit: 0,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -82,7 +88,11 @@ fn make_keypair(env: &Env) -> (BytesN<32>, soroban_sdk::testutils::ed25519::Keyp
 }
 
 /// Sign `proposal_id` with an Ed25519 keypair (same logic as submit_cold_signature).
-fn sign_proposal_id(env: &Env, kp: &soroban_sdk::testutils::ed25519::Keypair, proposal_id: u64) -> BytesN<64> {
+fn sign_proposal_id(
+    env: &Env,
+    kp: &soroban_sdk::testutils::ed25519::Keypair,
+    proposal_id: u64,
+) -> BytesN<64> {
     use soroban_sdk::Bytes;
     let mut id_bytes = Bytes::new(env);
     id_bytes.extend_from_array(&proposal_id.to_le_bytes());

@@ -30,7 +30,11 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             weekly_limit: 10_000_000,
             timelock_threshold: 999_999,
             timelock_delay: 0,
-            velocity_limit: VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
+            velocity_limit: VelocityConfig {
+                limit: 100,
+                window: 3600,
+                per_token_limit: 0,
+            },
             threshold_strategy: ThresholdStrategy::Fixed,
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
@@ -162,7 +166,7 @@ fn test_update_var_template_increments_version() {
 }
 
 // ============================================================================
-// create_proposal_from_var_template
+// create_prop_var_template
 // ============================================================================
 
 #[test]
@@ -189,9 +193,12 @@ fn test_create_proposal_from_template_success() {
 
     let recipient = Address::generate(&env);
     let mut values: Map<Symbol, Bytes> = Map::new(&env);
-    values.set(Symbol::new(&env, "amount"), make_template_bytes(&env, "500"));
+    values.set(
+        Symbol::new(&env, "amount"),
+        make_template_bytes(&env, "500"),
+    );
 
-    let proposal_id = client.create_proposal_from_var_template(
+    let proposal_id = client.create_prop_var_template(
         &admin,
         &template_id,
         &recipient,
@@ -236,9 +243,12 @@ fn test_create_proposal_from_template_missing_required_var_rejected() {
     let recipient = Address::generate(&env);
     let mut values: Map<Symbol, Bytes> = Map::new(&env);
     // Only provide "amount", missing "reason"
-    values.set(Symbol::new(&env, "amount"), make_template_bytes(&env, "100"));
+    values.set(
+        Symbol::new(&env, "amount"),
+        make_template_bytes(&env, "100"),
+    );
 
-    let result = client.try_create_proposal_from_var_template(
+    let result = client.try_create_prop_var_template(
         &admin,
         &template_id,
         &recipient,
@@ -270,7 +280,7 @@ fn test_deactivate_template_blocked_when_proposals_reference_it() {
     );
 
     let recipient = Address::generate(&env);
-    client.create_proposal_from_var_template(
+    client.create_prop_var_template(
         &admin,
         &template_id,
         &recipient,
@@ -300,7 +310,7 @@ fn test_proposal_retains_template_version_on_update() {
     );
 
     let recipient = Address::generate(&env);
-    let proposal_id = client.create_proposal_from_var_template(
+    let proposal_id = client.create_prop_var_template(
         &admin,
         &template_id,
         &recipient,
