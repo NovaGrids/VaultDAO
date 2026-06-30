@@ -21,23 +21,25 @@ mod types;
 mod types_balance_snapshot;
 
 use errors::VaultError;
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractimpl, Address, BytesN, Env, IntoVal, Map, String, Symbol, Vec,
+    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Vec,
 };
 use types::{
     AuditAction, AuditEntry, BatchExecutionResult, BatchOperation, BatchStatus, BatchTransaction,
     BridgeConfig, CancellationRecord, Capability, CapabilityToken, ColdSignerConfig, Comment,
-    Condition, ConditionLogic, Config, CostEstimate, CostModel, CrossChainAsset,
-    CrossChainProposal, CrossVaultConfig, CrossVaultProposal, CrossVaultStatus, Delegation,
-    DelegationHistory, DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
-    ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
-    FundingRoundConfig, FundingRoundStatus, GasConfig, HolidayBehavior, HolidayCalendar,
-    InitConfig, InsuranceClaim, InsuranceClaimStatus, InsuranceConfig, ListMode, Milestone,
-    MultiPhaseProposal, NotificationPreferences, OptionalProposalOperation,
-    OptionalVaultOracleConfig, Priority, Proposal, ProposalAmendment, ProposalOperation,
-    ProposalPhase, ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig,
-    RecoveryProposal, RecoveryStatus, RecurringPayment, Reputation, ReputationConfig, RetryConfig,
-    RetryState, Role, RoleAssignment, ScheduledTransferConfig, SignerTier, StakingConfig,
+    Condition, ConditionLogic, Config, ConfigParam, CostEstimate, CostModel, CrossChainAsset,
+    CrossChainProposal, CrossVaultConfig, CrossVaultProposal, CrossVaultStatus, DeadLetterRecord,
+    Delegation, DelegationHistory, DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow,
+    EscrowStatus, ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
+    FundingRoundConfig, FundingRoundStatus, GasConfig, GovernanceProposal, HolidayBehavior,
+    HolidayCalendar, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
+    InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
+    NotificationPrefs, OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority,
+    Proposal, ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus,
+    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
+    RecurringPayment, RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role,
+    RoleAssignment, ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig,
     StreamRateWindow, StreamStatus, StreamingPayment, Subscription, SubscriptionStatus,
     SubscriptionTier, SwapProposal, SwapResult, Tag, TemplateOverrides, TemplateVarRef,
     ThresholdStrategy, TokenSpendingConfig, TransferDetails, VarTemplate, VaultAction,
@@ -59,6 +61,9 @@ const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 
 /// Ledger interval in seconds (approximate)
 const LEDGER_INTERVAL_SECONDS: u64 = 5;
+
+/// One 24-hour cycle in ledgers (quiet-hours day offset, 5 s/ledger)
+const QUIET_HOURS_CYCLE: u64 = 1440;
 
 /// Maximum proposals that can be batch-executed in one call (gas limit)
 const MAX_BATCH_SIZE: u32 = 10;
@@ -101,7 +106,7 @@ const REP_APPROVAL_BONUS: u32 = 2;
 /// Called at emission time so indexers receive a ready-made push list inside
 /// the companion `notif_dispatch` event.
 fn compute_relevant_signers(env: &Env, event_type: &Symbol, amount: i128) -> Vec<Address> {
-    let day_offset = env.ledger().sequence() % QUIET_HOURS_CYCLE;
+    let day_offset = (env.ledger().sequence() as u64 % QUIET_HOURS_CYCLE) as u32;
     // Use the dedicated prefs index so any address (not just role-holders) can subscribe.
     let known = storage::get_notification_prefs_index(env);
     let mut relevant = Vec::new(env);
@@ -180,9 +185,9 @@ fn calculate_impact_score(
     // 2. Recipient Risk Score (0-100)
     // Whitelisted recipients get 0, unknown get 100
     let recipient_risk_score = if storage::is_recipient_whitelisted(env, recipient) {
-        0u8
+        0u32
     } else {
-        100u8
+        100u32
     };
 
     // 3. Complexity Score (0-100)
@@ -205,7 +210,7 @@ fn calculate_impact_score(
         complexity = complexity.saturating_add(30);
     }
 
-    let complexity_score = (complexity as u8).min(100);
+    let complexity_score = complexity.min(100);
 
     // 4. Total Impact Score using weighted average
     // Formula: (treasury_impact_bps / 100) * 0.4 + recipient_risk * 0.3 + complexity * 0.3
@@ -220,7 +225,7 @@ fn calculate_impact_score(
         .saturating_mul(30)
         .saturating_div(100);
 
-    let total = (treasury_component + recipient_component + complexity_component).min(100) as u8;
+    let total = (treasury_component + recipient_component + complexity_component).min(100);
 
     ImpactScore {
         treasury_impact_bps,
@@ -464,10 +469,11 @@ impl VaultDAO {
             },
             vote_weight: config.vote_weight,
             high_impact_threshold: config.high_impact_threshold,
+            admin_rotation_delay: config.admin_rotation_delay,
         };
 
         // Apply staking config from InitConfig
-        storage::set_staking_config(&env, &config.staking_config);
+        storage::set_staking_config(&env, &config_storage.staking_config);
 
         // Store state
         storage::set_config(&env, &config_storage);
@@ -784,9 +790,9 @@ impl VaultDAO {
         {
             let mut preimage = soroban_sdk::Bytes::new(&env);
             preimage.extend_from_array(&amount.to_le_bytes());
-            preimage.extend_from_slice(&recipient.to_bytes());
-            preimage.extend_from_slice(&token_addr.to_bytes());
-            let fingerprint = env.crypto().sha256(&preimage);
+            preimage.append(&recipient.clone().to_xdr(&env));
+            preimage.append(&token_addr.clone().to_xdr(&env));
+            let fingerprint: BytesN<32> = env.crypto().sha256(&preimage).into();
             if !override_duplicate && storage::has_proposal_fingerprint(&env, &fingerprint) {
                 return Err(VaultError::DuplicateProposal);
             }
@@ -913,10 +919,10 @@ impl VaultDAO {
         {
             let mut preimage = soroban_sdk::Bytes::new(&env);
             preimage.extend_from_array(&amount.to_le_bytes());
-            preimage.extend_from_slice(&recipient.to_bytes());
-            preimage.extend_from_slice(&token_addr.to_bytes());
+            preimage.append(&recipient.clone().to_xdr(&env));
+            preimage.append(&token_addr.clone().to_xdr(&env));
             let fp = env.crypto().sha256(&preimage);
-            storage::set_proposal_fingerprint(&env, &fp);
+            storage::set_proposal_fingerprint(&env, &fp.to_bytes());
         }
 
         // Extend TTL to ensure persistent data stays alive
@@ -2279,34 +2285,34 @@ impl VaultDAO {
 
         // Iteratively trace the target chain. A->B->C is valid; adding another
         // hop is rejected. Cycle detection happens before state is written.
-        const MAX_DELEGATION_DEPTH: u8 = 2;
-        let mut depth = 1u8;
+        const MAX_DELEGATION_DEPTH: u32 = 2;
+        let mut depth = 1u32;
         let mut current = delegate.clone();
         let current_ledger = env.ledger().sequence() as u64;
 
         loop {
-            if let Some(delegation) = storage::get_delegation(&env, &current) {
-                if !delegation.is_active
-                    || (delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger)
-                {
-                    break;
-                }
-                if delegation.delegate == delegator {
-                    return Err(VaultError::CircularDelegation);
-                }
-                if depth >= MAX_DELEGATION_DEPTH {
-                    return Err(VaultError::DelegationChainTooLong);
-                }
-                current = delegation.delegate.clone();
-                depth = depth.saturating_add(1);
-            } else {
+            let delegation = storage::get_delegation(&env, &current);
+            if !delegation.is_active
+                || (delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger)
+            {
                 break;
             }
+            if delegation.delegate == delegator {
+                return Err(VaultError::CircularDelegation);
+            }
+            if depth >= MAX_DELEGATION_DEPTH {
+                return Err(VaultError::DelegationChainTooLong);
+            }
+            current = delegation.delegate.clone();
+            depth = depth.saturating_add(1);
         }
 
-        let old_delegate = storage::get_delegation(&env, &delegator)
-            .map(|d| d.delegate)
-            .unwrap_or(delegator.clone());
+        let upstream_delegation = storage::get_delegation(&env, &delegator);
+        let old_delegate = if upstream_delegation.is_active {
+            upstream_delegation.delegate
+        } else {
+            delegator.clone()
+        };
 
         if depth >= MAX_DELEGATION_DEPTH
             && !storage::get_delegators_for(&env, &delegator).is_empty()
@@ -2328,11 +2334,10 @@ impl VaultDAO {
         // If this signer was already the final delegate for another signer,
         // extending the chain changes that original delegation to depth two.
         for upstream in storage::get_delegators_for(&env, &delegator).iter() {
-            if let Some(mut upstream_delegation) = storage::get_delegation(&env, &upstream) {
-                if upstream_delegation.is_active && upstream_delegation.delegate == delegator {
-                    upstream_delegation.chain_depth = depth.saturating_add(1);
-                    storage::set_delegation(&env, &upstream_delegation);
-                }
+            let mut upstream_delegation = storage::get_delegation(&env, &upstream);
+            if upstream_delegation.is_active && upstream_delegation.delegate == delegator {
+                upstream_delegation.chain_depth = depth.saturating_add(1);
+                storage::set_delegation(&env, &upstream_delegation);
             }
         }
 
@@ -2377,15 +2382,14 @@ impl VaultDAO {
                     if voters.contains(&delegator) {
                         continue;
                     }
-                    if let Some(delegation) = storage::get_delegation(env, &delegator) {
-                        if delegation.is_active
-                            && delegation.delegate == delegate
-                            && (delegation.expiry_ledger == 0
-                                || current_ledger <= delegation.expiry_ledger)
-                        {
-                            voters.push_back(delegator.clone());
-                            next.push_back(delegator);
-                        }
+                    let delegation = storage::get_delegation(env, &delegator);
+                    if delegation.is_active
+                        && delegation.delegate == delegate
+                        && (delegation.expiry_ledger == 0
+                            || current_ledger <= delegation.expiry_ledger)
+                    {
+                        voters.push_back(delegator.clone());
+                        next.push_back(delegator);
                     }
                 }
             }
@@ -2410,21 +2414,21 @@ impl VaultDAO {
         delegator.require_auth();
 
         let old_delegation = storage::get_delegation(&env, &delegator);
-        if let Some(d) = old_delegation {
-            storage::remove_delegation(&env, &delegator);
-
-            let history = DelegationHistory {
-                id: storage::increment_delegation_id(&env),
-                delegator: delegator.clone(),
-                previous_delegate: d.delegate,
-                new_delegate: delegator.clone(),
-                changed_at: env.ledger().sequence() as u64,
-            };
-            storage::add_delegation_history(&env, &history);
-            Ok(())
-        } else {
-            Err(VaultError::ProposalNotFound) // No delegation to revoke
+        if !old_delegation.is_active {
+            return Err(VaultError::ProposalNotFound);
         }
+
+        storage::remove_delegation(&env, &delegator);
+
+        let history = DelegationHistory {
+            id: storage::increment_delegation_id(&env),
+            delegator: delegator.clone(),
+            previous_delegate: old_delegation.delegate,
+            new_delegate: delegator.clone(),
+            changed_at: env.ledger().sequence() as u64,
+        };
+        storage::add_delegation_history(&env, &history);
+        Ok(())
     }
 
     /// Get the delegation chain for an address.
@@ -2449,22 +2453,18 @@ impl VaultDAO {
         let current_ledger = env.ledger().sequence() as u64;
 
         loop {
-            if let Some(delegation) = storage::get_delegation(&env, &current) {
-                // Check if delegation is still active
-                if !delegation.is_active
-                    || (delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger)
-                {
-                    break;
-                }
-                if depth >= MAX_DELEGATION_DEPTH {
-                    return Err(VaultError::DelegationChainTooLong);
-                }
-                chain.push_back(delegation.delegate.clone());
-                current = delegation.delegate;
-                depth += 1;
-            } else {
+            let delegation = storage::get_delegation(&env, &current);
+            if !delegation.is_active
+                || (delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger)
+            {
                 break;
             }
+            if depth >= MAX_DELEGATION_DEPTH {
+                return Err(VaultError::DelegationChainTooLong);
+            }
+            chain.push_back(delegation.delegate.clone());
+            current = delegation.delegate;
+            depth += 1;
         }
 
         Ok(chain)
@@ -3263,24 +3263,26 @@ impl VaultDAO {
                     enabled: false,
                     max_retries: 0,
                     initial_backoff_ledgers: 0,
+                    max_retry_delay: 0,
                 },
                 recovery_config: RecoveryConfig {
                     guardians: Vec::new(&env),
                     threshold: 0,
                     delay: 0,
                 },
-                staking_config: StakingConfig {
-                    enabled: false,
-                    min_amount: 0,
-                    base_stake_bps: 0,
-                    max_stake_amount: 0,
-                    reputation_discount_threshold: 0,
-                    reputation_discount_percentage: 0,
-                    slash_percentage: 0,
-                },
+                staking_config: StakingConfig::default(),
+                supported_tokens: Vec::new(&env),
+                token_daily_limits: Vec::new(&env),
+                token_weekly_limits: Vec::new(&env),
+                stream_max_window_amount: 0,
+                burst_factor: 150,
                 veto_window_ledgers: 0,
                 proposal_id_prefix: 0,
                 whitelist_mode: false,
+                grace_period_ledgers: 100,
+                vote_weight: VoteWeight::Flat,
+                high_impact_threshold: 70,
+                admin_rotation_delay: MIN_ADMIN_ROTATION_DELAY,
             }
         });
         (config.quorum, config.quorum_percentage)
@@ -3724,6 +3726,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority: Priority::Normal,
             conditions: Vec::new(&env),
@@ -3894,7 +3897,7 @@ impl VaultDAO {
     ///
     /// SHA-256 is applied to the raw UTF-8 bytes of the attachment string.
     fn compute_leaf_hash(env: &Env, attachment: &soroban_sdk::String) -> BytesN<32> {
-        let bytes: soroban_sdk::Bytes = attachment.into();
+        let bytes = attachment.clone().to_xdr(env);
         env.crypto().sha256(&bytes).into()
     }
 
@@ -4025,6 +4028,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority: Priority::Normal,
             conditions: Vec::new(&env),
@@ -4033,6 +4037,7 @@ impl VaultDAO {
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
             execution_time: None,
+            execution_window_ledgers: 0,
             insurance_amount: 0,
             stake_amount: 0,
             gas_limit: 0,
@@ -4630,7 +4635,7 @@ impl VaultDAO {
             let next_id = storage::get_next_recurring_id(&env);
             for payment_id in 1..next_id {
                 if let Ok(payment) = storage::get_recurring_payment(&env, payment_id) {
-                    if payment.is_active && payment.token == token {
+                    if payment.status == RecurringStatus::Active && payment.token == token {
                         return Err(VaultError::TokenHasActivePayments);
                     }
                 }
@@ -5481,43 +5486,6 @@ impl VaultDAO {
             return Err(VaultError::AddressNotOnList);
         }
 
-        let current_ledger = env.ledger().sequence() as u64;
-        let proposal_id = storage::increment_proposal_id(&env);
-        let proposal = Proposal {
-            id: proposal_id,
-            proposer: proposer.clone(),
-            recipient: env.current_contract_address(),
-            token: env.current_contract_address(),
-            amount: 0,
-            memo: Symbol::new(&env, "swap"),
-            metadata: Map::new(&env),
-            tags: Vec::new(&env),
-            approvals: Vec::new(&env),
-            abstentions: Vec::new(&env),
-            attachments: Vec::new(&env),
-            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
-            status: ProposalStatus::Pending,
-            priority: priority.clone(),
-            conditions,
-            condition_logic,
-            created_at: current_ledger,
-            expires_at: calculate_expiration_ledger(&config, &priority, current_ledger),
-            unlock_ledger: 0,
-            execution_time: None,
-            insurance_amount,
-            stake_amount: 0,
-            gas_limit: 0,
-            gas_used: 0,
-            snapshot_ledger: current_ledger,
-            snapshot_signers: config.signers.clone(),
-            depends_on: Vec::new(&env),
-            is_swap: true,
-            voting_deadline: if config.default_voting_deadline > 0 {
-                current_ledger + config.default_voting_deadline
-            } else {
-                0
-            },
-        };
         storage::remove_from_whitelist(&env, &addr);
         storage::extend_instance_ttl(&env);
 
@@ -5993,37 +5961,6 @@ impl VaultDAO {
             return Err(VaultError::AuditChainBroken);
         }
 
-        let proposal = Proposal {
-            id: proposal_id,
-            proposer: proposer.clone(),
-            recipient,
-            token: template.token,
-            amount,
-            memo,
-            metadata: Map::new(&env),
-            tags: Vec::new(&env),
-            approvals: Vec::new(&env),
-            abstentions: Vec::new(&env),
-            attachments: Vec::new(&env),
-            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
-            status: ProposalStatus::Pending,
-            priority,
-            conditions: Vec::new(&env),
-            condition_logic: ConditionLogic::And,
-            created_at: current_ledger,
-            expires_at,
-            unlock_ledger,
-            execution_time: None,
-            insurance_amount: 0,
-            stake_amount: 0, // Template proposals don't require stake
-            gas_limit: 0,
-            gas_used: 0,
-            snapshot_ledger: current_ledger,
-            snapshot_signers: config.signers.clone(),
-            depends_on: Vec::new(&env),
-            is_swap: false,
-            voting_deadline: 0,
-        };
         let last_audit_id = storage::get_next_audit_id(&env).saturating_sub(1);
         if to_id > last_audit_id {
             return Err(VaultError::AuditChainBroken);
@@ -6072,7 +6009,8 @@ impl VaultDAO {
     /// Validates the hash chain from start_id to end_id.
     /// Returns true if the chain is valid, false otherwise.
     pub fn verify_audit_trail(env: Env, start_id: u64, end_id: u64) -> Result<bool, VaultError> {
-        Ok(Self::verify_audit_chain(env, start_id, end_id))
+        Self::verify_audit_chain(env, start_id, end_id)?;
+        Ok(true)
     }
 
     /// Walk the full audit trail from entry 1 to the latest entry and verify
@@ -7029,8 +6967,9 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         caller.require_auth();
 
-        let role = storage::get_role(&env, &admin);
-        if !Role::role_satisfies(Role::Admin, role) {
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let role = storage::get_role(&env, &caller);
+        if caller != proposal.proposer && !Role::role_satisfies(Role::Admin, role) {
             return Err(VaultError::Unauthorized);
         }
 
@@ -7086,7 +7025,7 @@ impl VaultDAO {
             }
             (parent.level + 1, pid)
         } else {
-            (0u8, 0u64)
+            (0u32, 0u64)
         };
 
         if storage::htag_name_in_scope_exists(&env, parent_scope, &name) {
@@ -7600,10 +7539,7 @@ impl VaultDAO {
         let signer_idx = signer_idx.ok_or(VaultError::NotAColdSigner)?;
 
         // Replay prevention: hash the raw signature bytes and check uniqueness
-        let sig_hash: BytesN<32> = env
-            .crypto()
-            .sha256(&soroban_sdk::Bytes::from(signature.as_val()))
-            .into();
+        let sig_hash: BytesN<32> = env.crypto().sha256(&signature.clone().to_xdr(&env)).into();
         if storage::is_cold_sig_used(&env, &sig_hash) {
             return Err(VaultError::ColdSignatureAlreadySubmitted);
         }
@@ -7615,11 +7551,8 @@ impl VaultDAO {
         let proposal_hash: BytesN<32> = env.crypto().sha256(&proposal_id_bytes).into();
 
         // Ed25519 signature verification
-        env.crypto().ed25519_verify(
-            &public_key,
-            &soroban_sdk::Bytes::from(proposal_hash.as_val()),
-            &signature,
-        );
+        env.crypto()
+            .ed25519_verify(&public_key, &proposal_id_bytes, &signature);
 
         let signer_address = cold_config
             .cold_signer_addresses
@@ -7633,10 +7566,7 @@ impl VaultDAO {
             signed_at_ledger: env.ledger().sequence(),
         };
 
-        let pubkey_hash: BytesN<32> = env
-            .crypto()
-            .sha256(&soroban_sdk::Bytes::from(public_key.as_val()))
-            .into();
+        let pubkey_hash: BytesN<32> = env.crypto().sha256(&public_key.clone().to_xdr(&env)).into();
         storage::set_cold_sig(&env, &record, &pubkey_hash);
         storage::add_cold_sig_to_index(&env, proposal_id, &pubkey_hash);
         storage::mark_cold_sig_used(&env, &sig_hash);
@@ -7724,11 +7654,11 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
-        // Validate tiers are sorted by min_volume
+        // Validate tiers are sorted by volume_threshold
         for i in 1..fee_structure.tiers.len() {
             let prev = fee_structure.tiers.get(i - 1).unwrap();
             let curr = fee_structure.tiers.get(i).unwrap();
-            if curr.min_volume <= prev.min_volume {
+            if curr.volume_threshold <= prev.volume_threshold {
                 return Err(VaultError::InvalidAmount);
             }
             if curr.fee_bps > 10_000 {
@@ -7933,7 +7863,31 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         caller.require_auth();
 
-        storage::set_notification_prefs(&env, &caller, &prefs);
+        let mut subscribed_events = Vec::new(&env);
+        if prefs.notify_on_proposal {
+            subscribed_events.push_back(Symbol::new(&env, "proposal"));
+        }
+        if prefs.notify_on_approval {
+            subscribed_events.push_back(Symbol::new(&env, "approval"));
+        }
+        if prefs.notify_on_execution {
+            subscribed_events.push_back(Symbol::new(&env, "execution"));
+        }
+        if prefs.notify_on_rejection {
+            subscribed_events.push_back(Symbol::new(&env, "rejection"));
+        }
+        if prefs.notify_on_expiry {
+            subscribed_events.push_back(Symbol::new(&env, "expiry"));
+        }
+
+        let stored = NotificationPrefs {
+            signer: caller.clone(),
+            subscribed_events,
+            min_amount_threshold: 0,
+            quiet_hours_start: 0,
+            quiet_hours_end: 0,
+        };
+        storage::set_notification_prefs(&env, &stored);
         storage::extend_instance_ttl(&env);
 
         events::emit_notification_prefs_updated(&env, &caller);
@@ -7943,7 +7897,17 @@ impl VaultDAO {
 
     /// Get notification preferences for an address.
     pub fn get_notification_preferences(env: Env, addr: Address) -> NotificationPreferences {
-        storage::get_notification_prefs(&env, &addr)
+        let subscribed = storage::get_notification_prefs(&env, &addr)
+            .map(|p| p.subscribed_events)
+            .unwrap_or_else(|| Vec::new(&env));
+        let has = |name: &str| subscribed.contains(&Symbol::new(&env, name));
+        NotificationPreferences {
+            notify_on_proposal: has("proposal"),
+            notify_on_approval: has("approval"),
+            notify_on_execution: has("execution"),
+            notify_on_rejection: has("rejection"),
+            notify_on_expiry: has("expiry"),
+        }
     }
 
     /// Get addresses subscribed to a specific notification event type.
@@ -7960,20 +7924,9 @@ impl VaultDAO {
                 break;
             }
             if let Some(addr) = index.get(i) {
-                let prefs = storage::get_notification_prefs(&env, &addr);
-                let subscribed = if event_type == Symbol::new(&env, "proposal") {
-                    prefs.notify_on_proposal
-                } else if event_type == Symbol::new(&env, "approval") {
-                    prefs.notify_on_approval
-                } else if event_type == Symbol::new(&env, "execution") {
-                    prefs.notify_on_execution
-                } else if event_type == Symbol::new(&env, "rejection") {
-                    prefs.notify_on_rejection
-                } else if event_type == Symbol::new(&env, "expiry") {
-                    prefs.notify_on_expiry
-                } else {
-                    false
-                };
+                let subscribed = storage::get_notification_prefs(&env, &addr)
+                    .map(|prefs| prefs.subscribed_events.contains(&event_type))
+                    .unwrap_or(false);
                 if subscribed {
                     result.push_back(addr);
                 }
@@ -8908,7 +8861,7 @@ impl VaultDAO {
         let mut fee_bps = fee_structure.base_fee_bps;
         for i in 0..fee_structure.tiers.len() {
             if let Some(tier) = fee_structure.tiers.get(i) {
-                if user_volume >= tier.min_volume {
+                if user_volume >= tier.volume_threshold {
                     fee_bps = tier.fee_bps;
                 } else {
                     break; // Tiers are sorted, so we can stop
@@ -9054,6 +9007,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority: priority.clone(),
             conditions,
@@ -10275,6 +10229,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority,
             conditions: Vec::new(&env),
@@ -11886,7 +11841,7 @@ impl VaultDAO {
             if sum_amounts > 0 {
                 sum_amounts
             } else {
-                proposal.amount
+                total_amount
             }
         } else {
             milestones.iter().map(|m| m.amount).sum()
@@ -12054,7 +12009,7 @@ impl VaultDAO {
         let mut updated_milestone = milestone.clone();
         updated_milestone.status = FundingMilestoneStatus::Verified;
         updated_milestone.verified_at = env.ledger().timestamp();
-        updated_milestone.verified_by = Some(verifier.clone());
+        updated_milestone.verifications.push_back(verifier.clone());
 
         // Compute release amount: percentage-based or fixed
         let amount = if updated_milestone.release_percentage_bps > 0 {
@@ -12074,7 +12029,7 @@ impl VaultDAO {
 
         events::emit_milestone_verified(&env, round_id, milestone_index, &verifier, amount);
 
-        Ok(())
+        Ok(amount)
     }
 
     /// Release funds for verified milestones
@@ -12091,29 +12046,25 @@ impl VaultDAO {
             return Err(VaultError::NotASigner);
         }
 
-        // Role check (Admin or Treasurer only)
-        let role = storage::get_role(&env, &verifier)?;
+        let role = storage::get_role(&env, &releaser);
         if role != Role::Admin && role != Role::Treasurer {
             return Err(VaultError::InsufficientRole);
         }
 
-        // First verification timestamp
-        if milestone.verifications.is_empty() {
-            milestone.verified_at = env.ledger().sequence();
+        let mut round = storage::get_funding_round(&env, round_id)?;
+
+        if round.status != FundingRoundStatus::Active {
+            return Err(VaultError::InvalidStatusTransition);
         }
 
-        // Add verifier
-        milestone.verifications.push(verifier.clone());
-
-        // Check quorum
-        if (milestone.verifications.len() as u32) >= milestone.required_verifiers {
-            milestone.status = FundingMilestoneStatus::Verified;
-
-            // Optional: trigger fund release logic
-            storage::release_milestone_funds(&env, round_id, milestone_index)?;
+        if milestone_index >= round.milestones.len() {
+            return Err(VaultError::InvalidAmount);
         }
-        updated.verified_at = env.ledger().timestamp();
-        updated.verified_by = Some(verifier.clone());
+
+        let milestone = round.milestones.get(milestone_index).unwrap();
+        if milestone.status != FundingMilestoneStatus::Verified {
+            return Err(VaultError::InvalidStatusTransition);
+        }
 
         let mut amount = milestone.amount;
 
@@ -12287,13 +12238,13 @@ impl VaultDAO {
 
         // Generate bridge ID (hash of source + target + token + amount + ledger)
         let bridge_id = {
-            let mut vec = soroban_sdk::Vec::<u8>::new(&env);
-            vec.extend_from_slice(env.current_contract_address().to_array());
-            vec.extend_from_slice(target_vault.to_array());
-            vec.extend_from_slice(token.to_array());
-            vec.extend_from_slice(&amount.to_be_bytes());
-            vec.extend_from_slice(&current_ledger.to_be_bytes());
-            soroban_sdk::crypto::sha256(&vec)
+            let mut data = Bytes::new(&env);
+            data.append(&env.current_contract_address().clone().to_xdr(&env));
+            data.append(&target_vault.clone().to_xdr(&env));
+            data.append(&token.clone().to_xdr(&env));
+            data.extend_from_array(&amount.to_be_bytes());
+            data.extend_from_array(&current_ledger.to_be_bytes());
+            env.crypto().sha256(&data).to_bytes()
         };
 
         // Check if bridge record already exists
@@ -12471,6 +12422,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority: priority.clone(),
             conditions,
@@ -12664,13 +12616,7 @@ impl VaultDAO {
         }
 
         // Transfer bond from disputer to vault
-        token::transfer(
-            &env,
-            &bond_token,
-            &disputer,
-            &env.current_contract_address(),
-            bond_amount,
-        );
+        token::transfer_to_vault(&env, &bond_token, &disputer, bond_amount);
 
         let dispute_id = storage::increment_dispute_id(&env);
         let dispute = Dispute {
@@ -12894,7 +12840,7 @@ impl VaultDAO {
             }
         }
 
-        dispute.outcome = outcome;
+        dispute.outcome = outcome.clone();
         dispute.arbitrator = arbitrator.clone();
         dispute.resolved_at = env.ledger().sequence() as u64;
 
@@ -13434,6 +13380,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority: priority.clone(),
             conditions,
@@ -13699,6 +13646,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority: Priority::Critical,
             conditions: Vec::new(&env),
@@ -13914,6 +13862,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),   // Fresh approvals
             abstentions: Vec::new(&env), // Fresh abstentions
             attachments: source_proposal.attachments.clone(),
+            attachment_merkle_root: source_proposal.attachment_merkle_root.clone(),
             status: ProposalStatus::Pending,
             priority: priority.clone(),
             conditions: source_proposal.conditions.clone(),
@@ -14084,6 +14033,7 @@ impl VaultDAO {
             approvals: Vec::new(&env),
             abstentions: Vec::new(&env),
             attachments: Vec::new(&env),
+            attachment_merkle_root: BytesN::from_array(&env, &[0u8; 32]),
             status: ProposalStatus::Pending,
             priority: Priority::Normal,
             conditions: Vec::new(&env),

@@ -2,7 +2,7 @@
 
 use soroban_sdk::contracterror;
 
-#[contracterror]
+#[contracterror(export = false)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum VaultError {
@@ -294,6 +294,70 @@ pub enum VaultError {
 
     /// Max cold signer count reached (5)
     TooManyColdSigners = 745,
+
+    // =========================================================
+    // Emergency pause / circuit breaker (#1084)
+    // =========================================================
+    VaultPaused = 1020,
+
+    // =========================================================
+    // Dependency graph depth (#1066)
+    // =========================================================
+    DependencyDepthExceeded = 963,
+
+    // =========================================================
+    // Proposal attachments
+    // =========================================================
+    AttachmentHashInvalid = 680,
+    AttachmentAlreadyExists = 681,
+    TooManyAttachments = 682,
+
+    // =========================================================
+    // Bridge operations
+    // =========================================================
+    BridgeError = 170,
+    BridgeAlreadyExists = 171,
+    BridgeInvalidId = 172,
+    BridgeInvalidStatus = 173,
+    BridgeAmountExceedsLimit = 174,
+    BridgeDeadlineExceeded = 175,
+    BridgeSlippageExceeded = 176,
+
+    // =========================================================
+    // Dispute resolution
+    // =========================================================
+    DisputeNotFound = 180,
+    DisputeAlreadyResolved = 181,
+    DisputeAlreadyDismissed = 182,
+    DisputeBondTooSmall = 183,
+    ArbitratorCannotResolveOwnDispute = 184,
+
+    // =========================================================
+    // Subscription management
+    // =========================================================
+    SubscriptionNotActive = 190,
+    SubscriptionPaused = 191,
+    SubscriptionAlreadyCancelled = 192,
+    SubscriptionAlreadyExpired = 193,
+    NotSubscriberOrAdmin = 194,
+    RenewalNotDue = 195,
+    SubscriptionNotFound = 196,
+
+    // =========================================================
+    // Signer / execution constraints
+    // =========================================================
+    CannotRemoveSigner = 85,
+    DuplicateProposal = 26,
+    ExecutionWindowExpired = 27,
+    GasLimitExceeded = 161,
+    InsurancePoolInsufficient = 111,
+    InvalidDeadline = 44,
+    InvalidLedgerRange = 45,
+    InvalidProposalIdPrefix = 46,
+    InvalidStreamRate = 232,
+    MaxDeadlineExtensionsReached = 47,
+    OracleNotConfigured = 721,
+    OraclePriceStale = 722,
 }
 
 // Compatibility markers for CI source checks:

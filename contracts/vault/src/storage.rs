@@ -18,26 +18,28 @@
 //!
 //! 5. **Batch Operations**: Multiple related updates are batched into single storage operations.
 
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Map, String, Symbol, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    AuditEntry, BatchExecutionResult, BatchTransaction, BridgeConfig, CapabilityToken,
-    ColdSignatureRecord, ColdSignerConfig, Comment, Config, CostEstimate, CostModel,
-    CrossChainProposal, DeadLetterRecord, DelegatedPermission, Delegation, DelegationHistory,
-    DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure, FundingRound,
-    FundingRoundConfig, GasConfig, HolidayCalendar, InsuranceClaim, InsuranceConfig, ListMode,
-    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PermissionGrant, Proposal,
+    AuditCheckpoint, AuditEntry, BatchExecutionResult, BatchTransaction, BridgeConfig,
+    CapabilityToken, ColdSignatureRecord, ColdSignerConfig, Comment, ComplianceRule, Config,
+    CostEstimate, CostModel, CrossChainProposal, DeadLetterRecord, DelegatedPermission, Delegation,
+    DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure,
+    FundingRound, FundingRoundConfig, GasConfig, GovernanceProposal, HolidayCalendar,
+    InsuranceClaim, InsuranceConfig, ListMode, MergeRecord, MultiPhaseProposal,
+    NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant, Proposal,
     ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
-    ReputationConfig, RetryState, Role, RoleAssignment, SignerTier, StakeRecord, StakingConfig,
-    StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
+    ReputationConfig, RetryState, Role, RoleAssignment, ScopedDelegation, SignerTier, StakeRecord,
+    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
     TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
     VestingSchedule, VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 
 /// Core storage key definitions (kept minimal to avoid size limits)
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum DataKey {
     /// Contract initialization flag
@@ -175,9 +177,23 @@ pub enum DataKey {
     ProposalVarRef(u64),
     /// Proposal IDs created from a VarTemplate -> Vec<u64>
     VarTemplateProposals(u64),
+    // ---- Issue #1087: Audit Trail Compression ----
+    /// Audit checkpoint by ID -> AuditCheckpoint
+    AuditCheckpoint(u64),
+    /// Next audit checkpoint ID counter -> u64
+    NextAuditCheckpointId,
+    // ---- Issue #1100: Vault Merge Protocol ----
+    /// Merge record by ID -> MergeRecord
+    MergeRecord(u64),
+    /// Next merge ID counter -> u64
+    NextMergeId,
+    /// Whether this vault has been permanently deactivated by a completed merge -> bool
+    VaultDeactivated,
+    /// Active merge ID for this vault (0 if none) -> u64
+    ActiveMergeId,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CounterKey {
     Template = 1,
@@ -190,7 +206,7 @@ pub enum CounterKey {
     ScopedDelegation = 8,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum VestingKey {
     Schedule(u64),
@@ -199,14 +215,14 @@ pub enum VestingKey {
     Reserved(Address),
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum CalendarKey {
     Holidays,
 }
 
 /// Feature-specific storage keys (split to avoid enum size limits)
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum FeatureKey {
     /// Generic counter key
@@ -336,6 +352,38 @@ pub enum FeatureKey {
     DeadLetter(u64),
     /// Dead letter count -> u64
     DeadLetterCount,
+    /// Vault pause state -> PauseState
+    PauseState,
+    /// Emergency signers list -> Vec<Address>
+    EmergencySigners,
+    /// Circuit breaker outflow per hour window -> i128
+    CircuitBreakerOutflow(u64),
+    /// Proposal content fingerprint -> bool
+    ProposalFingerprint(soroban_sdk::BytesN<32>),
+    /// Circuit breaker threshold -> i128
+    CircuitBreakerThreshold,
+    /// Compliance rules -> Vec<ComplianceRule>
+    ComplianceRules,
+    /// Scoped delegation record -> ScopedDelegation
+    ScopedDelegation(u64),
+    /// Scoped delegation IDs by delegator -> Vec<u64>
+    ScopedDelegationsByDelegator(soroban_sdk::Address),
+    /// Balance snapshots -> Vec<BalanceSnapshot>
+    BalanceSnapshots,
+    /// Snapshot interval in ledgers -> u32
+    SnapshotInterval,
+    /// Last snapshot ledger -> u64
+    LastSnapshotLedger,
+    /// Governance proposal by ID -> GovernanceProposal
+    GovernanceProposal(u64),
+    /// Governance supermajority threshold (percentage) -> u32
+    GovernanceThreshold,
+    /// Active governance proposal count -> u32
+    ActiveGovernanceCount,
+    /// Next governance proposal ID -> u64
+    NextGovernanceId,
+    /// Deadline extension count per proposal -> u32
+    DeadlineExtensionCount(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -2090,8 +2138,8 @@ pub fn compute_audit_hash(
     // action: u32 (4 bytes, little-endian)
     data.extend_from_array(&(action.clone() as u32).to_le_bytes());
 
-    // actor: Address bytes (32 bytes)
-    data.extend_from_slice(&actor.to_bytes());
+    // actor: Address XDR bytes
+    data.append(&actor.clone().to_xdr(env));
 
     // target: u64 (8 bytes, little-endian)
     data.extend_from_array(&target.to_le_bytes());
@@ -2106,9 +2154,8 @@ pub fn compute_audit_hash(
     let hash_bytes = env.crypto().sha256(&data);
 
     // Convert first 8 bytes of hash to u64 (little-endian)
-    let mut hash_array = [0u8; 8];
-    hash_array.copy_from_slice(&hash_bytes.slice(0..8).to_array());
-    u64::from_le_bytes(hash_array)
+    let hash_array = hash_bytes.to_array();
+    u64::from_le_bytes(hash_array[0..8].try_into().unwrap())
 }
 
 pub fn create_audit_entry(
@@ -3026,6 +3073,7 @@ pub fn get_delegation(env: &Env, delegator: &Address) -> Delegation {
             created_at: 0,
             expiry_ledger: 0,
             is_active: false,
+            chain_depth: 0,
         })
 }
 
@@ -3296,12 +3344,10 @@ pub fn get_tag_index(env: &Env, tag: &Symbol) -> Vec<u64> {
 /// Uses the SHA-256 of the symbol's string bytes (first 8 bytes, little-endian).
 fn symbol_to_u64_key(env: &Env, tag: &Symbol) -> u64 {
     use soroban_sdk::Bytes;
-    let tag_str = tag.to_string();
-    let tag_bytes = Bytes::from(tag_str.as_bytes());
+    let tag_bytes = tag.clone().to_xdr(env);
     let hash = env.crypto().sha256(&tag_bytes);
-    let mut arr = [0u8; 8];
-    arr.copy_from_slice(&hash.slice(0..8).to_array());
-    u64::from_le_bytes(arr)
+    let hash_bytes = hash.to_array();
+    u64::from_le_bytes(hash_bytes[0..8].try_into().unwrap())
 }
 
 // ============================================================================
@@ -3309,7 +3355,7 @@ fn symbol_to_u64_key(env: &Env, tag: &Symbol) -> u64 {
 // ============================================================================
 
 pub const MAX_HTAG_COUNT: u64 = 100;
-pub const MAX_HTAG_LEVEL: u8 = 2; // 0=root, 1=child, 2=grandchild
+pub const MAX_HTAG_LEVEL: u32 = 2; // 0=root, 1=child, 2=grandchild
 
 pub fn get_htag(env: &Env, id: u64) -> Result<Tag, VaultError> {
     env.storage()
@@ -3765,4 +3811,437 @@ pub fn store_template_version(env: &Env, template: &ProposalTemplate) -> Option<
         return Some(template.version.saturating_sub(5));
     }
     None
+}
+
+// Emergency Pause / Circuit Breaker (#1084)
+// ============================================================================
+
+pub fn get_pause_state(env: &Env) -> PauseState {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::PauseState)
+        .unwrap_or(PauseState {
+            is_paused: false,
+            paused_by: None,
+            paused_at_ledger: 0,
+            cause: soroban_sdk::Symbol::new(env, "none"),
+        })
+}
+
+pub fn set_pause_state(env: &Env, state: &PauseState) {
+    env.storage().instance().set(&FeatureKey::PauseState, state);
+}
+
+pub fn get_emergency_signers(env: &Env) -> soroban_sdk::Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::EmergencySigners)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+pub fn set_emergency_signers(env: &Env, signers: &soroban_sdk::Vec<Address>) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::EmergencySigners, signers);
+}
+
+pub fn get_circuit_breaker_threshold(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::CircuitBreakerThreshold)
+        .unwrap_or(0i128)
+}
+
+pub fn set_circuit_breaker_threshold(env: &Env, threshold: i128) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::CircuitBreakerThreshold, &threshold);
+}
+
+/// Returns the 1-hour window index for circuit breaker tracking (~720 ledgers per hour)
+pub fn get_hour_window(env: &Env) -> u64 {
+    env.ledger().sequence() as u64 / 720
+}
+
+pub fn get_circuit_breaker_outflow(env: &Env, window: u64) -> i128 {
+    env.storage()
+        .temporary()
+        .get(&FeatureKey::CircuitBreakerOutflow(window))
+        .unwrap_or(0i128)
+}
+
+pub fn add_circuit_breaker_outflow(env: &Env, window: u64, amount: i128) {
+    let current: i128 = get_circuit_breaker_outflow(env, window);
+    let key = FeatureKey::CircuitBreakerOutflow(window);
+    env.storage().temporary().set(&key, &(current + amount));
+    env.storage().temporary().extend_ttl(&key, 1440, 1440); // 2 hours
+}
+
+// ============================================================================
+// Proposal Fingerprint Deduplication (#1089)
+// ============================================================================
+
+/// ~30 days in ledgers
+pub const FINGERPRINT_TTL: u32 = DAY_IN_LEDGERS * 30;
+
+pub fn has_proposal_fingerprint(env: &Env, fingerprint: &soroban_sdk::BytesN<32>) -> bool {
+    env.storage()
+        .temporary()
+        .has(&FeatureKey::ProposalFingerprint(fingerprint.clone()))
+}
+
+pub fn set_proposal_fingerprint(env: &Env, fingerprint: &soroban_sdk::BytesN<32>) {
+    let key = FeatureKey::ProposalFingerprint(fingerprint.clone());
+    env.storage().temporary().set(&key, &true);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, FINGERPRINT_TTL, FINGERPRINT_TTL);
+}
+
+// ============================================================================
+
+// Scoped Delegation (#1082)
+// ============================================================================
+
+pub fn get_next_scoped_delegation_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::Counter(CounterKey::ScopedDelegation))
+        .unwrap_or(1)
+}
+
+pub fn increment_scoped_delegation_id(env: &Env) -> u64 {
+    let id = get_next_scoped_delegation_id(env);
+    env.storage().instance().set(
+        &FeatureKey::Counter(CounterKey::ScopedDelegation),
+        &(id + 1),
+    );
+    id
+}
+
+pub fn set_scoped_delegation(env: &Env, d: &ScopedDelegation) {
+    let key = FeatureKey::ScopedDelegation(d.id);
+    env.storage().persistent().set(&key, d);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_scoped_delegation(env: &Env, id: u64) -> Option<ScopedDelegation> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ScopedDelegation(id))
+}
+
+pub fn get_scoped_delegations_by_delegator(env: &Env, delegator: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ScopedDelegationsByDelegator(delegator.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_scoped_delegations_by_delegator(env: &Env, delegator: &Address, ids: &Vec<u64>) {
+    let key = FeatureKey::ScopedDelegationsByDelegator(delegator.clone());
+    env.storage().persistent().set(&key, ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Balance Snapshots (#1080)
+// ============================================================================
+
+const MAX_SNAPSHOTS: u32 = 90;
+
+pub fn get_snapshots(env: &Env) -> Vec<BalanceSnapshot> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::BalanceSnapshots)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_snapshot(env: &Env, snapshot: &BalanceSnapshot) {
+    let mut snapshots = get_snapshots(env);
+    if snapshots.len() >= MAX_SNAPSHOTS {
+        snapshots.remove(0);
+    }
+    snapshots.push_back(snapshot.clone());
+    let key = FeatureKey::BalanceSnapshots;
+    env.storage().persistent().set(&key, &snapshots);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+
+    env.storage()
+        .persistent()
+        .set(&FeatureKey::LastSnapshotLedger, &snapshot.ledger);
+}
+
+pub fn get_last_snapshot_ledger(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::LastSnapshotLedger)
+        .unwrap_or(0)
+}
+
+pub fn get_snapshot_interval(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::SnapshotInterval)
+        .unwrap_or(0)
+}
+
+pub fn set_snapshot_interval(env: &Env, interval: u32) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::SnapshotInterval, &interval);
+}
+
+pub fn get_snapshot_at(env: &Env, target_ledger: u32) -> Option<BalanceSnapshot> {
+    let snapshots = get_snapshots(env);
+    let len = snapshots.len();
+    if len == 0 {
+        return None;
+    }
+    // Binary search for nearest snapshot at or before target_ledger
+    let target = target_ledger as u64;
+    let mut lo: u32 = 0;
+    let mut hi: u32 = len - 1;
+    let mut best: Option<BalanceSnapshot> = None;
+
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let snap = snapshots.get(mid).unwrap();
+        if snap.ledger <= target {
+            best = Some(snap);
+            if mid == hi {
+                break;
+            }
+            lo = mid + 1;
+        } else {
+            if mid == 0 {
+                break;
+            }
+            hi = mid - 1;
+        }
+    }
+    best
+}
+
+// ============================================================================
+// Governance Proposals (#1068)
+// ============================================================================
+
+pub fn get_next_governance_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NextGovernanceId)
+        .unwrap_or(1)
+}
+
+pub fn increment_governance_id(env: &Env) -> u64 {
+    let id = get_next_governance_id(env);
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NextGovernanceId, &(id + 1));
+    id
+}
+
+pub fn get_governance_proposal(env: &Env, id: u64) -> Option<GovernanceProposal> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::GovernanceProposal(id))
+}
+
+pub fn set_governance_proposal(env: &Env, gp: &GovernanceProposal) {
+    let key = FeatureKey::GovernanceProposal(gp.id);
+    env.storage().persistent().set(&key, gp);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_governance_threshold(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::GovernanceThreshold)
+        .unwrap_or(67)
+}
+
+pub fn set_governance_threshold(env: &Env, threshold: u32) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::GovernanceThreshold, &threshold);
+}
+
+pub fn get_active_governance_count(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::ActiveGovernanceCount)
+        .unwrap_or(0)
+}
+
+pub fn set_active_governance_count(env: &Env, count: u32) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::ActiveGovernanceCount, &count);
+}
+
+// ============================================================================
+// Pending Config Change (Issue #943)
+// ============================================================================
+
+pub fn get_pending_config_proposal(env: &Env) -> Option<u64> {
+    env.storage().instance().get(&FeatureKey::PendingConfig)
+}
+
+pub fn set_pending_config_proposal(env: &Env, proposal_id: u64) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::PendingConfig, &proposal_id);
+}
+
+pub fn clear_pending_config_proposal(env: &Env) {
+    env.storage().instance().remove(&FeatureKey::PendingConfig);
+}
+
+// ============================================================================
+// Recipient whitelist helper
+// ============================================================================
+
+pub fn is_recipient_whitelisted(env: &Env, recipient: &Address) -> bool {
+    match get_list_mode(env) {
+        ListMode::Disabled => true,
+        ListMode::Whitelist => is_whitelisted(env, recipient),
+        ListMode::Blacklist => !is_blacklisted(env, recipient),
+    }
+}
+
+// ============================================================================
+// Issue #1087: Audit Trail Compression
+// ============================================================================
+
+pub fn get_next_audit_checkpoint_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextAuditCheckpointId)
+        .unwrap_or(1)
+}
+
+pub fn increment_audit_checkpoint_id(env: &Env) -> u64 {
+    let id = get_next_audit_checkpoint_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextAuditCheckpointId, &(id + 1));
+    id
+}
+
+pub fn set_audit_checkpoint(env: &Env, checkpoint: &AuditCheckpoint) {
+    let key = DataKey::AuditCheckpoint(checkpoint.id);
+    env.storage().persistent().set(&key, checkpoint);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_audit_checkpoint(env: &Env, id: u64) -> Option<AuditCheckpoint> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AuditCheckpoint(id))
+}
+
+pub fn remove_audit_entry(env: &Env, id: u64) {
+    env.storage().persistent().remove(&DataKey::AuditEntry(id));
+}
+
+// ============================================================================
+// Issue #1100: Vault Merge Protocol Storage
+// ============================================================================
+
+pub fn get_next_merge_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextMergeId)
+        .unwrap_or(1)
+}
+
+pub fn increment_merge_id(env: &Env) -> u64 {
+    let id = get_next_merge_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextMergeId, &(id + 1));
+    id
+}
+
+pub fn set_merge_record(env: &Env, record: &MergeRecord) {
+    let key = DataKey::MergeRecord(record.id);
+    env.storage().persistent().set(&key, record);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_merge_record(env: &Env, id: u64) -> Option<MergeRecord> {
+    env.storage().persistent().get(&DataKey::MergeRecord(id))
+}
+
+pub fn set_active_merge_id(env: &Env, merge_id: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ActiveMergeId, &merge_id);
+}
+
+pub fn get_active_merge_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ActiveMergeId)
+        .unwrap_or(0)
+}
+
+pub fn set_vault_deactivated(env: &Env) {
+    env.storage()
+        .instance()
+        .set(&DataKey::VaultDeactivated, &true);
+}
+
+pub fn is_vault_deactivated(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::VaultDeactivated)
+        .unwrap_or(false)
+}
+
+// ============================================================================
+// Voting deadline extensions
+// ============================================================================
+
+pub fn get_deadline_extension_count(env: &Env, proposal_id: u64) -> u32 {
+    env.storage()
+        .temporary()
+        .get(&FeatureKey::DeadlineExtensionCount(proposal_id))
+        .unwrap_or(0)
+}
+
+pub fn increment_deadline_extension_count(env: &Env, proposal_id: u64) -> u32 {
+    let count = get_deadline_extension_count(env, proposal_id) + 1;
+    let key = FeatureKey::DeadlineExtensionCount(proposal_id);
+    env.storage().temporary().set(&key, &count);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    count
+}
+
+/// Retrieve a specific historical version of a template.
+pub fn get_template_version(
+    env: &Env,
+    template_id: u64,
+    version: u32,
+) -> Result<ProposalTemplate, VaultError> {
+    let archive_id = template_id * 1_000_000 + version as u64;
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::Template(archive_id))
+        .ok_or(VaultError::TemplateNotFound)
 }

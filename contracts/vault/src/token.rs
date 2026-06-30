@@ -28,6 +28,11 @@ pub fn balance(env: &Env, token_addr: &Address) -> i128 {
     client.balance(&vault_address)
 }
 
+/// Alias used by lib.rs for treasury impact calculations
+pub fn get_vault_balance(env: &Env, token_addr: &Address) -> i128 {
+    balance(env, token_addr)
+}
+
 /// Transfer tokens FROM a user INTO the vault (for insurance stake locking).
 /// Requires the `from` address to have already authorized (via require_auth in the caller).
 pub fn transfer_to_vault(env: &Env, token_addr: &Address, from: &Address, amount: i128) {

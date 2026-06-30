@@ -102,7 +102,9 @@ pub struct InitConfig {
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
     pub vote_weight: VoteWeight,
     /// High impact score threshold (0-100). Proposals at or above trigger extended timelock (+48h)
-    pub high_impact_threshold: u8,
+    pub high_impact_threshold: u32,
+    /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
+    pub admin_rotation_delay: u64,
 }
 
 /// Vault configuration
@@ -175,7 +177,9 @@ pub struct Config {
     /// Vote weight model: Flat, TokenWeighted, or Quadratic
     pub vote_weight: VoteWeight,
     /// High impact score threshold (0-100). Proposals at or above trigger extended timelock (+48h)
-    pub high_impact_threshold: u8,
+    pub high_impact_threshold: u32,
+    /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
+    pub admin_rotation_delay: u64,
 }
 
 /// Audit record for a cancelled proposal
@@ -356,7 +360,7 @@ pub struct Delegation {
     pub expiry_ledger: u64,
     pub is_active: bool,
     /// Number of delegation hops from this signer to the final delegate.
-    pub chain_depth: u8,
+    pub chain_depth: u32,
 }
 
 /// Per-signer authority for unilateral treasury transfers.
@@ -474,16 +478,16 @@ pub struct ImpactScore {
     pub treasury_impact_bps: u32,
     /// Recipient risk score: 0 (whitelisted) to 100 (unknown)
     /// Used to gauge exposure to new or untrusted addresses
-    pub recipient_risk_score: u8,
+    pub recipient_risk_score: u32,
     /// Complexity score: 0-100 based on:
     ///   - Number of conditions (0-20 points)
     ///   - Dependencies on other proposals (0-30 points)
     ///   - Scheduled vs immediate execution (0-20 points)
     ///   - Insurance/staking requirements (0-30 points)
-    pub complexity_score: u8,
+    pub complexity_score: u32,
     /// Total impact score: weighted average of the three components (0-100)
     /// Formula: (treasury_impact_bps / 100) * 0.4 + recipient_risk_score * 0.3 + complexity_score * 0.3
-    pub total_score: u8,
+    pub total_score: u32,
 }
 
 /// Transfer proposal
@@ -2279,7 +2283,7 @@ pub struct Tag {
     /// Parent tag ID (None = root tag)
     pub parent_id: Option<u64>,
     /// Hierarchy depth: 0 = root, 1 = child, 2 = grandchild (max)
-    pub level: u8,
+    pub level: u32,
 }
 
 // ============================================================================
@@ -2479,4 +2483,94 @@ pub struct TokenSpendingConfig {
     pub daily_limit: i128,
     pub weekly_limit: i128,
     pub is_default: bool,
+}
+
+// ============================================================================
+// Emergency Pause / Circuit Breaker (#1084)
+// ============================================================================
+
+/// Pause state for the vault
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PauseState {
+    pub is_paused: bool,
+    pub paused_by: Option<soroban_sdk::Address>,
+    pub paused_at_ledger: u32,
+    pub cause: soroban_sdk::Symbol,
+}
+
+// ============================================================================
+// Compliance Scoring (#1103)
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuleEvaluator {
+    TimelockAdherence,
+    SpendingLimitCompliance,
+    VotingParticipation,
+    AuditTrailCompleteness,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ComplianceRule {
+    pub rule_id: u32,
+    pub description: soroban_sdk::Symbol,
+    pub weight: u32,
+    pub evaluator: RuleEvaluator,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ComplianceReport {
+    pub score: u32,
+    pub failed_rules: soroban_sdk::Vec<u32>,
+    pub generated_at: u32,
+}
+
+// ============================================================================
+// Scoped Delegation (#1082)
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ScopedDelegation {
+    pub id: u64,
+    pub delegator: soroban_sdk::Address,
+    pub delegate: soroban_sdk::Address,
+    pub max_amount: i128,
+    pub expires_at_ledger: u32,
+    pub proposal_ids: soroban_sdk::Vec<u64>,
+    pub is_active: bool,
+    pub created_at: u64,
+}
+
+// ============================================================================
+// Governance Parameter Change (#1068)
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ConfigParam {
+    Threshold = 0,
+    SpendingLimit = 1,
+    DailyLimit = 2,
+    WeeklyLimit = 3,
+    TimelockDelay = 4,
+    Quorum = 5,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GovernanceProposal {
+    pub id: u64,
+    pub proposer: soroban_sdk::Address,
+    pub param: ConfigParam,
+    pub new_value: i128,
+    pub approvals: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub status: ProposalStatus,
+    pub created_at: u64,
+    pub expires_at: u64,
 }

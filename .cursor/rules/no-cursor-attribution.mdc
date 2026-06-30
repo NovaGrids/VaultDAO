@@ -1,0 +1,12 @@
+---
+description: Never add Cursor as git commit author or co-author
+alwaysApply: true
+---
+
+# Git commits — no Cursor attribution
+
+When creating commits:
+
+- Do **not** add `Co-authored-by: Cursor`, `Made-with: Cursor`, or any Cursor attribution to commit messages.
+- Do **not** use `git commit --trailer` for Cursor attribution.
+- Use plain `git commit -m "subject"` (optional body only) with the user's git identity as sole author.
