@@ -68,7 +68,10 @@ const GovernanceHealthWidget: React.FC<GovernanceHealthWidgetProps> = ({ title }
               <Cell fill="#374151" />
             </Pie>
             <Tooltip
-              formatter={(value: number, name: string) => [`${value}%`, name]}
+              formatter={(value, name) => [
+                `${typeof value === 'number' ? value : Number(value ?? 0)}%`,
+                String(name),
+              ]}
               contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '6px' }}
             />
           </PieChart>

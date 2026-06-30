@@ -42,6 +42,12 @@ const EVENT_LABELS: Record<NotificationEventKey, string> = {
   export_error: 'Export error',
   approval_failed: 'Approval failed',
   approval_success: 'Approval successful',
+  schedule_created: 'Report schedule created',
+  schedule_deleted: 'Report schedule deleted',
+  schedule_error: 'Report schedule error',
+  pdf_exported: 'PDF exported',
+  pdf_error: 'PDF export error',
+  csv_exported: 'CSV exported',
 };
 
 const METHOD_LABELS: Record<NotificationMethod, string> = {

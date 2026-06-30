@@ -1,6 +1,7 @@
 import React from 'react';
 import { Eye, Type, Zap, Keyboard as KeyboardIcon } from 'lucide-react';
-import { useAccessibility } from '../contexts/AccessibilityContext';\nimport AccessibilityAuditPanel from './AccessibilityAuditPanel';
+import { useAccessibility } from '../contexts/AccessibilityContext';
+import AccessibilityAuditPanel from './AccessibilityAuditPanel';
 
 export function AccessibilitySettings() {
   const {

@@ -92,7 +92,7 @@ export function exportCompliancePDF(data: ComplianceExportData): Blob {
     theme: 'striped',
     styles: { fontSize: 8 },
     headStyles: { fillColor: purple },
-    didParseCell: (hookData) => {
+    didParseCell: (hookData: { column: { index: number }; cell: { raw: unknown; styles: Record<string, unknown> } }) => {
       if (hookData.column.index === 2 && hookData.cell.raw === 'REVIEW') {
         hookData.cell.styles.textColor = [220, 38, 38];
         hookData.cell.styles.fontStyle = 'bold';

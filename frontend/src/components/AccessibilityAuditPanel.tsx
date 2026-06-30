@@ -21,7 +21,7 @@ export function AccessibilityAuditPanel() {
     try {
       const axe = (await import('axe-core')).default;
       const results = await axe.run(document);
-      setViolations(results.violations);
+      setViolations(results.violations as Violation[]);
     } catch (e) {
       console.error("Axe core failed to run", e);
     } finally {

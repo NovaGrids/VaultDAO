@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import InfiniteScroll from 'react-infinite-scroll-component';
-import { FixedSizeList as List } from 'react-window';
 import Fuse from 'fuse.js';
 import {
   Copy,
@@ -196,7 +195,7 @@ const AuditLog: React.FC = () => {
 
   const loadMore = useCallback(() => {
     if (!loading && hasMore) {
-      void fetchPage(offset, actionFilter, false);
+      void fetchPage(offset, actionFilter.join(','), false);
     }
   }, [loading, hasMore, offset, actionFilter, fetchPage]);
 
@@ -448,14 +447,7 @@ const AuditLog: React.FC = () => {
                     No audit entries found.
                   </div>
                 ) : (
-                  <List
-                    height={600}
-                    itemCount={filteredEntries.length}
-                    itemSize={60}
-                    width="100%"
-                  >
-                    {({ index, style }) => {
-                      const entry = filteredEntries[index];
+                  filteredEntries.map((entry, index) => {
                       const broken = isBrokenEntry(index);
                       const isBreakPoint =
                         verificationResult !== null &&
@@ -464,9 +456,8 @@ const AuditLog: React.FC = () => {
 
                       return (
                         <div
-                          style={style}
                           key={entry.id}
-                          className={`flex items-center px-4 transition-colors ${
+                          className={`flex items-center px-4 py-3 transition-colors ${
                             broken
                               ? 'bg-red-500/10 hover:bg-red-500/15'
                               : 'hover:bg-gray-700/30'
@@ -535,8 +526,7 @@ const AuditLog: React.FC = () => {
                           </div>
                         </div>
                       );
-                    }}
-                  </List>
+                    })
                 )}
                 {loading && filteredEntries.length === 0 && (
                   <div className="px-4 py-8 text-center text-gray-400 text-xs">

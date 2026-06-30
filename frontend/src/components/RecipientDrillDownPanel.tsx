@@ -211,7 +211,10 @@ const RecipientDrillDownPanel: React.FC<RecipientDrillDownPanelProps> = ({
                       border: '1px solid #374151',
                       borderRadius: '8px',
                     }}
-                    formatter={(value: number) => [value.toFixed(0) + ' XLM', 'Value']}
+                    formatter={(value) => [
+                      typeof value === 'number' ? `${value.toFixed(0)} XLM` : String(value ?? ''),
+                      'Value',
+                    ]}
                   />
                   <Line
                     type="monotone"

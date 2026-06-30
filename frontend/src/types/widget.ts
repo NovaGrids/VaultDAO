@@ -60,7 +60,7 @@ export interface MarketplaceWidget {
 }
 
 export interface WidgetMessage {
-  type: 'init' | 'config' | 'data' | 'action' | 'error' | 'event' | 'response';
+  type: 'init' | 'config' | 'data' | 'action' | 'error' | 'event' | 'response' | 'config-response' | 'data-response' | 'permission-response';
   payload: unknown;
   callId?: string;
   widgetId: string;

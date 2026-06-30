@@ -9,9 +9,10 @@ export interface SpendingData {
 interface Props {
   data: SpendingData[];
   limit?: number;
+  height?: number;
 }
 
-export const SpendingAreaChart: React.FC<Props> = ({ data, limit }) => {
+export const SpendingAreaChart: React.FC<Props> = ({ data, limit, height = 256 }) => {
   // Simple forecast extension logic
   const extendedData = [...data];
   if (data.length >= 2 && limit) {
@@ -30,7 +31,7 @@ export const SpendingAreaChart: React.FC<Props> = ({ data, limit }) => {
   }
 
   return (
-    <div className="w-full h-64 transition-all duration-500 ease-in-out">
+    <div className="w-full transition-all duration-500 ease-in-out" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={extendedData}>
           <XAxis dataKey="date" stroke="#6b7280" />

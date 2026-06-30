@@ -167,7 +167,6 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
       onClick={handleClick}
       role="article"
       aria-label={`${notification.category} notification: ${notification.title}`}
-      onClick={handleClick}
     >
       {/* Swipe action background */}
       <div

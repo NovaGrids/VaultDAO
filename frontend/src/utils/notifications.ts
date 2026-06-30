@@ -27,6 +27,12 @@ export const NOTIFICATION_EVENTS = [
   'export_error',
   'approval_failed',
   'approval_success',
+  'schedule_created',
+  'schedule_deleted',
+  'schedule_error',
+  'pdf_exported',
+  'pdf_error',
+  'csv_exported',
 ] as const;
 
 export type NotificationEventKey = (typeof NOTIFICATION_EVENTS)[number];
@@ -89,6 +95,12 @@ export const DEFAULT_EVENT_PRIORITIES: Record<NotificationEventKey, Notification
   export_error: 'normal',
   approval_failed: 'high',
   approval_success: 'normal',
+  schedule_created: 'normal',
+  schedule_deleted: 'normal',
+  schedule_error: 'high',
+  pdf_exported: 'normal',
+  pdf_error: 'normal',
+  csv_exported: 'normal',
 };
 
 export const DEFAULT_PREFERENCES: NotificationPreferences = {

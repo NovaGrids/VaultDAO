@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Calendar, DollarSign, TrendingUp } from 'lucide-react';
-import type { RecurringPayment } from '../../hooks/useVaultContract';
+import type { RecurringPayment } from '../hooks/useVaultContract';
 
 const LEDGER_CLOSE_TIME_SECONDS = 5;
 const MS_PER_DAY = 86_400_000;

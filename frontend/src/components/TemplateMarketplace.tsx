@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Download, Upload, Star, Eye } from 'lucide-react';
 import { env } from '../config/env';
 
+import type { VaultTemplate } from '../utils/vaultTemplates';
+
 interface Template {
   id: string;
   name: string;
@@ -9,7 +11,12 @@ interface Template {
   rating: number;
 }
 
-export function TemplateMarketplace() {
+interface TemplateMarketplaceProps {
+  onSelectTemplate?: (template: VaultTemplate) => void;
+  onClose?: () => void;
+}
+
+export function TemplateMarketplace({ onSelectTemplate, onClose }: TemplateMarketplaceProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [ratings, setRatings] = useState<Record<string, number>>(
     JSON.parse(localStorage.getItem('templateRatings') || '{}')
@@ -40,7 +47,29 @@ export function TemplateMarketplace() {
   };
 
   const handleImport = (template: Template) => {
-    console.log("Import to vault / governance proposal trigger for", template.name);
+    if (onSelectTemplate) {
+      onSelectTemplate({
+        id: template.id,
+        name: template.name,
+        description: template.description,
+        category: 'Custom',
+        icon: '📄',
+        config: {
+          signers: [],
+          threshold: 2,
+          spendingLimit: '10000000000',
+          dailyLimit: '50000000000',
+          weeklyLimit: '200000000000',
+          timelockThreshold: '20000000000',
+          timelockDelay: 17280,
+        },
+        features: [],
+        recommended: false,
+      });
+      onClose?.();
+      return;
+    }
+    console.log('Import to vault / governance proposal trigger for', template.name);
     alert(`Proposal created to import ${template.name}`);
   };
 
