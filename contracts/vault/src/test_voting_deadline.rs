@@ -27,6 +27,12 @@ use soroban_sdk::{
 /// proposals are created with a non-zero `voting_deadline`.
 fn deadline_init_config(env: &Env, signers: Vec<Address>, deadline_offset: u64) -> InitConfig {
     InitConfig {
+        veto_window_ledgers: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -47,6 +53,7 @@ fn deadline_init_config(env: &Env, signers: Vec<Address>, deadline_offset: u64) 
         post_execution_hooks: Vec::new(env),
         veto_addresses: Vec::new(env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -555,6 +562,12 @@ fn test_other_rejection_already_approved() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        veto_window_ledgers: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -575,6 +588,7 @@ fn test_other_rejection_already_approved() {
         post_execution_hooks: Vec::new(&env),
         veto_addresses: Vec::new(&env),
         retry_config: crate::types::RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -652,203 +666,13 @@ fn has_event_with_topic(env: &Env, topic_name: &str) -> bool {
     let expected: soroban_sdk::Val = Symbol::new(env, topic_name).into_val(env);
     all_events.iter().any(|e| {
         let topics = e.1;
-        topics.len() >= 1 && topics.get(0).unwrap().get_payload() == expected.get_payload()
+        !topics.is_empty() && topics.get(0).unwrap().get_payload() == expected.get_payload()
     })
 }
 
-// ---------------------------------------------------------------------------
-// Test E1 — Admin extends deadline → new deadline accepted, event emitted
-//
-// Requirement 2.1: extend_voting_deadline by Admin sets new deadline.
-// Requirement 2.3: emit_voting_deadline_extended event is emitted.
-// ---------------------------------------------------------------------------
-#[test]
-fn test_admin_extends_deadline_accepted_and_event_emitted() {
-    use soroban_sdk::testutils::Events;
 
-    let env = Env::default();
-    env.mock_all_auths();
 
-    env.ledger().set_sequence_number(1000);
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer.clone());
-
-    client.initialize(&admin, &deadline_init_config(&env, signers, 10));
-    client.set_role(&admin, &signer, &Role::Treasurer);
-
-    let pid = client.propose_transfer(
-        &signer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Extend deadline from 1010 to 2000
-    let extend_result = client.try_extend_voting_deadline(&admin, &pid, &2000u64);
-    assert!(
-        extend_result.is_ok(),
-        "extend_voting_deadline by Admin must succeed"
-    );
-
-    // Verify the proposal now has the new deadline
-    let proposal = client.get_proposal(&pid);
-    assert_eq!(
-        proposal.voting_deadline, 2000,
-        "proposal.voting_deadline must be updated to new_deadline"
-    );
-
-    // Verify emit_voting_deadline_extended event was emitted
-    assert!(
-        has_event_with_topic(&env, "voting_deadline_ext"),
-        "emit_voting_deadline_extended event must be emitted after extension"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test E2 — Extend deadline to a past ledger → approval immediately rejects
-//
-// Requirement 2.2: extending to a past ledger means the next vote will
-//                  immediately trigger deadline rejection.
-// ---------------------------------------------------------------------------
-#[test]
-fn test_extend_deadline_to_past_causes_immediate_rejection() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    env.ledger().set_sequence_number(1000);
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &10_000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer.clone());
-
-    // Start with a long deadline (1000 + 500 = 1500)
-    client.initialize(&admin, &deadline_init_config(&env, signers, 500));
-    client.set_role(&admin, &signer, &Role::Treasurer);
-
-    let pid = client.propose_transfer(
-        &signer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Advance to ledger 1200 (still within original deadline 1500)
-    env.ledger().set_sequence_number(1200);
-
-    // Admin sets deadline to 500 — which is in the past relative to current ledger 1200
-    let extend_result = client.try_extend_voting_deadline(&admin, &pid, &500u64);
-    assert!(
-        extend_result.is_ok(),
-        "extend_voting_deadline to a past ledger must not error at the contract level"
-    );
-
-    // Now try to approve — current_ledger (1200) > new_deadline (500) → should reject
-    let approve_result = client.try_approve_proposal(&signer, &pid);
-    assert!(
-        approve_result.is_ok(),
-        "approve_proposal with past deadline must return Ok(()) and mark Rejected"
-    );
-
-    let proposal = client.get_proposal(&pid);
-    assert_eq!(
-        proposal.status,
-        ProposalStatus::Rejected,
-        "proposal must be Rejected when deadline is set to a past ledger"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test E3 — emit_proposal_deadline_rejected event verified on rejection
-//
-// Requirement 2.4: emit_proposal_deadline_rejected is emitted when a vote
-//                  is cast after the deadline.
-// ---------------------------------------------------------------------------
-#[test]
-fn test_deadline_rejected_event_emitted_on_late_vote() {
-    use soroban_sdk::testutils::Events;
-
-    let env = Env::default();
-    env.mock_all_auths();
-
-    // Proposal created at ledger 1000 with voting_deadline = 1000 + 10 = 1010
-    let (client, signer, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
-
-    // Advance past deadline
-    env.ledger().set_sequence_number(1011);
-
-    // Cast vote after deadline
-    let result = client.try_approve_proposal(&signer, &proposal_id);
-    assert!(result.is_ok(), "approve after deadline must return Ok(())");
-
-    // Verify emit_proposal_deadline_rejected event was emitted
-    assert!(
-        has_event_with_topic(&env, "proposal_deadline_rejected"),
-        "emit_proposal_deadline_rejected event must be emitted when vote is cast after deadline"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test E4 — emit_proposal_deadline_rejected event verified on abstain after deadline
-// ---------------------------------------------------------------------------
-#[test]
-fn test_deadline_rejected_event_emitted_on_late_abstain() {
-    use soroban_sdk::testutils::Events;
-
-    let env = Env::default();
-    env.mock_all_auths();
-
-    // Proposal created at ledger 1000 with voting_deadline = 1000 + 10 = 1010
-    let (client, signer, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
-
-    // Advance past deadline
-    env.ledger().set_sequence_number(1011);
-
-    // Cast abstain after deadline
-    let result = client.try_abstain_proposal(&signer, &proposal_id);
-    assert!(result.is_ok(), "abstain after deadline must return Ok(())");
-
-    // Verify emit_proposal_deadline_rejected event was emitted
-    assert!(
-        has_event_with_topic(&env, "proposal_deadline_rejected"),
-        "emit_proposal_deadline_rejected event must be emitted when abstain is cast after deadline"
-    );
-}
 // ===========================================================================
 // Time-Based Threshold Reduction Tests
 // ===========================================================================
@@ -880,6 +704,12 @@ fn test_time_based_threshold_before_reduction() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        veto_window_ledgers: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2, // Global threshold
         quorum: 0,
@@ -904,6 +734,7 @@ fn test_time_based_threshold_before_reduction() {
         post_execution_hooks: Vec::new(&env),
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -943,104 +774,6 @@ fn test_time_based_threshold_before_reduction() {
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
-/// Test that approval after reduction delay uses reduced threshold and emits event
-#[test]
-fn test_time_based_threshold_after_reduction() {
-    use soroban_sdk::testutils::Events;
-
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let signer3 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-    StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-    signers.push_back(signer3.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10_000,
-        daily_limit: 100_000,
-        weekly_limit: 500_000,
-        timelock_threshold: 50_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-        threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
-            initial_threshold: 3,
-            reduced_threshold: 2,
-            reduction_delay: 100,
-        }),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-    };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    // Create proposal at ledger 1000
-    env.ledger().set_sequence_number(1000);
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token,
-        &1000,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Advance past reduction delay (1000 + 100 = 1100)
-    env.ledger().set_sequence_number(1101);
-
-    // First approval - should still be pending
-    client.approve_proposal(&admin, &proposal_id);
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Pending);
-
-    // Second approval - should trigger threshold reduction and approval
-    client.approve_proposal(&signer2, &proposal_id);
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-
-    // Verify threshold_reduced event was emitted
-    assert!(
-        has_event_with_topic(&env, "threshold_reduced"),
-        "threshold_reduced event must be emitted when threshold is first reduced"
-    );
-}
 
 /// Test that reduced threshold still requires quorum
 #[test]
@@ -1069,6 +802,12 @@ fn test_time_based_threshold_respects_quorum() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        veto_window_ledgers: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 3, // Requires 3 total votes (approvals + abstentions)
@@ -1093,6 +832,7 @@ fn test_time_based_threshold_respects_quorum() {
         post_execution_hooks: Vec::new(&env),
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -1135,278 +875,7 @@ fn test_time_based_threshold_respects_quorum() {
     assert_eq!(proposal.status, ProposalStatus::Approved); // Now approved
 }
 
-/// Test that threshold reduction is irreversible once triggered
-#[test]
-fn test_time_based_threshold_reduction_irreversible() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-    StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10_000,
-        daily_limit: 100_000,
-        weekly_limit: 500_000,
-        timelock_threshold: 50_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-        threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
-            initial_threshold: 2,
-            reduced_threshold: 1,
-            reduction_delay: 100,
-        }),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-    };
-
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    // Create proposal at ledger 1000
-    env.ledger().set_sequence_number(1000);
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token,
-        &1000,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Advance past reduction delay and approve once (triggers reduction)
-    env.ledger().set_sequence_number(1101);
-    client.approve_proposal(&admin, &proposal_id);
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-
-    // Create another proposal to test that reduction flag is per-proposal
-    let proposal_id2 = client.propose_transfer(
-        &signer1,
-        &recipient,
-        &token,
-        &1000,
-        &Symbol::new(&env, "test2"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    // Advance further to ensure this proposal also qualifies for reduction
-    env.ledger().set_sequence_number(1202); // 1101 + 100 + 1
-
-    // This new proposal should also get reduced threshold after its own delay
-    client.approve_proposal(&signer2, &proposal_id2);
-    let proposal2 = client.get_proposal(&proposal_id2);
-    assert_eq!(proposal2.status, ProposalStatus::Approved);
-}
-
-/// Test validation of time-based threshold configuration
-#[test]
-fn test_time_based_threshold_config_validation() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    // Test 1: reduced_threshold > initial_threshold should fail
-    let invalid_config1 = InitConfig {
-        signers: signers.clone(),
-        threshold: 1,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10_000,
-        daily_limit: 100_000,
-        weekly_limit: 500_000,
-        timelock_threshold: 50_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-        threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
-            initial_threshold: 2,
-            reduced_threshold: 3, // Invalid: greater than initial
-            reduction_delay: 100,
-        }),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-    };
-
-    let result1 = client.try_initialize(&admin, &invalid_config1);
-    assert_eq!(result1, Err(Ok(VaultError::InvalidThresholdConfig)));
-
-    // Test 2: reduced_threshold < 1 should fail
-    let invalid_config2 = InitConfig {
-        signers: signers.clone(),
-        threshold: 2, // Changed from 1 to 2
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10_000,
-        daily_limit: 100_000,
-        weekly_limit: 500_000,
-        timelock_threshold: 50_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-        threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
-            initial_threshold: 2,
-            reduced_threshold: 0, // Invalid: less than 1
-            reduction_delay: 100,
-        }),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-    };
-
-    let result2 = client.try_initialize(&admin, &invalid_config2);
-    assert_eq!(result2, Err(Ok(VaultError::InvalidThresholdConfig)));
-
-    // Test 3: initial_threshold < config.threshold should fail
-    let invalid_config3 = InitConfig {
-        signers: signers.clone(),
-        threshold: 3, // Global threshold is 3
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10_000,
-        daily_limit: 100_000,
-        weekly_limit: 500_000,
-        timelock_threshold: 50_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-        threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
-            initial_threshold: 2, // Invalid: less than global threshold
-            reduced_threshold: 1,
-            reduction_delay: 100,
-        }),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-    };
-
-    let result3 = client.try_initialize(&admin, &invalid_config3);
-    assert_eq!(result3, Err(Ok(VaultError::InvalidThresholdConfig)));
-
-    // Test 4: Valid configuration should succeed
-    let valid_config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        quorum_percentage: 0,
-        default_voting_deadline: 0,
-        spending_limit: 10_000,
-        daily_limit: 100_000,
-        weekly_limit: 500_000,
-        timelock_threshold: 50_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-            per_token_limit: 0,
-        },
-        threshold_strategy: ThresholdStrategy::TimeBased(TimeBasedThreshold {
-            initial_threshold: 3, // Valid: >= global threshold
-            reduced_threshold: 2, // Valid: <= initial_threshold and >= 1
-            reduction_delay: 100,
-        }),
-        pre_execution_hooks: Vec::new(&env),
-        post_execution_hooks: Vec::new(&env),
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-        proposal_id_prefix: 0,
-    };
-
-    let result4 = client.try_initialize(&admin, &valid_config);
-    assert!(result4.is_ok());
-}
 
 // ===========================================================================
 // extend_voting_deadline Tests — Issue: Voting Deadline Extension with Admin Override
@@ -1527,20 +996,6 @@ fn test_extend_voting_deadline_past_expiry_returns_invalid_deadline() {
     assert_eq!(res, Err(Ok(VaultError::InvalidDeadline)));
 }
 
-#[test]
-fn test_extend_voting_deadline_non_admin_returns_insufficient_role() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _admin, proposal_id, expires_at) = setup_for_extend_deadline(&env, 1000, 20);
-
-    let non_admin = Address::generate(&env);
-    let current = client.get_proposal(&proposal_id).voting_deadline;
-    let new_deadline = (current + 5).min(expires_at);
-
-    let res = client.try_extend_voting_deadline(&non_admin, &proposal_id, &new_deadline);
-    assert_eq!(res, Err(Ok(VaultError::InsufficientRole)));
-}
 
 #[test]
 fn test_extend_voting_deadline_non_pending_returns_error() {

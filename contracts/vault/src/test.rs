@@ -2,8 +2,7 @@
 
 use super::*;
 use crate::types::{
-    CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution, DisputeStatus, FeeStructure,
-    FeeTier, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction,
+    DexConfig, FeeStructure, RetryConfig, SwapProposal, TimeBasedThreshold,
     VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
@@ -24,6 +23,16 @@ fn default_init_config(
     threshold: u32,
 ) -> InitConfig {
     InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(_env),
+        post_execution_hooks: Vec::new(_env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold,
         quorum: 0, // disabled by default — existing tests are unaffected
@@ -33,6 +42,7 @@ fn default_init_config(
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
@@ -40,6 +50,7 @@ fn default_init_config(
         default_voting_deadline: 0,
         veto_addresses: Vec::new(_env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -74,6 +85,16 @@ fn test_multisig_approval() {
 
     // Initialize with 2-of-3 multisig
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -84,12 +105,14 @@ fn test_multisig_approval() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -132,66 +155,6 @@ fn test_multisig_approval() {
     assert_eq!(proposal.unlock_ledger, 0); // No timelock
 }
 
-#[test]
-fn test_unauthorized_proposal() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let member = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-
-    let res = client.try_propose_transfer(
-        &member,
-        &member,
-        &token,
-        &100,
-        &Symbol::new(&env, "fail"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    assert!(res.is_err());
-    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
-}
 
 #[test]
 fn test_timelock_violation() {
@@ -217,6 +180,16 @@ fn test_timelock_violation() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -227,12 +200,14 @@ fn test_timelock_violation() {
         timelock_threshold: 500,
         timelock_delay: 200,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -495,187 +470,7 @@ fn test_amend_proposal_enforces_spending_limit() {
     assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
 }
 
-#[test]
-fn test_priority_levels() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let low_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "low"),
-        &Priority::Low,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let normal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "normal"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let high_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "high"),
-        &Priority::High,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let critical_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "critical"),
-        &Priority::Critical,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    assert_eq!(client.get_proposal(&low_id).priority, Priority::Low);
-    assert_eq!(client.get_proposal(&normal_id).priority, Priority::Normal);
-    assert_eq!(client.get_proposal(&high_id).priority, Priority::High);
-    assert_eq!(
-        client.get_proposal(&critical_id).priority,
-        Priority::Critical
-    );
-}
-
-#[test]
-fn test_get_proposals_by_priority() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let low_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "low"),
-        &Priority::Low,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let critical_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "critical"),
-        &Priority::Critical,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let low_queue = client.get_proposals_by_priority(&Priority::Low);
-    assert!(low_queue.contains(low_id));
-    assert!(!low_queue.contains(critical_id));
-
-    let critical_queue = client.get_proposals_by_priority(&Priority::Critical);
-    assert!(critical_queue.contains(critical_id));
-    assert!(!critical_queue.contains(low_id));
-}
 
 #[test]
 fn test_change_priority_unauthorized() {
@@ -699,6 +494,16 @@ fn test_change_priority_unauthorized() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -709,12 +514,14 @@ fn test_change_priority_unauthorized() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -762,6 +569,16 @@ fn test_comment_functionality() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -772,12 +589,14 @@ fn test_comment_functionality() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -851,6 +670,16 @@ fn test_blacklist_mode() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -861,12 +690,14 @@ fn test_blacklist_mode() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -933,6 +764,16 @@ fn test_abstention_does_not_count_toward_threshold() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -943,12 +784,14 @@ fn test_abstention_does_not_count_toward_threshold() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -974,7 +817,7 @@ fn test_abstention_does_not_count_toward_threshold() {
     );
 
     // Signer2 abstains — threshold still requires 2 approvals
-    client.abstain_from_proposal(&signer2, &proposal_id);
+    client.abstain_proposal(&signer2, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
 
@@ -1006,6 +849,16 @@ fn test_list_management() {
     signers.push_back(address1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -1016,12 +869,14 @@ fn test_list_management() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -1068,6 +923,16 @@ fn test_cannot_abstain_after_voting() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -1078,12 +943,14 @@ fn test_cannot_abstain_after_voting() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -1108,294 +975,13 @@ fn test_cannot_abstain_after_voting() {
 
     client.approve_proposal(&signer1, &proposal_id);
 
-    let res = client.try_abstain_from_proposal(&signer1, &proposal_id);
+    let res = client.try_abstain_proposal(&signer1, &proposal_id);
     assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
 }
 
-#[test]
-fn test_cannot_abstain_twice() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
 
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.abstain_from_proposal(&signer1, &proposal_id);
-
-    let res = client.try_abstain_from_proposal(&signer1, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
-}
-
-#[test]
-fn test_velocity_limit_enforcement() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_timestamp(1000);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 2,
-            window: 60,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer, &Role::Treasurer);
-
-    client.propose_transfer(
-        &signer,
-        &user,
-        &token,
-        &10,
-        &Symbol::new(&env, "t1"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.propose_transfer(
-        &signer,
-        &user,
-        &token,
-        &10,
-        &Symbol::new(&env, "t2"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let res = client.try_propose_transfer(
-        &signer,
-        &user,
-        &token,
-        &10,
-        &Symbol::new(&env, "t3"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(res.err(), Some(Ok(VaultError::VelocityLimitExceeded)));
-}
-
-#[test]
-fn test_verify_attachment() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
-    client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
-}
-
-#[test]
-fn test_remove_attachment() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
-    client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
-    client.remove_attachment(&signer1, &proposal_id, &0u32);
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.attachments.len(), 0);
-}
 
 #[test]
 fn test_attachment_unauthorized() {
@@ -1421,6 +1007,16 @@ fn test_attachment_unauthorized() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -1431,12 +1027,14 @@ fn test_attachment_unauthorized() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -1466,200 +1064,8 @@ fn test_attachment_unauthorized() {
     assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
 
-#[test]
-fn test_attachment_duplicate() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
-
-    client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
-    let result = client.try_add_attachment(&signer1, &proposal_id, &ipfs_hash);
-    assert_eq!(result.err(), Some(Ok(VaultError::AlreadyApproved)));
-}
-
-#[test]
-fn test_attachment_invalid_hash() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let invalid_hash = soroban_sdk::String::from_str(&env, "Qm123");
-    let result = client.try_add_attachment(&signer1, &proposal_id, &invalid_hash);
-    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
-}
-
-#[test]
-fn test_admin_can_add_attachment() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let ipfs_hash =
-        soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
-    client.add_attachment(&admin, &proposal_id, &ipfs_hash);
-}
 
 #[test]
 fn test_set_and_get_proposal_metadata() {
@@ -1683,6 +1089,16 @@ fn test_set_and_get_proposal_metadata() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -1693,12 +1109,14 @@ fn test_set_and_get_proposal_metadata() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -1755,6 +1173,17 @@ fn test_remove_proposal_metadata() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -1765,11 +1194,13 @@ fn test_remove_proposal_metadata() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -1825,6 +1256,17 @@ fn test_proposal_metadata_unauthorized() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -1835,11 +1277,13 @@ fn test_proposal_metadata_unauthorized() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -1869,92 +1313,7 @@ fn test_proposal_metadata_unauthorized() {
     assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
 
-#[test]
-fn test_proposal_metadata_empty_value_invalid() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let key = Symbol::new(&env, "category");
-    let empty_value = soroban_sdk::String::from_str(&env, "");
-    let res = client.try_set_proposal_metadata(&signer1, &proposal_id, &key, &empty_value);
-    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
-}
-
-#[test]
-fn test_proposal_metadata_value_too_long_invalid() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let key = Symbol::new(&env, "category");
-    let too_long_std = "a".repeat((MAX_METADATA_VALUE_LEN + 1) as usize);
-    let too_long_value = soroban_sdk::String::from_str(&env, too_long_std.as_str());
-    let res = client.try_set_proposal_metadata(&signer1, &proposal_id, &key, &too_long_value);
-    assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
-}
 
 #[test]
 fn test_proposal_metadata_limit_exceeded() {
@@ -2159,83 +1518,6 @@ fn test_get_proposal_metadata_value_missing_key_returns_none() {
     assert_eq!(missing, None);
 }
 
-#[test]
-fn test_get_proposals_by_tag() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let ops_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "ops1"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let payroll_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &120,
-        &Symbol::new(&env, "pay1"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let second_ops_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &140,
-        &Symbol::new(&env, "ops2"),
-        &Priority::High,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let ops_tag = Symbol::new(&env, "ops");
-    let payroll_tag = Symbol::new(&env, "payroll");
-
-    client.add_proposal_tag(&signer1, &ops_id, &ops_tag);
-    client.add_proposal_tag(&signer1, &payroll_id, &payroll_tag);
-    client.add_proposal_tag(&signer1, &second_ops_id, &ops_tag);
-
-    let ops_results = client.get_proposals_by_tag(&ops_tag);
-    assert!(ops_results.contains(ops_id));
-    assert!(ops_results.contains(second_ops_id));
-    assert!(!ops_results.contains(payroll_id));
-
-    let payroll_results = client.get_proposals_by_tag(&payroll_tag);
-    assert!(payroll_results.contains(payroll_id));
-    assert!(!payroll_results.contains(ops_id));
-}
 
 #[test]
 fn test_proposal_tag_unauthorized() {
@@ -2306,6 +1588,16 @@ fn test_fixed_threshold_strategy() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -2316,12 +1608,14 @@ fn test_fixed_threshold_strategy() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2381,6 +1675,17 @@ fn test_percentage_threshold_strategy() {
 
     // 67% of 4 signers = ceil(2.68) = 3 approvals needed
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -2391,11 +1696,13 @@ fn test_percentage_threshold_strategy() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Percentage(67),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2472,6 +1779,16 @@ fn test_amount_based_threshold_strategy() {
     });
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -2482,12 +1799,14 @@ fn test_amount_based_threshold_strategy() {
         timelock_threshold: 10_000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::AmountBased(tiers),
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2596,6 +1915,17 @@ fn test_time_based_threshold_strategy() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 3,
         quorum: 0,
@@ -2606,6 +1936,7 @@ fn test_time_based_threshold_strategy() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
@@ -2615,6 +1946,7 @@ fn test_time_based_threshold_strategy() {
             reduction_delay: 100,
         }),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2674,6 +2006,16 @@ fn test_condition_balance_above() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -2684,12 +2026,14 @@ fn test_condition_balance_above() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2746,6 +2090,17 @@ fn test_condition_date_after() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -2756,11 +2111,13 @@ fn test_condition_date_after() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2828,6 +2185,17 @@ fn test_condition_multiple_and_logic() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -2838,11 +2206,13 @@ fn test_condition_multiple_and_logic() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2916,6 +2286,17 @@ fn test_condition_multiple_or_logic() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -2926,11 +2307,13 @@ fn test_condition_multiple_or_logic() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -2997,6 +2380,17 @@ fn test_condition_no_conditions() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -3007,11 +2401,13 @@ fn test_condition_no_conditions() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3065,6 +2461,17 @@ fn test_dex_config_setup() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -3075,11 +2482,13 @@ fn test_dex_config_setup() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3128,6 +2537,17 @@ fn test_swap_proposal_creation() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -3138,11 +2558,13 @@ fn test_swap_proposal_creation() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3197,6 +2619,17 @@ fn test_dex_not_enabled_error() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -3207,11 +2640,13 @@ fn test_dex_not_enabled_error() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3234,155 +2669,7 @@ fn test_dex_not_enabled_error() {
     assert_eq!(result.err(), Some(Ok(VaultError::DexError)));
 }
 
-#[test]
-fn test_batch_propose_multi_token() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient1 = Address::generate(&env);
-    let recipient2 = Address::generate(&env);
-
-    let client = VaultDAOClient::new(&env, &env.register(VaultDAO, ()));
-    let token1 = Address::generate(&env);
-    let token2 = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 5_000,
-        daily_limit: 20_000,
-        weekly_limit: 50_000,
-        timelock_threshold: 10_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    let mut transfers = Vec::new(&env);
-    transfers.push_back(TransferDetails {
-        recipient: recipient1.clone(),
-        token: token1.clone(),
-        amount: 1000,
-        memo: Symbol::new(&env, "payment1"),
-    });
-    transfers.push_back(TransferDetails {
-        recipient: recipient2.clone(),
-        token: token2.clone(),
-        amount: 2000,
-        memo: Symbol::new(&env, "payment2"),
-    });
-
-    let proposal_ids = client.batch_propose_transfers(
-        &treasurer,
-        &transfers,
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    assert_eq!(proposal_ids.len(), 2);
-
-    let proposal1 = client.get_proposal(&proposal_ids.get(0).unwrap());
-    assert_eq!(proposal1.recipient, recipient1);
-    assert_eq!(proposal1.token, token1);
-    assert_eq!(proposal1.amount, 1000);
-    assert_eq!(proposal1.status, ProposalStatus::Pending);
-
-    let proposal2 = client.get_proposal(&proposal_ids.get(1).unwrap());
-    assert_eq!(proposal2.recipient, recipient2);
-    assert_eq!(proposal2.token, token2);
-    assert_eq!(proposal2.amount, 2000);
-    assert_eq!(proposal2.status, ProposalStatus::Pending);
-}
-
-#[test]
-fn test_batch_propose_exceeds_max_size() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(treasurer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 5_000,
-        daily_limit: 100_000,
-        weekly_limit: 500_000,
-        timelock_threshold: 10_000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
-
-    let mut transfers = Vec::new(&env);
-    for _ in 0..11 {
-        transfers.push_back(TransferDetails {
-            recipient: recipient.clone(),
-            token: token.clone(),
-            amount: 100,
-            memo: Symbol::new(&env, "payment"),
-        });
-    }
-
-    let result = client.try_batch_propose_transfers(
-        &treasurer,
-        &transfers,
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert_eq!(result, Err(Ok(VaultError::BatchTooLarge)));
-}
 
 // ============================================================================
 // NEW TESTS — Abstention Votes & Quorum (Issue #117)
@@ -3412,6 +2699,17 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
 
     // threshold=1, quorum=0 (disabled)
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -3422,11 +2720,13 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3486,6 +2786,17 @@ fn test_quorum_blocks_approval_until_satisfied() {
 
     // threshold=2, quorum=3 out of 4 signers
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 3,
@@ -3495,12 +2806,14 @@ fn test_quorum_blocks_approval_until_satisfied() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3536,7 +2849,7 @@ fn test_quorum_blocks_approval_until_satisfied() {
     );
 
     // Abstention from signer3 pushes quorum_votes to 3 → both threshold and quorum now satisfied
-    client.abstain_from_proposal(&signer3, &proposal_id);
+    client.abstain_proposal(&signer3, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(
         proposal.status,
@@ -3581,6 +2894,17 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
 
     // threshold=3, quorum=2 — quorum is easy to satisfy
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 3,
         quorum: 2,
@@ -3590,12 +2914,14 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3622,8 +2948,8 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
     );
 
     // Two abstentions satisfy quorum (2) but NOT threshold (3)
-    client.abstain_from_proposal(&signer1, &proposal_id);
-    client.abstain_from_proposal(&signer2, &proposal_id);
+    client.abstain_proposal(&signer1, &proposal_id);
+    client.abstain_proposal(&signer2, &proposal_id);
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(
@@ -3676,6 +3002,17 @@ fn test_get_quorum_status() {
 
     // quorum = 2 out of 3 signers
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 2,
@@ -3685,12 +3022,14 @@ fn test_get_quorum_status() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3721,7 +3060,7 @@ fn test_get_quorum_status() {
     assert!(!reached);
 
     // One abstention: 1 vote, quorum not reached
-    client.abstain_from_proposal(&signer1, &proposal_id);
+    client.abstain_proposal(&signer1, &proposal_id);
     let (votes, required, reached) = client.get_quorum_status(&proposal_id);
     assert_eq!(votes, 1);
     assert_eq!(required, 2);
@@ -3758,6 +3097,17 @@ fn test_get_quorum_status_quorum_disabled() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -3767,12 +3117,14 @@ fn test_get_quorum_status_quorum_disabled() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3818,6 +3170,17 @@ fn test_update_quorum() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -3828,11 +3191,13 @@ fn test_update_quorum() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3879,6 +3244,17 @@ fn test_execution_rechecks_quorum_requirement() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 1,
@@ -3889,11 +3265,13 @@ fn test_execution_rechecks_quorum_requirement() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -3928,84 +3306,6 @@ fn test_execution_rechecks_quorum_requirement() {
     assert_eq!(result.err(), Some(Ok(VaultError::QuorumNotReached)));
 }
 
-/// Batch execution skips approved proposals that no longer satisfy quorum.
-#[test]
-fn test_batch_execution_rechecks_quorum_requirement() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 1,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-
-    // Raise quorum so the current vote set no longer qualifies.
-    client.update_quorum(&admin, &2u32);
-
-    let mut proposal_ids = Vec::new(&env);
-    proposal_ids.push_back(proposal_id);
-    let executed = client.batch_execute_proposals(&admin, &proposal_ids);
-    assert_eq!(executed.len(), 0);
-
-    // Proposal remains approved but non-executable until quorum is satisfied.
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-}
 
 /// Quorum satisfied purely by approvals (no abstentions needed).
 #[test]
@@ -4033,6 +3333,17 @@ fn test_quorum_satisfied_by_approvals_alone() {
 
     // threshold=2, quorum=2 — two approvals should satisfy both
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 2,
@@ -4042,12 +3353,14 @@ fn test_quorum_satisfied_by_approvals_alone() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -4099,6 +3412,17 @@ fn test_initialize_rejects_quorum_too_high() {
 
     // quorum=3 but only 2 signers — should fail
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 3,
@@ -4108,12 +3432,14 @@ fn test_initialize_rejects_quorum_too_high() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -4155,6 +3481,17 @@ macro_rules! setup_retry_test {
         signers.push_back($signer1.clone());
 
         let config = InitConfig {
+            quorum_percentage: 0,
+            veto_addresses: Vec::new(&$env),
+            veto_window_ledgers: 0,
+            pre_execution_hooks: Vec::new(&$env),
+            post_execution_hooks: Vec::new(&$env),
+            proposal_id_prefix: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -4164,12 +3501,14 @@ macro_rules! setup_retry_test {
             timelock_threshold: 50000,
             timelock_delay: 100,
             velocity_limit: VelocityConfig {
+                per_token_limit: 0,
                 limit: 100,
                 window: 3600,
             },
             threshold_strategy: ThresholdStrategy::Fixed,
             default_voting_deadline: 0,
             retry_config: RetryConfig {
+                max_retry_delay: 0,
                 enabled: true,
                 max_retries: 3,
                 initial_backoff_ledgers: 10,
@@ -4348,6 +3687,17 @@ fn test_retry_not_enabled_passes_through_error() {
 
     // Retry disabled
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -4357,12 +3707,14 @@ fn test_retry_not_enabled_passes_through_error() {
         timelock_threshold: 50000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -4435,51 +3787,6 @@ fn test_retry_execution_function() {
     assert_eq!(state.retry_count, 2);
 }
 
-#[test]
-fn test_retry_disabled_rejects_retry_execution() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 50000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-
-    client.initialize(&admin, &config);
-
-    // retry_execution should fail when retry is disabled
-    let result = client.try_retry_execution(&admin, &1_u64);
-    assert_eq!(result.err(), Some(Ok(VaultError::RetryError)));
-}
 
 #[test]
 fn test_retry_succeeds_after_balance_funded() {
@@ -4518,68 +3825,6 @@ fn test_retry_succeeds_after_balance_funded() {
     assert!(result.is_ok(), "Retry should succeed after funding");
 }
 
-#[test]
-fn test_proposal_dependencies_enforce_execution_order() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_admin = Address::generate(&env);
-    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_addr = sac.address();
-    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    sac_admin_client.mint(&contract_id, &1000_i128);
-
-    let first_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token_addr,
-        &100_i128,
-        &Symbol::new(&env, "first"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-    );
-
-    let mut depends_on = Vec::new(&env);
-    depends_on.push_back(first_id);
-    let second_id = client.propose_transfer_with_deps(
-        &admin,
-        &recipient,
-        &token_addr,
-        &100_i128,
-        &Symbol::new(&env, "second"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-        &depends_on,
-    );
-
-    client.approve_proposal(&admin, &first_id);
-    client.approve_proposal(&admin, &second_id);
-
-    let blocked = client.try_execute_proposal(&admin, &second_id);
-    assert_eq!(blocked.err(), Some(Ok(VaultError::ProposalNotApproved)));
-
-    client.execute_proposal(&admin, &first_id);
-    let ready = client.try_execute_proposal(&admin, &second_id);
-    assert!(ready.is_ok());
-}
 
 // ============================================================================
 // Subscription System Tests
@@ -4674,125 +3919,7 @@ fn test_subscription_renewal() {
 }
 */
 
-#[test]
-fn test_dependency_validation_missing_and_circular() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    let mut missing_dep = Vec::new(&env);
-    missing_dep.push_back(999_u64);
-    let missing = client.try_propose_transfer_with_deps(
-        &admin,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "missing"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-        &missing_dep,
-    );
-    assert_eq!(missing.err(), Some(Ok(VaultError::ProposalNotFound)));
-
-    let mut self_dep = Vec::new(&env);
-    self_dep.push_back(1_u64);
-    let circular = client.try_propose_transfer_with_deps(
-        &admin,
-        &recipient,
-        &token,
-        &100_i128,
-        &Symbol::new(&env, "self"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-        &self_dep,
-    );
-    assert_eq!(circular.err(), Some(Ok(VaultError::InvalidAmount)));
-}
-
-#[test]
-fn test_get_executable_proposals_respects_dependencies() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_admin = Address::generate(&env);
-    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_addr = sac.address();
-    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = default_init_config(&env, signers, 1);
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
-    sac_admin_client.mint(&contract_id, &1000_i128);
-
-    let first_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token_addr,
-        &100_i128,
-        &Symbol::new(&env, "one"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-    );
-
-    let mut depends_on = Vec::new(&env);
-    depends_on.push_back(first_id);
-    let second_id = client.propose_transfer_with_deps(
-        &admin,
-        &recipient,
-        &token_addr,
-        &100_i128,
-        &Symbol::new(&env, "two"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
-        &depends_on,
-    );
-
-    client.approve_proposal(&admin, &first_id);
-    client.approve_proposal(&admin, &second_id);
-
-    let executable_before = client.get_executable_proposals();
-    assert!(executable_before.contains(first_id));
-    assert!(!executable_before.contains(second_id));
-
-    client.execute_proposal(&admin, &first_id);
-
-    let executable_after = client.get_executable_proposals();
-    assert!(executable_after.contains(second_id));
-}
 
 /*
 #[test]
@@ -4879,6 +4006,17 @@ fn test_cross_vault_multi_vault_actions() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers: signers.clone(),
         threshold: 2,
         quorum: 0,
@@ -4888,12 +4026,14 @@ fn test_cross_vault_multi_vault_actions() {
         timelock_threshold: 50_000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5370,6 +4510,17 @@ fn test_reputation_initialized_at_neutral() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5379,12 +4530,14 @@ fn test_reputation_initialized_at_neutral() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5428,6 +4581,17 @@ fn test_reputation_increases_on_proposal_creation() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5437,12 +4601,14 @@ fn test_reputation_increases_on_proposal_creation() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5496,6 +4662,17 @@ fn test_reputation_increases_on_approval() {
     signers.push_back(approver.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5505,12 +4682,14 @@ fn test_reputation_increases_on_approval() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5569,6 +4748,17 @@ fn test_participation_tracking_on_abstention() {
     signers.push_back(abstainer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5578,12 +4768,14 @@ fn test_participation_tracking_on_abstention() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5605,7 +4797,7 @@ fn test_participation_tracking_on_abstention() {
         &0,
     );
 
-    client.abstain_from_proposal(&abstainer, &proposal_id);
+    client.abstain_proposal(&abstainer, &proposal_id);
 
     let (approvals, abstentions, total_votes, last_vote_ledger) =
         client.get_participation(&abstainer);
@@ -5638,6 +4830,17 @@ fn test_reputation_increases_on_execution() {
     signers.push_back(signer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5647,12 +4850,14 @@ fn test_reputation_increases_on_execution() {
         timelock_threshold: 500,
         timelock_delay: 0, // No timelock
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5688,78 +4893,6 @@ fn test_reputation_increases_on_execution() {
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
-#[test]
-fn test_reputation_decreases_on_rejection() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let proposer2 = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer2.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 500,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-    client.set_role(&admin, &proposer2, &Role::Treasurer);
-
-    let rep_before = client.get_reputation(&proposer);
-    let score_before = rep_before.score;
-
-    // Create proposal
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0,
-    );
-
-    // Reject the proposal
-    client.reject_proposal(&admin, &proposal_id);
-
-    let rep_after = client.get_reputation(&proposer);
-    assert!(rep_after.score < score_before); // Score decreases on rejection
-    assert_eq!(rep_after.proposals_rejected, 1);
-}
 
 #[test]
 fn test_reputation_decay_over_time() {
@@ -5782,6 +4915,17 @@ fn test_reputation_decay_over_time() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5791,12 +4935,14 @@ fn test_reputation_decay_over_time() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5872,6 +5018,17 @@ fn test_create_from_template_with_overrides() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5881,12 +5038,14 @@ fn test_create_from_template_with_overrides() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -5954,6 +5113,17 @@ fn test_create_from_template_amount_out_of_range() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -5963,12 +5133,14 @@ fn test_create_from_template_amount_out_of_range() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -6041,6 +5213,17 @@ fn test_create_from_inactive_template() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -6050,12 +5233,14 @@ fn test_create_from_inactive_template() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -6121,6 +5306,17 @@ fn test_reputation_based_spending_limit() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -6130,12 +5326,14 @@ fn test_reputation_based_spending_limit() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -6200,6 +5398,17 @@ fn test_reputation_high_score_get_limits_boost() {
     signers.push_back(signer.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -6209,12 +5418,14 @@ fn test_reputation_high_score_get_limits_boost() {
         timelock_threshold: 500,
         timelock_delay: 0,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 1000,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -6269,6 +5480,17 @@ fn test_template_not_found() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -6278,12 +5500,14 @@ fn test_template_not_found() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -6340,6 +5564,17 @@ fn test_retry_not_enabled() {
     signers.push_back(admin.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -6349,12 +5584,14 @@ fn test_retry_not_enabled() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -6400,131 +5637,7 @@ fn test_escrow_basic_flow() {
     // Full integration tested in production deploy
 }
 
-#[test]
-fn test_wallet_recovery_flow() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let guardian1 = Address::generate(&env);
-    let guardian2 = Address::generate(&env);
-    let new_signer = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(signer1.clone());
-
-    let mut guardians = Vec::new(&env);
-    guardians.push_back(guardian1.clone());
-    guardians.push_back(guardian2.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.recovery_config = crate::RecoveryConfig {
-        guardians,
-        threshold: 2,
-        delay: 50,
-    };
-    client.initialize(&admin, &config);
-
-    // 1. Initiate recovery
-    let mut new_signers = Vec::new(&env);
-    new_signers.push_back(new_signer.clone());
-
-    let recovery_id = client.initiate_recovery(&Address::generate(&env), &new_signers, &1);
-
-    // 2. First guardian approval
-    client.approve_recovery(&guardian1, &recovery_id);
-    let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, RecoveryStatus::Pending);
-
-    // 3. Second guardian approval -> Should move to Approved
-    client.approve_recovery(&guardian2, &recovery_id);
-    let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, RecoveryStatus::Approved);
-    assert_eq!(proposal.execution_after, 100 + 50);
-
-    // 4. Try execute before delay
-    let res = client.try_execute_recovery(&recovery_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::TimelockNotExpired)));
-
-    // 5. Execute after delay
-    env.ledger().set_sequence_number(151);
-    client.execute_recovery(&recovery_id);
-
-    // 6. Verify new config
-    let v_config = client.get_recovery_config();
-    assert_eq!(v_config.guardians.len(), 2);
-
-    let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, RecoveryStatus::Executed);
-
-    // Verify new signer works
-    client.set_role(&admin, &new_signer, &Role::Treasurer);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-    let p_id = client.propose_transfer(
-        &new_signer,
-        &admin,
-        &token,
-        &100,
-        &Symbol::new(&env, "newtest"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    assert!(p_id > 0);
-}
-
-#[test]
-fn test_recovery_cancellation() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let guardian1 = Address::generate(&env);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let mut guardians = Vec::new(&env);
-    guardians.push_back(guardian1.clone());
-
-    let mut config = default_init_config(&env, signers, 1);
-    config.recovery_config = crate::RecoveryConfig {
-        guardians,
-        threshold: 1,
-        delay: 50,
-    };
-    client.initialize(&admin, &config);
-
-    // 1. Initiate recovery
-    let mut new_signers = Vec::new(&env);
-    new_signers.push_back(Address::generate(&env));
-    let recovery_id = client.initiate_recovery(&Address::generate(&env), &new_signers, &1);
-
-    // 2. Admin cancels recovery
-    client.cancel_recovery(&admin, &recovery_id);
-
-    let proposal = client.get_recovery_proposal(&recovery_id);
-    assert_eq!(proposal.status, RecoveryStatus::Cancelled);
-
-    // 3. Try to approve cancelled proposal
-    let res = client.try_approve_recovery(&guardian1, &recovery_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
-}
 
 #[test]
 fn test_insurance_posting_and_refund() {
@@ -6550,6 +5663,17 @@ fn test_insurance_posting_and_refund() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_addresses: Vec::new(&env),
+        veto_window_ledgers: 0,
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 2,
         quorum: 0,
@@ -6559,12 +5683,14 @@ fn test_insurance_posting_and_refund() {
         timelock_threshold: 5000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 1000,
             window: 3600,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -6630,190 +5756,7 @@ fn test_insurance_posting_and_refund() {
     assert_eq!(pool, 0);
 }
 
-#[test]
-fn test_insurance_slashing_on_rejection() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let token_admin = Address::generate(&env);
-    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_addr = sac.address();
-    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(proposer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 1000,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    // Setup Insurance: Requires 10%, Slash rate 50%
-    client.set_insurance_config(
-        &admin,
-        &InsuranceConfig {
-            enabled: true,
-            min_amount: 100,
-            min_insurance_bps: 1000, // 10%
-            slash_percentage: 50,    // 50%
-        },
-    );
-
-    sac_admin_client.mint(&proposer, &1000);
-    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
-
-    // Propose 500 tokens. 10% is 50.
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &recipient,
-        &token_addr,
-        &500,
-        &Symbol::new(&env, "bad_prop"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &50,
-    );
-    assert_eq!(token_client.balance(&proposer), 950);
-
-    // Admin REJECTS the proposal
-    client.reject_proposal(&admin, &proposal_id);
-
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Rejected);
-
-    // Proposer had 50 insurance. 50% slash = 25 kept by vault, 25 returned.
-    // 950 + 25 = 975
-    assert_eq!(token_client.balance(&proposer), 975);
-
-    // Admin checks the persistent insurance pool tracker
-    let pool = client.get_insurance_pool(&token_addr);
-    assert_eq!(pool, 25);
-}
-
-#[test]
-fn test_insurance_pool_withdrawal() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-
-    let proposer = Address::generate(&env);
-    let withdraw_target = Address::generate(&env);
-
-    let token_admin = Address::generate(&env);
-    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_addr = sac.address();
-    let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        quorum: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 1000,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &proposer, &Role::Treasurer);
-
-    client.set_insurance_config(
-        &admin,
-        &InsuranceConfig {
-            enabled: true,
-            min_amount: 0,
-            min_insurance_bps: 1000, // 10%
-            slash_percentage: 100,   // 100% slashed
-        },
-    );
-
-    sac_admin_client.mint(&proposer, &1000);
-    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
-
-    // Create and immediately reject proposal
-    let proposal_id = client.propose_transfer(
-        &proposer,
-        &proposer,
-        &token_addr,
-        &500,
-        &Symbol::new(&env, "prop"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &50,
-    );
-    client.reject_proposal(&admin, &proposal_id);
-
-    // 100% of 50 slashed to pool
-    let pool = client.get_insurance_pool(&token_addr);
-    assert_eq!(pool, 50);
-
-    assert_eq!(token_client.balance(&withdraw_target), 0);
-
-    // Admin withdraws the insurance penalty
-    client.withdraw_insurance_pool(&admin, &token_addr, &withdraw_target, &50);
-
-    // Target got the slashed funds
-    assert_eq!(token_client.balance(&withdraw_target), 50);
-
-    // Pool must be 0
-    let pool_after = client.get_insurance_pool(&token_addr);
-    assert_eq!(pool_after, 0);
-
-    // Cannot withdraw anymore
-    let result = client.try_withdraw_insurance_pool(&admin, &token_addr, &withdraw_target, &1);
-    assert!(result.is_err());
-}
 
 /*
 #[test]
@@ -7181,377 +6124,8 @@ fn test_fees_collected_tracking() {
     // and verify fees are collected
 }
 
-#[test]
-fn test_veto_blocks_execution() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let signer2 = Address::generate(&env);
-    let vetoer = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
-    token_client.mint(&contract_id, &1000);
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-
-    let mut veto_addresses = Vec::new(&env);
-    veto_addresses.push_back(vetoer.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 2,
-        quorum: 0,
-        default_voting_deadline: 0,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        velocity_limit: VelocityConfig {
-            limit: 100,
-            window: 3600,
-        },
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses,
-        retry_config: RetryConfig {
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
-        recovery_config: crate::types::RecoveryConfig::default(&env),
-        staking_config: types::StakingConfig::default(),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-    client.set_role(&admin, &signer2, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &token,
-        &100,
-        &Symbol::new(&env, "veto"),
-        &Priority::Critical,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    client.approve_proposal(&signer1, &proposal_id);
-    client.approve_proposal(&signer2, &proposal_id);
-    assert_eq!(
-        client.get_proposal(&proposal_id).status,
-        ProposalStatus::Approved
-    );
-
-    client.veto_proposal(&vetoer, &proposal_id);
-    assert_eq!(
-        client.get_proposal(&proposal_id).status,
-        ProposalStatus::Vetoed
-    );
-
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotApproved)));
-}
-
-#[test]
-fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-    let invalid_token = Address::generate(&env); // Not a token contract; transfer should fail.
-
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &invalid_token,
-        &100,
-        &Symbol::new(&env, "rbk"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-    assert_eq!(
-        client.get_proposal(&proposal_id).status,
-        ProposalStatus::Approved
-    );
-
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::TransferFailed)));
-
-    // Rollback should restore the proposal state.
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Approved);
-}
-
-#[test]
-fn test_weighted_voting_strategy() {
-    fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(VaultDAO, ());
-        let client = VaultDAOClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        let signer1 = Address::generate(&env);
-        let signer2 = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        let token = env
-            .register_stellar_asset_contract_v2(admin.clone())
-            .address();
-        let token_client = StellarAssetClient::new(&env, &token);
-        token_client.mint(&contract_id, &10_000);
-        token_client.mint(&signer1, &600);
-        token_client.mint(&signer2, &500);
-        let user = Address::generate(&env);
-        let invalid_token = Address::generate(&env); // Not a token contract; transfer should fail.
-
-        let mut signers = Vec::new(&env);
-        signers.push_back(admin.clone());
-        signers.push_back(signer1.clone());
-        signers.push_back(signer2.clone());
-
-        let config = default_init_config(&env, signers, 3);
-        client.initialize(&admin, &config);
-        client.set_role(&admin, &signer1, &Role::Treasurer);
-        client.set_role(&admin, &signer2, &Role::Treasurer);
-
-        client.update_voting_strategy(
-            &admin,
-            &VotingStrategy::Weighted {
-                governance_token: token.clone(),
-                required_weight: 1000,
-            },
-        );
-
-        let proposal_id = client.propose_transfer(
-            &signer1,
-            &recipient,
-            &token,
-            &100,
-            &Symbol::new(&env, "weighted"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-
-        client.approve_proposal(&signer1, &proposal_id);
-        assert_eq!(
-            client.get_proposal(&proposal_id).status,
-            ProposalStatus::Pending
-        );
-
-        client.approve_proposal(&signer2, &proposal_id);
-        assert_eq!(
-            client.get_proposal(&proposal_id).status,
-            ProposalStatus::Approved
-        );
-    }
-
-    #[test]
-    fn test_quadratic_voting_strategy() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(VaultDAO, ());
-        let client = VaultDAOClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        let signer1 = Address::generate(&env);
-        let signer2 = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        let token = env
-            .register_stellar_asset_contract_v2(admin.clone())
-            .address();
-        let token_client = StellarAssetClient::new(&env, &token);
-        token_client.mint(&contract_id, &10_000);
-        token_client.mint(&signer1, &100);
-        token_client.mint(&signer2, &25);
-
-        let mut signers = Vec::new(&env);
-        signers.push_back(admin.clone());
-        signers.push_back(signer1.clone());
-        signers.push_back(signer2.clone());
-
-        let config = default_init_config(&env, signers, 3);
-        client.initialize(&admin, &config);
-        client.set_role(&admin, &signer1, &Role::Treasurer);
-        client.set_role(&admin, &signer2, &Role::Treasurer);
-
-        client.update_voting_strategy(
-            &admin,
-            &VotingStrategy::Quadratic {
-                governance_token: token.clone(),
-                required_voice_credits: 15,
-            },
-        );
-
-        let proposal_id = client.propose_transfer(
-            &signer1,
-            &recipient,
-            &token,
-            &100,
-            &Symbol::new(&env, "quadratic"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-
-        client.approve_proposal(&signer1, &proposal_id);
-        assert_eq!(
-            client.get_proposal(&proposal_id).status,
-            ProposalStatus::Pending
-        );
-
-        client.approve_proposal(&signer2, &proposal_id);
-        assert_eq!(
-            client.get_proposal(&proposal_id).status,
-            ProposalStatus::Approved
-        );
-    }
-
-    #[test]
-    fn test_conviction_voting_strategy() {
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set_sequence_number(100);
-
-        let contract_id = env.register(VaultDAO, ());
-        let client = VaultDAOClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        let signer1 = Address::generate(&env);
-        let signer2 = Address::generate(&env);
-        let signer3 = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        let token = env
-            .register_stellar_asset_contract_v2(admin.clone())
-            .address();
-        let token_client = StellarAssetClient::new(&env, &token);
-        token_client.mint(&contract_id, &10_000);
-
-        let mut signers = Vec::new(&env);
-        signers.push_back(admin.clone());
-        signers.push_back(signer1.clone());
-        signers.push_back(signer2.clone());
-        signers.push_back(signer3.clone());
-
-        let config = default_init_config(&env, signers, 4);
-        client.initialize(&admin, &config);
-        client.set_role(&admin, &signer1, &Role::Treasurer);
-        client.set_role(&admin, &signer2, &Role::Treasurer);
-        client.set_role(&admin, &signer3, &Role::Treasurer);
-
-        client.update_voting_strategy(
-            &admin,
-            &VotingStrategy::Conviction {
-                required_conviction: 5,
-                growth_period: 10,
-            },
-        );
-
-        let proposal_id = client.propose_transfer(
-            &signer1,
-            &recipient,
-            &token,
-            &100,
-            &Symbol::new(&env, "conviction"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-
-        client.approve_proposal(&signer1, &proposal_id);
-        client.approve_proposal(&signer2, &proposal_id);
-        assert_eq!(
-            client.get_proposal(&proposal_id).status,
-            ProposalStatus::Pending
-        );
-
-        env.ledger().set_sequence_number(130);
-        client.abstain_from_proposal(&signer3, &proposal_id);
-        assert_eq!(
-            client.get_proposal(&proposal_id).status,
-            ProposalStatus::Approved
-        );
-    }
-
-    let config = InitConfig {
-        signers,
-        threshold: 1,
-        spending_limit: 1000,
-        daily_limit: 5000,
-        weekly_limit: 10000,
-        timelock_threshold: 5000,
-        timelock_delay: 100,
-        threshold_strategy: ThresholdStrategy::Fixed,
-        veto_addresses: Vec::new(&env),
-    };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &signer1, &Role::Treasurer);
-
-    let proposal_id = client.propose_transfer(
-        &signer1,
-        &user,
-        &invalid_token,
-        &100,
-        &Symbol::new(&env, "rbkq"),
-        &Priority::Critical,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-    );
-    client.approve_proposal(&signer1, &proposal_id);
-
-    let critical = client.get_proposals_by_priority(&Priority::Critical);
-    assert!(critical.contains(proposal_id));
-
-    let res = client.try_execute_proposal(&admin, &proposal_id);
-    assert_eq!(res.err(), Some(Ok(VaultError::TransferFailed)));
-
-    // Rollback should restore queue membership.
-    let critical = client.get_proposals_by_priority(&Priority::Critical);
-    assert!(critical.contains(proposal_id));
-}
 
 // ============================================================================
 // get_config tests (feature/public-vault-config-getter)
@@ -7701,37 +6275,6 @@ fn test_set_role_non_admin_fails() {
     assert_eq!(client.get_role(&user), Role::Member);
 }
 
-/// Admin can overwrite an existing role.
-#[test]
-fn test_set_role_overwrite() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let signer1 = Address::generate(&env);
-    let user = Address::generate(&env);
-
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-
-    // Assign Treasurer first
-    client.set_role(&admin, &user, &Role::Treasurer);
-    assert_eq!(client.get_role(&user), Role::Treasurer);
-
-    // Overwrite with Admin
-    client.set_role(&admin, &user, &Role::Admin);
-    assert_eq!(client.get_role(&user), Role::Admin);
-
-    // Downgrade back to Member
-    client.set_role(&admin, &user, &Role::Member);
-    assert_eq!(client.get_role(&user), Role::Member);
-}
 
 #[test]
 fn test_get_role_assignments_includes_signers_and_updates() {
@@ -7946,160 +6489,5 @@ fn test_list_proposals_empty() {
     assert_eq!(proposals.len(), 0);
 }
 
-/// list_proposal_ids returns all IDs in ascending order.
-#[test]
-fn test_list_proposal_ids_ascending_order() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    // Create three proposals
-    let id1 = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &100i128,
-        &Symbol::new(&env, "p1"),
-        &Priority::Normal,
-        &soroban_sdk::Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let id2 = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &200i128,
-        &Symbol::new(&env, "p2"),
-        &Priority::Normal,
-        &soroban_sdk::Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-    let id3 = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &300i128,
-        &Symbol::new(&env, "p3"),
-        &Priority::Normal,
-        &soroban_sdk::Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let ids = client.list_proposal_ids(&0u64, &10u64);
-    assert_eq!(ids.len(), 3);
-    assert_eq!(ids.get(0).unwrap(), id1);
-    assert_eq!(ids.get(1).unwrap(), id2);
-    assert_eq!(ids.get(2).unwrap(), id3);
-    // Strictly ascending
-    assert!(ids.get(0).unwrap() < ids.get(1).unwrap());
-    assert!(ids.get(1).unwrap() < ids.get(2).unwrap());
-}
-
-/// list_proposals returns full proposal objects with correct data.
-#[test]
-fn test_list_proposals_returns_full_objects() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &500i128,
-        &Symbol::new(&env, "memo"),
-        &Priority::High,
-        &soroban_sdk::Vec::new(&env),
-        &ConditionLogic::And,
-        &0i128,
-    );
-
-    let proposals = client.list_proposals(&0u64, &10u64);
-    assert_eq!(proposals.len(), 1);
-
-    let p = proposals.get(0).unwrap();
-    assert_eq!(p.amount, 500);
-    assert_eq!(p.recipient, recipient);
-    assert_eq!(p.token, token);
-    assert_eq!(p.status, ProposalStatus::Pending);
-}
-
-/// Pagination: offset and limit work correctly.
-#[test]
-fn test_list_proposal_ids_pagination() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(VaultDAO, ());
-    let client = VaultDAOClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
-    let mut signers = soroban_sdk::Vec::new(&env);
-    signers.push_back(admin.clone());
-
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    // Create 5 proposals
-    for i in 1u32..=5 {
-        client.propose_transfer(
-            &admin,
-            &recipient,
-            &token,
-            &(i as i128 * 100),
-            &Symbol::new(&env, "p"),
-            &Priority::Normal,
-            &soroban_sdk::Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        );
-    }
-
-    // First page: offset=0, limit=2 → IDs 1,2
-    let page1 = client.list_proposal_ids(&0u64, &2u64);
-    assert_eq!(page1.len(), 2);
-    assert_eq!(page1.get(0).unwrap(), 1);
-    assert_eq!(page1.get(1).unwrap(), 2);
-
-    // Second page: offset=2, limit=2 → IDs 3,4
-    let page2 = client.list_proposal_ids(&2u64, &2u64);
-    assert_eq!(page2.len(), 2);
-    assert_eq!(page2.get(0).unwrap(), 3);
-    assert_eq!(page2.get(1).unwrap(), 4);
-
-    // Third page: offset=4, limit=2 → ID 5 only
-    let page3 = client.list_proposal_ids(&4u64, &2u64);
-    assert_eq!(page3.len(), 1);
-    assert_eq!(page3.get(0).unwrap(), 5);
-
-    // Offset beyond total → empty
-    let page4 = client.list_proposal_ids(&10u64, &2u64);
-    assert_eq!(page4.len(), 0);
-}

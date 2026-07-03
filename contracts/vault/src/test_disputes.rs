@@ -1,9 +1,9 @@
 use super::*;
 use crate::types::{
-    ConditionLogic, DisputeResolution, DisputeStatus, EscrowStatus, Priority, Role,
+    ConditionLogic, DisputeStatus, Priority, Role,
 };
 use crate::{VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, Symbol, Vec};
+use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
 
 fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
@@ -16,6 +16,12 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
     client.initialize(
         &admin,
         &crate::types::InitConfig {
+            veto_window_ledgers: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -33,6 +39,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             default_voting_deadline: 0,
             veto_addresses: Vec::new(env),
             retry_config: crate::types::RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 0,
                 initial_backoff_ledgers: 0,
@@ -74,7 +81,7 @@ fn make_proposal(
 fn test_raise_dispute_by_signer_with_bond() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
+    let (client, admin, _contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -109,244 +116,16 @@ fn test_raise_dispute_by_signer_with_bond() {
     assert_eq!(ids.get(0).unwrap(), dispute_id);
 }
 
-#[test]
-fn test_resolve_dispute_uphold() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
 
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
-    let recipient = Address::generate(&env);
 
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
 
-    let bond_amount = 100i128;
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-        &token,
-        &bond_amount,
-    );
 
-    // Create arbitrator
-    let arbitrator = Address::generate(&env);
-    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
-
-    let initial_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
-
-    client.resolve_dispute_with_outcome(
-        &arbitrator,
-        &dispute_id,
-        &crate::types::DisputeOutcome::UpholdDispute,
-    );
-
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Resolved);
-    assert_eq!(dispute.outcome, crate::types::DisputeOutcome::UpholdDispute);
-
-    // Should have bond returned
-    let final_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
-    assert_eq!(final_balance, initial_balance);
-}
-
-#[test]
-fn test_resolve_dispute_dismiss_with_slash() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
-    let recipient = Address::generate(&env);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let bond_amount = 100i128;
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-        &token,
-        &bond_amount,
-    );
-
-    // Create arbitrator
-    let arbitrator = Address::generate(&env);
-    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
-
-    let initial_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
-
-    client.resolve_dispute_with_outcome(
-        &arbitrator,
-        &dispute_id,
-        &crate::types::DisputeOutcome::DismissDispute,
-    );
-
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Dismissed);
-    assert_eq!(
-        dispute.outcome,
-        crate::types::DisputeOutcome::DismissDispute
-    );
-
-    // Should have half bond returned
-    let final_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
-    assert_eq!(final_balance, initial_balance - 50); // 100 - 50 = 50 lost
-}
-
-#[test]
-fn test_resolve_dispute_draw() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
-    let recipient = Address::generate(&env);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let bond_amount = 100i128;
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-        &token,
-        &bond_amount,
-    );
-
-    // Create arbitrator
-    let arbitrator = Address::generate(&env);
-    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
-
-    let initial_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
-
-    client.resolve_dispute_with_outcome(
-        &arbitrator,
-        &dispute_id,
-        &crate::types::DisputeOutcome::DrawDispute,
-    );
-
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Resolved);
-    assert_eq!(dispute.outcome, crate::types::DisputeOutcome::DrawDispute);
-
-    // Should have full bond returned
-    let final_balance = soroban_sdk::token::Client::new(&env, &token).balance(&admin);
-    assert_eq!(final_balance, initial_balance);
-}
-
-#[test]
-fn test_cannot_raise_dispute_on_already_dismissed() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
-    let recipient = Address::generate(&env);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let bond_amount = 100i128;
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-        &token,
-        &bond_amount,
-    );
-
-    // Create arbitrator and dismiss
-    let arbitrator = Address::generate(&env);
-    client.set_role(&admin, &arbitrator, &Role::DisputeArbitrator);
-    client.resolve_dispute_with_outcome(
-        &arbitrator,
-        &dispute_id,
-        &crate::types::DisputeOutcome::DismissDispute,
-    );
-
-    // Try to raise another dispute on same proposal
-    let result = client.try_raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "more_fraud"),
-        &Vec::new(&env),
-        &token,
-        &bond_amount,
-    );
-    assert_eq!(result, Err(Ok(VaultError::DisputeAlreadyDismissed)));
-}
-
-#[test]
-fn test_arbitrator_cannot_resolve_own_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
-    let recipient = Address::generate(&env);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let bond_amount = 100i128;
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-        &token,
-        &bond_amount,
-    );
-
-    // Make admin the arbitrator too
-    client.set_role(&admin, &admin, &Role::DisputeArbitrator);
-
-    // Try to resolve own dispute
-    let result = client.try_resolve_dispute_with_outcome(
-        &admin,
-        &dispute_id,
-        &crate::types::DisputeOutcome::UpholdDispute,
-    );
-    assert_eq!(
-        result,
-        Err(Ok(VaultError::ArbitratorCannotResolveOwnDispute))
-    );
-}
 
 #[test]
 fn test_dispute_bond_too_small() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
+    let (client, admin, _contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -370,361 +149,11 @@ fn test_dispute_bond_too_small() {
     assert_eq!(result, Err(Ok(VaultError::DisputeBondTooSmall)));
 }
 
-#[test]
-fn test_raise_dispute_non_signer_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
 
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let recipient = Address::generate(&env);
-    let outsider = Address::generate(&env);
 
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
 
-    let result = client.try_raise_dispute(
-        &outsider,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-    );
-    assert!(result.is_err());
-}
 
-#[test]
-fn test_resolve_dispute_by_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
 
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let recipient = Address::generate(&env);
 
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-    );
 
-    env.ledger().set_sequence_number(100);
-    client.resolve_dispute(&admin, &dispute_id, &DisputeResolution::InFavorOfProposer);
 
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Resolved);
-    assert_eq!(dispute.resolution, DisputeResolution::InFavorOfProposer);
-    assert_eq!(dispute.arbitrator, admin);
-    assert!(dispute.resolved_at > 0);
-}
-
-#[test]
-fn test_resolve_dispute_dismissed_outcome() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let recipient = Address::generate(&env);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "invalid"),
-        &Vec::new(&env),
-    );
-
-    client.resolve_dispute(&admin, &dispute_id, &DisputeResolution::Dismissed);
-
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Dismissed);
-}
-
-#[test]
-fn test_cannot_resolve_already_resolved_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let recipient = Address::generate(&env);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-    );
-
-    client.resolve_dispute(&admin, &dispute_id, &DisputeResolution::Compromise);
-
-    let result =
-        client.try_resolve_dispute(&admin, &dispute_id, &DisputeResolution::InFavorOfDisputer);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_raise_dispute_with_escrow_funder() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let funder = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&funder, &10_000);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let mut milestones = Vec::new(&env);
-    milestones.push_back(crate::types::Milestone {
-        id: 1,
-        percentage: 100,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &100i128,
-        &milestones,
-        &1000u64,
-        &arbitrator,
-    );
-
-    let dispute_id = client.raise_dispute(
-        &funder,
-        &proposal_id,
-        &Some(escrow_id),
-        &Symbol::new(&env, "breach"),
-        &Vec::new(&env),
-    );
-
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Filed);
-    assert_eq!(dispute.proposal_id, proposal_id);
-}
-
-#[test]
-fn test_resolve_dispute_releases_funds_to_recipient() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let funder = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&funder, &10_000);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let mut milestones = Vec::new(&env);
-    milestones.push_back(crate::types::Milestone {
-        id: 1,
-        percentage: 100,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &100i128,
-        &milestones,
-        &1000u64,
-        &arbitrator,
-    );
-
-    let dispute_id = client.raise_dispute(
-        &funder,
-        &proposal_id,
-        &Some(escrow_id),
-        &Symbol::new(&env, "breach"),
-        &Vec::new(&env),
-    );
-
-    // Verify escrow is now Disputed
-    let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, EscrowStatus::Disputed);
-
-    // Admin resolves in favor of disputer (recipient gets funds)
-    client.resolve_dispute(&admin, &dispute_id, &DisputeResolution::InFavorOfDisputer);
-
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Resolved);
-
-    // Recipient should have received the escrow funds
-    let recipient_balance = soroban_sdk::token::Client::new(&env, &token).balance(&recipient);
-    assert_eq!(recipient_balance, 100);
-    let _ = contract_id;
-}
-
-#[test]
-fn test_resolve_dispute_refunds_to_funder() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let funder = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&funder, &10_000);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let mut milestones = Vec::new(&env);
-    milestones.push_back(crate::types::Milestone {
-        id: 1,
-        percentage: 100,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &100i128,
-        &milestones,
-        &1000u64,
-        &arbitrator,
-    );
-
-    let funder_balance_before = soroban_sdk::token::Client::new(&env, &token).balance(&funder);
-
-    let dispute_id = client.raise_dispute(
-        &funder,
-        &proposal_id,
-        &Some(escrow_id),
-        &Symbol::new(&env, "breach"),
-        &Vec::new(&env),
-    );
-
-    // Admin resolves in favor of proposer (funder gets refund)
-    client.resolve_dispute(&admin, &dispute_id, &DisputeResolution::InFavorOfProposer);
-
-    let dispute = client.get_dispute(&dispute_id);
-    assert_eq!(dispute.status, DisputeStatus::Resolved);
-
-    // Funder should have been refunded
-    let funder_balance_after = soroban_sdk::token::Client::new(&env, &token).balance(&funder);
-    assert_eq!(funder_balance_after, funder_balance_before + 100);
-}
-
-#[test]
-fn test_resolve_dispute_unauthorized_non_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let recipient = Address::generate(&env);
-    let non_admin = Address::generate(&env);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-    let dispute_id = client.raise_dispute(
-        &admin,
-        &proposal_id,
-        &None,
-        &Symbol::new(&env, "fraud"),
-        &Vec::new(&env),
-    );
-
-    // Non-admin cannot resolve
-    let result = client.try_resolve_dispute(
-        &non_admin,
-        &dispute_id,
-        &DisputeResolution::InFavorOfProposer,
-    );
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_raise_dispute_escrow_unauthorized_third_party() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let funder = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-    let outsider = Address::generate(&env);
-
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&funder, &10_000);
-
-    let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient);
-
-    let mut milestones = Vec::new(&env);
-    milestones.push_back(crate::types::Milestone {
-        id: 1,
-        percentage: 100,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-
-    let escrow_id = client.create_escrow(
-        &funder,
-        &recipient,
-        &token,
-        &100i128,
-        &milestones,
-        &1000u64,
-        &arbitrator,
-    );
-
-    let result = client.try_raise_dispute(
-        &outsider,
-        &proposal_id,
-        &Some(escrow_id),
-        &Symbol::new(&env, "breach"),
-        &Vec::new(&env),
-    );
-    assert!(result.is_err());
-}

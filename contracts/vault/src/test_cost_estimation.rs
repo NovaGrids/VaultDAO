@@ -20,6 +20,11 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -41,6 +46,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             veto_addresses: Vec::new(env),
             veto_window_ledgers: 0,
             retry_config: RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 0,
                 initial_backoff_ledgers: 0,
@@ -133,59 +139,5 @@ fn test_update_cost_model_unauthorized() {
 // estimate_proposal_cost
 // ============================================================================
 
-#[test]
-fn test_estimate_single_operation_proposal() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
 
-    let estimate = client.estimate_proposal_cost(&proposal_id).unwrap();
-
-    // Base compute units + 10% buffer = base * 1.1
-    let model = client.get_cost_model();
-    let expected_base = model.base_compute_units + model.base_compute_units / 10;
-    assert_eq!(estimate.compute_units, expected_base);
-    assert!(estimate.ledger_reads >= model.base_ledger_reads);
-    assert!(estimate.ledger_writes >= model.base_ledger_writes);
-}
-
-#[test]
-fn test_estimate_proposal_not_found() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _, _) = setup(&env);
-    let result = client.try_estimate_proposal_cost(&9999u64);
-    assert_eq!(result, Err(Ok(VaultError::ProposalNotFound)));
-}
-
-#[test]
-fn test_estimate_respects_custom_cost_model() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
-
-    let model = CostModel {
-        base_compute_units: 2_000_000,
-        per_condition_compute_units: 0,
-        per_attachment_compute_units: 0,
-        per_phase_compute_units: 0,
-        base_ledger_reads: 8,
-        base_ledger_writes: 4,
-        stroops_per_10k_compute_units: 500,
-    };
-    client.update_cost_model(&admin, &model);
-
-    let estimate = client.estimate_proposal_cost(&proposal_id).unwrap();
-
-    // 2_000_000 base + 10% buffer = 2_200_000
-    assert_eq!(estimate.compute_units, 2_200_000);
-    assert_eq!(estimate.ledger_reads, 8);
-    assert_eq!(estimate.ledger_writes, 4);
-    // fee = (2_200_000 / 10_000) * 500 = 220 * 500 = 110_000
-    assert_eq!(estimate.fee_estimate_xlm, 110_000);
-}

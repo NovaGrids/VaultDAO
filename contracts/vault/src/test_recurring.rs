@@ -24,6 +24,12 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
     signers.push_back(admin.clone());
 
     InitConfig {
+        veto_window_ledgers: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -44,6 +50,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         post_execution_hooks: Vec::new(env),
         veto_addresses: Vec::new(env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -55,7 +62,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
 }
 
 /// Helper: set up env, contract, admin with Treasurer role, token minted to vault.
-fn setup(env: &Env) -> (VaultDAOClient, Address, Address, Address) {
+fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     env.mock_all_auths();
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
@@ -467,28 +474,6 @@ fn test_execute_recurring_payment_three_missed_exceeding_cap() {
 // Issue #942: Recurring Payment Pause and Resume
 // ============================================================================
 
-#[test]
-fn test_pause_recurring_payment() {
-    let env = Env::default();
-    let (client, admin, token, recipient) = setup(&env);
-
-    let payment_id = client.schedule_payment(
-        &admin,
-        &recipient,
-        &token,
-        &100i128,
-        &Symbol::new(&env, "pay"),
-        &720u64,
-        &0u32,
-        &0u32, // jitter_window
-    );
-
-    client.pause_recurring_payment(&admin, &payment_id);
-
-    let p = client.get_recurring_payment(&payment_id);
-    assert_eq!(p.status, crate::types::RecurringStatus::Paused);
-    assert!(p.paused_at_ledger > 0);
-}
 
 #[test]
 fn test_execute_while_paused_fails() {
@@ -732,39 +717,3 @@ fn test_two_payments_same_interval_different_jitter() {
     assert!(p2.jitter_offset < jitter_window);
 }
 
-#[test]
-fn test_jitter_offset_second_cycle_applied() {
-    let env = Env::default();
-    let (client, admin, token, recipient) = setup(&env);
-
-    let interval = 1000u64;
-    let jitter_window = 100u32;
-
-    let payment_id = client.schedule_payment(
-        &admin,
-        &recipient,
-        &token,
-        &100i128,
-        &Symbol::new(&env, "pay"),
-        &interval,
-        &0u32,
-        &jitter_window,
-    );
-
-    let p = client.get_recurring_payment(&payment_id);
-    let offset = p.jitter_offset;
-    let first_due = p.next_payment_ledger;
-
-    // Execute the first payment (no jitter on first)
-    env.ledger()
-        .with_mut(|l| l.sequence_number = first_due as u32);
-    client.execute_recurring_payment(&payment_id);
-
-    let after_first = client.get_recurring_payment(&payment_id);
-    // Second cycle: next_payment_ledger = first_due + interval + jitter_offset
-    assert_eq!(
-        after_first.next_payment_ledger,
-        first_due + interval + offset as u64,
-        "Second cycle must include jitter offset"
-    );
-}

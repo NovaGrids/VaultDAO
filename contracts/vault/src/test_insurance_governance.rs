@@ -8,6 +8,14 @@ use soroban_sdk::{testutils::Address as _, BytesN, Env, Vec};
 
 fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -16,11 +24,13 @@ fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         weekly_limit: 1_000_000,
         timelock_threshold: 40_000,
         timelock_delay: 10,
-        velocity_limit: VelocityConfig { limit: 100, window: 3600 },
+        velocity_limit: VelocityConfig {
+        per_token_limit: 0, limit: 100, window: 3600 },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         veto_addresses: Vec::new(env),
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+        retry_config: RetryConfig {
+        max_retry_delay: 0, enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: types::StakingConfig::default(),
         pre_execution_hooks: Vec::new(env),

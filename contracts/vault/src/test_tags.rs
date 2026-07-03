@@ -18,6 +18,11 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -39,6 +44,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             veto_addresses: Vec::new(env),
             veto_window_ledgers: 0,
             retry_config: RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 0,
                 initial_backoff_ledgers: 0,

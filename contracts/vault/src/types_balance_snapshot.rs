@@ -23,7 +23,7 @@ pub struct BalanceSnapshot {
 }
 
 impl BalanceSnapshot {
-    pub fn new(env: &Env, ledger: u64, timestamp: u64, balances: Vec<(Address, i128)>) -> Self {
+    pub fn new(_env: &Env, ledger: u64, timestamp: u64, balances: Vec<(Address, i128)>) -> Self {
         Self {
             ledger,
             timestamp,

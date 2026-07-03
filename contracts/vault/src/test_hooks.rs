@@ -4,7 +4,7 @@ use super::*;
 use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::Address as _,
     Env, Vec,
 };
 
@@ -13,6 +13,14 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
     signers.push_back(admin.clone());
 
     InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -23,6 +31,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
@@ -31,6 +40,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         post_execution_hooks: Vec::new(env),
         veto_addresses: Vec::new(env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,
@@ -169,6 +179,14 @@ fn test_hooks_with_initialization() {
     post_hooks.push_back(post_hook.clone());
 
     let config = InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers: {
             let mut s = Vec::new(&env);
             s.push_back(admin.clone());
@@ -183,6 +201,7 @@ fn test_hooks_with_initialization() {
         timelock_threshold: 500,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 100,
             window: 3600,
         },
@@ -191,6 +210,7 @@ fn test_hooks_with_initialization() {
         post_execution_hooks: post_hooks,
         veto_addresses: Vec::new(&env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,

@@ -18,6 +18,11 @@ fn make_env() -> (Env, crate::VaultDAOClient<'static>) {
 
 fn base_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -30,7 +35,8 @@ fn base_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         timelock_delay: 0,
         velocity_limit: VelocityConfig { limit: 100, window: 3600, per_token_limit: 0 },
         threshold_strategy: ThresholdStrategy::Fixed,
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+        retry_config: RetryConfig {
+        max_retry_delay: 0, enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
         recovery_config: RecoveryConfig::default(env),
         staking_config: StakingConfig::default(),
         proposal_id_prefix: 0,

@@ -62,6 +62,14 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
     InitConfig {
+        quorum_percentage: 0,
+        veto_window_ledgers: 0,
+        proposal_id_prefix: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -72,6 +80,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         timelock_threshold: 900_000_000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
+            per_token_limit: 0,
             limit: 1_000_000_000,
             window: 3_600,
         },
@@ -80,6 +89,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         post_execution_hooks: Vec::new(env),
         veto_addresses: Vec::new(env),
         retry_config: RetryConfig {
+            max_retry_delay: 0,
             enabled: false,
             max_retries: 0,
             initial_backoff_ledgers: 0,

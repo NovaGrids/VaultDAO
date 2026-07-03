@@ -25,6 +25,11 @@ fn setup(env: &Env, threshold: u32, n_signers: usize) -> (VaultDAOClient<'_>, Ve
     StellarAssetClient::new(env, &token).mint(&contract_id, &100_000);
 
     let cfg = InitConfig {
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers: signers.clone(),
         threshold,
         quorum: 0,
@@ -41,7 +46,8 @@ fn setup(env: &Env, threshold: u32, n_signers: usize) -> (VaultDAOClient<'_>, Ve
         default_voting_deadline: 0,
         veto_addresses: Vec::new(env),
         veto_window_ledgers: 0,
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+        retry_config: RetryConfig {
+        max_retry_delay: 0, enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
         recovery_config: RecoveryConfig::default(env),
         staking_config: types::StakingConfig::default(),
         proposal_id_prefix: 0,

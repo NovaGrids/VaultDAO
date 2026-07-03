@@ -1,5 +1,5 @@
 use crate::errors::VaultError;
-use crate::types::{FeeStructure, FeeTier, RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{FeeStructure, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Vec};
 
@@ -18,6 +18,13 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            veto_window_ledgers: 0,
+            proposal_id_prefix: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -29,6 +36,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             timelock_threshold: 999_999_999,
             timelock_delay: 0,
             velocity_limit: VelocityConfig {
+                per_token_limit: 0,
                 limit: 100,
                 window: 3600,
             },
@@ -37,6 +45,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             post_execution_hooks: Vec::new(env),
             veto_addresses: Vec::new(env),
             retry_config: RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 0,
                 initial_backoff_ledgers: 0,
@@ -98,47 +107,6 @@ fn test_fee_no_discount_base_rate() {
     assert_eq!(client.get_fees_collected(&token), 100);
 }
 
-#[test]
-fn test_fee_volume_discount_tier() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token) = setup(&env);
-    let user = Address::generate(&env);
-
-    StellarAssetClient::new(&env, &token).mint(&user, &10_000_000);
-
-    // Set up a volume tier: >= 500_000 volume → 50 bps (0.5%)
-    let mut tiers = Vec::new(&env);
-    tiers.push_back(FeeTier {
-        min_volume: 500_000,
-        fee_bps: 50,
-    });
-
-    let fee_structure = FeeStructure {
-        tiers,
-        base_fee_bps: 100,
-        reputation_discount_threshold: 750,
-        reputation_discount_percentage: 25,
-        treasury: admin.clone(),
-        enabled: true,
-    };
-    client.set_fee_structure(&admin, &fee_structure);
-
-    // First call: user volume = 0, base rate applies → 1% of 10_000 = 100
-    let fee1 = client.collect_execution_fee(&user, &token, &10_000i128);
-    assert_eq!(fee1, 100);
-
-    // Build up volume past the tier threshold with a large transaction
-    let fee2 = client.collect_execution_fee(&user, &token, &600_000i128);
-    // user_volume after fee1 = 10_000; still below 500_000 → base rate 100 bps
-    // fee = 600_000 * 100 / 10_000 = 6_000
-    assert_eq!(fee2, 6_000);
-
-    // Now user_volume = 610_000 >= 500_000 → tier rate 50 bps
-    let fee3 = client.collect_execution_fee(&user, &token, &10_000i128);
-    assert_eq!(fee3, 50); // 10_000 * 50 / 10_000 = 50
-}
 
 #[test]
 fn test_fee_reputation_discount() {

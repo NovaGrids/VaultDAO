@@ -21,6 +21,12 @@ fn setup_metrics(env: &Env) -> (VaultDAOClient, Address, Address, Address) {
     signers.push_back(signer.clone());
 
     let config = InitConfig {
+        veto_window_ledgers: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
         signers,
         threshold: 1,
         quorum: 0,
@@ -34,7 +40,8 @@ fn setup_metrics(env: &Env) -> (VaultDAOClient, Address, Address, Address) {
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         veto_addresses: Vec::new(env),
-        retry_config: RetryConfig { enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+        retry_config: RetryConfig {
+        max_retry_delay: 0, enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: crate::types::StakingConfig::default(),
         proposal_id_prefix: 0,

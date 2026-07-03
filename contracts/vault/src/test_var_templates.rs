@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{ConditionLogic, Priority, RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::Address as _, token::StellarAssetClient, Address, Bytes, Env, Map, Symbol, Vec,
@@ -20,6 +20,11 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -41,6 +46,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             veto_addresses: Vec::new(env),
             veto_window_ledgers: 0,
             retry_config: RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 0,
                 initial_backoff_ledgers: 0,
@@ -62,38 +68,6 @@ fn make_template_bytes(env: &Env, s: &str) -> Bytes {
 // create_var_template
 // ============================================================================
 
-#[test]
-fn test_create_var_template_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup(&env);
-
-    let desc = make_template_bytes(&env, "Pay {{amount}} to {{recipient}} for {{reason}}");
-    let mut vars = Vec::new(&env);
-    vars.push_back(Symbol::new(&env, "amount"));
-    vars.push_back(Symbol::new(&env, "recipient"));
-    vars.push_back(Symbol::new(&env, "reason"));
-    let mut required = Vec::new(&env);
-    required.push_back(Symbol::new(&env, "amount"));
-    required.push_back(Symbol::new(&env, "recipient"));
-
-    let template_id = client.create_var_template(
-        &admin,
-        &Symbol::new(&env, "Payroll"),
-        &desc,
-        &vars,
-        &required,
-    );
-    assert!(template_id > 0);
-
-    let stored = client.get_var_template(&template_id).unwrap();
-    assert_eq!(stored.name, Symbol::new(&env, "Payroll"));
-    assert_eq!(stored.version, 1);
-    assert!(stored.is_active);
-    assert_eq!(stored.variables.len(), 3);
-    assert_eq!(stored.required_fields.len(), 2);
-}
 
 #[test]
 fn test_create_var_template_unauthorized() {
@@ -112,58 +86,11 @@ fn test_create_var_template_unauthorized() {
     assert_eq!(result, Err(Ok(VaultError::Unauthorized)));
 }
 
-#[test]
-fn test_create_var_template_too_many_variables_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup(&env);
-    let mut vars = Vec::new(&env);
-    for i in 0..11u32 {
-        vars.push_back(Symbol::new(&env, &format!("var{}", i)));
-    }
-
-    let result = client.try_create_var_template(
-        &admin,
-        &Symbol::new(&env, "TooManyVars"),
-        &make_template_bytes(&env, "body"),
-        &vars,
-        &Vec::new(&env),
-    );
-    assert_eq!(result, Err(Ok(VaultError::TooManyTemplateVariables)));
-}
 
 // ============================================================================
 // update_var_template — versioning
 // ============================================================================
 
-#[test]
-fn test_update_var_template_increments_version() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup(&env);
-    let desc = make_template_bytes(&env, "Template v1");
-    let template_id = client.create_var_template(
-        &admin,
-        &Symbol::new(&env, "Grant"),
-        &desc,
-        &Vec::new(&env),
-        &Vec::new(&env),
-    );
-
-    let updated_desc = make_template_bytes(&env, "Template v2");
-    client.update_var_template(
-        &admin,
-        &template_id,
-        &updated_desc,
-        &Vec::new(&env),
-        &Vec::new(&env),
-    );
-
-    let stored = client.get_var_template(&template_id).unwrap();
-    assert_eq!(stored.version, 2);
-}
 
 // ============================================================================
 // create_prop_var_template

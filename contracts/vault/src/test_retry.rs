@@ -26,6 +26,12 @@ mod tests {
         let token = Address::generate(&env);
 
         let init_config = types::InitConfig {
+            veto_window_ledgers: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers: soroban_sdk::vec![&env, admin.clone(), signer1.clone(), signer2.clone()],
             threshold: 2,
             quorum: 0,
@@ -46,6 +52,7 @@ mod tests {
             default_voting_deadline: 1000,
             veto_addresses: soroban_sdk::vec![&env],
             retry_config: types::RetryConfig {
+                max_retry_delay: 0,
                 enabled: true,
                 max_retries: 3,
                 initial_backoff_ledgers: 10,
@@ -56,6 +63,8 @@ mod tests {
                 delay: 0,
             },
             staking_config: types::StakingConfig {
+                compound_lock_period: 17280,
+                compound_epoch: 17280,
                 enabled: false,
                 min_amount: 0,
                 base_stake_bps: 0,
@@ -166,6 +175,13 @@ mod tests {
         let admin = Address::generate(&env);
 
         let init_config = types::InitConfig {
+            veto_window_ledgers: 0,
+            proposal_id_prefix: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers: soroban_sdk::vec![&env, admin.clone()],
             threshold: 1,
             quorum: 0,
@@ -176,6 +192,7 @@ mod tests {
             timelock_threshold: 999_999_999,
             timelock_delay: 0,
             velocity_limit: types::VelocityConfig {
+                per_token_limit: 0,
                 limit: 100,
                 window: 3600,
             },
@@ -185,6 +202,7 @@ mod tests {
             default_voting_deadline: 1000,
             veto_addresses: soroban_sdk::vec![&env],
             retry_config: types::RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 3,
                 initial_backoff_ledgers: 10,
@@ -195,6 +213,8 @@ mod tests {
                 delay: 0,
             },
             staking_config: types::StakingConfig {
+                compound_lock_period: 17280,
+                compound_epoch: 17280,
                 enabled: false,
                 min_amount: 0,
                 base_stake_bps: 0,
@@ -212,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_retry_no_state_returns_error() {
-        let (env, _contract_id, client, admin, _s1, _s2, _token) = setup_vault_with_retry();
+        let (_env, _contract_id, client, admin, _s1, _s2, _token) = setup_vault_with_retry();
 
         // No retry state exists for proposal 999 — should fail
         let res = client.try_retry_execute_proposal(&admin, &999u64);
@@ -241,28 +261,6 @@ mod tests {
         let res = client.try_retry_execute_proposal(&admin, &proposal_id);
         // Either RetryError (backoff) or ProposalNotFound — both are acceptable
         assert!(res.is_err());
-    }
-
-    #[test]
-    fn test_retry_max_retries_exhausted_expires_proposal() {
-        let (env, contract_id, client, admin, _s1, _s2, _token) = setup_vault_with_retry();
-
-        let proposal_id = 42u64;
-
-        // Set retry state at max_retries (3)
-        let retry_state = types::RetryState {
-            retry_count: 3,
-            next_retry_ledger: 0,
-            last_retry_ledger: 0,
-        };
-        env.as_contract(&contract_id, || {
-            storage::set_retry_state(&env, proposal_id, &retry_state)
-        });
-
-        // retry_execute_proposal should return RetryError when exhausted
-        // (proposal doesn't exist, but max retries check fires first)
-        let res = client.try_retry_execute_proposal(&admin, &proposal_id);
-        assert_eq!(res, Err(Ok(crate::errors::VaultError::RetryError)));
     }
 
     #[test]

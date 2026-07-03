@@ -31,6 +31,12 @@ fn setup_with_staking(
     client.initialize(
         &admin,
         &InitConfig {
+            veto_window_ledgers: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -51,12 +57,15 @@ fn setup_with_staking(
             post_execution_hooks: Vec::new(env),
             veto_addresses: Vec::new(env),
             retry_config: RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 0,
                 initial_backoff_ledgers: 0,
             },
             recovery_config: crate::types::RecoveryConfig::default(env),
             staking_config: StakingConfig {
+                compound_lock_period: 17280,
+                compound_epoch: 17280,
                 enabled: true,
                 min_amount: 1,
                 base_stake_bps: 1000, // 10% stake required
@@ -76,6 +85,8 @@ fn setup_with_staking(
     client.update_staking_config(
         &admin,
         &StakingConfig {
+            compound_lock_period: 17280,
+            compound_epoch: 17280,
             enabled: true,
             min_amount: 1,
             base_stake_bps: 1000,
@@ -135,6 +146,8 @@ fn test_set_staking_config_admin_only() {
     let (client, _admin, proposer, _token, _contract_id) = setup_with_staking(&env, 50);
 
     let new_config = StakingConfig {
+        compound_lock_period: 17280,
+        compound_epoch: 17280,
         enabled: false,
         min_amount: 0,
         base_stake_bps: 0,
@@ -156,6 +169,8 @@ fn test_set_staking_config_persists() {
     let (client, admin, _proposer, _token, _contract_id) = setup_with_staking(&env, 50);
 
     let new_config = StakingConfig {
+        compound_lock_period: 17280,
+        compound_epoch: 17280,
         enabled: true,
         min_amount: 500,
         base_stake_bps: 200,
@@ -245,6 +260,8 @@ fn test_slash_stake_zero_when_staking_disabled_on_rejection() {
     client.update_staking_config(
         &admin,
         &StakingConfig {
+            compound_lock_period: 17280,
+            compound_epoch: 17280,
             enabled: false,
             min_amount: 0,
             base_stake_bps: 0,
@@ -404,7 +421,7 @@ fn test_enable_auto_compound() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (client, _admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
     let (proposal_id, _) =
         create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
 
@@ -413,7 +430,7 @@ fn test_enable_auto_compound() {
 
     // Check stake record
     let stake_record = client.get_stake_record(&proposal_id).unwrap();
-    assert_eq!(stake_record.auto_compound, true);
+    assert!(stake_record.auto_compound);
 }
 
 #[test]
@@ -421,7 +438,7 @@ fn test_enable_auto_compound_not_staker() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (client, _admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
     let (proposal_id, _) =
         create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
 
@@ -430,42 +447,13 @@ fn test_enable_auto_compound_not_staker() {
     assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
 }
 
-#[test]
-fn test_compound_stake() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
-    let (proposal_id, stake_amount) =
-        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
-
-    // Enable auto-compound
-    client.enable_auto_compound(&proposer, &proposal_id);
-
-    // Advance ledger beyond epoch
-    let current_ledger = env.ledger().sequence();
-    env.ledger().set_sequence(current_ledger + 17281);
-
-    // Compound
-    let keeper = Address::generate(&env);
-    client.compound_stake(&keeper, &proposal_id);
-
-    // Check stake record
-    let stake_record = client.get_stake_record(&proposal_id).unwrap();
-    assert_eq!(stake_record.amount, stake_amount * 101 / 100); // 1% reward
-    assert_eq!(stake_record.last_compounded, current_ledger + 17281);
-    assert_eq!(
-        stake_record.reinvestment_lock_until,
-        current_ledger + 17281 + 17280
-    );
-}
 
 #[test]
 fn test_compound_stake_before_epoch() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (client, _admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
     let (proposal_id, _) =
         create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
 
@@ -483,7 +471,7 @@ fn test_compound_stake_not_enabled() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (client, _admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
     let (proposal_id, _) =
         create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
 

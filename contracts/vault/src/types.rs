@@ -3,6 +3,8 @@
 //! Core data structures for the multisig treasury contract.
 //!
 //! # Gas Optimization Notes
+
+#![allow(clippy::enum_variant_names)]
 //!
 //! This module implements several gas optimization techniques:
 //!
@@ -18,10 +20,6 @@
 //! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
 use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Symbol, Vec};
-
-#[path = "types_balance_snapshot.rs"]
-mod types_balance_snapshot;
-use types_balance_snapshot::BalanceSnapshot;
 
 /// Oracle configuration for price feeds
 #[contracttype]
@@ -1507,6 +1505,7 @@ pub enum DisputeResolution {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
+#[allow(clippy::enum_variant_names)]
 pub enum DisputeOutcome {
     /// Uphold the dispute - release bond to disputer
     UpholdDispute = 0,

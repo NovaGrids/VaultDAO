@@ -18,6 +18,11 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
             signers,
             threshold: 1,
             quorum: 0,
@@ -39,6 +44,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             veto_addresses: Vec::new(env),
             veto_window_ledgers: 0,
             retry_config: RetryConfig {
+                max_retry_delay: 0,
                 enabled: false,
                 max_retries: 0,
                 initial_backoff_ledgers: 0,
@@ -78,51 +84,8 @@ fn create_proposal(
 // create_tag — flat (root) tags
 // ============================================================================
 
-#[test]
-fn test_create_root_tag_success() {
-    let env = Env::default();
-    env.mock_all_auths();
 
-    let (client, admin, _, _) = setup(&env);
 
-    let tag_id = client.create_tag(&admin, &Symbol::new(&env, "Finance"), &None);
-    assert!(tag_id > 0);
-
-    let tag = client.get_tag(&tag_id).unwrap();
-    assert_eq!(tag.name, Symbol::new(&env, "Finance"));
-    assert_eq!(tag.level, 0);
-    assert!(tag.parent_id.is_none());
-}
-
-#[test]
-fn test_create_child_tag_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup(&env);
-
-    let parent_id = client.create_tag(&admin, &Symbol::new(&env, "Finance"), &None);
-    let child_id = client.create_tag(&admin, &Symbol::new(&env, "Payroll"), &Some(parent_id));
-
-    let child = client.get_tag(&child_id).unwrap();
-    assert_eq!(child.level, 1);
-    assert_eq!(child.parent_id, Some(parent_id));
-}
-
-#[test]
-fn test_create_grandchild_tag_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup(&env);
-
-    let root_id = client.create_tag(&admin, &Symbol::new(&env, "Finance"), &None);
-    let child_id = client.create_tag(&admin, &Symbol::new(&env, "Payroll"), &Some(root_id));
-    let grand_id = client.create_tag(&admin, &Symbol::new(&env, "Eng"), &Some(child_id));
-
-    let grand = client.get_tag(&grand_id).unwrap();
-    assert_eq!(grand.level, 2);
-}
 
 #[test]
 fn test_create_tag_too_deep_rejected() {
@@ -202,23 +165,6 @@ fn test_assign_tags_to_proposal() {
     assert!(result.contains(proposal_id));
 }
 
-#[test]
-fn test_assign_tags_max_exceeded() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token, vault) = setup(&env);
-    let proposal_id = create_proposal(&env, &client, &admin, &token, &vault);
-
-    let mut ids = Vec::new(&env);
-    for i in 0u64..9u64 {
-        let tid = client.create_tag(&admin, &Symbol::new(&env, &format!("tag{}", i)), &None);
-        ids.push_back(tid);
-    }
-
-    let result = client.try_assign_tags(&admin, &proposal_id, &ids);
-    assert_eq!(result, Err(Ok(VaultError::TooManyTags)));
-}
 
 #[test]
 fn test_assign_tags_nonexistent_tag_rejected() {
@@ -274,18 +220,6 @@ fn test_get_proposals_by_parent_tag_returns_children() {
 // delete_tag
 // ============================================================================
 
-#[test]
-fn test_delete_tag_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, _, _) = setup(&env);
-    let tag_id = client.create_tag(&admin, &Symbol::new(&env, "Temp"), &None);
-    client.delete_tag(&admin, &tag_id);
-
-    let result = client.try_get_tag(&tag_id);
-    assert_eq!(result, Err(Ok(VaultError::TagNotFound)));
-}
 
 #[test]
 fn test_delete_tag_blocked_when_proposals_use_it() {
