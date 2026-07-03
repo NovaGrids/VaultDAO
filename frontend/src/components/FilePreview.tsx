@@ -46,7 +46,7 @@ export function FilePreview({ file, onRemove, className = '' }: FilePreviewProps
         if (!file.objectUrl) URL.revokeObjectURL(url);
       };
     } else if (isMounted) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setPreviewUrl(null);
     }
     

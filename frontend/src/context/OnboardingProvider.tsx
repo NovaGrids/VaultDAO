@@ -54,7 +54,7 @@ export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children
       }
 
       if (completed === 'true') {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+         
       setState((prev: OnboardingState) => ({ ...prev, completedOnboarding: true }));
       }
     } catch (error) {

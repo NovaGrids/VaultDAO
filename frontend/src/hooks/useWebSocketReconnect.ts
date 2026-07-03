@@ -187,7 +187,7 @@ export function useWebSocketReconnect({
     reconnectTimerRef.current = setTimeout(() => {
       openConnection();
     }, backoffMs);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [openConnection]);
 
   const connect = useCallback(() => {

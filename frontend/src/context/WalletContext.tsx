@@ -174,7 +174,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selectedWalletId, connected, updateWalletState]);
 
   const connect = useCallback(async (walletType?: WalletType) => {

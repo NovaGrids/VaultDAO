@@ -142,7 +142,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
   }, [notifications, activeTab]);
 
   const filteredNotifications = useMemo(() => {
-    let filtered = tabFiltered.filter((n) => {
+    const filtered = tabFiltered.filter((n) => {
       const categoryMatch = filter.categories.includes(n.category);
       const priorityMatch = filter.priorities.includes(n.priority);
       const statusMatch = !filter.status || n.status === filter.status;
