@@ -3,14 +3,9 @@
 #![cfg(test)]
 
 use super::*;
-use crate::types::{
-    RetryConfig, ThresholdStrategy, VelocityConfig,
-};
+use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO};
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, Env, Vec,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn make_audit_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
     InitConfig {
@@ -50,10 +45,6 @@ fn make_audit_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitCo
         high_impact_threshold: 80,
     }
 }
-
-
-
-
 
 // ============================================================================
 // Issue #1087: Audit Trail Compression Tests
@@ -116,11 +107,6 @@ fn generate_audit_entries(client: &crate::VaultDAOClient, admin: &Address, count
     }
 }
 
-
-
-
-
-
 #[test]
 fn test_checkpoint_with_nonexistent_id_fails() {
     let env = Env::default();
@@ -133,4 +119,3 @@ fn test_checkpoint_with_nonexistent_id_fails() {
         "Should fail when checkpoint does not exist"
     );
 }
-

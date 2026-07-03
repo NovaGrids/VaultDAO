@@ -84,9 +84,6 @@ fn create_proposal(
 // create_tag — flat (root) tags
 // ============================================================================
 
-
-
-
 #[test]
 fn test_create_tag_too_deep_rejected() {
     let env = Env::default();
@@ -165,7 +162,6 @@ fn test_assign_tags_to_proposal() {
     assert!(result.contains(proposal_id));
 }
 
-
 #[test]
 fn test_assign_tags_nonexistent_tag_rejected() {
     let env = Env::default();
@@ -219,7 +215,6 @@ fn test_get_proposals_by_parent_tag_returns_children() {
 // ============================================================================
 // delete_tag
 // ============================================================================
-
 
 #[test]
 fn test_delete_tag_blocked_when_proposals_use_it() {

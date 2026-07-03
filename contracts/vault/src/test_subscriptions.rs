@@ -153,7 +153,6 @@ fn test_create_subscription_zero_interval_fails() {
 // renew_subscription
 // ============================================================================
 
-
 #[test]
 fn test_renew_before_renewal_ledger_fails() {
     let env = Env::default();
@@ -269,7 +268,6 @@ fn test_cancel_subscription_by_admin() {
     let sub = client.get_subscription(&id);
     assert_eq!(sub.status, SubscriptionStatus::Cancelled);
 }
-
 
 #[test]
 fn test_cancel_already_cancelled_fails() {
@@ -418,8 +416,6 @@ fn test_upgrade_zero_amount_fails() {
 // auto_renew by third party
 // ============================================================================
 
-
-
 // ============================================================================
 // get_subscription / get_subscriptions_by_subscriber
 // ============================================================================
@@ -524,10 +520,6 @@ fn test_get_subscriptions_by_subscriber_empty() {
 // Event verification
 // ============================================================================
 
-
-
-
-
 // ============================================================================
 // Status transitions
 // ============================================================================
@@ -568,7 +560,6 @@ fn test_status_transitions_create_cancel() {
     );
 }
 
-
 #[test]
 fn test_upgrade_preserves_active_status() {
     let env = Env::default();
@@ -598,7 +589,6 @@ fn test_upgrade_preserves_active_status() {
     assert_eq!(sub.tier, SubscriptionTier::Premium);
     assert_eq!(sub.amount_per_period, 300);
 }
-
 
 #[test]
 fn test_auto_renew_flag_stored_correctly() {
@@ -790,7 +780,6 @@ fn test_renew_within_grace_period_succeeds() {
         SubscriptionStatus::Active
     );
 }
-
 
 #[test]
 fn test_expire_overdue_subscriptions_batch() {

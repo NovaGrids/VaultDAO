@@ -107,7 +107,6 @@ fn test_fee_no_discount_base_rate() {
     assert_eq!(client.get_fees_collected(&token), 100);
 }
 
-
 #[test]
 fn test_fee_reputation_discount() {
     let env = Env::default();

@@ -68,7 +68,6 @@ fn make_template_bytes(env: &Env, s: &str) -> Bytes {
 // create_var_template
 // ============================================================================
 
-
 #[test]
 fn test_create_var_template_unauthorized() {
     let env = Env::default();
@@ -86,11 +85,9 @@ fn test_create_var_template_unauthorized() {
     assert_eq!(result, Err(Ok(VaultError::Unauthorized)));
 }
 
-
 // ============================================================================
 // update_var_template — versioning
 // ============================================================================
-
 
 // ============================================================================
 // create_prop_var_template

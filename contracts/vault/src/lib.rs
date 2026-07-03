@@ -27,25 +27,24 @@ use soroban_sdk::{
     contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Vec,
 };
 use types::{
-    AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, Comment,
-    Condition, ConditionLogic, Config, ConfigParam, CrossChainAsset,
-    CrossChainProposal, CrossVaultConfig, CrossVaultProposal, CrossVaultStatus, DeadLetterRecord,
-    Delegation, DelegationHistory, DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow,
-    EscrowStatus, ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
-    FundingRoundConfig, FundingRoundStatus, GasConfig, GovernanceProposal, HolidayBehavior,
-    HolidayCalendar, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
-    InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
-    NotificationPrefs, OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority,
-    Proposal, ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus,
-    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
-    RecurringPayment, RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role,
-    RoleAssignment, ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig,
-    StreamRateWindow, StreamStatus, StreamingPayment, Subscription, SubscriptionStatus,
-    SubscriptionTier, SwapProposal, SwapResult, TemplateOverrides,
-    ThresholdStrategy, TokenSpendingConfig, TransferDetails, VaultAction,
-    VaultMetrics, VaultOracleConfig, VaultPriceData, VelocityConfig, VestingSchedule, VoteChoice,
-    VoteWeight, VotingStrategy, WhitelistEntry,
+    AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction, BridgeConfig,
+    CancellationRecord, Capability, CapabilityToken, Comment, Condition, ConditionLogic, Config,
+    ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig, CrossVaultProposal,
+    CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory, DexConfig, Dispute,
+    DisputeResolution, DisputeStatus, Escrow, EscrowStatus, ExecutionFeeEstimate, FundingMilestone,
+    FundingMilestoneStatus, FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig,
+    GovernanceProposal, HolidayBehavior, HolidayCalendar, ImpactScore, InitConfig, InsuranceClaim,
+    InsuranceClaimStatus, InsuranceConfig, ListMode, Milestone, MultiPhaseProposal,
+    NotificationPreferences, NotificationPrefs, OptionalProposalOperation,
+    OptionalVaultOracleConfig, PauseState, Priority, Proposal, ProposalAmendment,
+    ProposalOperation, ProposalPhase, ProposalPhaseStatus, ProposalStatus, ProposalTemplate,
+    RecoveryConfig, RecoveryProposal, RecoveryStatus, RecurringPayment, RecurringStatus,
+    Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
+    ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig, StreamRateWindow,
+    StreamStatus, StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier,
+    SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy, TokenSpendingConfig,
+    TransferDetails, VaultAction, VaultMetrics, VaultOracleConfig, VaultPriceData, VelocityConfig,
+    VestingSchedule, VoteChoice, VoteWeight, VotingStrategy, WhitelistEntry,
 };
 use types_balance_snapshot::BalanceSnapshot;
 
@@ -219,12 +218,8 @@ fn calculate_impact_score(
     let treasury_component = treasury_impact_bps
         .saturating_mul(40)
         .saturating_div(10_000);
-    let recipient_component = recipient_risk_score
-        .saturating_mul(30)
-        .saturating_div(100);
-    let complexity_component = complexity_score
-        .saturating_mul(30)
-        .saturating_div(100);
+    let recipient_component = recipient_risk_score.saturating_mul(30).saturating_div(100);
+    let complexity_component = complexity_score.saturating_mul(30).saturating_div(100);
 
     let total = (treasury_component + recipient_component + complexity_component).min(100);
 
@@ -407,10 +402,9 @@ impl VaultDAO {
 
         // Validate proposal_id_prefix
         let prefix = config.proposal_id_prefix;
-        if prefix != 0
-            && (!prefix.is_multiple_of(1_000_000) || prefix > u64::MAX / 2) {
-                return Err(VaultError::InvalidProposalIdPrefix);
-            }
+        if prefix != 0 && (!prefix.is_multiple_of(1_000_000) || prefix > u64::MAX / 2) {
+            return Err(VaultError::InvalidProposalIdPrefix);
+        }
 
         // Admin must authorize initialization
         admin.require_auth();
@@ -5322,9 +5316,9 @@ impl VaultDAO {
 
         if refund_amount > 0
             && token::try_transfer(&env, &stream.token_addr, &stream.sender, refund_amount).is_err()
-            {
-                return Err(VaultError::InsufficientBalance);
-            }
+        {
+            return Err(VaultError::InsufficientBalance);
+        }
 
         stream.last_update_timestamp = now;
         stream.status = StreamStatus::Cancelled;

@@ -1,7 +1,5 @@
 use super::*;
-use crate::types::{
-    ConditionLogic, DisputeStatus, Priority, Role,
-};
+use crate::types::{ConditionLogic, DisputeStatus, Priority, Role};
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
 
@@ -116,11 +114,6 @@ fn test_raise_dispute_by_signer_with_bond() {
     assert_eq!(ids.get(0).unwrap(), dispute_id);
 }
 
-
-
-
-
-
 #[test]
 fn test_dispute_bond_too_small() {
     let env = Env::default();
@@ -148,12 +141,3 @@ fn test_dispute_bond_too_small() {
     );
     assert_eq!(result, Err(Ok(VaultError::DisputeBondTooSmall)));
 }
-
-
-
-
-
-
-
-
-

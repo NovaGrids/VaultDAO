@@ -447,7 +447,6 @@ fn test_enable_auto_compound_not_staker() {
     assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
 }
 
-
 #[test]
 fn test_compound_stake_before_epoch() {
     let env = Env::default();

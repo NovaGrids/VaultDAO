@@ -147,7 +147,6 @@ fn test_role_assignments_query_returns_deterministic_order() {
     assert_eq!(assignments.get(2).unwrap().role, Role::Treasurer);
 }
 
-
 #[test]
 fn test_expiry_refund_is_idempotent() {
     // Triggering expiry twice (e.g. approve then execute on an already-expired
@@ -218,7 +217,6 @@ fn test_expiry_refund_is_idempotent() {
     );
 }
 
-
 // ============================================================================
 // Security Regression Tests — Issue #711
 // ============================================================================
@@ -248,10 +246,6 @@ fn test_reinit_fails_with_already_initialized() {
     );
     assert_eq!(result, Err(Ok(VaultError::AlreadyInitialized)));
 }
-
-
-
-
 
 /// Regression: the same signer approving a proposal twice must fail with
 /// `VaultError::AlreadyApproved` on the second attempt.
@@ -304,7 +298,6 @@ fn test_double_approval_by_same_signer_fails() {
     let result = client.try_approve_proposal(&admin, &proposal_id);
     assert_eq!(result, Err(Ok(VaultError::AlreadyApproved)));
 }
-
 
 /// Regression: attempting to execute a proposal that has been cancelled must
 /// fail with `VaultError::ProposalAlreadyCancelled`.
@@ -1037,6 +1030,3 @@ fn setup_dependency_env(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Add
     let recipient = Address::generate(env);
     (client, admin, token, recipient)
 }
-
-
-

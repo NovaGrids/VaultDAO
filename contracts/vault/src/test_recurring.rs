@@ -474,7 +474,6 @@ fn test_execute_recurring_payment_three_missed_exceeding_cap() {
 // Issue #942: Recurring Payment Pause and Resume
 // ============================================================================
 
-
 #[test]
 fn test_execute_while_paused_fails() {
     let env = Env::default();
@@ -716,4 +715,3 @@ fn test_two_payments_same_interval_different_jitter() {
     assert!(p1.jitter_offset < jitter_window);
     assert!(p2.jitter_offset < jitter_window);
 }
-

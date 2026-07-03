@@ -670,9 +670,6 @@ fn has_event_with_topic(env: &Env, topic_name: &str) -> bool {
     })
 }
 
-
-
-
 // ===========================================================================
 // Time-Based Threshold Reduction Tests
 // ===========================================================================
@@ -774,7 +771,6 @@ fn test_time_based_threshold_before_reduction() {
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
-
 /// Test that reduced threshold still requires quorum
 #[test]
 fn test_time_based_threshold_respects_quorum() {
@@ -874,8 +870,6 @@ fn test_time_based_threshold_respects_quorum() {
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved); // Now approved
 }
-
-
 
 // ===========================================================================
 // extend_voting_deadline Tests — Issue: Voting Deadline Extension with Admin Override
@@ -995,7 +989,6 @@ fn test_extend_voting_deadline_past_expiry_returns_invalid_deadline() {
     let res = client.try_extend_voting_deadline(&admin, &proposal_id, &(expires_at + 1));
     assert_eq!(res, Err(Ok(VaultError::InvalidDeadline)));
 }
-
 
 #[test]
 fn test_extend_voting_deadline_non_pending_returns_error() {

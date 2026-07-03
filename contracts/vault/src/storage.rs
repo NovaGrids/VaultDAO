@@ -23,13 +23,13 @@ use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Symbol, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    AuditCheckpoint, AuditEntry, BridgeConfig,
-    CapabilityToken, ColdSignatureRecord, ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord, DelegatedPermission, Delegation,
-    DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate, ExecutionSnapshot, FeeStructure,
-    FundingRound, FundingRoundConfig, GasConfig, GovernanceProposal, HolidayCalendar,
-    InsuranceClaim, InsuranceConfig, ListMode, MergeRecord, MultiPhaseProposal,
-    NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant, Proposal,
-    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
+    AuditCheckpoint, AuditEntry, BridgeConfig, CapabilityToken, ColdSignatureRecord,
+    ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
+    DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
+    ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
+    GovernanceProposal, HolidayCalendar, InsuranceClaim, InsuranceConfig, ListMode, MergeRecord,
+    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant,
+    Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
     ReputationConfig, RetryState, Role, RoleAssignment, ScopedDelegation, SignerTier, StakeRecord,
     StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
     TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
@@ -3342,7 +3342,6 @@ pub fn get_tag_index(env: &Env, tag: &Symbol) -> Vec<u64> {
 /// Derive a stable u64 hash from a Symbol for use as a DataKey discriminant.
 /// Uses the SHA-256 of the symbol's string bytes (first 8 bytes, little-endian).
 fn symbol_to_u64_key(env: &Env, tag: &Symbol) -> u64 {
-    
     let tag_bytes = tag.clone().to_xdr(env);
     let hash = env.crypto().sha256(&tag_bytes);
     let hash_bytes = hash.to_array();

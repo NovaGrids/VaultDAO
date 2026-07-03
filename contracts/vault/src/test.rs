@@ -2,8 +2,7 @@
 
 use super::*;
 use crate::types::{
-    DexConfig, FeeStructure, RetryConfig, SwapProposal, TimeBasedThreshold,
-    VelocityConfig,
+    DexConfig, FeeStructure, RetryConfig, SwapProposal, TimeBasedThreshold, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -154,7 +153,6 @@ fn test_multisig_approval() {
     assert_eq!(proposal.status, ProposalStatus::Approved);
     assert_eq!(proposal.unlock_ledger, 0); // No timelock
 }
-
 
 #[test]
 fn test_timelock_violation() {
@@ -469,8 +467,6 @@ fn test_amend_proposal_enforces_spending_limit() {
     );
     assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
 }
-
-
 
 #[test]
 fn test_change_priority_unauthorized() {
@@ -979,10 +975,6 @@ fn test_cannot_abstain_after_voting() {
     assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
 }
 
-
-
-
-
 #[test]
 fn test_attachment_unauthorized() {
     let env = Env::default();
@@ -1063,9 +1055,6 @@ fn test_attachment_unauthorized() {
     let res = client.try_add_attachment(&signer2, &proposal_id, &ipfs_hash);
     assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
-
-
-
 
 #[test]
 fn test_set_and_get_proposal_metadata() {
@@ -1313,8 +1302,6 @@ fn test_proposal_metadata_unauthorized() {
     assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
 
-
-
 #[test]
 fn test_proposal_metadata_limit_exceeded() {
     let env = Env::default();
@@ -1517,7 +1504,6 @@ fn test_get_proposal_metadata_value_missing_key_returns_none() {
     let missing = client.get_proposal_metadata_value(&proposal_id, &Symbol::new(&env, "missing"));
     assert_eq!(missing, None);
 }
-
 
 #[test]
 fn test_proposal_tag_unauthorized() {
@@ -2669,8 +2655,6 @@ fn test_dex_not_enabled_error() {
     assert_eq!(result.err(), Some(Ok(VaultError::DexError)));
 }
 
-
-
 // ============================================================================
 // NEW TESTS — Abstention Votes & Quorum (Issue #117)
 // ============================================================================
@@ -3306,7 +3290,6 @@ fn test_execution_rechecks_quorum_requirement() {
     assert_eq!(result.err(), Some(Ok(VaultError::QuorumNotReached)));
 }
 
-
 /// Quorum satisfied purely by approvals (no abstentions needed).
 #[test]
 fn test_quorum_satisfied_by_approvals_alone() {
@@ -3787,7 +3770,6 @@ fn test_retry_execution_function() {
     assert_eq!(state.retry_count, 2);
 }
 
-
 #[test]
 fn test_retry_succeeds_after_balance_funded() {
     setup_retry_test!(env, client, admin, _signer1, token_addr, contract_id);
@@ -3824,7 +3806,6 @@ fn test_retry_succeeds_after_balance_funded() {
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_ok(), "Retry should succeed after funding");
 }
-
 
 // ============================================================================
 // Subscription System Tests
@@ -3918,8 +3899,6 @@ fn test_subscription_renewal() {
     assert_eq!(subscription.total_payments, 1);
 }
 */
-
-
 
 /*
 #[test]
@@ -4893,7 +4872,6 @@ fn test_reputation_increases_on_execution() {
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
-
 #[test]
 fn test_reputation_decay_over_time() {
     let env = Env::default();
@@ -5637,8 +5615,6 @@ fn test_escrow_basic_flow() {
     // Full integration tested in production deploy
 }
 
-
-
 #[test]
 fn test_insurance_posting_and_refund() {
     let env = Env::default();
@@ -5755,8 +5731,6 @@ fn test_insurance_posting_and_refund() {
     let pool = client.get_insurance_pool(&token_addr);
     assert_eq!(pool, 0);
 }
-
-
 
 /*
 #[test]
@@ -6124,9 +6098,6 @@ fn test_fees_collected_tracking() {
     // and verify fees are collected
 }
 
-
-
-
 // ============================================================================
 // get_config tests (feature/public-vault-config-getter)
 // ============================================================================
@@ -6274,7 +6245,6 @@ fn test_set_role_non_admin_fails() {
     // role must remain unchanged
     assert_eq!(client.get_role(&user), Role::Member);
 }
-
 
 #[test]
 fn test_get_role_assignments_includes_signers_and_updates() {
@@ -6488,6 +6458,3 @@ fn test_list_proposals_empty() {
     let proposals = client.list_proposals(&0u64, &10u64);
     assert_eq!(proposals.len(), 0);
 }
-
-
-

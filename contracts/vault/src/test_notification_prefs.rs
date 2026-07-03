@@ -77,7 +77,6 @@ fn test_set_and_get_notification_prefs() {
     assert!(retrieved.notify_on_expiry);
 }
 
-
 #[test]
 fn test_update_specific_field() {
     let env = Env::default();
@@ -107,5 +106,3 @@ fn test_update_specific_field() {
     let retrieved = client.get_notification_preferences(&user);
     assert!(retrieved.notify_on_expiry);
 }
-
-

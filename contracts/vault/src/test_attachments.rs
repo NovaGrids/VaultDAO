@@ -50,10 +50,6 @@ fn sha256_string(env: &Env, s: &str) -> BytesN<32> {
     env.crypto().sha256(&b).into()
 }
 
-
-
-
-
 // Test 5: verify_attachment returns false for invalid leaf
 #[test]
 fn test_verify_attachment_invalid_leaf() {
@@ -98,7 +94,6 @@ fn test_verify_attachment_invalid_leaf() {
     assert!(!result, "Wrong leaf should fail verification");
 }
 
-
 // Test 7: Empty proposal attachment has zero root — verify_attachment with zero leaf returns true
 #[test]
 fn test_verify_empty_attachments_zero_leaf() {
@@ -135,4 +130,3 @@ fn test_verify_empty_attachments_zero_leaf() {
     let result = client.verify_attachment(&pid, &zero_leaf, &proof, &0u32);
     assert!(result, "Zero leaf verifies for empty attachment list");
 }
-

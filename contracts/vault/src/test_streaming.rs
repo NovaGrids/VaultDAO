@@ -45,12 +45,6 @@ fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     }
 }
 
-
-
-
-
-
-
 // Test 7: Admin can update rate config
 #[test]
 fn test_update_stream_rate_config() {

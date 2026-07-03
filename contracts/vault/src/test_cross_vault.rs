@@ -342,9 +342,6 @@ fn test_bridge_to_vault_success() {
     assert_eq!(bridge_record.min_received, 95);
 }
 
-
-
-
 #[test]
 fn test_bridge_amount_exceeds_limit() {
     let env = Env::default();
