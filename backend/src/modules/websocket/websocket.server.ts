@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
@@ -7,20 +8,69 @@ import type { ContractEvent } from "../events/events.types.js";
 
 const logger = createLogger("websocket-server");
 
+// ---------------------------------------------------------------------------
+// Connection state machine
+// ---------------------------------------------------------------------------
+
+/**
+ * Connecting  – TCP/WS handshake complete; awaiting authentication.
+ * Authenticated – Client provided a valid token (either via query-param at
+ *                 connection time or via an explicit "authenticate" message).
+ * Subscribed   – Client has at least one active topic subscription.
+ *
+ * Valid transitions:
+ *   Connecting    → Authenticated  (on valid auth)
+ *   Authenticated → Subscribed     (on first subscribe)
+ *   Subscribed    → Authenticated  (on unsubscribe all)
+ *
+ * Any message received while the connection is in an unexpected state triggers
+ * an "invalid_transition" event and a 1008 close (policy violation).
+ */
+export type ConnectionState = "connecting" | "authenticated" | "subscribed";
+
+/** Close code defined by RFC 6455 §7.4 – "violated policy". */
+export const WS_CLOSE_POLICY_VIOLATION = 1008;
+
 interface ClientSubscription {
   connectionId: string;
   subscriptions: Set<string>;
   /** room IDs this connection has joined (e.g. "proposal:123", "contract:ABC") */
   rooms: Set<string>;
+  /** Current state in the connection lifecycle machine. */
+  state: ConnectionState;
 }
 
-export class EventWebSocketServer {
+// ---------------------------------------------------------------------------
+// Event types emitted by EventWebSocketServer
+// ---------------------------------------------------------------------------
+
+export interface InvalidTransitionEvent {
+  connectionId: string;
+  currentState: ConnectionState;
+  attemptedAction: string;
+}
+
+export declare interface EventWebSocketServer {
+  /** Emitted whenever a client sends a message that is invalid for its current state. */
+  on(
+    event: "invalid_transition",
+    listener: (e: InvalidTransitionEvent) => void,
+  ): this;
+  emit(event: "invalid_transition", e: InvalidTransitionEvent): boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Server
+// ---------------------------------------------------------------------------
+
+export class EventWebSocketServer extends EventEmitter {
   private wss: WebSocketServer;
   private clients: Map<WebSocket, ClientSubscription> = new Map();
   /** room → set of WebSocket connections */
   private rooms: Map<string, Set<WebSocket>> = new Map();
 
   constructor(server: Server) {
+    super();
     this.wss = new WebSocketServer({ server });
     this.init();
   }
@@ -97,11 +147,12 @@ export class EventWebSocketServer {
 
   private init() {
     this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-      // Auth via query param: ?token=<API_KEY>
       const url = new URL(req.url ?? "/", "http://localhost");
       const token = url.searchParams.get("token");
       const apiKey = process.env["API_KEY"];
 
+      // If an API key is configured and the query-param token is wrong, reject
+      // immediately — this is a hard auth failure, not a state transition.
       if (apiKey && token !== apiKey) {
         ws.close(4401, "Unauthorized");
         logger.warn("rejected unauthenticated websocket connection");
@@ -112,10 +163,17 @@ export class EventWebSocketServer {
       logger.info("client connected", { connectionId });
 
       (ws as any).isAlive = true;
+
+      // If a valid token was supplied at connect time (or no API key is
+      // configured) the client is immediately authenticated.
+      const initialState: ConnectionState =
+        !apiKey || token === apiKey ? "authenticated" : "connecting";
+
       this.clients.set(ws, {
         connectionId,
         subscriptions: new Set(),
         rooms: new Set(),
+        state: initialState,
       });
 
       ws.on("pong", () => {
@@ -125,31 +183,7 @@ export class EventWebSocketServer {
       ws.on("message", (data: Buffer) => {
         try {
           const message = JSON.parse(data.toString());
-          if (message.type === "subscribe") {
-            this.handleSubscribe(ws, message, connectionId);
-          } else if (message.type === "unsubscribe") {
-            this.handleUnsubscribe(ws, message, connectionId);
-          } else if (message.type === "subscriptions") {
-            const sub = this.clients.get(ws);
-            ws.send(
-              JSON.stringify({
-                type: "subscriptions",
-                topics: Array.from(sub?.subscriptions ?? []),
-              }),
-            );
-          } else if (message.type === "join") {
-            const roomId: string = message.room;
-            if (roomId) {
-              this.joinRoom(connectionId, roomId);
-              ws.send(JSON.stringify({ type: "joined", room: roomId }));
-            }
-          } else if (message.type === "leave") {
-            const roomId: string = message.room;
-            if (roomId) {
-              this.leaveRoom(connectionId, roomId);
-              ws.send(JSON.stringify({ type: "left", room: roomId }));
-            }
-          }
+          this.handleMessage(ws, message, connectionId);
         } catch (error) {
           logger.error("failed to parse client message", {
             connectionId,
@@ -180,6 +214,147 @@ export class EventWebSocketServer {
     this.wss.on("close", () => {
       clearInterval(interval);
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message routing with state validation
+  // ---------------------------------------------------------------------------
+
+  private handleMessage(ws: WebSocket, message: any, connectionId: string) {
+    const sub = this.clients.get(ws);
+    if (!sub) return;
+
+    const { type } = message ?? {};
+
+    // ------------------------------------------------------------------
+    // Explicit authentication message
+    // ------------------------------------------------------------------
+    if (type === "authenticate") {
+      this.handleAuthenticate(ws, message, sub);
+      return;
+    }
+
+    // ------------------------------------------------------------------
+    // All other message types require at least "authenticated" state.
+    // ------------------------------------------------------------------
+    if (sub.state === "connecting") {
+      this.rejectInvalidTransition(ws, sub, type ?? "unknown");
+      return;
+    }
+
+    // ------------------------------------------------------------------
+    // Route to specific handlers
+    // ------------------------------------------------------------------
+    if (type === "subscribe") {
+      this.handleSubscribe(ws, message, connectionId);
+    } else if (type === "unsubscribe") {
+      this.handleUnsubscribe(ws, message, connectionId);
+    } else if (type === "subscriptions") {
+      ws.send(
+        JSON.stringify({
+          type: "subscriptions",
+          topics: Array.from(sub.subscriptions),
+        }),
+      );
+    } else if (type === "join") {
+      // join/leave require Subscribed state
+      if (sub.state !== "subscribed") {
+        this.rejectInvalidTransition(ws, sub, type);
+        return;
+      }
+      const roomId: string = message.room;
+      if (roomId) {
+        this.joinRoom(connectionId, roomId);
+        ws.send(JSON.stringify({ type: "joined", room: roomId }));
+      }
+    } else if (type === "leave") {
+      if (sub.state !== "subscribed") {
+        this.rejectInvalidTransition(ws, sub, type);
+        return;
+      }
+      const roomId: string = message.room;
+      if (roomId) {
+        this.leaveRoom(connectionId, roomId);
+        ws.send(JSON.stringify({ type: "left", room: roomId }));
+      }
+    }
+  }
+
+  /**
+   * Handle an explicit "authenticate" message.
+   * Only valid in the "connecting" state.  Clients that are already
+   * authenticated receive an error but are NOT closed.
+   */
+  private handleAuthenticate(
+    ws: WebSocket,
+    message: any,
+    sub: ClientSubscription,
+  ) {
+    if (sub.state !== "connecting") {
+      // Already authenticated — benign no-op with an informational error.
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "ALREADY_AUTHENTICATED",
+          message: "Connection is already authenticated",
+        }),
+      );
+      return;
+    }
+
+    const apiKey = process.env["API_KEY"];
+    const token: string | undefined = message.token;
+
+    if (apiKey && token !== apiKey) {
+      logger.warn("authenticate: bad token", {
+        connectionId: sub.connectionId,
+      });
+      ws.close(WS_CLOSE_POLICY_VIOLATION, "Policy Violation: invalid token");
+      return;
+    }
+
+    sub.state = "authenticated";
+    logger.info("client authenticated via message", {
+      connectionId: sub.connectionId,
+    });
+    ws.send(JSON.stringify({ type: "authenticated" }));
+  }
+
+  /**
+   * Reject a message sent in the wrong state.
+   * Emits an "invalid_transition" event, sends an error frame, then closes
+   * with 1008 (Policy Violation).
+   */
+  private rejectInvalidTransition(
+    ws: WebSocket,
+    sub: ClientSubscription,
+    attemptedAction: string,
+  ) {
+    const event: InvalidTransitionEvent = {
+      connectionId: sub.connectionId,
+      currentState: sub.state,
+      attemptedAction,
+    };
+
+    logger.warn("invalid state transition", event);
+    this.emit("invalid_transition", event);
+
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "INVALID_STATE",
+          message: `Cannot perform '${attemptedAction}' while in state '${sub.state}'`,
+        }),
+      );
+    } catch {
+      // ignore — connection may already be closing
+    }
+
+    ws.close(
+      WS_CLOSE_POLICY_VIOLATION,
+      `Policy Violation: '${attemptedAction}' not allowed in state '${sub.state}'`,
+    );
   }
 
   private cleanupConnection(ws: WebSocket, connectionId: string): void {
@@ -243,6 +418,12 @@ export class EventWebSocketServer {
       sub.subscriptions.add(norm);
     }
 
+    // Transition to subscribed state once there is at least one subscription.
+    if (sub.subscriptions.size > 0 && sub.state === "authenticated") {
+      sub.state = "subscribed";
+      logger.info("client moved to subscribed state", { connectionId });
+    }
+
     logger.info("client subscribed", { connectionId, topics });
     this.clients.set(ws, sub);
     ws.send(JSON.stringify({ type: "subscribed", topics: topics }));
@@ -270,6 +451,14 @@ export class EventWebSocketServer {
         norm = `notification:events:${t.toUpperCase()}`;
       }
       sub.subscriptions.delete(norm);
+    }
+
+    // If all subscriptions have been removed, revert to authenticated state.
+    if (sub.subscriptions.size === 0 && sub.state === "subscribed") {
+      sub.state = "authenticated";
+      logger.info("client reverted to authenticated state", {
+        connectionId: sub.connectionId,
+      });
     }
 
     this.clients.set(ws, sub);
@@ -313,6 +502,9 @@ export class EventWebSocketServer {
     let broadcastCount = 0;
     this.clients.forEach((sub, ws) => {
       if (ws.readyState !== WebSocket.OPEN) return;
+
+      // Only deliver to authenticated or subscribed clients.
+      if (sub.state === "connecting") return;
 
       // If no subscriptions, deliver all events (backward compatible)
       if (!sub.subscriptions || sub.subscriptions.size === 0) {
@@ -366,5 +558,12 @@ export class EventWebSocketServer {
 
   public getActiveConnectionCount(): number {
     return this.clients.size;
+  }
+
+  /** Expose the state of a connection (for testing). */
+  public getConnectionState(connectionId: string): ConnectionState | undefined {
+    const ws = this.findWs(connectionId);
+    if (!ws) return undefined;
+    return this.clients.get(ws)?.state;
   }
 }
