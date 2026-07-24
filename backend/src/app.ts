@@ -7,6 +7,8 @@ import {
   createMetricsRouter,
   createDetailedHealthRouter,
 } from "./modules/health/health.routes.js";
+import { wantsOpenMetrics } from "./modules/health/metrics.controller.js";
+import { OpenMetricsFormatter } from "./modules/health/openmetrics.formatter.js";
 import { createContractsRouter } from "./modules/contracts/contracts.controller.js";
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { getCorsOriginsController, addCorsOriginController, removeCorsOriginController } from "./modules/admin/cors.controller.js";
@@ -175,12 +177,29 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   app.use(createHealthRouter(env, runtime));
 
-  // Public Prometheus scrape endpoint
-  app.get("/metrics", (_req, res) => {
+  // Public Prometheus scrape endpoint (also serves OpenMetrics via content
+  // negotiation: Accept: application/openmetrics-text)
+  app.get("/metrics", (req, res) => {
+    if (wantsOpenMetrics(req)) {
+      res
+        .status(200)
+        .set("Content-Type", OpenMetricsFormatter.CONTENT_TYPE)
+        .send(runtime.metricsRegistry.renderOpenMetrics());
+      return;
+    }
+
     res
       .status(200)
       .set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
       .send(runtime.metricsRegistry.render());
+  });
+
+  // Public OpenMetrics scrape endpoint (explicit path alongside content negotiation)
+  app.get("/metrics/otel", (_req, res) => {
+    res
+      .status(200)
+      .set("Content-Type", OpenMetricsFormatter.CONTENT_TYPE)
+      .send(runtime.metricsRegistry.renderOpenMetrics());
   });
 
   const v1Router = express.Router();
