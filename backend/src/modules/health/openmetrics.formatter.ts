@@ -1,11 +1,17 @@
 import type { MetricsSnapshot } from "./metrics.registry.js";
+import { baseName } from "./metrics.formatter.js";
 
-export function baseName(key: string): string {
-  const idx = key.indexOf("{");
-  return idx >= 0 ? key.slice(0, idx) : key;
-}
+/**
+ * Formats a metrics snapshot per the OpenMetrics exposition format
+ * (https://github.com/OpenMetrics/OpenMetrics/blob/main/specification/OpenMetrics.md).
+ *
+ * Differs from the Prometheus text format in content type, and requires a
+ * terminating `# EOF` line.
+ */
+export class OpenMetricsFormatter {
+  public static readonly CONTENT_TYPE =
+    "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
-export class PrometheusFormatter {
   public static format(snapshot: MetricsSnapshot): string {
     const lines: string[] = [];
 
@@ -19,8 +25,9 @@ export class PrometheusFormatter {
     }
 
     for (const [name, meta] of snapshot.metadata.entries()) {
+      const type = meta.type === "counter" ? "counter" : meta.type;
       lines.push(`# HELP ${name} ${meta.help}`);
-      lines.push(`# TYPE ${name} ${meta.type}`);
+      lines.push(`# TYPE ${name} ${type}`);
 
       if (meta.type === "histogram") {
         const histogram = snapshot.histograms.get(name);
@@ -47,6 +54,7 @@ export class PrometheusFormatter {
       }
     }
 
+    lines.push("# EOF");
     return `${lines.join("\n")}\n`;
   }
 }
