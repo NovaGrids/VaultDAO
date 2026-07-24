@@ -5,18 +5,50 @@ import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
 import { createLogger } from "../../shared/logging/logger.js";
 import type { ContractEvent } from "../events/events.types.js";
+import type { MetricsRegistry } from "../health/metrics.registry.js";
 
 const logger = createLogger("websocket-server");
+
+// ---------------------------------------------------------------------------
+// Heartbeat constants
+// ---------------------------------------------------------------------------
+
+/** How often to send a PING to each connected client. */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * Base pong deadline per round-trip.  If no pong arrives within this many ms
+ * of a ping being sent the miss counter is incremented.
+ */
+const HEARTBEAT_BASE_TIMEOUT_MS = 10_000;
+
+/** Maximum pong deadline when RTT is very high. */
+const HEARTBEAT_MAX_TIMEOUT_MS = 30_000;
+
+/** Close the connection after this many consecutive missed pongs. */
+const HEARTBEAT_MAX_MISSED = 2;
+
+/** EWMA smoothing factor for RTT.  Closer to 1 = more weight on recent samples. */
+const RTT_EWMA_ALPHA = 0.2;
+
+// ---------------------------------------------------------------------------
+// Heartbeat metric names (exported so callers can register/query them)
+// ---------------------------------------------------------------------------
+
+export const WS_METRIC_PINGS_SENT = "ws_heartbeat_pings_sent_total";
+export const WS_METRIC_PONGS_RECEIVED = "ws_heartbeat_pongs_received_total";
+export const WS_METRIC_TIMEOUTS = "ws_heartbeat_timeouts_total";
+export const WS_METRIC_RTT_MS = "ws_heartbeat_rtt_ms";
 
 // ---------------------------------------------------------------------------
 // Connection state machine
 // ---------------------------------------------------------------------------
 
 /**
- * Connecting  – TCP/WS handshake complete; awaiting authentication.
+ * Connecting    – TCP/WS handshake complete; awaiting authentication.
  * Authenticated – Client provided a valid token (either via query-param at
  *                 connection time or via an explicit "authenticate" message).
- * Subscribed   – Client has at least one active topic subscription.
+ * Subscribed    – Client has at least one active topic subscription.
  *
  * Valid transitions:
  *   Connecting    → Authenticated  (on valid auth)
@@ -31,6 +63,28 @@ export type ConnectionState = "connecting" | "authenticated" | "subscribed";
 /** Close code defined by RFC 6455 §7.4 – "violated policy". */
 export const WS_CLOSE_POLICY_VIOLATION = 1008;
 
+// ---------------------------------------------------------------------------
+// Per-connection heartbeat state
+// ---------------------------------------------------------------------------
+
+interface HeartbeatStats {
+  /** Number of consecutive pings sent without a pong response. */
+  missedPings: number;
+  /** Timestamp (ms) when the last ping was sent; 0 if none yet. */
+  lastPingAt: number;
+  /**
+   * Exponentially-weighted moving average of round-trip time in ms.
+   * Starts at 0 (unsampled).
+   */
+  smoothedRtt: number;
+  /**
+   * Effective pong deadline for this connection in ms.  Starts at
+   * HEARTBEAT_BASE_TIMEOUT_MS and grows with smoothedRtt up to
+   * HEARTBEAT_MAX_TIMEOUT_MS.
+   */
+  adaptiveTimeoutMs: number;
+}
+
 interface ClientSubscription {
   connectionId: string;
   subscriptions: Set<string>;
@@ -38,6 +92,8 @@ interface ClientSubscription {
   rooms: Set<string>;
   /** Current state in the connection lifecycle machine. */
   state: ConnectionState;
+  /** Heartbeat tracking state. */
+  heartbeat: HeartbeatStats;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,6 +106,16 @@ export interface InvalidTransitionEvent {
   attemptedAction: string;
 }
 
+export interface HeartbeatEvent {
+  connectionId: string;
+  /** Round-trip latency of this ping/pong in ms. */
+  latencyMs: number;
+  /** Current consecutive missed-ping count (0 after a successful pong). */
+  missedPings: number;
+  /** Current adaptive pong deadline in ms. */
+  adaptiveTimeoutMs: number;
+}
+
 export declare interface EventWebSocketServer {
   /** Emitted whenever a client sends a message that is invalid for its current state. */
   on(
@@ -57,6 +123,10 @@ export declare interface EventWebSocketServer {
     listener: (e: InvalidTransitionEvent) => void,
   ): this;
   emit(event: "invalid_transition", e: InvalidTransitionEvent): boolean;
+
+  /** Emitted on each successful heartbeat round-trip. */
+  on(event: "heartbeat", listener: (e: HeartbeatEvent) => void): this;
+  emit(event: "heartbeat", e: HeartbeatEvent): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,11 +138,44 @@ export class EventWebSocketServer extends EventEmitter {
   private clients: Map<WebSocket, ClientSubscription> = new Map();
   /** room → set of WebSocket connections */
   private rooms: Map<string, Set<WebSocket>> = new Map();
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private readonly metrics: MetricsRegistry | null;
 
-  constructor(server: Server) {
+  constructor(server: Server, metrics?: MetricsRegistry) {
     super();
+    this.metrics = metrics ?? null;
+    if (this.metrics) {
+      this.registerMetrics(this.metrics);
+    }
     this.wss = new WebSocketServer({ server });
     this.init();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Metric registration
+  // ---------------------------------------------------------------------------
+
+  private registerMetrics(registry: MetricsRegistry): void {
+    registry.register(
+      WS_METRIC_PINGS_SENT,
+      "Total WebSocket PING frames sent to clients",
+      "counter",
+    );
+    registry.register(
+      WS_METRIC_PONGS_RECEIVED,
+      "Total WebSocket PONG frames received from clients",
+      "counter",
+    );
+    registry.register(
+      WS_METRIC_TIMEOUTS,
+      "Total WebSocket connections closed due to heartbeat timeout",
+      "counter",
+    );
+    registry.registerHistogram(
+      WS_METRIC_RTT_MS,
+      "WebSocket heartbeat round-trip time in milliseconds",
+      [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -162,8 +265,6 @@ export class EventWebSocketServer extends EventEmitter {
       const connectionId = randomUUID();
       logger.info("client connected", { connectionId });
 
-      (ws as any).isAlive = true;
-
       // If a valid token was supplied at connect time (or no API key is
       // configured) the client is immediately authenticated.
       const initialState: ConnectionState =
@@ -174,10 +275,16 @@ export class EventWebSocketServer extends EventEmitter {
         subscriptions: new Set(),
         rooms: new Set(),
         state: initialState,
+        heartbeat: {
+          missedPings: 0,
+          lastPingAt: 0,
+          smoothedRtt: 0,
+          adaptiveTimeoutMs: HEARTBEAT_BASE_TIMEOUT_MS,
+        },
       });
 
       ws.on("pong", () => {
-        (ws as any).isAlive = true;
+        this.handlePong(ws);
       });
 
       ws.on("message", (data: Buffer) => {
@@ -202,18 +309,132 @@ export class EventWebSocketServer extends EventEmitter {
       });
     });
 
-    // Heartbeat: terminate connections that did not respond to the last ping
-    const interval = setInterval(() => {
-      this.wss.clients.forEach((ws: any) => {
-        if (ws.isAlive === false) return ws.terminate();
-        ws.isAlive = false;
-        ws.ping();
-      });
-    }, 30000);
+    // Adaptive heartbeat loop
+    this.heartbeatInterval = setInterval(() => {
+      this.runHeartbeat();
+    }, HEARTBEAT_INTERVAL_MS);
 
     this.wss.on("close", () => {
-      clearInterval(interval);
+      if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = null;
+      }
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Heartbeat implementation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Called on every heartbeat tick (every HEARTBEAT_INTERVAL_MS).
+   *
+   * For each open connection:
+   *   1. If a ping is outstanding and has exceeded the adaptive timeout,
+   *      count it as a miss.  After HEARTBEAT_MAX_MISSED misses, terminate.
+   *   2. Otherwise send a ping and record the timestamp.
+   */
+  private runHeartbeat(): void {
+    const now = Date.now();
+
+    for (const [ws, sub] of this.clients) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+
+      const hb = sub.heartbeat;
+
+      // Check whether the previous ping timed out
+      if (hb.lastPingAt > 0) {
+        const elapsed = now - hb.lastPingAt;
+        if (elapsed > hb.adaptiveTimeoutMs) {
+          // No pong arrived within the adaptive window — count as a miss
+          hb.missedPings += 1;
+          logger.warn("heartbeat miss", {
+            connectionId: sub.connectionId,
+            missedPings: hb.missedPings,
+            elapsedMs: elapsed,
+            adaptiveTimeoutMs: hb.adaptiveTimeoutMs,
+          });
+
+          if (hb.missedPings >= HEARTBEAT_MAX_MISSED) {
+            logger.warn("terminating zombie connection", {
+              connectionId: sub.connectionId,
+              missedPings: hb.missedPings,
+            });
+            this.metrics?.incrementCounter(WS_METRIC_TIMEOUTS);
+            ws.terminate();
+            // cleanupConnection will be called from the close event
+            continue;
+          }
+        }
+      }
+
+      // Send next ping and record timestamp
+      try {
+        ws.ping();
+        hb.lastPingAt = Date.now();
+        this.metrics?.incrementCounter(WS_METRIC_PINGS_SENT);
+      } catch (err) {
+        logger.warn("failed to send ping", {
+          connectionId: sub.connectionId,
+          err,
+        });
+      }
+    }
+  }
+
+  /**
+   * Called whenever a PONG frame arrives from a client.
+   * Updates the EWMA RTT and resets the miss counter.
+   * Emits a 'heartbeat' event and records metrics.
+   */
+  private handlePong(ws: WebSocket): void {
+    const sub = this.clients.get(ws);
+    if (!sub) return;
+
+    const hb = sub.heartbeat;
+    const now = Date.now();
+
+    // Calculate RTT only if we have a pending ping timestamp
+    let latencyMs = 0;
+    if (hb.lastPingAt > 0) {
+      latencyMs = now - hb.lastPingAt;
+
+      // Update EWMA — first sample seeds the average directly
+      if (hb.smoothedRtt === 0) {
+        hb.smoothedRtt = latencyMs;
+      } else {
+        hb.smoothedRtt =
+          RTT_EWMA_ALPHA * latencyMs +
+          (1 - RTT_EWMA_ALPHA) * hb.smoothedRtt;
+      }
+
+      // Recalculate adaptive timeout:
+      //   base + smoothedRtt * 2, clamped to [base, max]
+      //   The x2 multiplier gives a comfortable buffer above the observed RTT.
+      const proposed = HEARTBEAT_BASE_TIMEOUT_MS + hb.smoothedRtt * 2;
+      hb.adaptiveTimeoutMs = Math.min(
+        Math.max(proposed, HEARTBEAT_BASE_TIMEOUT_MS),
+        HEARTBEAT_MAX_TIMEOUT_MS,
+      );
+
+      this.metrics?.observeHistogram(WS_METRIC_RTT_MS, latencyMs);
+    }
+
+    // Reset miss counter and clear the pending ping timestamp
+    hb.missedPings = 0;
+    hb.lastPingAt = 0;
+
+    this.metrics?.incrementCounter(WS_METRIC_PONGS_RECEIVED);
+
+    const heartbeatEvent: HeartbeatEvent = {
+      connectionId: sub.connectionId,
+      latencyMs,
+      missedPings: hb.missedPings,
+      adaptiveTimeoutMs: hb.adaptiveTimeoutMs,
+    };
+
+    logger.debug("heartbeat pong received", heartbeatEvent);
+    this.emit("heartbeat", heartbeatEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -553,6 +774,10 @@ export class EventWebSocketServer extends EventEmitter {
   }
 
   public stop() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
     this.wss.close();
   }
 
@@ -565,5 +790,25 @@ export class EventWebSocketServer extends EventEmitter {
     const ws = this.findWs(connectionId);
     if (!ws) return undefined;
     return this.clients.get(ws)?.state;
+  }
+
+  /**
+   * Expose heartbeat stats for a connection (for testing / introspection).
+   * Returns a snapshot copy so callers cannot mutate internal state.
+   */
+  public getHeartbeatStats(connectionId: string): HeartbeatStats | undefined {
+    const ws = this.findWs(connectionId);
+    if (!ws) return undefined;
+    const hb = this.clients.get(ws)?.heartbeat;
+    if (!hb) return undefined;
+    return { ...hb };
+  }
+
+  /**
+   * Trigger one heartbeat tick immediately.
+   * Intended for unit tests where we don't want to wait 30 seconds.
+   */
+  public tickHeartbeat(): void {
+    this.runHeartbeat();
   }
 }
