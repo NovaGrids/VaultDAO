@@ -33,6 +33,12 @@ export interface BackendEnv {
   readonly rateLimitDefaultPerMin: number;
   /** Maximum ledger jitter window for due-payment queries (default: 10 ledgers). */
   readonly jitterWindowMax: number;
+  /**
+   * Maximum number of entries held in the event normalizer LRU+TTL cache.
+   * When the limit is reached the least-recently-used entry is evicted.
+   * Default: 10,000.  Configure via `NORMALIZER_CACHE_MAX_SIZE`.
+   */
+  readonly normalizerCacheMaxSize: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -239,6 +245,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     rateLimitExecutePerMin: 10,
     rateLimitDefaultPerMin: 60,
     jitterWindowMax: 10,
+    normalizerCacheMaxSize: 10_000,
     ...overrides,
   };
 }
@@ -326,6 +333,11 @@ export function loadEnv(): BackendEnv {
     issues,
   );
   const jitterWindowMax = readPort("JITTER_WINDOW_MAX", 10, issues);
+  const normalizerCacheMaxSize = readPort(
+    "NORMALIZER_CACHE_MAX_SIZE",
+    10_000,
+    issues,
+  );
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -410,5 +422,6 @@ export function loadEnv(): BackendEnv {
     rateLimitExecutePerMin,
     rateLimitDefaultPerMin,
     jitterWindowMax,
+    normalizerCacheMaxSize,
   };
 }
