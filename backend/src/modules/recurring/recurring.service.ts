@@ -9,6 +9,12 @@ import {
   RecurringIndexerState,
   RecurringStatus,
 } from "./types.js";
+import {
+  isInBackoff,
+  recordFailure,
+  type BackoffOptions,
+  type PaymentBackoffEvent,
+} from "./backoff.js";
 
 /**
  * A due payment enriched with the reason it was triggered.
@@ -142,14 +148,6 @@ export function transformRawRecurringPayment(
     events.unshift(RecurringEvent.CREATED);
   }
 
-  // Check if executed (payment count increased)
-  if (
-    existingPayment &&
-    Number(raw.payment_count) > existingPayment.paymentCount
-  ) {
-    events.push(RecurringEvent.EXECUTED);
-  }
-
   // Calculate computed fields
   const nextPaymentLedger = Number(raw.next_payment_ledger);
   const currentLedger = ledger;
@@ -173,6 +171,22 @@ export function transformRawRecurringPayment(
     computedStatus = "active";
   }
 
+  // Detect a new successful execution (payment_count increased).
+  // Used both to push the EXECUTED event and to reset retry state.
+  const wasExecuted =
+    existingPayment !== undefined &&
+    Number(raw.payment_count) > existingPayment.paymentCount;
+
+  if (wasExecuted) {
+    events.push(RecurringEvent.EXECUTED);
+  }
+
+  // Preserve existing retry state; reset to zero on successful execution.
+
+  const retryCount = wasExecuted ? 0 : (existingPayment?.retryCount ?? 0);
+  const lastAttemptAt = wasExecuted ? 0 : (existingPayment?.lastAttemptAt ?? 0);
+  const nextRetryAt = wasExecuted ? 0 : (existingPayment?.nextRetryAt ?? 0);
+
   return {
     paymentId: raw.id,
     proposer: raw.proposer,
@@ -195,6 +209,9 @@ export function transformRawRecurringPayment(
     computedStatus,
     ledgersUntilDue,
     missedPayments,
+    retryCount,
+    lastAttemptAt,
+    nextRetryAt,
   };
 }
 
@@ -513,13 +530,25 @@ export class RecurringIndexerService {
   ): Promise<DuePaymentResult[]> {
     const windowStart = currentLedger - jitterWindowMax;
     const windowEnd = currentLedger + 1; // inclusive upper bound
+    const nowSeconds = Math.floor(Date.now() / 1000);
 
     const all = await this.storage.getAll();
     const inWindow = all.filter(
       (payment) =>
         payment.status !== RecurringStatus.CANCELLED &&
         payment.nextPaymentLedger >= windowStart &&
-        payment.nextPaymentLedger <= windowEnd,
+        payment.nextPaymentLedger <= windowEnd &&
+        // Skip payments that are still within their backoff window.
+        // This is the guard that eliminates the tight-polling loop when
+        // a vault balance issue causes repeated failures.
+        !isInBackoff(
+          {
+            retryCount: payment.retryCount,
+            lastAttemptAt: payment.lastAttemptAt,
+            nextRetryAt: payment.nextRetryAt,
+          },
+          nowSeconds,
+        ),
     );
 
     return inWindow.map((payment) => {
@@ -594,6 +623,48 @@ export class RecurringIndexerService {
     }
 
     return conflicts.sort((a, b) => b.similarity_score - a.similarity_score);
+  }
+
+  /**
+   * Record a failed execution attempt for a payment and persist the updated
+   * backoff state.  Returns the `PaymentBackoffEvent` that callers should
+   * emit/log so observers can track retry progression.
+   *
+   * Call this from the keeper job whenever a payment execution fails.  The
+   * scheduler will automatically skip the payment until `nextRetryAt` has
+   * elapsed (via the `isInBackoff` guard in `getDuePaymentsInWindow`).
+   *
+   * @param paymentId  - ID of the recurring payment that failed.
+   * @param options    - Backoff strategy and base-delay overrides.
+   * @returns The backoff event data, or null if the payment is not found.
+   */
+  public async recordPaymentFailure(
+    paymentId: string,
+    options: BackoffOptions = {},
+  ): Promise<PaymentBackoffEvent | null> {
+    const payment = await this.storage.getById(paymentId);
+    if (!payment) return null;
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const { state, event } = recordFailure(
+      paymentId,
+      {
+        retryCount: payment.retryCount,
+        lastAttemptAt: payment.lastAttemptAt,
+        nextRetryAt: payment.nextRetryAt,
+      },
+      nowSeconds,
+      options,
+    );
+
+    await this.storage.save({
+      ...payment,
+      retryCount: state.retryCount,
+      lastAttemptAt: state.lastAttemptAt,
+      nextRetryAt: state.nextRetryAt,
+    });
+
+    return event;
   }
 
   /**
