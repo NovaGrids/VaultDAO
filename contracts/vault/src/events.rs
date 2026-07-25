@@ -1545,3 +1545,80 @@ pub fn emit_gov_proposal_executed(env: &Env, id: u64, param: u32, new_value: i12
     env.events()
         .publish((Symbol::new(env, "gov_executed"), id), (param, new_value));
 }
+
+// ============================================================================
+// Fee Cache Events (#1428)
+// ============================================================================
+
+pub fn emit_fee_cache_invalidated(env: &Env, proposal_id: u64, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "fee_cache_invalidated"), proposal_id),
+        admin.clone(),
+    );
+}
+
+// ============================================================================
+// Fan-Out Stream Events (#1430)
+// ============================================================================
+
+pub fn emit_fan_out_stream_created(env: &Env, stream_id: u64, creator: &Address, recipient_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "fanout_stream_created"), stream_id),
+        (creator.clone(), recipient_count),
+    );
+}
+
+pub fn emit_fan_out_payment_distributed(
+    env: &Env,
+    stream_id: u64,
+    recipient: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "fanout_payment_distributed"), stream_id),
+        (recipient.clone(), amount),
+    );
+}
+
+// ============================================================================
+// Stream Pause/Resume TTL Events (#1429)
+// ============================================================================
+
+pub fn emit_stream_paused(env: &Env, stream_id: u64, pauser: &Address, ledger: u64) {
+    env.events().publish(
+        (Symbol::new(env, "stream_paused"), stream_id),
+        (pauser.clone(), ledger),
+    );
+}
+
+pub fn emit_stream_resumed(env: &Env, stream_id: u64, resumer: &Address, pause_duration: u64) {
+    env.events().publish(
+        (Symbol::new(env, "stream_resumed"), stream_id),
+        (resumer.clone(), pause_duration),
+    );
+}
+
+// ============================================================================
+// Escrow Voting Events (#1431)
+// ============================================================================
+
+pub fn emit_escrow_release_locked_for_voting(env: &Env, escrow_id: u64, required_approvals: u32) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_release_locked"), escrow_id),
+        required_approvals,
+    );
+}
+
+pub fn emit_escrow_release_voted(
+    env: &Env,
+    escrow_id: u64,
+    voter: &Address,
+    approved: bool,
+    approval_count: u32,
+    rejection_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_release_voted"), escrow_id),
+        (voter.clone(), approved, approval_count, rejection_count),
+    );
+}
