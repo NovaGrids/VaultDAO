@@ -103,6 +103,8 @@ pub struct InitConfig {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
+    /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
+    pub arbitration_timeout_ledgers: u64,
 }
 
 /// Vault configuration
@@ -178,6 +180,8 @@ pub struct Config {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
+    /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
+    pub arbitration_timeout_ledgers: u64,
 }
 
 /// Audit record for a cancelled proposal

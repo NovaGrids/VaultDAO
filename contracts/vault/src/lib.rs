@@ -244,6 +244,8 @@ mod test_cross_vault;
 #[cfg(test)]
 mod test_disputes;
 #[cfg(test)]
+mod test_escrow_timeout;
+#[cfg(test)]
 mod test_fees;
 #[cfg(test)]
 mod test_hooks;
@@ -451,6 +453,11 @@ impl VaultDAO {
             vote_weight: config.vote_weight,
             high_impact_threshold: config.high_impact_threshold,
             admin_rotation_delay: config.admin_rotation_delay,
+            arbitration_timeout_ledgers: if config.arbitration_timeout_ledgers > 0 {
+                config.arbitration_timeout_ledgers
+            } else {
+                17_280 * 30 // default: 30 days
+            },
         };
 
         // Apply staking config from InitConfig
@@ -10678,6 +10685,45 @@ impl VaultDAO {
         storage::set_escrow(&env, &escrow);
 
         events::emit_escrow_dispute_resolved(&env, escrow_id, &arbitrator, release_to_recipient);
+
+        Ok(())
+    }
+
+    /// Auto-resolve an escrow dispute if arbitration timeout has expired
+    ///
+    /// If the escrow is in Disputed status and the arbitration timeout has elapsed,
+    /// automatically refunds all remaining funds to the funder.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow to auto-resolve
+    pub fn auto_resolve_escrow(env: Env, escrow_id: u64) -> Result<(), VaultError> {
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        let config = storage::get_config(&env)?;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Only auto-resolve if in Disputed status and timeout has expired
+        if escrow.status != EscrowStatus::Disputed {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let dispute_duration = current_ledger.saturating_sub(escrow.created_at);
+        if dispute_duration < config.arbitration_timeout_ledgers {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        // Refund all remaining funds to the funder
+        let amount_to_refund = escrow.total_amount - escrow.released_amount;
+        if amount_to_refund > 0 {
+            token::transfer(&env, &escrow.token, &escrow.funder, amount_to_refund);
+            escrow.released_amount += amount_to_refund;
+        }
+
+        escrow.status = EscrowStatus::Refunded;
+        escrow.finalized_at = current_ledger;
+
+        storage::set_escrow(&env, &escrow);
+
+        events::emit_escrow_auto_resolved(&env, escrow_id, amount_to_refund);
 
         Ok(())
     }

@@ -873,6 +873,13 @@ pub fn emit_escrow_dispute_resolved(
     );
 }
 
+pub fn emit_escrow_auto_resolved(env: &Env, escrow_id: u64, amount_refunded: i128) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_auto_resolved"), escrow_id),
+        amount_refunded,
+    );
+}
+
 /// Emit when a funding round is created
 pub fn emit_funding_round_created(
     env: &Env,
