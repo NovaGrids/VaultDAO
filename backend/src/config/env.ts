@@ -33,6 +33,14 @@ export interface BackendEnv {
   readonly rateLimitDefaultPerMin: number;
   /** Maximum ledger jitter window for due-payment queries (default: 10 ledgers). */
   readonly jitterWindowMax: number;
+  /** Enable the daily proposal archival job (default: true). */
+  readonly proposalArchivalJobEnabled: boolean;
+  /** Interval in ms between archival runs (default: 86400000 = 24 h). */
+  readonly proposalArchivalJobIntervalMs: number;
+  /** Archive proposals whose last activity is older than this many days (default: 180). */
+  readonly proposalArchivalThresholdDays: number;
+  /** Always keep proposals created within the last N days in hot storage (default: 7). */
+  readonly proposalHotStorageDays: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -239,6 +247,10 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     rateLimitExecutePerMin: 10,
     rateLimitDefaultPerMin: 60,
     jitterWindowMax: 10,
+    proposalArchivalJobEnabled: false,
+    proposalArchivalJobIntervalMs: 86_400_000,
+    proposalArchivalThresholdDays: 180,
+    proposalHotStorageDays: 7,
     ...overrides,
   };
 }
@@ -327,6 +339,24 @@ export function loadEnv(): BackendEnv {
   );
   const jitterWindowMax = readPort("JITTER_WINDOW_MAX", 10, issues);
 
+  const proposalArchivalJobEnabled =
+    readString("PROPOSAL_ARCHIVAL_JOB_ENABLED", "true") === "true";
+  const proposalArchivalJobIntervalMs = readPort(
+    "PROPOSAL_ARCHIVAL_JOB_INTERVAL_MS",
+    86_400_000,
+    issues,
+  );
+  const proposalArchivalThresholdDays = readPort(
+    "PROPOSAL_ARCHIVAL_THRESHOLD_DAYS",
+    180,
+    issues,
+  );
+  const proposalHotStorageDays = readPort(
+    "PROPOSAL_HOT_STORAGE_DAYS",
+    7,
+    issues,
+  );
+
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
   validateAllowedValue(
@@ -410,5 +440,9 @@ export function loadEnv(): BackendEnv {
     rateLimitExecutePerMin,
     rateLimitDefaultPerMin,
     jitterWindowMax,
+    proposalArchivalJobEnabled,
+    proposalArchivalJobIntervalMs,
+    proposalArchivalThresholdDays,
+    proposalHotStorageDays,
   };
 }
