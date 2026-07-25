@@ -26,6 +26,7 @@ import { createEventsRouter } from "./modules/events/events.routes.js";
 import { createJobsRouter } from "./modules/jobs/jobs.routes.js";
 import { error, success } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
+import { createRateLimitMetricsMiddleware } from "./shared/http/token-bucket-metrics.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
 import { createJsonWithRawBody, createHmacSigningMiddleware } from "./shared/http/hmac.js";
 import { ErrorCode } from "./shared/http/errorCodes.js";
@@ -123,31 +124,29 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   });
 
   // Global rate limiter — catch-all DoS protection for all endpoints (1000 req/min per IP)
-  const globalRateLimiter = createRateLimitMiddleware({
-    windowMs: 60 * 1000,
-    maxRequests: 1000,
-  });
+  // Token-bucket algorithm: smooth burst tolerance, no fixed-window double-spend.
+  // Gated on env.rateLimitEnabled so tests and development can disable it cleanly.
+  const makeRateLimiter = (maxRequests: number) =>
+    env.rateLimitEnabled
+      ? createRateLimitMetricsMiddleware(
+          createRateLimitMiddleware({ windowMs: 60 * 1000, maxRequests }),
+          runtime.metricsRegistry,
+        )
+      : (_req: Request, _res: Response, next: NextFunction) => next();
+
+  const globalRateLimiter = makeRateLimiter(1000);
   app.use(globalRateLimiter);
 
   // Rate limiting middleware — different limits per endpoint type
   // Health/readiness probes: 300 req/min (high-frequency monitoring)
-  const healthRateLimiter = createRateLimitMiddleware({
-    windowMs: 60 * 1000,
-    maxRequests: 300,
-  });
+  const healthRateLimiter = makeRateLimiter(300);
   app.use("/health", healthRateLimiter);
   app.use("/ready", healthRateLimiter);
 
-  // Write endpoints (POST/PUT/PATCH/DELETE): 10 req/min
-  const writeRateLimiter = createRateLimitMiddleware({
-    windowMs: 60 * 1000,
-    maxRequests: 10,
-  });
-  // Read endpoints (GET): 100 req/min
-  const readRateLimiter = createRateLimitMiddleware({
-    windowMs: 60 * 1000,
-    maxRequests: 100,
-  });
+  // Write endpoints (POST/PUT/PATCH/DELETE): configurable, default 10 req/min
+  const writeRateLimiter = makeRateLimiter(env.rateLimitExecutePerMin);
+  // Read endpoints (GET): configurable, default 60 req/min
+  const readRateLimiter = makeRateLimiter(env.rateLimitDefaultPerMin);
   // Apply method-aware rate limiter to all /api/v1 routes
   app.use("/api/v1", (req: Request, res: Response, next: NextFunction) => {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
