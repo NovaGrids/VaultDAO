@@ -600,6 +600,10 @@ pub struct Proposal {
     /// Voting power snapshot at proposal creation: signer -> voting_power
     /// Used by vote_on_proposal to prevent vote-buying attacks
     pub signer_snapshot: Map<Address, i128>,
+    /// Cached execution fee estimate (Issue #1428)
+    pub fee_estimate_cache: Option<i128>,
+    /// Ledger timestamp when fee cache was last computed (Issue #1428)
+    pub fee_cache_timestamp: u64,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
@@ -783,6 +787,10 @@ pub struct StreamingPayment {
     pub accumulated_seconds: u64,
     /// Current status
     pub status: StreamStatus,
+    /// Total duration paused (in ledgers) - Issue #1429
+    pub pause_duration: u64,
+    /// Number of pause cycles for tracking history - Issue #1429
+    pub pause_cycles: u32,
 }
 
 #[contracttype]
@@ -1667,6 +1675,42 @@ pub enum EscrowStatus {
 /// Milestone tracking unit for progressive fund release
 #[contracttype]
 #[derive(Clone, Debug)]
+/// Pause history record for streaming payments - Issue #1429
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseRecord {
+    /// Ledger when pause started
+    pub pause_ledger: u64,
+    /// Ledger when pause ended (0 if still paused)
+    pub resume_ledger: u64,
+    /// Duration of pause in ledgers
+    pub duration_ledgers: u64,
+}
+
+/// Vote record for escrow release voting - Issue #1431
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowVote {
+    /// Signer who voted
+    pub voter: Address,
+    /// Whether they approved (true) or rejected (false)
+    pub approved: bool,
+    /// Ledger when vote was cast
+    pub voted_at: u64,
+}
+
+/// Fan-out recipient for multi-recipient streaming - Issue #1430
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FanOutRecipient {
+    /// Recipient address
+    pub address: Address,
+    /// Percentage of stream (0-100)
+    pub percentage: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
 pub struct Milestone {
     /// Unique milestone ID
     pub id: u64,
@@ -1710,6 +1754,12 @@ pub struct Escrow {
     pub expires_at: u64,
     /// Ledger when escrow was released/refunded (0 if still active)
     pub finalized_at: u64,
+    /// Whether escrow release requires signer voting approval - Issue #1431
+    pub requires_signer_approval: bool,
+    /// Count of approval votes received - Issue #1431
+    pub approval_votes: u32,
+    /// Count of rejection votes received - Issue #1431
+    pub rejection_votes: u32,
 }
 
 // ============================================================================

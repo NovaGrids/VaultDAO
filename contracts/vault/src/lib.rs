@@ -280,6 +280,13 @@ mod test_var_templates;
 #[cfg(test)]
 mod test_voting_deadline;
 #[cfg(test)]
+mod test_fee_cache;
+#[cfg(test)]
+mod test_fan_out_streams;
+#[cfg(test)]
+mod test_stream_pause_ttl;
+#[cfg(test)]
+mod test_escrow_voting;
 mod test_proposal_management;
 
 #[cfg(test)]
