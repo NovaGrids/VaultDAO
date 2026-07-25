@@ -679,6 +679,13 @@ pub struct RecurringPayment {
     pub jitter_window: u32,
     /// Deterministic jitter offset computed as sha256(id || creation_ledger) % jitter_window.
     /// Added to the base schedule ledger. Zero for the first payment.
+    ///
+    /// **Audit trail note**: When `jitter_window > 0`, the `next_payment_ledger` stored
+    /// after each execution (starting from the second cycle) will differ from the nominal
+    /// schedule by exactly `jitter_offset` ledgers.  Consecutive execution timestamps that
+    /// appear `interval + jitter_offset` ledgers apart (rather than exactly `interval`) are
+    /// expected and intentional — check for a `recurring_pay_jittered` on-chain event to
+    /// confirm.  Do not treat this timing variance as a missed or delayed payment.
     pub jitter_offset: u32,
 }
 

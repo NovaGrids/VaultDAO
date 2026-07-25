@@ -91,3 +91,25 @@ git push origin feature/your-task
 ```
 
 **Updated: YYYY-MM-DD** | **Next Sprint Focus**: Foundation → Indexing
+
+---
+
+## ⏱️ Recurring Payment Jitter — Audit Trail Note (issue #1364)
+
+Recurring payments support an **optional jitter window** (`jitter_window > 0`) for load distribution.
+When enabled, each payment cycle's `next_payment_ledger` is shifted forward by a fixed, deterministic
+offset (`jitter_offset`, in `[0, jitter_window)` ledgers) computed at creation time from
+`sha256(payment_id || creation_ledger) % jitter_window`.
+
+**What this means for payment history audits:**
+- The **first** payment in every series has **no jitter** — it executes at exactly `creation_ledger + interval`.
+- From the **second cycle onward**, `next_payment_ledger = nominal_schedule + jitter_offset`.
+- Consecutive execution timestamps that appear `interval + jitter_offset` ledgers apart
+  (instead of exactly `interval`) are **expected and intentional**.
+- The on-chain event `recurring_pay_jittered` (topics: `["recurring_pay_jittered", payment_id]`,
+  data: `(nominal_next_ledger, jittered_next_ledger, jitter_offset)`) is emitted whenever jitter
+  is applied — use it to confirm the variance is deliberate.
+- The `jitter_offset` field on the `RecurringPayment` struct is fixed for the payment's lifetime.
+- **Do not treat jitter-induced timing variance as a missed or delayed payment.**
+- When `jitter_window == 0` (the default), behavior is byte-for-byte identical to the
+  pre-jitter fixed-interval scheduling — zero overhead.
