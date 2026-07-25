@@ -1116,6 +1116,34 @@ pub fn emit_swap_executed(
     );
 }
 
+/// Emit event recording the vault's token balances immediately before and after
+/// a swap's on-chain settlement (issue #1441), so off-chain observers can verify
+/// the swap moved exactly the reported amounts.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_swap_balances(
+    env: &Env,
+    proposal_id: u64,
+    token_in: &Address,
+    token_out: &Address,
+    token_in_before: i128,
+    token_in_after: i128,
+    token_out_before: i128,
+    token_out_after: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "swap_balances"),),
+        (
+            proposal_id,
+            token_in.clone(),
+            token_out.clone(),
+            token_in_before,
+            token_in_after,
+            token_out_before,
+            token_out_after,
+        ),
+    );
+}
+
 /// Emit event when liquidity is added
 pub fn emit_liquidity_added(
     env: &Env,
