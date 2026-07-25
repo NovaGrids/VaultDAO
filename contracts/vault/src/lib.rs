@@ -4332,6 +4332,9 @@ impl VaultDAO {
             holiday_behavior: HolidayBehavior::PayLate,
             jitter_window: effective_jitter_window,
             jitter_offset,
+            retry_strategy: crate::types::RetryBackoffStrategy::Exponential,
+            retry_count: 0,
+            retry_next_ledger: 0,
         };
 
         storage::set_recurring_payment(&env, &payment);
@@ -4760,7 +4763,14 @@ impl VaultDAO {
             payment.skip_holidays,
             &payment.holiday_behavior,
         );
-        if current_ledger < due_ledger {
+        let effective_due_ledger = if payment.retry_count > 0
+            && payment.retry_next_ledger > due_ledger
+        {
+            payment.retry_next_ledger
+        } else {
+            due_ledger
+        };
+        if current_ledger < effective_due_ledger {
             return Err(VaultError::TimelockNotExpired); // Reuse error for "Too Early"
         }
 
@@ -4801,20 +4811,20 @@ impl VaultDAO {
             return Err(VaultError::ExceedsWeeklyLimit);
         }
 
-        // Check balance
-        let balance = token::balance(&env, &payment.token);
-        if balance < total_amount {
-            return Err(VaultError::InsufficientBalance);
-        }
-
         // Revalidate recipient against current whitelist/blacklist policies.
         Self::validate_recipient(&env, &payment.recipient)?;
 
-        // Execute all payments
-        for i in 0..total_payments {
-            token::transfer(&env, &payment.token, &payment.recipient, payment.amount);
+        // Attempt transfer of the full due amount.
+        // If the transfer fails, schedule a retry and preserve the current payment state.
+        if token::try_transfer(&env, &payment.token, &payment.recipient, total_amount).is_err() {
+            Self::schedule_recurring_retry(&env, &mut payment, current_ledger);
+            storage::set_recurring_payment(&env, &payment);
+            storage::extend_instance_ttl(&env);
+            return Ok(());
+        }
 
-            // Emit event for each payment with sequential ledger timestamp
+        // Emit an event for each payment with sequential ledger timestamp.
+        for i in 0..total_payments {
             let payment_ledger = if i == 0 {
                 due_ledger
             } else {
@@ -4830,6 +4840,10 @@ impl VaultDAO {
                 (payment_id, payment_ledger, payment.amount),
             );
         }
+
+        // Reset retry state after a successful execution.
+        payment.retry_count = 0;
+        payment.retry_next_ledger = 0;
 
         // Update limits with total amount
         storage::add_daily_spent(&env, today, total_amount);
@@ -4849,6 +4863,35 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    fn schedule_recurring_retry(env: &Env, payment: &mut crate::RecurringPayment, current_ledger: u64) {
+        payment.retry_count = payment.retry_count.saturating_add(1);
+        let max_backoff = 17_280 * 7; // 7 days in ledgers
+        let backoff = match payment.retry_strategy {
+            crate::types::RetryBackoffStrategy::Linear => payment
+                .interval
+                .saturating_mul(payment.retry_count as u64)
+                .min(max_backoff),
+            crate::types::RetryBackoffStrategy::Exponential => {
+                let exponent = core::cmp::min(payment.retry_count.saturating_sub(1), 30);
+                payment
+                    .interval
+                    .checked_shl(exponent as u32)
+                    .unwrap_or(max_backoff)
+                    .min(max_backoff)
+            }
+        };
+
+        payment.retry_next_ledger = current_ledger.saturating_add(backoff);
+
+        events::emit_recurring_retry_scheduled(
+            env,
+            payment.id,
+            payment.retry_count,
+            payment.retry_next_ledger,
+            0,
+        );
     }
 
     /// Get a recurring payment by ID

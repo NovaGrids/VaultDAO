@@ -357,6 +357,51 @@ fn test_execute_recurring_payment_transfers_tokens() {
     );
 }
 
+#[test]
+fn test_execute_recurring_payment_schedules_retry_on_transfer_failure() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &default_init_config(&env, &admin));
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    let recipient = Address::generate(&env);
+    let amount = 100i128;
+    let interval = 720u64;
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &amount,
+        &Symbol::new(&env, "payroll"),
+        &interval,
+        &0u32,
+        &0u32,
+    );
+
+    let payment = client.get_recurring_payment(&payment_id);
+    let due_ledger = payment.next_payment_ledger;
+    env.ledger().with_mut(|li| {
+        li.sequence_number = due_ledger as u32;
+    });
+
+    client.execute_recurring_payment(&payment_id);
+
+    let updated = client.get_recurring_payment(&payment_id);
+    assert_eq!(updated.payment_count, 0);
+    assert_eq!(updated.next_payment_ledger, due_ledger);
+    assert_eq!(updated.retry_count, 1);
+    assert!(updated.retry_next_ledger > due_ledger);
+}
+
 // ============================================================================
 // New tests for catch-up logic
 // ============================================================================

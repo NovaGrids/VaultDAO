@@ -379,3 +379,43 @@ test("getDuePaymentsAtLedger returns only payments ready for execution", async (
   const ids = due.map((payment) => payment.paymentId).sort();
   assert.deepEqual(ids, ["due-now", "due-status"]);
 });
+
+test("getDuePaymentsAtLedger ignores payments waiting for retry backoff", async () => {
+  const storage = new MemoryRecurringStorageAdapter();
+  const service = new RecurringIndexerService(createTestEnv(), storage);
+  const now = new Date().toISOString();
+
+  await storage.save({
+    paymentId: "retry-wait",
+    proposer: "alice",
+    recipient: "bob",
+    token: "USD",
+    amount: "10",
+    memo: "m1",
+    intervalLedgers: 10,
+    nextPaymentLedger: 10,
+    retryStrategy: "EXPONENTIAL",
+    retryCount: 1,
+    retryNextLedger: 20,
+    paymentCount: 1,
+    status: RecurringStatus.ACTIVE,
+    events: [RecurringEvent.CREATED],
+    metadata: {
+      id: "retry-wait",
+      contractId: "C1",
+      createdAt: now,
+      lastUpdatedAt: now,
+      ledger: 10,
+    },
+    computedStatus: "active",
+    ledgersUntilDue: 0,
+    missedPayments: 0,
+  });
+
+  const dueBeforeRetry = await service.getDuePaymentsAtLedger(15);
+  assert.equal(dueBeforeRetry.length, 0);
+
+  const dueAtRetry = await service.getDuePaymentsAtLedger(20);
+  assert.equal(dueAtRetry.length, 1);
+  assert.equal(dueAtRetry[0]?.paymentId, "retry-wait");
+});
