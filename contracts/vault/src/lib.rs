@@ -271,6 +271,8 @@ mod test_tags;
 mod test_var_templates;
 #[cfg(test)]
 mod test_voting_deadline;
+#[cfg(test)]
+mod test_proposal_management;
 
 #[cfg(test)]
 pub mod mock_oracle {
@@ -449,6 +451,7 @@ impl VaultDAO {
             vote_weight: config.vote_weight,
             high_impact_threshold: config.high_impact_threshold,
             admin_rotation_delay: config.admin_rotation_delay,
+            approval_timeout_ledgers: config.approval_timeout_ledgers,
         };
 
         // Apply staking config from InitConfig
@@ -3298,6 +3301,7 @@ impl VaultDAO {
                 vote_weight: VoteWeight::Flat,
                 high_impact_threshold: 70,
                 admin_rotation_delay: MIN_ADMIN_ROTATION_DELAY,
+                approval_timeout_ledgers: 0,
             }
         });
         (config.quorum, config.quorum_percentage)
@@ -3852,6 +3856,201 @@ impl VaultDAO {
     pub fn get_config(env: Env) -> Result<Config, VaultError> {
         storage::extend_instance_ttl(&env);
         storage::get_config(&env)
+    }
+
+    // ========================================================================
+    // Issue #1424: Fix Empty Signer Snapshot Bug
+    // ========================================================================
+
+    /// Retrieve the signer snapshot for a proposal (for debugging and audit)
+    /// Returns the list of signers who were authorized to vote at proposal creation
+    pub fn get_signer_snapshot(env: Env, proposal_id: u64) -> Result<Vec<Address>, VaultError> {
+        storage::extend_instance_ttl(&env);
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        Ok(proposal.signer_snapshot.keys())
+    }
+
+    // ========================================================================
+    // Issue #1423: Implement Proposal Supersession
+    // ========================================================================
+
+    /// Supersede (replace) an existing proposal with a new one
+    /// The old proposal is cancelled with a reference to the new one
+    #[allow(clippy::too_many_arguments)]
+    pub fn supersede_proposal(
+        env: Env,
+        proposer: Address,
+        old_proposal_id: u64,
+        recipient: Address,
+        token_addr: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify the proposer authorized the old proposal
+        let old_proposal = storage::get_proposal(&env, old_proposal_id)?;
+        if old_proposal.proposer != proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Create the new proposal
+        let new_proposal_id = Self::propose_transfer_internal(
+            env.clone(),
+            proposer.clone(),
+            recipient,
+            token_addr,
+            amount,
+            memo.clone(),
+            priority,
+            conditions,
+            condition_logic,
+            insurance_amount,
+            Vec::new(&env),
+            None,
+            0,
+            false,
+        )?;
+
+        // Cancel the old proposal with supersession reason
+        let mut cancelled_proposal = old_proposal;
+        cancelled_proposal.status = ProposalStatus::Cancelled;
+
+        // Add metadata linking to the new proposal
+        cancelled_proposal
+            .metadata
+            .set(Symbol::new(&env, "superseded_by"), new_proposal_id.to_string());
+        cancelled_proposal
+            .metadata
+            .set(Symbol::new(&env, "supersession_reason"), Symbol::new(&env, "superseded"));
+
+        storage::set_proposal(&env, &cancelled_proposal);
+
+        // Add metadata to new proposal linking to old one
+        let mut new_proposal = storage::get_proposal(&env, new_proposal_id)?;
+        new_proposal
+            .metadata
+            .set(Symbol::new(&env, "supersedes"), old_proposal_id.to_string());
+        storage::set_proposal(&env, &new_proposal);
+
+        // Emit event for supersession
+        events::emit_proposal_cancelled(
+            &env,
+            old_proposal_id,
+            &proposer,
+            &Symbol::new(&env, "superseded"),
+            0, // No refund in supersession
+        );
+
+        Ok(new_proposal_id)
+    }
+
+    // ========================================================================
+    // Issue #1425: Implement Proposal Approval Timeout Mechanism
+    // ========================================================================
+
+    /// Update the approval timeout configuration
+    pub fn update_approval_timeout(env: Env, admin: Address, timeout_ledgers: u64) -> Result<(), VaultError> {
+        admin.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify admin role
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.approval_timeout_ledgers = timeout_ledgers;
+        storage::set_config(&env, &config);
+
+        // Emit config update event
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
+    /// Automatically expire proposals that have exceeded the approval timeout
+    /// Returns the count of proposals expired
+    pub fn auto_expire_proposals(
+        env: Env,
+        admin: Address,
+        max_count: u32,
+    ) -> Result<u32, VaultError> {
+        admin.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify admin role
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let config = storage::get_config(&env)?;
+        if config.approval_timeout_ledgers == 0 {
+            return Ok(0); // Timeout disabled
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let mut expired_count = 0u32;
+
+        // Get all proposal IDs (simplified — in production would use pagination)
+        let next_id = storage::get_next_proposal_id(&env);
+        for proposal_id in 1..next_id {
+            if expired_count >= max_count {
+                break;
+            }
+
+            match storage::get_proposal(&env, proposal_id) {
+                Ok(mut proposal) => {
+                    if proposal.status == ProposalStatus::Pending {
+                        let age = current_ledger.saturating_sub(proposal.created_at);
+                        if age > config.approval_timeout_ledgers {
+                            // Expire the proposal
+                            proposal.status = ProposalStatus::Expired;
+                            storage::set_proposal(&env, &proposal);
+                            expired_count += 1;
+
+                            // Emit expiry event
+                            events::emit_proposal_expired(&env, proposal_id, current_ledger);
+                        }
+                    }
+                }
+                Err(_) => continue, // Proposal not found, skip
+            }
+        }
+
+        Ok(expired_count)
+    }
+
+    /// Update the signer list configuration
+    pub fn update_config_signers(
+        env: Env,
+        admin: Address,
+        signers: Vec<Address>,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify admin role
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.signers = signers;
+        storage::set_config(&env, &config);
+
+        // Emit config update event
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
     }
 
     // ========================================================================

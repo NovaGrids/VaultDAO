@@ -15,6 +15,11 @@ This document covers production hardening, monitoring, backup strategy, and inci
 7. [Backup Strategy](#backup-strategy)
 8. [Health Check & Load Balancer Integration](#health-check--load-balancer-integration)
 9. [Incident Response Playbook](#incident-response-playbook)
+   - [Vault Pause Procedure](#1-vault-pause-procedure)
+   - [Emergency Signer Rotation](#2-emergency-signer-rotation)
+   - [Empty Signer Snapshot Recovery](#3-empty-signer-snapshot-recovery-issue-1424)
+   - [Event Cursor Reset](#4-event-cursor-reset)
+   - [Communication Template](#5-communication-template)
 10. [Rollback Procedure for Contract Upgrades](#rollback-procedure-for-contract-upgrades)
 
 ---
@@ -559,7 +564,89 @@ stellar contract invoke \
   unpause
 ```
 
-### 3. Event Cursor Reset
+### 3. Empty Signer Snapshot Recovery (Issue #1424)
+
+If proposal creation fails with `EmptySignerSnapshot` error, all signers have been removed from the vault configuration. This prevents any new proposals from being created.
+
+**Symptoms:**
+- All proposal creation attempts fail with error code 610 (EmptySignerSnapshot)
+- `get_signer_snapshot(proposal_id)` returns empty set for all proposals
+- Operators report inability to create new proposals
+
+**Recovery Steps:**
+
+```bash
+# 1. Pause the vault to prevent any automated operations
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --network mainnet \
+  --source $ADMIN_SECRET_KEY \
+  -- \
+  pause
+
+# 2. Debug: Retrieve current signer snapshot to confirm issue
+# Using backend API or direct contract query
+curl -s https://vaultdao.example.com/api/vault/signer-snapshot \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq .
+
+# 3. Restore signers using update_config_signers
+# List of known good signer addresses from deployment manifest
+SIGNERS='["GXXXXX1", "GXXXXX2", "GXXXXX3"]'
+
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --network mainnet \
+  --source $ADMIN_SECRET_KEY \
+  -- \
+  update_config_signers \
+  --signers "$SIGNERS"
+
+# 4. Verify signers have been restored
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --network mainnet \
+  -- \
+  get_config | jq '.signers'
+
+# 5. Test that new proposals can be created
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --network mainnet \
+  --source $PROPOSER_KEY \
+  -- \
+  propose_transfer \
+  --recipient $TEST_RECIPIENT \
+  --token $TOKEN_ADDRESS \
+  --amount 1000 \
+  --memo "recovery_test" \
+  --priority "Normal" \
+  --conditions "[]" \
+  --condition_logic "And" \
+  --insurance_amount 0
+
+# 6. Unpause the vault
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --network mainnet \
+  --source $ADMIN_SECRET_KEY \
+  -- \
+  unpause
+```
+
+**Prevention:**
+- Maintain a deployment manifest with the current list of signers
+- Use `get_signer_snapshot()` function regularly to audit signer state
+- Implement a read-only query endpoint that allows monitoring of signer health
+- Alert on any configuration changes that remove all signers
+- Test signer removal procedures in staging before production
+
+**Deployment Manifest Entry:**
+```
+# /opt/vaultdao/signer-manifest.log
+2026-01-15T10:30:00Z SIGNERS: GXXXXX1,GXXXXX2,GXXXXX3 THRESHOLD: 2 QUORUM: 0
+```
+
+### 4. Event Cursor Reset
 
 If the event pipeline gets stuck or corrupted:
 
@@ -587,7 +674,7 @@ docker compose start backend
 docker compose logs -f backend | grep "proposal-consumer"
 ```
 
-### 4. Communication Template
+### 5. Communication Template
 
 ```
 INCIDENT: [Brief description]
