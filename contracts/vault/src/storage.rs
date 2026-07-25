@@ -27,13 +27,14 @@ use crate::types::{
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
-    GovernanceProposal, HolidayCalendar, InsuranceClaim, InsuranceConfig, ListMode, MergeRecord,
-    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant,
-    Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
-    ReputationConfig, RetryState, Role, RoleAssignment, ScopedDelegation, SignerTier, StakeRecord,
-    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
-    TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
-    VestingSchedule, VotingStrategy, WhitelistEntry,
+    GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, InsuranceClaim, InsuranceConfig,
+    ListMode, MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
+    PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate,
+    RecoveryProposal, Reputation, ReputationConfig, RetryState, Role, RoleAssignment,
+    ScopedDelegation, SignerTier, StakeRecord, StakingConfig, StreamRateWindow, Subscription,
+    SwapProposal, SwapResult, Tag, TemplateVarRef, TimeWeightedConfig, TokenLock,
+    TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig, VestingSchedule,
+    VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 
@@ -346,6 +347,9 @@ pub enum FeatureKey {
     // ---- Issue #1085: Gas Cost Estimation Oracle ----
     /// Per-operation cost model -> CostModel
     CostModel,
+    // ---- Issue #1367: Gas-Price Oracle for fee estimation ----
+    /// Live gas-price oracle configuration -> GasPriceOracleConfig
+    GasPriceOracle,
     // ---- Issue #1086: Cold Storage Config ----
     /// Cold signer configuration -> ColdSignerConfig
     ColdSignerConfig,
@@ -3577,6 +3581,27 @@ pub fn get_cost_model(env: &Env) -> CostModel {
 
 pub fn set_cost_model(env: &Env, model: &CostModel) {
     env.storage().instance().set(&FeatureKey::CostModel, model);
+}
+
+// ============================================================================
+// Issue #1367: Gas-Price Oracle Storage
+// ============================================================================
+
+/// Retrieve the gas-price oracle configuration, if one has been set by an admin.
+pub fn get_gas_price_oracle_config(env: &Env) -> Option<GasPriceOracleConfig> {
+    env.storage().instance().get(&FeatureKey::GasPriceOracle)
+}
+
+/// Persist the gas-price oracle configuration.
+pub fn set_gas_price_oracle_config(env: &Env, config: &GasPriceOracleConfig) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::GasPriceOracle, config);
+}
+
+/// Remove the gas-price oracle configuration (reverts to local-only estimation).
+pub fn clear_gas_price_oracle_config(env: &Env) {
+    env.storage().instance().remove(&FeatureKey::GasPriceOracle);
 }
 
 // ============================================================================

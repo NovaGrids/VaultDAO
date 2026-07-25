@@ -245,6 +245,30 @@ pub fn emit_oracle_price_stale(env: &Env, asset: &Address, price_ledger: u64, cu
     );
 }
 
+// ============================================================================
+// Gas-Price Oracle Fee Estimation Events (Issue #1367)
+// ============================================================================
+
+/// Emit when a proposal fee estimate is finalized, recording which price source
+/// was used (oracle live price vs. local CostModel fallback) and the price value.
+///
+/// Topics: `("oracle_gas_price_used", proposal_id)`
+/// Data:   `(price_used, source_is_oracle: bool)`
+///
+/// `source_is_oracle = true`  → live oracle price was used.
+/// `source_is_oracle = false` → local CostModel fallback was used (oracle unavailable/stale/invalid).
+pub fn emit_oracle_gas_price_used(
+    env: &Env,
+    proposal_id: u64,
+    price_used: i128,
+    source_is_oracle: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "oracle_gas_price_used"), proposal_id),
+        (price_used, source_is_oracle),
+    );
+}
+
 /// Emit when quorum configuration is updated by admin
 pub fn emit_quorum_updated(env: &Env, admin: &Address, old_quorum: u32, new_quorum: u32) {
     env.events().publish(

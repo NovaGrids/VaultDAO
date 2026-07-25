@@ -33,13 +33,13 @@ use types::{
     CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory, DexConfig, Dispute,
     DisputeResolution, DisputeStatus, Escrow, EscrowStatus, ExecutionFeeEstimate, FundingMilestone,
     FundingMilestoneStatus, FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig,
-    GovernanceProposal, HolidayBehavior, HolidayCalendar, ImpactScore, InitConfig, InsuranceClaim,
-    InsuranceClaimStatus, InsuranceConfig, ListMode, Milestone, MultiPhaseProposal,
-    NotificationPreferences, NotificationPrefs, OptionalProposalOperation,
-    OptionalVaultOracleConfig, PauseState, Priority, Proposal, ProposalAmendment,
-    ProposalOperation, ProposalPhase, ProposalPhaseStatus, ProposalStatus, ProposalTemplate,
-    RecoveryConfig, RecoveryProposal, RecoveryStatus, RecurringPayment, RecurringStatus,
-    Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
+    GasPriceOracleConfig, GasPriceSource, GovernanceProposal, HolidayBehavior, HolidayCalendar,
+    ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus, InsuranceConfig, ListMode,
+    Milestone, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
+    OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority, Proposal,
+    ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus, ProposalStatus,
+    ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus, RecurringPayment,
+    RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
     ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig, StreamRateWindow,
     StreamStatus, StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier,
     SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy, TokenSpendingConfig,
@@ -247,6 +247,8 @@ mod test_disputes;
 mod test_escrow_timeout;
 #[cfg(test)]
 mod test_fees;
+#[cfg(test)]
+mod test_gas_price_oracle;
 #[cfg(test)]
 mod test_hooks;
 #[cfg(test)]
@@ -7553,7 +7555,26 @@ impl VaultDAO {
     /// Estimate the compute cost of executing a proposal.
     ///
     /// Walks the proposal's operations and conditions, aggregates costs from the
-    /// on-chain CostModel, and applies a 10% buffer.  Read-only (advisory).
+    /// on-chain CostModel, and applies a 10% buffer.
+    ///
+    /// # Oracle integration (Issue #1367)
+    ///
+    /// When a gas-price oracle is configured via `set_gas_price_oracle`, this
+    /// function queries it for a live `stroops_per_10k_compute_units` price.
+    /// The oracle must expose the same `lastprice(asset: Address) -> Option<VaultPriceData>`
+    /// interface already used by `get_asset_price` / condition evaluation.
+    ///
+    /// Fallback rules — the local `CostModel.stroops_per_10k_compute_units` is
+    /// used (and the reason is recorded in `price_source`) if:
+    ///   - no oracle is configured,
+    ///   - the oracle cross-contract call panics,
+    ///   - the oracle returns `None`,
+    ///   - the returned price is stale (older than `max_staleness` ledgers),
+    ///   - the returned price is ≤ 0.
+    ///
+    /// The function **never** returns an error for oracle failures — fallback is
+    /// silent except for the `oracle_gas_price_used` event that records the
+    /// source and price actually used.
     pub fn estimate_proposal_cost(
         env: Env,
         proposal_id: u64,
@@ -7561,6 +7582,7 @@ impl VaultDAO {
         let proposal = storage::get_proposal(&env, proposal_id)?;
         let model = storage::get_cost_model(&env);
 
+        // --- compute unit aggregation (unchanged from Issue #1085) ---
         let mut compute_units: u64 = model.base_compute_units;
         let mut ledger_reads: u32 = model.base_ledger_reads;
         let mut ledger_writes: u32 = model.base_ledger_writes;
@@ -7594,15 +7616,148 @@ impl VaultDAO {
         // Apply 10% conservative buffer
         compute_units = compute_units.saturating_add(compute_units / 10);
 
-        let fee_estimate_xlm =
-            (compute_units as i128 / 10_000).saturating_mul(model.stroops_per_10k_compute_units);
+        // --- oracle price resolution (Issue #1367) ---
+        let (price_used, price_source) = Self::resolve_gas_price(&env, &model, proposal_id);
+
+        let fee_estimate_xlm = (compute_units as i128 / 10_000).saturating_mul(price_used);
 
         Ok(types::CostEstimate {
             compute_units,
             ledger_reads,
             ledger_writes,
             fee_estimate_xlm,
+            price_used,
+            price_source,
         })
+    }
+
+    // ========================================================================
+    // Issue #1367: Gas-Price Oracle Configuration
+    // ========================================================================
+
+    /// Configure the oracle contract used to fetch live gas prices for fee
+    /// estimation.  Admin-only.
+    ///
+    /// Pass the address of any contract that implements the `lastprice` interface
+    /// (same interface already used by `Condition::PriceAbove/Below`):
+    /// ```text
+    /// lastprice(asset: Address) -> Option<VaultPriceData>
+    /// ```
+    /// The `asset` argument passed to `lastprice` is the vault's **own contract
+    /// address**, which acts as a stable identifier for the "gas price" feed.
+    ///
+    /// Set `max_staleness = 0` is rejected; use `clear_gas_price_oracle` to
+    /// remove the oracle and revert to local-only estimation.
+    pub fn set_gas_price_oracle(
+        env: Env,
+        admin: Address,
+        oracle_address: Address,
+        max_staleness: u32,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        if max_staleness == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let config = GasPriceOracleConfig {
+            address: oracle_address.clone(),
+            max_staleness,
+        };
+        storage::set_gas_price_oracle_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        // Reuse the existing oracle-config-updated event; the admin and oracle
+        // address are the relevant attributes.
+        events::emit_oracle_config_updated(&env, &admin, &oracle_address);
+
+        Ok(())
+    }
+
+    /// Remove the gas-price oracle configuration.  Subsequent calls to
+    /// `estimate_proposal_cost` will use the local CostModel price only.
+    pub fn clear_gas_price_oracle(env: Env, admin: Address) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::clear_gas_price_oracle_config(&env);
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Return the currently configured gas-price oracle, if any.
+    pub fn get_gas_price_oracle(env: Env) -> Option<GasPriceOracleConfig> {
+        storage::get_gas_price_oracle_config(&env)
+    }
+
+    /// Resolve the stroops-per-10k-compute-units price for fee estimation.
+    ///
+    /// Attempts a live oracle query; silently falls back to the CostModel
+    /// constant on any failure.  Emits `oracle_gas_price_used` in all cases.
+    ///
+    /// Returns `(price, source)`.
+    fn resolve_gas_price(
+        env: &Env,
+        model: &types::CostModel,
+        proposal_id: u64,
+    ) -> (i128, GasPriceSource) {
+        let fallback_price = model.stroops_per_10k_compute_units;
+
+        // No oracle configured → use local price immediately.
+        let oracle_cfg = match storage::get_gas_price_oracle_config(env) {
+            Some(cfg) => cfg,
+            None => {
+                events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+                return (fallback_price, GasPriceSource::LocalFallback);
+            }
+        };
+
+        // Query oracle.  Use try_invoke_contract so a panicking oracle never
+        // blocks proposal execution; treat all errors as a fallback trigger.
+        let vault_addr = env.current_contract_address();
+        let raw_result = env.try_invoke_contract::<Option<VaultPriceData>, soroban_sdk::Error>(
+            &oracle_cfg.address,
+            &Symbol::new(env, "lastprice"),
+            Vec::from_array(env, [vault_addr.into_val(env)]),
+        );
+
+        let price_data = match raw_result {
+            Ok(Ok(Some(data))) => data,
+            // Oracle returned None, a contract error, or a host error → fallback.
+            _ => {
+                events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+                return (fallback_price, GasPriceSource::LocalFallback);
+            }
+        };
+
+        // Staleness check.
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger.saturating_sub(price_data.timestamp) > oracle_cfg.max_staleness as u64 {
+            events::emit_oracle_price_stale(
+                env,
+                &oracle_cfg.address,
+                price_data.timestamp,
+                current_ledger,
+            );
+            events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+            return (fallback_price, GasPriceSource::LocalFallback);
+        }
+
+        // Validity check: price must be positive.
+        if price_data.price <= 0 {
+            events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+            return (fallback_price, GasPriceSource::LocalFallback);
+        }
+
+        // All checks passed — use the live oracle price.
+        events::emit_oracle_gas_price_used(env, proposal_id, price_data.price, true);
+        (price_data.price, GasPriceSource::Oracle)
     }
 
     // ========================================================================
