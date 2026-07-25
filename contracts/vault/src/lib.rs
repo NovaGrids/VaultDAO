@@ -256,6 +256,8 @@ mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
+mod test_rbac_consistency;
+#[cfg(test)]
 mod test_reentrancy;
 #[cfg(test)]
 mod test_regressions;
@@ -10688,9 +10690,9 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         arbitrator.require_auth();
 
-        // Admin-only: only the vault admin can resolve disputes
+        // Only Admin and DisputeArbitrator can resolve disputes
         let role = storage::get_role(&env, &arbitrator);
-        if role != Role::Admin {
+        if !Role::role_satisfies(Role::DisputeArbitrator, role) {
             return Err(VaultError::Unauthorized);
         }
 

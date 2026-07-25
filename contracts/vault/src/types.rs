@@ -293,12 +293,36 @@ pub enum Role {
 impl Role {
     /// Check whether `actual` satisfies the `required` role.
     /// Hierarchy: Admin >= Treasurer >= Member >= Observer
-    /// Special case: Admin and DisputeArbitrator can resolve disputes
+    /// Special case: Admin and DisputeArbitrator can resolve disputes, but DisputeArbitrator
+    /// does NOT have general Admin privileges
     pub fn role_satisfies(required: Role, actual: Role) -> bool {
         match (required, actual) {
+            // Dispute resolution: both Admin and DisputeArbitrator can resolve disputes
             (Role::DisputeArbitrator, Role::Admin) => true,
             (Role::DisputeArbitrator, Role::DisputeArbitrator) => true,
-            _ => (actual as u32) >= (required as u32),
+            // Admin cannot satisfy DisputeArbitrator when checking if someone is ONLY DisputeArbitrator
+            // (DisputeArbitrator is NOT an Admin-equivalent role)
+            (Role::Admin, Role::DisputeArbitrator) => false,
+            // Standard hierarchy for other roles: higher discriminants satisfy lower requirements
+            (Role::Admin, Role::Treasurer) => false,
+            (Role::Admin, Role::Member) => false,
+            (Role::Admin, Role::Observer) => false,
+            (Role::Treasurer, Role::Admin) => true,
+            (Role::Treasurer, Role::Treasurer) => true,
+            (Role::Treasurer, Role::Member) => false,
+            (Role::Treasurer, Role::Observer) => false,
+            (Role::Member, Role::Admin) => true,
+            (Role::Member, Role::Treasurer) => true,
+            (Role::Member, Role::Member) => true,
+            (Role::Member, Role::Observer) => false,
+            (Role::Observer, Role::Admin) => true,
+            (Role::Observer, Role::Treasurer) => true,
+            (Role::Observer, Role::Member) => true,
+            (Role::Observer, Role::Observer) => true,
+            // DisputeArbitrator checking for non-dispute requirements
+            (Role::Treasurer, Role::DisputeArbitrator) => false,
+            (Role::Member, Role::DisputeArbitrator) => false,
+            (Role::Observer, Role::DisputeArbitrator) => false,
         }
     }
 }
