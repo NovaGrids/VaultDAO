@@ -27,6 +27,7 @@ import { createJobsRouter } from "./modules/jobs/jobs.routes.js";
 import { error, success } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
+import { createJsonWithRawBody, createHmacSigningMiddleware } from "./shared/http/hmac.js";
 import { ErrorCode } from "./shared/http/errorCodes.js";
 import {
   REQUEST_ID_HEADER,
@@ -203,9 +204,18 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   });
 
   const v1Router = express.Router();
-  v1Router.use(express.json({ limit: env.requestBodyLimit }));
+  // Replace bare express.json() with the raw-body-capturing variant so that
+  // createHmacSigningMiddleware can read (req as any).rawBody for verification.
+  v1Router.use(createJsonWithRawBody({ limit: env.requestBodyLimit }));
 
-  v1Router.get("/admin/key-status", adminAuthMiddleware, (_req, res) => {
+  // HMAC request-signing verification — runs after body parsing but before any
+  // business logic. When VAULT_HMAC_SECRET is not set the middleware is a no-op
+  // (passthrough), matching the existing API-key passthrough behaviour in dev.
+  const hmacMiddleware = createHmacSigningMiddleware(
+    () => env.hmacSecret,
+  );
+
+  v1Router.get("/admin/key-status", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
     const rotationPending = Boolean(authKeyState.next);
     res.status(200).json({
       success: true,
@@ -216,7 +226,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     });
   });
 
-  v1Router.post("/admin/rotate-key", adminAuthMiddleware, (_req, res) => {
+  v1Router.post("/admin/rotate-key", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
     if (!authKeyState.next) {
       error(res, {
         message: "No pending API key rotation",
@@ -238,17 +248,17 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     });
   });
 
-  v1Router.get("/admin/cors/origins", adminAuthMiddleware, getCorsOriginsController(corsAllowlist));
-  v1Router.post("/admin/cors/origins", adminAuthMiddleware, addCorsOriginController(corsAllowlist));
-  v1Router.delete("/admin/cors/origins", adminAuthMiddleware, removeCorsOriginController(corsAllowlist));
+  v1Router.get("/admin/cors/origins", adminAuthMiddleware, hmacMiddleware, getCorsOriginsController(corsAllowlist));
+  v1Router.post("/admin/cors/origins", adminAuthMiddleware, hmacMiddleware, addCorsOriginController(corsAllowlist));
+  v1Router.delete("/admin/cors/origins", adminAuthMiddleware, hmacMiddleware, removeCorsOriginController(corsAllowlist));
 
-  v1Router.post("/admin/cursor/migrate", adminAuthMiddleware, triggerCursorMigrationController(runtime.dbCursorAdapter));
-  v1Router.post("/admin/cursor/rollback", adminAuthMiddleware, rollbackCursorMigrationController(runtime.dbCursorAdapter));
+  v1Router.post("/admin/cursor/migrate", adminAuthMiddleware, hmacMiddleware, triggerCursorMigrationController(runtime.dbCursorAdapter));
+  v1Router.post("/admin/cursor/rollback", adminAuthMiddleware, hmacMiddleware, rollbackCursorMigrationController(runtime.dbCursorAdapter));
 
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime, adminAuthMiddleware));
   v1Router.use("/health", createDetailedHealthRouter(env, runtime));
-  v1Router.use("/events", authMiddleware, createEventsRouter());
+  v1Router.use("/events", authMiddleware, hmacMiddleware, createEventsRouter());
 
   // Contracts listing
   const registry = new (
@@ -270,7 +280,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     }
   }
 
-  v1Router.get("/admin/config", adminAuthMiddleware, (_req, res) => {
+  v1Router.get("/admin/config", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
     success(res, {
       nodeEnv: env.nodeEnv,
       stellarNetwork: env.stellarNetwork,
@@ -299,7 +309,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     });
   });
 
-  v1Router.get("/admin/jobs/graph", adminAuthMiddleware, (_req, res) => {
+  v1Router.get("/admin/jobs/graph", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
     try {
       const graph = (runtime as any).jobManager?.getDependencyGraph?.() ?? {};
       success(res, graph);
@@ -313,29 +323,30 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   });
 
   // ── Feature Flags Admin ──────────────────────────────────────────────────────
-  v1Router.get("/admin/features", adminAuthMiddleware, (_req, res) => {
+  v1Router.get("/admin/features", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
     success(res, getFeatureFlags().list());
   });
 
-  v1Router.post("/admin/features/:flag/enable", adminAuthMiddleware, (req, res) => {
+  v1Router.post("/admin/features/:flag/enable", adminAuthMiddleware, hmacMiddleware, (req, res) => {
     const { flag } = req.params as { flag: string };
     getFeatureFlags().enable(flag);
     success(res, { flag, enabled: true });
   });
 
-  v1Router.post("/admin/features/:flag/disable", adminAuthMiddleware, (req, res) => {
+  v1Router.post("/admin/features/:flag/disable", adminAuthMiddleware, hmacMiddleware, (req, res) => {
     const { flag } = req.params as { flag: string };
     getFeatureFlags().disable(flag);
     success(res, { flag, enabled: false });
   });
 
   // ── RPC Pool Status ──────────────────────────────────────────────────────────
-  v1Router.get("/rpc/pool/status", adminAuthMiddleware, (_req, res) => {
+  v1Router.get("/rpc/pool/status", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
     success(res, { endpoints: rpcPool.getStatus() });
   });
 
   v1Router.use(
     "/contracts",
+    hmacMiddleware,
     createContractsRouter(registry, adminAuthMiddleware, (runtime as any).contractStateValidator),
   );
 
@@ -343,6 +354,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   if (runtime.jobManager && runtime.scheduledJobRunner) {
     v1Router.use(
       "/jobs",
+      hmacMiddleware,
       createJobsRouter(runtime.jobManager, runtime.scheduledJobRunner, adminAuthMiddleware),
     );
   }
@@ -351,7 +363,8 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     v1Router.use(
       "/notifications",
       authMiddleware,
-      express.json({ limit: env.notificationsRequestBodyLimit }),
+      hmacMiddleware,
+      createJsonWithRawBody({ limit: env.notificationsRequestBodyLimit }),
       createNotificationsRouter(runtime.notificationQueue),
     );
   }
@@ -360,7 +373,8 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     v1Router.use(
       "/webhooks",
       authMiddleware,
-      express.json({ limit: env.webhooksRequestBodyLimit }),
+      hmacMiddleware,
+      createJsonWithRawBody({ limit: env.webhooksRequestBodyLimit }),
       createWebhookRouter(runtime.webhookDeliveryService),
     );
   }
@@ -368,7 +382,8 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/snapshots",
     authMiddleware,
-    express.json({ limit: env.snapshotsRequestBodyLimit }),
+    hmacMiddleware,
+    createJsonWithRawBody({ limit: env.snapshotsRequestBodyLimit }),
     createSnapshotRouter(
       runtime.snapshotService,
       adminAuthMiddleware,
@@ -380,6 +395,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/proposals",
     authMiddleware,
+    hmacMiddleware,
     createProposalsRouter(
       runtime.proposalActivityAggregator,
       runtime.proposalActivityPersistence,
@@ -389,6 +405,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/recurring",
     authMiddleware,
+    hmacMiddleware,
     createRecurringRouter(
       runtime.recurringIndexerService,
       authMiddleware,
@@ -399,6 +416,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/transactions",
     authMiddleware,
+    hmacMiddleware,
     createTransactionsRouter(
       runtime.transactionsService,
       env.contractId,
@@ -409,6 +427,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/audit",
     authMiddleware,
+    hmacMiddleware,
     createAuditRouter(env.sorobanRpcUrl, adminAuthMiddleware),
   );
 
@@ -416,6 +435,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     v1Router.use(
       "/cache",
       authMiddleware,
+      hmacMiddleware,
       createCacheRouter(runtime.cacheManager, adminAuthMiddleware),
     );
   }
@@ -423,6 +443,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   if (runtime.dbCursorAdapter) {
     v1Router.use(
       "/cursors",
+      hmacMiddleware,
       createCursorsRouter(runtime.dbCursorAdapter, adminAuthMiddleware),
     );
   }
@@ -440,6 +461,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use(
     "/vault",
     authMiddleware,
+    hmacMiddleware,
     createVaultRouter(env.sorobanRpcUrl, passphrase, runtime.cacheManager, (runtime as any).vaultRegistry, adminAuthMiddleware),
   );
 
