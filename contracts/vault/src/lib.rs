@@ -262,6 +262,14 @@ mod test_recurring_dryrun;
 #[cfg(test)]
 mod test_escrow_multisig;
 #[cfg(test)]
+mod test_multitoken_limits;
+#[cfg(test)]
+mod test_multitoken_swap;
+#[cfg(test)]
+mod test_stream_clawback;
+#[cfg(test)]
+mod test_multitoken_insurance;
+#[cfg(test)]
 mod test_regressions;
 #[cfg(test)]
 mod test_retry;
