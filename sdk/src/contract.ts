@@ -24,7 +24,8 @@ import type {
   Reputation,
   AuditEntry,
 } from "./types";
-import { Role, ProposalStatus, VaultError, VaultErrorCode } from "./types";
+import { Role, ProposalStatus, VaultError, VaultErrorCode, noopLogger } from "./types";
+import type { SdkLogger } from "./types";
 import {
   getContract,
   buildTransaction,
@@ -44,8 +45,10 @@ import {
 async function simulateReadOnly<T>(
   operation: xdr.Operation,
   opts: SdkOptions,
-  sourceKey: string
+  sourceKey: string,
+  method?: string
 ): Promise<T> {
+  const log: SdkLogger = opts.logger ?? noopLogger;
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
   const { Account, TransactionBuilder, BASE_FEE } = await import("stellar-sdk");
   const account = await server.getAccount(sourceKey);
@@ -57,15 +60,67 @@ async function simulateReadOnly<T>(
     .setTimeout(15)
     .build();
 
+  const ctx = { contractId: opts.contractId, method };
+  const simStart = Date.now();
+  log.debug("Simulating read-only call", ctx);
+
   const sim = await server.simulateTransaction(tx);
+
   if (SorobanRpc.Api.isSimulationError(sim)) {
-    throw parseError(new Error(sim.error));
+    const durationMs = Date.now() - simStart;
+    const err = parseError(new Error(sim.error));
+    log.error("Read-only simulation failed", {
+      ...ctx,
+      durationMs,
+      errorMessage: err.message,
+    });
+    throw err;
   }
   if (!SorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) {
+    const durationMs = Date.now() - simStart;
+    log.error("Read-only simulation returned no result", { ...ctx, durationMs });
     throw new Error("Simulation returned no result");
   }
 
+  const durationMs = Date.now() - simStart;
+  log.debug("Read-only call succeeded", { ...ctx, durationMs });
+
   return decodeScVal(sim.result.retval) as T;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helper — build a write transaction with logger instrumentation
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap `buildTransaction` with before/after logger events for every
+ * contract method invocation.
+ *
+ * @internal
+ */
+async function invokeMethod(
+  method: string,
+  callerPublicKey: string,
+  operation: xdr.Operation,
+  opts: SdkOptions
+): Promise<string> {
+  const log: SdkLogger = opts.logger ?? noopLogger;
+  const ctx = { contractId: opts.contractId, method };
+
+  log.debug(`Invoking contract method: ${method}`, ctx);
+
+  try {
+    const txXdr = await buildTransaction(callerPublicKey, operation, opts);
+    log.debug(`Transaction built for method: ${method}`, ctx);
+    return txXdr;
+  } catch (err) {
+    const parsed = err instanceof Error ? err : new Error(String(err));
+    log.error(`Failed to build transaction for method: ${method}`, {
+      ...ctx,
+      errorMessage: parsed.message,
+    });
+    throw parsed;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +183,7 @@ export async function initialize(
     configScVal
   );
 
-  return buildTransaction(adminPublicKey, op, opts);
+  return invokeMethod("initialize", adminPublicKey, op, opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +218,7 @@ export async function proposeTransfer(
     i128ToScVal(amount),
     symbolToScVal(memo)
   );
-  return buildTransaction(proposerPublicKey, op, opts);
+  return invokeMethod("propose_transfer", proposerPublicKey, op, opts);
 }
 
 /**
@@ -184,7 +239,7 @@ export async function approveProposal(
     addressToScVal(signerPublicKey),
     u64ToScVal(proposalId)
   );
-  return buildTransaction(signerPublicKey, op, opts);
+  return invokeMethod("approve_proposal", signerPublicKey, op, opts);
 }
 
 /**
@@ -205,7 +260,7 @@ export async function executeProposal(
     addressToScVal(executorPublicKey),
     u64ToScVal(proposalId)
   );
-  return buildTransaction(executorPublicKey, op, opts);
+  return invokeMethod("execute_proposal", executorPublicKey, op, opts);
 }
 
 /**
@@ -717,7 +772,8 @@ export async function getComments(
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
     op,
     opts,
-    callerPublicKey
+    callerPublicKey,
+    "getComments"
   );
   return raw.map((c) => ({
     id: BigInt(c.id as number),
@@ -790,7 +846,8 @@ export async function getVaultMetrics(
   const raw = await simulateReadOnly<Record<string, unknown>>(
     op,
     opts,
-    callerPublicKey
+    callerPublicKey,
+    "getVaultMetrics"
   );
   return {
     executedCount: BigInt(raw.executed_count as number),
@@ -813,7 +870,8 @@ export async function getReputation(
   const raw = await simulateReadOnly<Record<string, unknown>>(
     op,
     opts,
-    callerPublicKey
+    callerPublicKey,
+    "getReputation"
   );
   return {
     address: raw.address as string,
@@ -836,7 +894,8 @@ export async function getAuditTrail(
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
     op,
     opts,
-    callerPublicKey
+    callerPublicKey,
+    "getAuditTrail"
   );
   return raw.map((e) => ({
     id: BigInt(e.id as number),
@@ -857,7 +916,7 @@ export async function getDelegationChain(
 ): Promise<string[]> {
   const contract = getContract(opts);
   const op = contract.call("get_delegation_chain", addressToScVal(address));
-  return simulateReadOnly<string[]>(op, opts, callerPublicKey);
+  return simulateReadOnly<string[]>(op, opts, callerPublicKey, "getDelegationChain");
 }
 
 // ---------------------------------------------------------------------------
@@ -881,7 +940,8 @@ export async function getProposal(
   const raw = await simulateReadOnly<Record<string, unknown>>(
     op,
     opts,
-    callerPublicKey
+    callerPublicKey,
+    "getProposal"
   );
   return decodeProposal(raw);
 }
@@ -900,7 +960,7 @@ export async function getRole(
 ): Promise<Role> {
   const contract = getContract(opts);
   const op = contract.call("get_role", addressToScVal(address));
-  const raw = await simulateReadOnly<number>(op, opts, callerPublicKey);
+  const raw = await simulateReadOnly<number>(op, opts, callerPublicKey, "getRole");
   return raw as Role;
 }
 
@@ -916,7 +976,7 @@ export async function getTodaySpent(
 ): Promise<bigint> {
   const contract = getContract(opts);
   const op = contract.call("get_today_spent");
-  return simulateReadOnly<bigint>(op, opts, callerPublicKey);
+  return simulateReadOnly<bigint>(op, opts, callerPublicKey, "getTodaySpent");
 }
 
 /**
@@ -933,7 +993,7 @@ export async function isSigner(
 ): Promise<boolean> {
   const contract = getContract(opts);
   const op = contract.call("is_signer", addressToScVal(address));
-  return simulateReadOnly<boolean>(op, opts, callerPublicKey);
+  return simulateReadOnly<boolean>(op, opts, callerPublicKey, "isSigner");
 }
 
 // ---------------------------------------------------------------------------

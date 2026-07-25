@@ -1130,6 +1130,34 @@ pub fn emit_swap_executed(
     );
 }
 
+/// Emit event recording the vault's token balances immediately before and after
+/// a swap's on-chain settlement (issue #1441), so off-chain observers can verify
+/// the swap moved exactly the reported amounts.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_swap_balances(
+    env: &Env,
+    proposal_id: u64,
+    token_in: &Address,
+    token_out: &Address,
+    token_in_before: i128,
+    token_in_after: i128,
+    token_out_before: i128,
+    token_out_after: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "swap_balances"),),
+        (
+            proposal_id,
+            token_in.clone(),
+            token_out.clone(),
+            token_in_before,
+            token_in_after,
+            token_out_before,
+            token_out_after,
+        ),
+    );
+}
+
 /// Emit event when liquidity is added
 pub fn emit_liquidity_added(
     env: &Env,
@@ -1558,4 +1586,43 @@ pub fn emit_gov_proposal_approved(env: &Env, id: u64, voter: &Address, count: u3
 pub fn emit_gov_proposal_executed(env: &Env, id: u64, param: u32, new_value: i128) {
     env.events()
         .publish((Symbol::new(env, "gov_executed"), id), (param, new_value));
+}
+
+// ============================================================================
+// Recurring Payment Jitter Events (issue #1364)
+// ============================================================================
+
+/// Emit when jitter is applied to a recurring payment's next execution ledger.
+///
+/// This event fires once per execution cycle (not per missed-payment catch-up
+/// transfer) whenever `jitter_window > 0` AND the payment is past its first
+/// cycle (jitter is skipped for the very first payment so it executes promptly).
+///
+/// **Audit note**: When this event is present for a payment ID, the
+/// `next_payment_ledger` stored on-chain will differ from the naive
+/// `prev_next_payment_ledger + interval` by exactly `jitter_offset` ledgers.
+/// Auditors should treat this timing variance as expected behavior, not a bug.
+///
+/// Topics: `("recurring_pay_jittered", payment_id)`
+/// Data:   `(nominal_next_ledger, jittered_next_ledger, jitter_offset)`
+///
+/// # Arguments
+/// * `payment_id`           - ID of the recurring payment.
+/// * `nominal_next_ledger`  - What `next_payment_ledger` would be without jitter
+///                            (i.e. `prev_next_payment_ledger + n * interval`).
+/// * `jittered_next_ledger` - The actual stored `next_payment_ledger` after
+///                            adding `jitter_offset`.
+/// * `jitter_offset`        - The ledger offset added (`jitter_offset` field on
+///                            the payment, in `[0, jitter_window)`).
+pub fn emit_recurring_payment_jittered(
+    env: &Env,
+    payment_id: u64,
+    nominal_next_ledger: u64,
+    jittered_next_ledger: u64,
+    jitter_offset: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "recurring_pay_jittered"), payment_id),
+        (nominal_next_ledger, jittered_next_ledger, jitter_offset),
+    );
 }
