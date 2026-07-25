@@ -14,8 +14,8 @@ import {
   nativeToScVal,
   scValToNative,
 } from "stellar-sdk";
-import type { SdkOptions, Network } from "./types";
-import { VaultError, VaultErrorCode } from "./types";
+import type { SdkOptions, Network, SdkLogger } from "./types";
+import { VaultError, VaultErrorCode, noopLogger } from "./types";
 
 // ---------------------------------------------------------------------------
 // Network helpers
@@ -38,17 +38,33 @@ export const DEFAULT_RPC_URLS: Record<Exclude<Network, "custom">, string> = {
 /**
  * Build an `SdkOptions` object from a network preset and contract ID.
  *
+ * @param network    - One of the known network presets.
+ * @param contractId - Deployed contract ID (Strkey Cxxx format).
+ * @param overrides  - Optional overrides, including a custom {@link SdkLogger}.
+ *
  * @example
  * const opts = buildOptions("testnet", "CXXXXXXXXX...");
+ *
+ * @example — with custom logger
+ * const opts = buildOptions("testnet", "CXXXXXXXXX...", {
+ *   logger: {
+ *     debug: (msg, ctx) => console.debug(msg, ctx),
+ *     info:  (msg, ctx) => console.info(msg, ctx),
+ *     warn:  (msg, ctx) => console.warn(msg, ctx),
+ *     error: (msg, ctx) => console.error(msg, ctx),
+ *   },
+ * });
  */
 export function buildOptions(
   network: Exclude<Network, "custom">,
-  contractId: string
+  contractId: string,
+  overrides?: Partial<Pick<SdkOptions, "rpcUrl" | "networkPassphrase" | "logger">>
 ): SdkOptions {
   return {
     contractId,
-    rpcUrl: DEFAULT_RPC_URLS[network],
-    networkPassphrase: NETWORK_PASSPHRASES[network],
+    rpcUrl: overrides?.rpcUrl ?? DEFAULT_RPC_URLS[network],
+    networkPassphrase: overrides?.networkPassphrase ?? NETWORK_PASSPHRASES[network],
+    logger: overrides?.logger,
   };
 }
 
@@ -101,6 +117,11 @@ export async function connectWallet(): Promise<WalletConnection> {
  *
  * Returns the prepared transaction ready to be signed and submitted.
  *
+ * Emits logger events:
+ * - `debug` before simulation
+ * - `debug` after successful simulation
+ * - `error` on simulation failure
+ *
  * @param sourcePublicKey - The sender's public key.
  * @param operation       - The XDR operation to include.
  * @param opts            - SDK connection options.
@@ -110,6 +131,7 @@ export async function buildTransaction(
   operation: xdr.Operation,
   opts: SdkOptions
 ): Promise<string> {
+  const log: SdkLogger = opts.logger ?? noopLogger;
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
   const account = await server.getAccount(sourcePublicKey);
 
@@ -121,10 +143,30 @@ export async function buildTransaction(
     .setTimeout(30)
     .build();
 
+  const simStart = Date.now();
+  log.debug("Simulating transaction", {
+    contractId: opts.contractId,
+    sourcePublicKey,
+  });
+
   const simResult = await server.simulateTransaction(tx);
+
   if (SorobanRpc.Api.isSimulationError(simResult)) {
-    throw parseSimulationError(simResult.error);
+    const durationMs = Date.now() - simStart;
+    const err = parseSimulationError(simResult.error);
+    log.error("Transaction simulation failed", {
+      contractId: opts.contractId,
+      errorMessage: err.message,
+      durationMs,
+    });
+    throw err;
   }
+
+  const durationMs = Date.now() - simStart;
+  log.debug("Transaction simulation succeeded", {
+    contractId: opts.contractId,
+    durationMs,
+  });
 
   const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
   return preparedTx.toXDR();
@@ -137,6 +179,14 @@ export async function buildTransaction(
 /**
  * Sign a transaction XDR with Freighter and submit it to the network.
  *
+ * Emits logger events:
+ * - `debug` before Freighter signing
+ * - `debug` after signing
+ * - `info` after successful submission
+ * - `debug` while polling for confirmation
+ * - `info` on transaction success
+ * - `error` on transaction failure or timeout
+ *
  * @param txXdr           - The base64 XDR of the prepared transaction.
  * @param opts            - SDK connection options.
  * @returns               The transaction hash on success.
@@ -148,10 +198,19 @@ export async function signAndSubmit(
   txXdr: string,
   opts: SdkOptions
 ): Promise<string> {
+  const log: SdkLogger = opts.logger ?? noopLogger;
   const freighter = await import("@stellar/freighter-api");
+
+  log.debug("Requesting transaction signature from Freighter", {
+    contractId: opts.contractId,
+  });
 
   const signedXdr = await freighter.signTransaction(txXdr, {
     networkPassphrase: opts.networkPassphrase,
+  });
+
+  log.debug("Transaction signed, submitting to network", {
+    contractId: opts.contractId,
   });
 
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
@@ -160,23 +219,56 @@ export async function signAndSubmit(
   const sendResult = await server.sendTransaction(signedTx);
 
   if (sendResult.status === "ERROR") {
-    throw new Error(`Transaction failed: ${sendResult.errorResult}`);
+    const errorMessage = `Transaction failed: ${sendResult.errorResult}`;
+    log.error("Transaction submission failed", {
+      contractId: opts.contractId,
+      errorMessage,
+    });
+    throw new Error(errorMessage);
   }
 
-  // Poll for confirmation
   const hash = sendResult.hash;
+  log.info("Transaction submitted", {
+    contractId: opts.contractId,
+    txHash: hash,
+  });
+
+  // Poll for confirmation
   for (let i = 0; i < 30; i++) {
     await sleep(2000);
     const status = await server.getTransaction(hash);
+
     if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+      log.info("Transaction confirmed", {
+        contractId: opts.contractId,
+        txHash: hash,
+        durationMs: (i + 1) * 2000,
+      });
       return hash;
     }
+
     if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
+      log.error("Transaction reverted on-chain", {
+        contractId: opts.contractId,
+        txHash: hash,
+        errorMessage: `Transaction reverted: ${hash}`,
+      });
       throw new Error(`Transaction reverted: ${hash}`);
     }
+
+    log.debug(`Polling transaction status (attempt ${i + 1}/30)`, {
+      contractId: opts.contractId,
+      txHash: hash,
+    });
   }
 
-  throw new Error(`Transaction not confirmed after 60 seconds: ${hash}`);
+  const timeoutMsg = `Transaction not confirmed after 60 seconds: ${hash}`;
+  log.warn("Transaction confirmation timed out", {
+    contractId: opts.contractId,
+    txHash: hash,
+    errorMessage: timeoutMsg,
+  });
+  throw new Error(timeoutMsg);
 }
 
 // ---------------------------------------------------------------------------
