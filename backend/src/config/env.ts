@@ -33,6 +33,8 @@ export interface BackendEnv {
   readonly rateLimitDefaultPerMin: number;
   /** Maximum ledger jitter window for due-payment queries (default: 10 ledgers). */
   readonly jitterWindowMax: number;
+  /** Maximum number of topic subscriptions a single WebSocket client may hold (default: 100). */
+  readonly wsMaxSubscriptionsPerClient: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -239,6 +241,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     rateLimitExecutePerMin: 10,
     rateLimitDefaultPerMin: 60,
     jitterWindowMax: 10,
+    wsMaxSubscriptionsPerClient: 100,
     ...overrides,
   };
 }
@@ -326,6 +329,11 @@ export function loadEnv(): BackendEnv {
     issues,
   );
   const jitterWindowMax = readPort("JITTER_WINDOW_MAX", 10, issues);
+  const wsMaxSubscriptionsPerClient = readPort(
+    "WS_MAX_SUBSCRIPTIONS_PER_CLIENT",
+    100,
+    issues,
+  );
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -410,5 +418,6 @@ export function loadEnv(): BackendEnv {
     rateLimitExecutePerMin,
     rateLimitDefaultPerMin,
     jitterWindowMax,
+    wsMaxSubscriptionsPerClient,
   };
 }

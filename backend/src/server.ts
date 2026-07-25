@@ -246,7 +246,7 @@ export async function startServer(
     runtime.lifecycleManager = lifecycleManager;
   }
 
-  const wsServer = new EventWebSocketServer(server);
+  const wsServer = new EventWebSocketServer(server, env.wsMaxSubscriptionsPerClient);
   runtime.wsServer = wsServer;
 
   // Determine cursor storage and run one-time file→database migration if needed

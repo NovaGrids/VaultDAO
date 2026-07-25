@@ -19,8 +19,10 @@ export class EventWebSocketServer {
   private clients: Map<WebSocket, ClientSubscription> = new Map();
   /** room → set of WebSocket connections */
   private rooms: Map<string, Set<WebSocket>> = new Map();
+  private readonly maxSubscriptionsPerClient: number;
 
-  constructor(server: Server) {
+  constructor(server: Server, maxSubscriptionsPerClient = 100) {
+    this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
     this.wss = new WebSocketServer({ server });
     this.init();
   }
@@ -222,11 +224,15 @@ export class EventWebSocketServer {
         norm = `notification:events:${t.toUpperCase()}`;
       }
 
-      if (sub.subscriptions.size >= 20) {
+      if (sub.subscriptions.size >= this.maxSubscriptionsPerClient) {
+        const remaining = 0;
         ws.send(
           JSON.stringify({
             type: "error",
-            message: "Maximum 20 topic subscriptions per connection",
+            code: "SUBSCRIPTION_LIMIT_REACHED",
+            message: `Maximum ${this.maxSubscriptionsPerClient} topic subscriptions per connection`,
+            limit: this.maxSubscriptionsPerClient,
+            remaining,
           }),
         );
         break;
