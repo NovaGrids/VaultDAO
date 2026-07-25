@@ -254,6 +254,14 @@ mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
+mod test_recurring_conditions;
+#[cfg(test)]
+mod test_recurring_alerts;
+#[cfg(test)]
+mod test_recurring_dryrun;
+#[cfg(test)]
+mod test_escrow_multisig;
+#[cfg(test)]
 mod test_regressions;
 #[cfg(test)]
 mod test_retry;
