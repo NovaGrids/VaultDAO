@@ -254,6 +254,8 @@ mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
+mod test_reentrancy;
+#[cfg(test)]
 mod test_regressions;
 #[cfg(test)]
 mod test_retry;
@@ -1715,6 +1717,11 @@ impl VaultDAO {
             return Err(VaultError::VaultPaused);
         }
 
+        // Check reentrancy guard (#1414)
+        if storage::is_proposal_in_progress(&env, proposal_id) {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
         // Validate state via state machine
         if proposal.status == ProposalStatus::Executed {
             return Err(VaultError::ProposalAlreadyExecuted);
@@ -1830,6 +1837,9 @@ impl VaultDAO {
             storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
         }
 
+        // Set reentrancy guard before external calls (#1414)
+        storage::set_proposal_in_progress(&env, proposal_id);
+
         // Attempt execution — retryable failures are handled below
         let exec_result =
             Self::try_execute_transfer(&env, &executor, &mut proposal, current_ledger);
@@ -1912,6 +1922,9 @@ impl VaultDAO {
                     &executor,
                     proposal_id,
                 );
+
+                // Clear reentrancy guard after state updates complete (#1414)
+                storage::clear_proposal_in_progress(&env, proposal_id);
 
                 Ok(())
             }
