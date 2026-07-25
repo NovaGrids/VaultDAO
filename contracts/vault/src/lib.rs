@@ -708,6 +708,20 @@ impl VaultDAO {
             return Err(VaultError::ExceedsWeeklyLimit);
         }
 
+        // 9b. Check per-token daily/weekly limits (issue #1440).
+        // Only enforced when the token has an explicit per-token spending config;
+        // tokens without one are only bound by the aggregate limits above.
+        if let Some(token_cfg) = storage::get_token_spending_config(&env, &token_addr) {
+            let token_spent_today = storage::get_token_daily_spent(&env, &token_addr, today);
+            if token_spent_today + amount > token_cfg.daily_limit {
+                return Err(VaultError::ExceedsTokenDailyLimit);
+            }
+            let token_spent_week = storage::get_token_weekly_spent(&env, &token_addr, week);
+            if token_spent_week + amount > token_cfg.weekly_limit {
+                return Err(VaultError::ExceedsTokenWeeklyLimit);
+            }
+        }
+
         // 10. Insurance check and locking
         let insurance_config = storage::get_insurance_config(&env);
         let mut actual_insurance = insurance_amount;
@@ -780,6 +794,8 @@ impl VaultDAO {
         // 11. Reserve spending (confirmed on execution)
         storage::add_daily_spent(&env, today, amount);
         storage::add_weekly_spent(&env, week, amount);
+        storage::add_token_daily_spent(&env, &token_addr, today, amount);
+        storage::add_token_weekly_spent(&env, &token_addr, week, amount);
 
         // 12. Calculate impact score (#1098)
         let treasury_balance = token::get_vault_balance(&env, &token_addr);
@@ -1338,6 +1354,7 @@ impl VaultDAO {
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             if proposal.status != ProposalStatus::Expired {
                 storage::refund_spending_limits(&env, proposal.amount);
+                storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
             }
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
@@ -1470,6 +1487,7 @@ impl VaultDAO {
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             if proposal.status != ProposalStatus::Expired {
                 storage::refund_spending_limits(&env, proposal.amount);
+                storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
             }
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
@@ -1735,6 +1753,7 @@ impl VaultDAO {
             // Only refund once — guard against double-refund if already Expired
             if proposal.status != ProposalStatus::Expired {
                 storage::refund_spending_limits(&env, proposal.amount);
+                storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
             }
             proposal.status = ProposalStatus::Expired;
             storage::tag_index_prune_proposal(&env, &proposal.tags, proposal_id);
@@ -2494,6 +2513,7 @@ impl VaultDAO {
 
         // Refund reserved spending capacity
         storage::refund_spending_limits(&env, proposal.amount);
+        storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
 
         // Veto is not punitive — return insurance in full
         if proposal.insurance_amount > 0 {
@@ -2697,6 +2717,7 @@ impl VaultDAO {
 
             // Refund reserved spending capacity
             storage::refund_spending_limits(&env, proposal.amount);
+            storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
 
             proposal.status = ProposalStatus::Cancelled;
             storage::set_proposal(&env, &proposal);
@@ -2902,13 +2923,28 @@ impl VaultDAO {
                 if spent_week + delta > adjusted_weekly_limit {
                     return Err(VaultError::ExceedsWeeklyLimit);
                 }
+                if let Some(token_cfg) = storage::get_token_spending_config(&env, &proposal.token) {
+                    let token_spent_today =
+                        storage::get_token_daily_spent(&env, &proposal.token, today);
+                    if token_spent_today + delta > token_cfg.daily_limit {
+                        return Err(VaultError::ExceedsTokenDailyLimit);
+                    }
+                    let token_spent_week =
+                        storage::get_token_weekly_spent(&env, &proposal.token, week);
+                    if token_spent_week + delta > token_cfg.weekly_limit {
+                        return Err(VaultError::ExceedsTokenWeeklyLimit);
+                    }
+                }
 
                 storage::add_daily_spent(&env, today, delta);
                 storage::add_weekly_spent(&env, week, delta);
+                storage::add_token_daily_spent(&env, &proposal.token, today, delta);
+                storage::add_token_weekly_spent(&env, &proposal.token, week, delta);
             }
             Ordering::Less => {
                 let delta = proposal.amount - new_amount;
                 storage::refund_spending_limits(&env, delta);
+                storage::refund_token_spending_limits(&env, &proposal.token, delta);
             }
             Ordering::Equal => {}
         }
@@ -4703,6 +4739,63 @@ impl VaultDAO {
     pub fn is_token_supported(env: Env, token: Address) -> Result<bool, VaultError> {
         let config = storage::get_config(&env)?;
         Ok(config.supported_tokens.contains(&token))
+    }
+
+    /// Update the per-token daily/weekly spending limits for an already-supported token
+    /// (issue #1440). Unlike `add_supported_token`, this can be called at any time to
+    /// tighten or loosen an existing token's limits without re-adding it.
+    ///
+    /// # Arguments
+    /// * `admin`        - Admin address (must authorize).
+    /// * `token`        - Token contract address; must already be supported.
+    /// * `daily_limit`  - New maximum daily outflow for this token.
+    /// * `weekly_limit` - New maximum weekly outflow for this token.
+    pub fn set_token_limits(
+        env: Env,
+        admin: Address,
+        token: Address,
+        daily_limit: i128,
+        weekly_limit: i128,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if daily_limit <= 0 || weekly_limit <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut config = storage::get_config(&env)?;
+
+        let mut found_idx: Option<u32> = None;
+        for i in 0..config.supported_tokens.len() {
+            if config.supported_tokens.get(i).unwrap() == token {
+                found_idx = Some(i);
+                break;
+            }
+        }
+        let idx = found_idx.ok_or(VaultError::TokenNotSupported)?;
+
+        config.token_daily_limits.set(idx, daily_limit);
+        config.token_weekly_limits.set(idx, weekly_limit);
+        storage::set_config(&env, &config);
+
+        let is_default = idx == 0;
+        let token_cfg = TokenSpendingConfig {
+            token: token.clone(),
+            daily_limit,
+            weekly_limit,
+            is_default,
+        };
+        storage::set_token_spending_config(&env, &token_cfg);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
     }
 
     /// Update streaming rate limiter config (admin only).
@@ -14980,3 +15073,12 @@ impl VaultDAO {
         storage::get_governance_proposal(&env, id)
     }
 }
+
+#[cfg(test)]
+mod test_token_limits;
+#[cfg(test)]
+mod test_swap_multi_token;
+#[cfg(test)]
+mod test_token_insurance;
+#[cfg(test)]
+mod test_stream_clawback;
