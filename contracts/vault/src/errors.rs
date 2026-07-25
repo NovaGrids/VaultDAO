@@ -104,6 +104,11 @@ pub enum VaultError {
     TooManyTokens = 252,
     CannotRemoveDefaultToken = 253,
     TokenHasActivePayments = 254,
+    // Issue #1440: Per-Token Daily/Weekly Spending Limits
+    /// Amount exceeds the per-token daily spending limit
+    ExceedsTokenDailyLimit = 255,
+    /// Amount exceeds the per-token weekly spending limit
+    ExceedsTokenWeeklyLimit = 256,
     /// Invalid time-based threshold configuration
     InvalidThresholdConfig = 310,
     /// Delegation cycle detected
