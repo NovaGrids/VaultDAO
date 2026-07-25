@@ -175,3 +175,131 @@ test("getProposalActivityController returns full event history for a proposal", 
   assert.equal(body.data.total, 2);
   assert.equal(body.data.data.length, 2);
 });
+
+// ============================================================================
+// Cursor Pagination Tests – proposals
+// ============================================================================
+
+test("getAllProposalsController cursor mode: returns first page with nextCursor when records > limit", async () => {
+  const records = Array.from({ length: 5 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+  const { res, state } = createMockResponse();
+
+  await handler(
+    { query: { contractId: "contract-1", limit: "2" } } as any,
+    res as any,
+    (() => {}) as any,
+  );
+
+  const body = state.body as any;
+  assert.equal(state.statusCode, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.data.data.length, 2);
+  assert.equal(body.data.total, 5);
+  assert.ok(body.data.nextCursor !== null, "nextCursor should be present");
+  assert.equal(typeof body.data.nextCursor, "string");
+  // No offset field in cursor mode
+  assert.equal(body.data.offset, undefined);
+});
+
+test("getAllProposalsController cursor mode: second page uses nextCursor and returns correct items", async () => {
+  const records = Array.from({ length: 5 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+
+  // First page
+  const { res: res1, state: state1 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2" } } as any,
+    res1 as any,
+    (() => {}) as any,
+  );
+  const body1 = (state1.body as any).data;
+  const cursor = body1.nextCursor as string;
+  assert.ok(cursor);
+
+  // Second page using cursor
+  const { res: res2, state: state2 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2", cursor } } as any,
+    res2 as any,
+    (() => {}) as any,
+  );
+  const body2 = (state2.body as any).data;
+  assert.equal(state2.statusCode, 200);
+  assert.equal(body2.data.length, 2);
+  // Items on the second page should be different from the first
+  const firstPageIds = body1.data.map((r: any) => r.activityId);
+  const secondPageIds = body2.data.map((r: any) => r.activityId);
+  assert.ok(
+    !firstPageIds.some((id: string) => secondPageIds.includes(id)),
+    "pages should not overlap",
+  );
+});
+
+test("getAllProposalsController cursor mode: last page returns nextCursor = null", async () => {
+  const records = Array.from({ length: 3 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+  const { res, state } = createMockResponse();
+
+  await handler(
+    { query: { contractId: "contract-1", limit: "10" } } as any,
+    res as any,
+    (() => {}) as any,
+  );
+
+  const body = state.body as any;
+  assert.equal(body.data.data.length, 3);
+  assert.equal(body.data.nextCursor, null);
+});
+
+test("getAllProposalsController cursor mode: invalid cursor falls back to offset 0", async () => {
+  const records = Array.from({ length: 3 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+  const { res, state } = createMockResponse();
+
+  await handler(
+    { query: { contractId: "contract-1", limit: "2", cursor: "totally-invalid-cursor" } } as any,
+    res as any,
+    (() => {}) as any,
+  );
+
+  const body = state.body as any;
+  assert.equal(state.statusCode, 200);
+  // Should return data from the start (offset 0 fallback)
+  assert.equal(body.data.data.length, 2);
+});
+
+test("getAllProposalsController offset mode: backward-compatible with offset+limit params", async () => {
+  const records = Array.from({ length: 10 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+  const { res, state } = createMockResponse();
+
+  await handler(
+    { query: { contractId: "contract-1", offset: "5", limit: "3" } } as any,
+    res as any,
+    (() => {}) as any,
+  );
+
+  const body = state.body as any;
+  assert.equal(state.statusCode, 200);
+  assert.equal(body.data.data.length, 3);
+  assert.equal(body.data.offset, 5);
+  assert.equal(body.data.total, 10);
+  // Offset mode should NOT have nextCursor
+  assert.equal(body.data.nextCursor, undefined);
+});

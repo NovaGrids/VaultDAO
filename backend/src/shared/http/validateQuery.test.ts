@@ -357,3 +357,139 @@ test("validateLedgerRange rejects negative to", () => {
   assert.equal(v, null);
   assert.equal(getStatus(), 400);
 });
+
+// ============================================================================
+// Cursor Pagination Tests
+// ============================================================================
+
+import {
+  encodeCursor,
+  decodeCursor,
+  parseCursorPagination,
+  validateCursorPagination,
+  type CursorPayload,
+} from "./validateQuery.js";
+
+test("encodeCursor / decodeCursor round-trips correctly", () => {
+  const payload: CursorPayload = { lastId: "activity-42", offset: 20 };
+  const encoded = encodeCursor(payload);
+  assert.ok(typeof encoded === "string" && encoded.length > 0, "should produce a non-empty string");
+  const decoded = decodeCursor(encoded);
+  assert.deepEqual(decoded, payload);
+});
+
+test("decodeCursor returns null for undefined input", () => {
+  assert.equal(decodeCursor(undefined), null);
+});
+
+test("decodeCursor returns null for empty string", () => {
+  assert.equal(decodeCursor(""), null);
+});
+
+test("decodeCursor returns null for whitespace-only string", () => {
+  assert.equal(decodeCursor("   "), null);
+});
+
+test("decodeCursor returns null for invalid base64", () => {
+  assert.equal(decodeCursor("!!!notbase64!!!"), null);
+});
+
+test("decodeCursor returns null for valid base64 that isn't a cursor object", () => {
+  const bogus = Buffer.from(JSON.stringify({ foo: "bar" })).toString("base64");
+  assert.equal(decodeCursor(bogus), null);
+});
+
+test("decodeCursor returns null when offset is not a number", () => {
+  const bogus = Buffer.from(JSON.stringify({ lastId: "x", offset: "nope" })).toString("base64");
+  assert.equal(decodeCursor(bogus), null);
+});
+
+test("decodeCursor returns null when offset is negative", () => {
+  const bogus = Buffer.from(JSON.stringify({ lastId: "x", offset: -1 })).toString("base64");
+  assert.equal(decodeCursor(bogus), null);
+});
+
+test("parseCursorPagination returns null cursor and default limit when no params", () => {
+  const r = parseCursorPagination({});
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.equal(r.value.cursor, null);
+    assert.equal(r.value.limit, DEFAULT_PAGINATION_LIMIT);
+  }
+});
+
+test("parseCursorPagination parses a valid cursor param", () => {
+  const payload: CursorPayload = { lastId: "entry-5", offset: 10 };
+  const encoded = encodeCursor(payload);
+  const r = parseCursorPagination({ cursor: encoded });
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.deepEqual(r.value.cursor, payload);
+    assert.equal(r.value.limit, DEFAULT_PAGINATION_LIMIT);
+  }
+});
+
+test("parseCursorPagination treats invalid cursor as null (graceful fallback)", () => {
+  const r = parseCursorPagination({ cursor: "this-is-garbage" });
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.equal(r.value.cursor, null);
+  }
+});
+
+test("parseCursorPagination caps limit at MAX_PAGINATION_LIMIT", () => {
+  const r = parseCursorPagination({ limit: "999" });
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.equal(r.value.limit, MAX_PAGINATION_LIMIT);
+  }
+});
+
+test("parseCursorPagination rejects non-integer limit", () => {
+  const r = parseCursorPagination({ limit: "abc" });
+  assert.equal(r.ok, false);
+});
+
+test("parseCursorPagination rejects limit < 1", () => {
+  const r = parseCursorPagination({ limit: "0" });
+  assert.equal(r.ok, false);
+});
+
+test("validateCursorPagination sends 400 on invalid limit", () => {
+  const { res, getStatus, getBody } = mockResponse();
+  const req = { query: { limit: "bad" } } as unknown as Request;
+  const out = validateCursorPagination(req, res);
+  assert.equal(out, null);
+  assert.equal(getStatus(), 400);
+  const body = getBody() as { success: boolean; error: { message: string; code: string } };
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /limit/i);
+  assert.equal(body.error.code, ErrorCode.BAD_REQUEST);
+});
+
+test("validateCursorPagination returns cursor null and default limit for empty query", () => {
+  const { res } = mockResponse();
+  const req = { query: {} } as unknown as Request;
+  const out = validateCursorPagination(req, res);
+  assert.ok(out !== null);
+  assert.equal(out!.cursor, null);
+  assert.equal(out!.limit, DEFAULT_PAGINATION_LIMIT);
+});
+
+test("encodeCursor produces URL-safe base64 (no +, /, =)", () => {
+  // Test with a payload that would normally trigger + or / in standard base64
+  for (let i = 0; i < 50; i++) {
+    const encoded = encodeCursor({ lastId: `id-${i}-some-longer-string`, offset: i * 17 });
+    assert.ok(!/[+/=]/.test(encoded), `cursor should be URL-safe, got: ${encoded}`);
+  }
+});
+
+test("cursor pagination across page boundaries: second page uses nextCursor from first", () => {
+  // Encode a cursor that points to after item at index 2
+  const firstPageCursor: CursorPayload = { lastId: "item-2", offset: 3 };
+  const encoded = encodeCursor(firstPageCursor);
+  const decoded = decodeCursor(encoded);
+  assert.deepEqual(decoded, firstPageCursor);
+  // Simulated second page: startIndex should be 3 (offset from cursor)
+  assert.equal(decoded!.offset, 3);
+});
