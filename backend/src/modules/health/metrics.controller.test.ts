@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Request, Response } from "express";
-import { getMetricsController } from "./metrics.controller.js";
+import { getMetricsController, wantsOpenMetrics } from "./metrics.controller.js";
 import { MetricsRegistry } from "./metrics.registry.js";
 
 function createMockResponse() {
@@ -147,4 +147,85 @@ test("Prometheus histogram renders required rpc latency buckets", () => {
   assert.match(lines, /vaultdao_rpc_latency_ms_bucket\{le="1000"\} 2/);
   assert.match(lines, /vaultdao_rpc_latency_ms_bucket\{le="2500"\} 2/);
   assert.match(lines, /vaultdao_rpc_latency_ms_bucket\{le="\+Inf"\} 3/);
+});
+
+test("GET /api/v1/metrics?format=openmetrics returns OpenMetrics exposition", () => {
+  const registry = new MetricsRegistry();
+  registry.register("vaultdao_uptime_seconds", "Backend uptime in seconds", "gauge");
+  registry.register("vaultdao_events_polled_total", "Total polled and processed events", "counter");
+  registry.incrementCounter("vaultdao_events_polled_total");
+
+  const runtime = {
+    startedAt: new Date(Date.now() - 1_000).toISOString(),
+    metricsRegistry: registry,
+    wsServer: { getActiveConnectionCount: () => 0 },
+  } as any;
+
+  const handler = getMetricsController(runtime);
+  const req = {
+    query: { format: "openmetrics" },
+    headers: {},
+  } as unknown as Request;
+  const { response, state } = createMockResponse();
+
+  handler(req, response, (() => undefined) as any);
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(
+    state.headers["content-type"],
+    "application/openmetrics-text; version=1.0.0; charset=utf-8",
+  );
+  assert.match(state.textBody, /# TYPE vaultdao_events_polled_total counter/);
+  assert.match(state.textBody.trimEnd(), /# EOF$/);
+});
+
+test("GET /api/v1/metrics with Accept: application/openmetrics-text negotiates OpenMetrics format", () => {
+  const registry = new MetricsRegistry();
+  registry.register("vaultdao_uptime_seconds", "Backend uptime in seconds", "gauge");
+
+  const runtime = {
+    startedAt: new Date(Date.now() - 1_000).toISOString(),
+    metricsRegistry: registry,
+    wsServer: { getActiveConnectionCount: () => 0 },
+  } as any;
+
+  const handler = getMetricsController(runtime);
+  const req = {
+    query: {},
+    headers: { accept: "application/openmetrics-text; version=1.0.0" },
+  } as unknown as Request;
+  const { response, state } = createMockResponse();
+
+  handler(req, response, (() => undefined) as any);
+
+  assert.equal(
+    state.headers["content-type"],
+    "application/openmetrics-text; version=1.0.0; charset=utf-8",
+  );
+  assert.match(state.textBody.trimEnd(), /# EOF$/);
+});
+
+test("wantsOpenMetrics returns false for a plain JSON/Prometheus request", () => {
+  assert.equal(
+    wantsOpenMetrics({ query: {}, headers: { accept: "text/plain" } } as unknown as Request),
+    false,
+  );
+  assert.equal(
+    wantsOpenMetrics({ query: {}, headers: {} } as unknown as Request),
+    false,
+  );
+});
+
+test("wantsOpenMetrics returns true for ?format=openmetrics or the Accept header", () => {
+  assert.equal(
+    wantsOpenMetrics({ query: { format: "openmetrics" }, headers: {} } as unknown as Request),
+    true,
+  );
+  assert.equal(
+    wantsOpenMetrics({
+      query: {},
+      headers: { accept: "application/openmetrics-text" },
+    } as unknown as Request),
+    true,
+  );
 });

@@ -27,6 +27,12 @@ export enum RecurringEvent {
   CANCELLED = "CANCELLED",
   /** Payment became due (ledger threshold reached) */
   BECAME_DUE = "BECAME_DUE",
+  /**
+   * Jitter was applied to the next execution ledger.
+   * The next_payment_ledger on this payment is offset by jitter_offset ledgers
+   * beyond the nominal schedule.  This is expected behavior, not an anomaly.
+   */
+  JITTERED = "JITTERED",
 }
 
 /**
@@ -74,6 +80,21 @@ export interface NormalizedRecurringPayment {
   readonly ledgersUntilDue: number;
   /** Number of missed payments when overdue */
   readonly missedPayments: number;
+  /**
+   * Maximum ledger spread applied after the first cycle for load distribution.
+   * 0 means jitter is disabled for this payment.
+   * When non-zero, each cycle's `nextPaymentLedger` is shifted forward by
+   * `jitterOffset` ledgers.  Auditors: this variance is intentional — see
+   * RECURRING_PAYMENT_JITTERED events for per-cycle details.
+   */
+  readonly jitterWindow: number;
+  /**
+   * Deterministic offset (in ledgers) added to `nextPaymentLedger` each cycle
+   * when `jitterWindow > 0`.  Computed on-chain as
+   * `sha256(id || creation_ledger) % jitter_window`.  Fixed for the lifetime
+   * of the payment.
+   */
+  readonly jitterOffset: number;
 }
 
 /**
@@ -94,6 +115,16 @@ export interface RawRecurringPayment {
   readonly retry_next_ledger: string;
   readonly payment_count: string;
   readonly is_active: boolean;
+  /**
+   * Maximum jitter window in ledgers (0 = disabled).
+   * Capped on-chain at 10% of the payment interval.
+   */
+  readonly jitter_window?: string;
+  /**
+   * Deterministic jitter offset in ledgers applied from the second cycle
+   * onward.  sha256(id || creation_ledger) % jitter_window.
+   */
+  readonly jitter_offset?: string;
 }
 
 /**
@@ -138,10 +169,8 @@ export interface RecurringFilter {
 
 /**
  * Map of contract event topics to internal RecurringEvent types.
- * TODO: Add recurring event topics once contract emits them
  */
 export const CONTRACT_RECURRING_EVENT_MAP: Record<string, RecurringEvent> = {
-  // recurring_created: RecurringEvent.CREATED,
-  // recurring_executed: RecurringEvent.EXECUTED,
-  // recurring_cancelled: RecurringEvent.CANCELLED,
+  recurring_payment_executed: RecurringEvent.EXECUTED,
+  recurring_pay_jittered: RecurringEvent.JITTERED,
 };

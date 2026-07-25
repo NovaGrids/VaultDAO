@@ -65,7 +65,7 @@ const ProposalFilters: React.FC<ProposalFiltersProps> = ({ onFilterChange, propo
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
           <input
             type="text"
-            placeholder="Search proposer, recipient, or memo..."
+            placeholder='Search proposals… try "recipient:alice amount:>1000"'
             className="w-full bg-gray-900/50 border border-gray-700 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-purple-500 outline-none transition-all"
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}

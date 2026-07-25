@@ -51,14 +51,18 @@
     -->
     <script>
       (function () {
-        var VALID = ['light', 'dark', 'high-contrast'];
-        var stored = null;
-        try { stored = localStorage.getItem('vaultdao_theme'); } catch (e) {}
-        var theme = (stored && VALID.indexOf(stored) !== -1)
-          ? stored
-          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        document.documentElement.classList.add(theme);
-        document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
+        try {
+          var key = 'vaultdao_theme_preference';
+          var stored = localStorage.getItem(key);
+          var pref = (stored === 'light' || stored === 'dark' || stored === 'system') ? stored : 'system';
+          var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var resolved = pref === 'system' ? (systemDark ? 'dark' : 'light') : pref;
+          document.documentElement.classList.add(resolved);
+          document.documentElement.style.colorScheme = resolved;
+        } catch (e) {
+          document.documentElement.classList.add('light');
+          document.documentElement.style.colorScheme = 'light';
+        }
       })();
     </script>
   </head>

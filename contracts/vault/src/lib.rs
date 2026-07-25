@@ -33,13 +33,13 @@ use types::{
     CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory, DexConfig, Dispute,
     DisputeResolution, DisputeStatus, Escrow, EscrowStatus, ExecutionFeeEstimate, FundingMilestone,
     FundingMilestoneStatus, FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig,
-    GovernanceProposal, HolidayBehavior, HolidayCalendar, ImpactScore, InitConfig, InsuranceClaim,
-    InsuranceClaimStatus, InsuranceConfig, ListMode, Milestone, MultiPhaseProposal,
-    NotificationPreferences, NotificationPrefs, OptionalProposalOperation,
-    OptionalVaultOracleConfig, PauseState, Priority, Proposal, ProposalAmendment,
-    ProposalOperation, ProposalPhase, ProposalPhaseStatus, ProposalStatus, ProposalTemplate,
-    RecoveryConfig, RecoveryProposal, RecoveryStatus, RecurringPayment, RecurringStatus,
-    Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
+    GasPriceOracleConfig, GasPriceSource, GovernanceProposal, HolidayBehavior, HolidayCalendar,
+    ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus, InsuranceConfig, ListMode,
+    Milestone, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
+    OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority, Proposal,
+    ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus, ProposalStatus,
+    ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus, RecurringPayment,
+    RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
     ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig, StreamRateWindow,
     StreamStatus, StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier,
     SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy, TokenSpendingConfig,
@@ -244,7 +244,11 @@ mod test_cross_vault;
 #[cfg(test)]
 mod test_disputes;
 #[cfg(test)]
+mod test_escrow_timeout;
+#[cfg(test)]
 mod test_fees;
+#[cfg(test)]
+mod test_gas_price_oracle;
 #[cfg(test)]
 mod test_hooks;
 #[cfg(test)]
@@ -254,11 +258,17 @@ mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
+mod test_rbac_consistency;
+#[cfg(test)]
+mod test_reentrancy;
+#[cfg(test)]
 mod test_regressions;
 #[cfg(test)]
 mod test_retry;
 #[cfg(test)]
 mod test_staking;
+#[cfg(test)]
+mod test_stream_burst_config;
 #[cfg(test)]
 mod test_streaming;
 #[cfg(test)]
@@ -271,6 +281,15 @@ mod test_tags;
 mod test_var_templates;
 #[cfg(test)]
 mod test_voting_deadline;
+#[cfg(test)]
+mod test_fee_cache;
+#[cfg(test)]
+mod test_fan_out_streams;
+#[cfg(test)]
+mod test_stream_pause_ttl;
+#[cfg(test)]
+mod test_escrow_voting;
+mod test_proposal_management;
 
 #[cfg(test)]
 pub mod mock_oracle {
@@ -449,6 +468,12 @@ impl VaultDAO {
             vote_weight: config.vote_weight,
             high_impact_threshold: config.high_impact_threshold,
             admin_rotation_delay: config.admin_rotation_delay,
+            arbitration_timeout_ledgers: if config.arbitration_timeout_ledgers > 0 {
+                config.arbitration_timeout_ledgers
+            } else {
+                17_280 * 30 // default: 30 days
+            },
+            approval_timeout_ledgers: config.approval_timeout_ledgers,
         };
 
         // Apply staking config from InitConfig
@@ -708,6 +733,20 @@ impl VaultDAO {
             return Err(VaultError::ExceedsWeeklyLimit);
         }
 
+        // 9b. Check per-token daily/weekly limits (issue #1440).
+        // Only enforced when the token has an explicit per-token spending config;
+        // tokens without one are only bound by the aggregate limits above.
+        if let Some(token_cfg) = storage::get_token_spending_config(&env, &token_addr) {
+            let token_spent_today = storage::get_token_daily_spent(&env, &token_addr, today);
+            if token_spent_today + amount > token_cfg.daily_limit {
+                return Err(VaultError::ExceedsTokenDailyLimit);
+            }
+            let token_spent_week = storage::get_token_weekly_spent(&env, &token_addr, week);
+            if token_spent_week + amount > token_cfg.weekly_limit {
+                return Err(VaultError::ExceedsTokenWeeklyLimit);
+            }
+        }
+
         // 10. Insurance check and locking
         let insurance_config = storage::get_insurance_config(&env);
         let mut actual_insurance = insurance_amount;
@@ -780,6 +819,8 @@ impl VaultDAO {
         // 11. Reserve spending (confirmed on execution)
         storage::add_daily_spent(&env, today, amount);
         storage::add_weekly_spent(&env, week, amount);
+        storage::add_token_daily_spent(&env, &token_addr, today, amount);
+        storage::add_token_weekly_spent(&env, &token_addr, week, amount);
 
         // 12. Calculate impact score (#1098)
         let treasury_balance = token::get_vault_balance(&env, &token_addr);
@@ -1338,6 +1379,7 @@ impl VaultDAO {
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             if proposal.status != ProposalStatus::Expired {
                 storage::refund_spending_limits(&env, proposal.amount);
+                storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
             }
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
@@ -1470,6 +1512,7 @@ impl VaultDAO {
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             if proposal.status != ProposalStatus::Expired {
                 storage::refund_spending_limits(&env, proposal.amount);
+                storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
             }
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
@@ -1715,6 +1758,11 @@ impl VaultDAO {
             return Err(VaultError::VaultPaused);
         }
 
+        // Check reentrancy guard (#1414)
+        if storage::is_proposal_in_progress(&env, proposal_id) {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
         // Validate state via state machine
         if proposal.status == ProposalStatus::Executed {
             return Err(VaultError::ProposalAlreadyExecuted);
@@ -1735,6 +1783,7 @@ impl VaultDAO {
             // Only refund once — guard against double-refund if already Expired
             if proposal.status != ProposalStatus::Expired {
                 storage::refund_spending_limits(&env, proposal.amount);
+                storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
             }
             proposal.status = ProposalStatus::Expired;
             storage::tag_index_prune_proposal(&env, &proposal.tags, proposal_id);
@@ -1830,6 +1879,9 @@ impl VaultDAO {
             storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
         }
 
+        // Set reentrancy guard before external calls (#1414)
+        storage::set_proposal_in_progress(&env, proposal_id);
+
         // Attempt execution — retryable failures are handled below
         let exec_result =
             Self::try_execute_transfer(&env, &executor, &mut proposal, current_ledger);
@@ -1912,6 +1964,9 @@ impl VaultDAO {
                     &executor,
                     proposal_id,
                 );
+
+                // Clear reentrancy guard after state updates complete (#1414)
+                storage::clear_proposal_in_progress(&env, proposal_id);
 
                 Ok(())
             }
@@ -2494,6 +2549,7 @@ impl VaultDAO {
 
         // Refund reserved spending capacity
         storage::refund_spending_limits(&env, proposal.amount);
+        storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
 
         // Veto is not punitive — return insurance in full
         if proposal.insurance_amount > 0 {
@@ -2697,6 +2753,7 @@ impl VaultDAO {
 
             // Refund reserved spending capacity
             storage::refund_spending_limits(&env, proposal.amount);
+            storage::refund_token_spending_limits(&env, &proposal.token, proposal.amount);
 
             proposal.status = ProposalStatus::Cancelled;
             storage::set_proposal(&env, &proposal);
@@ -2902,13 +2959,28 @@ impl VaultDAO {
                 if spent_week + delta > adjusted_weekly_limit {
                     return Err(VaultError::ExceedsWeeklyLimit);
                 }
+                if let Some(token_cfg) = storage::get_token_spending_config(&env, &proposal.token) {
+                    let token_spent_today =
+                        storage::get_token_daily_spent(&env, &proposal.token, today);
+                    if token_spent_today + delta > token_cfg.daily_limit {
+                        return Err(VaultError::ExceedsTokenDailyLimit);
+                    }
+                    let token_spent_week =
+                        storage::get_token_weekly_spent(&env, &proposal.token, week);
+                    if token_spent_week + delta > token_cfg.weekly_limit {
+                        return Err(VaultError::ExceedsTokenWeeklyLimit);
+                    }
+                }
 
                 storage::add_daily_spent(&env, today, delta);
                 storage::add_weekly_spent(&env, week, delta);
+                storage::add_token_daily_spent(&env, &proposal.token, today, delta);
+                storage::add_token_weekly_spent(&env, &proposal.token, week, delta);
             }
             Ordering::Less => {
                 let delta = proposal.amount - new_amount;
                 storage::refund_spending_limits(&env, delta);
+                storage::refund_token_spending_limits(&env, &proposal.token, delta);
             }
             Ordering::Equal => {}
         }
@@ -3262,6 +3334,7 @@ impl VaultDAO {
                 vote_weight: VoteWeight::Flat,
                 high_impact_threshold: 70,
                 admin_rotation_delay: MIN_ADMIN_ROTATION_DELAY,
+                approval_timeout_ledgers: 0,
             }
         });
         (config.quorum, config.quorum_percentage)
@@ -3816,6 +3889,201 @@ impl VaultDAO {
     pub fn get_config(env: Env) -> Result<Config, VaultError> {
         storage::extend_instance_ttl(&env);
         storage::get_config(&env)
+    }
+
+    // ========================================================================
+    // Issue #1424: Fix Empty Signer Snapshot Bug
+    // ========================================================================
+
+    /// Retrieve the signer snapshot for a proposal (for debugging and audit)
+    /// Returns the list of signers who were authorized to vote at proposal creation
+    pub fn get_signer_snapshot(env: Env, proposal_id: u64) -> Result<Vec<Address>, VaultError> {
+        storage::extend_instance_ttl(&env);
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        Ok(proposal.signer_snapshot.keys())
+    }
+
+    // ========================================================================
+    // Issue #1423: Implement Proposal Supersession
+    // ========================================================================
+
+    /// Supersede (replace) an existing proposal with a new one
+    /// The old proposal is cancelled with a reference to the new one
+    #[allow(clippy::too_many_arguments)]
+    pub fn supersede_proposal(
+        env: Env,
+        proposer: Address,
+        old_proposal_id: u64,
+        recipient: Address,
+        token_addr: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify the proposer authorized the old proposal
+        let old_proposal = storage::get_proposal(&env, old_proposal_id)?;
+        if old_proposal.proposer != proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Create the new proposal
+        let new_proposal_id = Self::propose_transfer_internal(
+            env.clone(),
+            proposer.clone(),
+            recipient,
+            token_addr,
+            amount,
+            memo.clone(),
+            priority,
+            conditions,
+            condition_logic,
+            insurance_amount,
+            Vec::new(&env),
+            None,
+            0,
+            false,
+        )?;
+
+        // Cancel the old proposal with supersession reason
+        let mut cancelled_proposal = old_proposal;
+        cancelled_proposal.status = ProposalStatus::Cancelled;
+
+        // Add metadata linking to the new proposal
+        cancelled_proposal
+            .metadata
+            .set(Symbol::new(&env, "superseded_by"), new_proposal_id.to_string());
+        cancelled_proposal
+            .metadata
+            .set(Symbol::new(&env, "supersession_reason"), Symbol::new(&env, "superseded"));
+
+        storage::set_proposal(&env, &cancelled_proposal);
+
+        // Add metadata to new proposal linking to old one
+        let mut new_proposal = storage::get_proposal(&env, new_proposal_id)?;
+        new_proposal
+            .metadata
+            .set(Symbol::new(&env, "supersedes"), old_proposal_id.to_string());
+        storage::set_proposal(&env, &new_proposal);
+
+        // Emit event for supersession
+        events::emit_proposal_cancelled(
+            &env,
+            old_proposal_id,
+            &proposer,
+            &Symbol::new(&env, "superseded"),
+            0, // No refund in supersession
+        );
+
+        Ok(new_proposal_id)
+    }
+
+    // ========================================================================
+    // Issue #1425: Implement Proposal Approval Timeout Mechanism
+    // ========================================================================
+
+    /// Update the approval timeout configuration
+    pub fn update_approval_timeout(env: Env, admin: Address, timeout_ledgers: u64) -> Result<(), VaultError> {
+        admin.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify admin role
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.approval_timeout_ledgers = timeout_ledgers;
+        storage::set_config(&env, &config);
+
+        // Emit config update event
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
+    /// Automatically expire proposals that have exceeded the approval timeout
+    /// Returns the count of proposals expired
+    pub fn auto_expire_proposals(
+        env: Env,
+        admin: Address,
+        max_count: u32,
+    ) -> Result<u32, VaultError> {
+        admin.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify admin role
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let config = storage::get_config(&env)?;
+        if config.approval_timeout_ledgers == 0 {
+            return Ok(0); // Timeout disabled
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let mut expired_count = 0u32;
+
+        // Get all proposal IDs (simplified — in production would use pagination)
+        let next_id = storage::get_next_proposal_id(&env);
+        for proposal_id in 1..next_id {
+            if expired_count >= max_count {
+                break;
+            }
+
+            match storage::get_proposal(&env, proposal_id) {
+                Ok(mut proposal) => {
+                    if proposal.status == ProposalStatus::Pending {
+                        let age = current_ledger.saturating_sub(proposal.created_at);
+                        if age > config.approval_timeout_ledgers {
+                            // Expire the proposal
+                            proposal.status = ProposalStatus::Expired;
+                            storage::set_proposal(&env, &proposal);
+                            expired_count += 1;
+
+                            // Emit expiry event
+                            events::emit_proposal_expired(&env, proposal_id, current_ledger);
+                        }
+                    }
+                }
+                Err(_) => continue, // Proposal not found, skip
+            }
+        }
+
+        Ok(expired_count)
+    }
+
+    /// Update the signer list configuration
+    pub fn update_config_signers(
+        env: Env,
+        admin: Address,
+        signers: Vec<Address>,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        storage::extend_instance_ttl(&env);
+
+        // Verify admin role
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.signers = signers;
+        storage::set_config(&env, &config);
+
+        // Emit config update event
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
     }
 
     // ========================================================================
@@ -4708,6 +4976,63 @@ impl VaultDAO {
         Ok(config.supported_tokens.contains(&token))
     }
 
+    /// Update the per-token daily/weekly spending limits for an already-supported token
+    /// (issue #1440). Unlike `add_supported_token`, this can be called at any time to
+    /// tighten or loosen an existing token's limits without re-adding it.
+    ///
+    /// # Arguments
+    /// * `admin`        - Admin address (must authorize).
+    /// * `token`        - Token contract address; must already be supported.
+    /// * `daily_limit`  - New maximum daily outflow for this token.
+    /// * `weekly_limit` - New maximum weekly outflow for this token.
+    pub fn set_token_limits(
+        env: Env,
+        admin: Address,
+        token: Address,
+        daily_limit: i128,
+        weekly_limit: i128,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if daily_limit <= 0 || weekly_limit <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut config = storage::get_config(&env)?;
+
+        let mut found_idx: Option<u32> = None;
+        for i in 0..config.supported_tokens.len() {
+            if config.supported_tokens.get(i).unwrap() == token {
+                found_idx = Some(i);
+                break;
+            }
+        }
+        let idx = found_idx.ok_or(VaultError::TokenNotSupported)?;
+
+        config.token_daily_limits.set(idx, daily_limit);
+        config.token_weekly_limits.set(idx, weekly_limit);
+        storage::set_config(&env, &config);
+
+        let is_default = idx == 0;
+        let token_cfg = TokenSpendingConfig {
+            token: token.clone(),
+            daily_limit,
+            weekly_limit,
+            is_default,
+        };
+        storage::set_token_spending_config(&env, &token_cfg);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
     /// Update streaming rate limiter config (admin only).
     ///
     /// Sets the `stream_max_window_amount` and `burst_factor` on the Config.
@@ -4735,6 +5060,42 @@ impl VaultDAO {
         config.burst_factor = burst_factor;
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Set streaming payment rate limit burst factor (admin only).
+    ///
+    /// Allows operators to adjust the burst multiplier for streaming payments.
+    /// Burst factor controls how much above the base limit a stream can burst.
+    /// Valid range: 100-300 (1x to 3x multiplier).
+    ///
+    /// # Arguments
+    /// * `admin` - The admin address (must be Admin role)
+    /// * `factor` - The burst factor * 100 (e.g., 150 = 1.5x burst, 300 = 3x burst)
+    pub fn set_stream_burst_factor(
+        env: Env,
+        admin: Address,
+        factor: u32,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if factor < 100 || factor > 300 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        let old_factor = config.burst_factor;
+        config.burst_factor = factor;
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_burst_factor_updated(&env, &admin, old_factor, factor);
 
         Ok(())
     }
@@ -4852,11 +5213,22 @@ impl VaultDAO {
         // Update payment schedule.
         // After the first payment (payment_count was 0), apply jitter to all subsequent cycles.
         let was_first_payment = payment.payment_count == 0;
-        payment.next_payment_ledger += total_payments * payment.interval;
+        let nominal_next_ledger = payment.next_payment_ledger + total_payments * payment.interval;
+        payment.next_payment_ledger = nominal_next_ledger;
         if !was_first_payment && payment.jitter_window > 0 {
             payment.next_payment_ledger = payment
                 .next_payment_ledger
                 .saturating_add(payment.jitter_offset as u64);
+
+            // Emit a jitter event so auditors can distinguish timing variance
+            // from scheduling bugs.  See events.rs for full field documentation.
+            crate::events::emit_recurring_payment_jittered(
+                &env,
+                payment_id,
+                nominal_next_ledger,
+                payment.next_payment_ledger,
+                payment.jitter_offset,
+            );
         }
         payment.payment_count += total_payments as u32;
         storage::set_recurring_payment(&env, &payment);
@@ -7226,7 +7598,26 @@ impl VaultDAO {
     /// Estimate the compute cost of executing a proposal.
     ///
     /// Walks the proposal's operations and conditions, aggregates costs from the
-    /// on-chain CostModel, and applies a 10% buffer.  Read-only (advisory).
+    /// on-chain CostModel, and applies a 10% buffer.
+    ///
+    /// # Oracle integration (Issue #1367)
+    ///
+    /// When a gas-price oracle is configured via `set_gas_price_oracle`, this
+    /// function queries it for a live `stroops_per_10k_compute_units` price.
+    /// The oracle must expose the same `lastprice(asset: Address) -> Option<VaultPriceData>`
+    /// interface already used by `get_asset_price` / condition evaluation.
+    ///
+    /// Fallback rules — the local `CostModel.stroops_per_10k_compute_units` is
+    /// used (and the reason is recorded in `price_source`) if:
+    ///   - no oracle is configured,
+    ///   - the oracle cross-contract call panics,
+    ///   - the oracle returns `None`,
+    ///   - the returned price is stale (older than `max_staleness` ledgers),
+    ///   - the returned price is ≤ 0.
+    ///
+    /// The function **never** returns an error for oracle failures — fallback is
+    /// silent except for the `oracle_gas_price_used` event that records the
+    /// source and price actually used.
     pub fn estimate_proposal_cost(
         env: Env,
         proposal_id: u64,
@@ -7234,6 +7625,7 @@ impl VaultDAO {
         let proposal = storage::get_proposal(&env, proposal_id)?;
         let model = storage::get_cost_model(&env);
 
+        // --- compute unit aggregation (unchanged from Issue #1085) ---
         let mut compute_units: u64 = model.base_compute_units;
         let mut ledger_reads: u32 = model.base_ledger_reads;
         let mut ledger_writes: u32 = model.base_ledger_writes;
@@ -7267,15 +7659,148 @@ impl VaultDAO {
         // Apply 10% conservative buffer
         compute_units = compute_units.saturating_add(compute_units / 10);
 
-        let fee_estimate_xlm =
-            (compute_units as i128 / 10_000).saturating_mul(model.stroops_per_10k_compute_units);
+        // --- oracle price resolution (Issue #1367) ---
+        let (price_used, price_source) = Self::resolve_gas_price(&env, &model, proposal_id);
+
+        let fee_estimate_xlm = (compute_units as i128 / 10_000).saturating_mul(price_used);
 
         Ok(types::CostEstimate {
             compute_units,
             ledger_reads,
             ledger_writes,
             fee_estimate_xlm,
+            price_used,
+            price_source,
         })
+    }
+
+    // ========================================================================
+    // Issue #1367: Gas-Price Oracle Configuration
+    // ========================================================================
+
+    /// Configure the oracle contract used to fetch live gas prices for fee
+    /// estimation.  Admin-only.
+    ///
+    /// Pass the address of any contract that implements the `lastprice` interface
+    /// (same interface already used by `Condition::PriceAbove/Below`):
+    /// ```text
+    /// lastprice(asset: Address) -> Option<VaultPriceData>
+    /// ```
+    /// The `asset` argument passed to `lastprice` is the vault's **own contract
+    /// address**, which acts as a stable identifier for the "gas price" feed.
+    ///
+    /// Set `max_staleness = 0` is rejected; use `clear_gas_price_oracle` to
+    /// remove the oracle and revert to local-only estimation.
+    pub fn set_gas_price_oracle(
+        env: Env,
+        admin: Address,
+        oracle_address: Address,
+        max_staleness: u32,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        if max_staleness == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let config = GasPriceOracleConfig {
+            address: oracle_address.clone(),
+            max_staleness,
+        };
+        storage::set_gas_price_oracle_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        // Reuse the existing oracle-config-updated event; the admin and oracle
+        // address are the relevant attributes.
+        events::emit_oracle_config_updated(&env, &admin, &oracle_address);
+
+        Ok(())
+    }
+
+    /// Remove the gas-price oracle configuration.  Subsequent calls to
+    /// `estimate_proposal_cost` will use the local CostModel price only.
+    pub fn clear_gas_price_oracle(env: Env, admin: Address) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::clear_gas_price_oracle_config(&env);
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Return the currently configured gas-price oracle, if any.
+    pub fn get_gas_price_oracle(env: Env) -> Option<GasPriceOracleConfig> {
+        storage::get_gas_price_oracle_config(&env)
+    }
+
+    /// Resolve the stroops-per-10k-compute-units price for fee estimation.
+    ///
+    /// Attempts a live oracle query; silently falls back to the CostModel
+    /// constant on any failure.  Emits `oracle_gas_price_used` in all cases.
+    ///
+    /// Returns `(price, source)`.
+    fn resolve_gas_price(
+        env: &Env,
+        model: &types::CostModel,
+        proposal_id: u64,
+    ) -> (i128, GasPriceSource) {
+        let fallback_price = model.stroops_per_10k_compute_units;
+
+        // No oracle configured → use local price immediately.
+        let oracle_cfg = match storage::get_gas_price_oracle_config(env) {
+            Some(cfg) => cfg,
+            None => {
+                events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+                return (fallback_price, GasPriceSource::LocalFallback);
+            }
+        };
+
+        // Query oracle.  Use try_invoke_contract so a panicking oracle never
+        // blocks proposal execution; treat all errors as a fallback trigger.
+        let vault_addr = env.current_contract_address();
+        let raw_result = env.try_invoke_contract::<Option<VaultPriceData>, soroban_sdk::Error>(
+            &oracle_cfg.address,
+            &Symbol::new(env, "lastprice"),
+            Vec::from_array(env, [vault_addr.into_val(env)]),
+        );
+
+        let price_data = match raw_result {
+            Ok(Ok(Some(data))) => data,
+            // Oracle returned None, a contract error, or a host error → fallback.
+            _ => {
+                events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+                return (fallback_price, GasPriceSource::LocalFallback);
+            }
+        };
+
+        // Staleness check.
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger.saturating_sub(price_data.timestamp) > oracle_cfg.max_staleness as u64 {
+            events::emit_oracle_price_stale(
+                env,
+                &oracle_cfg.address,
+                price_data.timestamp,
+                current_ledger,
+            );
+            events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+            return (fallback_price, GasPriceSource::LocalFallback);
+        }
+
+        // Validity check: price must be positive.
+        if price_data.price <= 0 {
+            events::emit_oracle_gas_price_used(env, proposal_id, fallback_price, false);
+            return (fallback_price, GasPriceSource::LocalFallback);
+        }
+
+        // All checks passed — use the live oracle price.
+        events::emit_oracle_gas_price_used(env, proposal_id, price_data.price, true);
+        (price_data.price, GasPriceSource::Oracle)
     }
 
     // ========================================================================
@@ -10673,9 +11198,9 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         arbitrator.require_auth();
 
-        // Admin-only: only the vault admin can resolve disputes
+        // Only Admin and DisputeArbitrator can resolve disputes
         let role = storage::get_role(&env, &arbitrator);
-        if role != Role::Admin {
+        if !Role::role_satisfies(Role::DisputeArbitrator, role) {
             return Err(VaultError::Unauthorized);
         }
 
@@ -10708,6 +11233,45 @@ impl VaultDAO {
         storage::set_escrow(&env, &escrow);
 
         events::emit_escrow_dispute_resolved(&env, escrow_id, &arbitrator, release_to_recipient);
+
+        Ok(())
+    }
+
+    /// Auto-resolve an escrow dispute if arbitration timeout has expired
+    ///
+    /// If the escrow is in Disputed status and the arbitration timeout has elapsed,
+    /// automatically refunds all remaining funds to the funder.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow to auto-resolve
+    pub fn auto_resolve_escrow(env: Env, escrow_id: u64) -> Result<(), VaultError> {
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        let config = storage::get_config(&env)?;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Only auto-resolve if in Disputed status and timeout has expired
+        if escrow.status != EscrowStatus::Disputed {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let dispute_duration = current_ledger.saturating_sub(escrow.created_at);
+        if dispute_duration < config.arbitration_timeout_ledgers {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        // Refund all remaining funds to the funder
+        let amount_to_refund = escrow.total_amount - escrow.released_amount;
+        if amount_to_refund > 0 {
+            token::transfer(&env, &escrow.token, &escrow.funder, amount_to_refund);
+            escrow.released_amount += amount_to_refund;
+        }
+
+        escrow.status = EscrowStatus::Refunded;
+        escrow.finalized_at = current_ledger;
+
+        storage::set_escrow(&env, &escrow);
+
+        events::emit_escrow_auto_resolved(&env, escrow_id, amount_to_refund);
 
         Ok(())
     }
@@ -15023,3 +15587,12 @@ impl VaultDAO {
         storage::get_governance_proposal(&env, id)
     }
 }
+
+#[cfg(test)]
+mod test_token_limits;
+#[cfg(test)]
+mod test_swap_multi_token;
+#[cfg(test)]
+mod test_token_insurance;
+#[cfg(test)]
+mod test_stream_clawback;

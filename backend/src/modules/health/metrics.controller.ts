@@ -1,12 +1,27 @@
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 import type { BackendRuntime } from "../../server.js";
+import { OpenMetricsFormatter } from "./openmetrics.formatter.js";
 
+/**
+ * True if the request explicitly asked for OpenMetrics format, either via
+ * `Accept: application/openmetrics-text` or `?format=openmetrics`.
+ */
+export function wantsOpenMetrics(request: Request): boolean {
+  const requestedFormat = String(request.query?.format ?? "").toLowerCase();
+  if (requestedFormat === "openmetrics") {
+    return true;
+  }
+  const accept = request.headers?.accept ?? "";
+  return accept.toLowerCase().includes("application/openmetrics-text");
+}
 
 /**
  * GET /api/v1/metrics
  *
  * Returns backend operational metrics aggregated from all runtime services.
- * Responds with JSON by default; set Accept: text/plain for Prometheus format.
+ * Responds with JSON by default. Set Accept: text/plain (or ?format=prometheus)
+ * for Prometheus format, or Accept: application/openmetrics-text
+ * (or ?format=openmetrics) for OpenMetrics format.
  *
  * This endpoint is intentionally unauthenticated for scraper compatibility.
  */
@@ -31,6 +46,14 @@ export function getMetricsController(runtime: BackendRuntime): RequestHandler {
 
     const requestedFormat = String(request.query?.format ?? "").toLowerCase();
     const prometheusRequested = requestedFormat === "prometheus";
+
+    if (wantsOpenMetrics(request)) {
+      response
+        .status(200)
+        .set("Content-Type", OpenMetricsFormatter.CONTENT_TYPE)
+        .send(runtime.metricsRegistry.renderOpenMetrics());
+      return;
+    }
 
     if (prometheusRequested) {
       response
