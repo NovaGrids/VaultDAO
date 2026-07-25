@@ -91,6 +91,7 @@ export enum EventType {
   RETRY_ATTEMPTED = "RETRY_ATTEMPTED",
   RETRIES_EXHAUSTED = "RETRIES_EXHAUSTED",
   PAYMENT_BACKOFF_INCREASED = "PAYMENT_BACKOFF_INCREASED",
+  CONSECUTIVE_MISS_RESET = "CONSECUTIVE_MISS_RESET",
   TOKENS_LOCKED = "TOKENS_LOCKED",
   LOCK_EXTENDED = "LOCK_EXTENDED",
   TOKENS_UNLOCKED = "TOKENS_UNLOCKED",
@@ -509,7 +510,7 @@ export interface RetriesExhaustedData {
 export interface PaymentBackoffIncreasedData {
   /** ID of the recurring payment that failed. */
   readonly paymentId: string;
-  /** Retry count after this failure. */
+  /** Consecutive retry count after this failure. */
   readonly retryCount: number;
   /** Clamped delay in seconds until the next allowed attempt. */
   readonly delaySeconds: number;
@@ -519,6 +520,36 @@ export interface PaymentBackoffIncreasedData {
   readonly strategy: string;
   /** Unix timestamp (seconds) of the next allowed retry. */
   readonly nextRetryAt: number;
+  /**
+   * Lifetime total of all failed execution attempts for this payment
+   * (including this one).  Provided for observer context; never reset.
+   */
+  readonly totalMissedExecutions: number;
+}
+
+/**
+ * Emitted when a recurring payment's consecutive-miss counter is reset to 0
+ * because a previously-failing payment executed successfully.
+ *
+ * Only emitted when the counter was greater than 0 before the reset (i.e. the
+ * payment is genuinely recovering from a missed-execution streak).  Payments
+ * that succeed without ever having missed are not eligible.
+ */
+export interface ConsecutiveMissResetData {
+  /** ID of the recurring payment that recovered. */
+  readonly paymentId: string;
+  /** Contract / vault identifier the payment belongs to. */
+  readonly contractId: string;
+  /**
+   * The consecutive-miss count that was just cleared (always ≥ 1).
+   * This is the value of `retryCount` immediately before the reset.
+   */
+  readonly clearedConsecutiveMisses: number;
+  /**
+   * Lifetime total of failed execution attempts for this payment.
+   * Preserved here for audit context; was not affected by this reset.
+   */
+  readonly totalMissedExecutions: number;
 }
 
 export interface TokensLockedData {
@@ -673,6 +704,7 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   retry_attempted: EventType.RETRY_ATTEMPTED,
   retries_exhausted: EventType.RETRIES_EXHAUSTED,
   payment_backoff_increased: EventType.PAYMENT_BACKOFF_INCREASED,
+  consecutive_miss_reset: EventType.CONSECUTIVE_MISS_RESET,
   tokens_locked: EventType.TOKENS_LOCKED,
   lock_extended: EventType.LOCK_EXTENDED,
   tokens_unlocked: EventType.TOKENS_UNLOCKED,

@@ -58,6 +58,10 @@ const basePayment = {
   computedStatus: "active" as const,
   ledgersUntilDue: 0,
   missedPayments: 0,
+  retryCount: 0,
+  lastAttemptAt: 0,
+  nextRetryAt: 0,
+  totalMissedExecutions: 0,
   metadata: {
     id: "p-1",
     contractId: "C1",
