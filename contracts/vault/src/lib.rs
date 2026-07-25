@@ -264,6 +264,8 @@ mod test_retry;
 #[cfg(test)]
 mod test_staking;
 #[cfg(test)]
+mod test_stream_burst_config;
+#[cfg(test)]
 mod test_streaming;
 #[cfg(test)]
 mod test_subscriptions;
@@ -4752,6 +4754,42 @@ impl VaultDAO {
         config.burst_factor = burst_factor;
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Set streaming payment rate limit burst factor (admin only).
+    ///
+    /// Allows operators to adjust the burst multiplier for streaming payments.
+    /// Burst factor controls how much above the base limit a stream can burst.
+    /// Valid range: 100-300 (1x to 3x multiplier).
+    ///
+    /// # Arguments
+    /// * `admin` - The admin address (must be Admin role)
+    /// * `factor` - The burst factor * 100 (e.g., 150 = 1.5x burst, 300 = 3x burst)
+    pub fn set_stream_burst_factor(
+        env: Env,
+        admin: Address,
+        factor: u32,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if factor < 100 || factor > 300 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        let old_factor = config.burst_factor;
+        config.burst_factor = factor;
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_burst_factor_updated(&env, &admin, old_factor, factor);
 
         Ok(())
     }

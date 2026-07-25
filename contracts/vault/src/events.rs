@@ -218,6 +218,13 @@ pub fn emit_config_updated(env: &Env, updater: &Address) {
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
 }
 
+pub fn emit_stream_burst_factor_updated(env: &Env, admin: &Address, old_factor: u32, new_factor: u32) {
+    env.events().publish(
+        (Symbol::new(env, "stream_burst_factor_updated"),),
+        (admin.clone(), old_factor, new_factor),
+    );
+}
+
 // ============================================================================
 // Oracle Events (feature/oracle-integration)
 // ============================================================================
