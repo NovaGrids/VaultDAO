@@ -244,6 +244,8 @@ mod test_cross_vault;
 #[cfg(test)]
 mod test_disputes;
 #[cfg(test)]
+mod test_escrow_timeout;
+#[cfg(test)]
 mod test_fees;
 #[cfg(test)]
 mod test_hooks;
@@ -254,11 +256,17 @@ mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
+mod test_rbac_consistency;
+#[cfg(test)]
+mod test_reentrancy;
+#[cfg(test)]
 mod test_regressions;
 #[cfg(test)]
 mod test_retry;
 #[cfg(test)]
 mod test_staking;
+#[cfg(test)]
+mod test_stream_burst_config;
 #[cfg(test)]
 mod test_streaming;
 #[cfg(test)]
@@ -451,6 +459,11 @@ impl VaultDAO {
             vote_weight: config.vote_weight,
             high_impact_threshold: config.high_impact_threshold,
             admin_rotation_delay: config.admin_rotation_delay,
+            arbitration_timeout_ledgers: if config.arbitration_timeout_ledgers > 0 {
+                config.arbitration_timeout_ledgers
+            } else {
+                17_280 * 30 // default: 30 days
+            },
             approval_timeout_ledgers: config.approval_timeout_ledgers,
         };
 
@@ -1736,6 +1749,11 @@ impl VaultDAO {
             return Err(VaultError::VaultPaused);
         }
 
+        // Check reentrancy guard (#1414)
+        if storage::is_proposal_in_progress(&env, proposal_id) {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
         // Validate state via state machine
         if proposal.status == ProposalStatus::Executed {
             return Err(VaultError::ProposalAlreadyExecuted);
@@ -1852,6 +1870,9 @@ impl VaultDAO {
             storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
         }
 
+        // Set reentrancy guard before external calls (#1414)
+        storage::set_proposal_in_progress(&env, proposal_id);
+
         // Attempt execution — retryable failures are handled below
         let exec_result =
             Self::try_execute_transfer(&env, &executor, &mut proposal, current_ledger);
@@ -1934,6 +1955,9 @@ impl VaultDAO {
                     &executor,
                     proposal_id,
                 );
+
+                // Clear reentrancy guard after state updates complete (#1414)
+                storage::clear_proposal_in_progress(&env, proposal_id);
 
                 Ok(())
             }
@@ -5024,6 +5048,42 @@ impl VaultDAO {
         config.burst_factor = burst_factor;
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Set streaming payment rate limit burst factor (admin only).
+    ///
+    /// Allows operators to adjust the burst multiplier for streaming payments.
+    /// Burst factor controls how much above the base limit a stream can burst.
+    /// Valid range: 100-300 (1x to 3x multiplier).
+    ///
+    /// # Arguments
+    /// * `admin` - The admin address (must be Admin role)
+    /// * `factor` - The burst factor * 100 (e.g., 150 = 1.5x burst, 300 = 3x burst)
+    pub fn set_stream_burst_factor(
+        env: Env,
+        admin: Address,
+        factor: u32,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if factor < 100 || factor > 300 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        let old_factor = config.burst_factor;
+        config.burst_factor = factor;
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_stream_burst_factor_updated(&env, &admin, old_factor, factor);
 
         Ok(())
     }
@@ -10933,9 +10993,9 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         arbitrator.require_auth();
 
-        // Admin-only: only the vault admin can resolve disputes
+        // Only Admin and DisputeArbitrator can resolve disputes
         let role = storage::get_role(&env, &arbitrator);
-        if role != Role::Admin {
+        if !Role::role_satisfies(Role::DisputeArbitrator, role) {
             return Err(VaultError::Unauthorized);
         }
 
@@ -10968,6 +11028,45 @@ impl VaultDAO {
         storage::set_escrow(&env, &escrow);
 
         events::emit_escrow_dispute_resolved(&env, escrow_id, &arbitrator, release_to_recipient);
+
+        Ok(())
+    }
+
+    /// Auto-resolve an escrow dispute if arbitration timeout has expired
+    ///
+    /// If the escrow is in Disputed status and the arbitration timeout has elapsed,
+    /// automatically refunds all remaining funds to the funder.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow to auto-resolve
+    pub fn auto_resolve_escrow(env: Env, escrow_id: u64) -> Result<(), VaultError> {
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        let config = storage::get_config(&env)?;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        // Only auto-resolve if in Disputed status and timeout has expired
+        if escrow.status != EscrowStatus::Disputed {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let dispute_duration = current_ledger.saturating_sub(escrow.created_at);
+        if dispute_duration < config.arbitration_timeout_ledgers {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        // Refund all remaining funds to the funder
+        let amount_to_refund = escrow.total_amount - escrow.released_amount;
+        if amount_to_refund > 0 {
+            token::transfer(&env, &escrow.token, &escrow.funder, amount_to_refund);
+            escrow.released_amount += amount_to_refund;
+        }
+
+        escrow.status = EscrowStatus::Refunded;
+        escrow.finalized_at = current_ledger;
+
+        storage::set_escrow(&env, &escrow);
+
+        events::emit_escrow_auto_resolved(&env, escrow_id, amount_to_refund);
 
         Ok(())
     }
