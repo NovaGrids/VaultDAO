@@ -270,6 +270,8 @@ mod test_streaming;
 #[cfg(test)]
 mod test_subscriptions;
 #[cfg(test)]
+mod test_proposal_expiration;
+#[cfg(test)]
 mod test_tag_taxonomy;
 #[cfg(test)]
 mod test_tags;
