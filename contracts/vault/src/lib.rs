@@ -248,6 +248,8 @@ mod test_fees;
 #[cfg(test)]
 mod test_hooks;
 #[cfg(test)]
+mod test_circular_dependency;
+#[cfg(test)]
 mod test_cold_signature_replay;
 #[cfg(test)]
 mod test_merge;
