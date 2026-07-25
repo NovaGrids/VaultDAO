@@ -252,6 +252,8 @@ mod test_merge;
 #[cfg(test)]
 mod test_notification_prefs;
 #[cfg(test)]
+mod test_threshold_reduction;
+#[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
 mod test_regressions;
