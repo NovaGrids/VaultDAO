@@ -190,6 +190,9 @@ pub enum DataKey {
     VaultDeactivated,
     /// Active merge ID for this vault (0 if none) -> u64
     ActiveMergeId,
+    // ---- Issue #1414: Reentrancy Guard ----
+    /// Reentrancy guard for proposal execution (proposal_id) -> bool
+    ProposalInProgress(u64),
 }
 
 #[contracttype(export = false)]
@@ -4242,4 +4245,27 @@ pub fn get_template_version(
         .persistent()
         .get(&FeatureKey::Template(archive_id))
         .ok_or(VaultError::TemplateNotFound)
+}
+
+// ============================================================================
+// Issue #1414: Reentrancy Guard for Proposal Execution
+// ============================================================================
+
+pub fn set_proposal_in_progress(env: &Env, proposal_id: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ProposalInProgress(proposal_id), &true);
+}
+
+pub fn is_proposal_in_progress(env: &Env, proposal_id: u64) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::ProposalInProgress(proposal_id))
+        .unwrap_or(false)
+}
+
+pub fn clear_proposal_in_progress(env: &Env, proposal_id: u64) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::ProposalInProgress(proposal_id));
 }

@@ -11,6 +11,7 @@ import ProposalFilters, { type FilterState } from '../../components/proposals/Pr
 import ProposalComparison from '../../components/ProposalComparison';
 import TransactionSimulatorModal from '../../components/TransactionSimulatorModal';
 import { useToast } from '../../hooks/useToast';
+import { useOptimisticUpdate } from '../../hooks/useOptimisticUpdate';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useProposals } from '../../hooks/useProposals';
 import { useWallet } from '../../hooks/useWallet';
@@ -65,7 +66,8 @@ export interface Proposal {
 }
 
 const Proposals: React.FC = () => {
-  const { notify } = useToast();
+  const { notify, showToast } = useToast();
+  const { execute: optimisticExecute } = useOptimisticUpdate<Proposal[]>();
   const { rejectProposal, approveProposal, executeProposal, getUserRole, getTokenBalances, getVaultConfig } = useVaultContract();
   const { address } = useWallet();
   const { isReady, checkReady } = useActionReadiness();
@@ -357,24 +359,30 @@ const Proposals: React.FC = () => {
     const doApprove = async () => {
       setApprovingIds(prev => new Set(prev).add(proposalId));
       try {
-        await approveProposal(Number(proposalId));
-        setLocalProposals(prev => prev.map(p => {
-          if (p.id === proposalId) {
-            const newApprovals = p.approvals + 1;
-            const newApprovedBy = [...p.approvedBy, address!];
-            return {
-              ...p,
-              approvals: newApprovals,
-              approvedBy: newApprovedBy,
-              status: newApprovals >= p.threshold ? 'Approved' : p.status
-            };
-          }
-          return p;
-        }));
-        notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to approve proposal';
-        notify('proposal_rejected', errorMessage, 'error');
+        await optimisticExecute(setLocalProposals, {
+          metricLabel: 'approve_proposal',
+          applyUpdate: (prev) => prev.map(p => {
+            if (p.id === proposalId) {
+              const newApprovals = p.approvals + 1;
+              const newApprovedBy = [...p.approvedBy, address!];
+              return {
+                ...p,
+                approvals: newApprovals,
+                approvedBy: newApprovedBy,
+                status: newApprovals >= p.threshold ? 'Approved' : p.status,
+              };
+            }
+            return p;
+          }),
+          performAction: () => approveProposal(Number(proposalId)),
+          onSuccess: () => {
+            notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
+          },
+          onError: (err) => {
+            const errorMessage = err.message || 'Failed to approve proposal';
+            showToast(errorMessage, 'error');
+          },
+        });
       } finally {
         setApprovingIds(prev => {
           const newSet = new Set(prev);
@@ -444,6 +452,51 @@ const Proposals: React.FC = () => {
       onProceed: doExecute,
     });
     setSimulatorOpen(true);
+  };
+
+  /**
+   * Optimistic approve triggered from ProposalDetailModal.
+   * Immediately updates localProposals, then calls the RPC. On failure,
+   * localProposals is rolled back and a toast with the real error is shown.
+   */
+  const handleApproveFromModal = async (proposalId: string): Promise<void> => {
+    const { ready, message } = checkReady();
+    if (!ready) {
+      showToast(message ?? 'Not ready', 'error');
+      return;
+    }
+    setApprovingIds(prev => new Set(prev).add(proposalId));
+    try {
+      await optimisticExecute(setLocalProposals, {
+        metricLabel: 'approve_proposal_modal',
+        applyUpdate: (prev) => prev.map(p => {
+          if (p.id === proposalId) {
+            const newApprovals = p.approvals + 1;
+            const newApprovedBy = [...p.approvedBy, address!];
+            return {
+              ...p,
+              approvals: newApprovals,
+              approvedBy: newApprovedBy,
+              status: newApprovals >= p.threshold ? 'Approved' : p.status,
+            };
+          }
+          return p;
+        }),
+        performAction: () => approveProposal(Number(proposalId)),
+        onSuccess: () => {
+          notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
+        },
+        onError: (err) => {
+          showToast(err.message || 'Failed to approve proposal', 'error');
+        },
+      });
+    } finally {
+      setApprovingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(proposalId);
+        return newSet;
+      });
+    }
   };
 
   return (
@@ -721,7 +774,7 @@ const Proposals: React.FC = () => {
           onSaveAsTemplate={() => { }}
           onClose={() => setShowNewProposalModal(false)}
         />
-        <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} />
+        <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} onApprove={handleApproveFromModal} />
         <ConfirmationModal isOpen={showRejectModal} title="Reject Proposal" message="Are you sure you want to reject this?" onConfirm={handleRejectConfirm} onCancel={() => setShowRejectModal(false)} showReasonInput={true} isDestructive={true} />
         {showComparison && (
           <ProposalComparison

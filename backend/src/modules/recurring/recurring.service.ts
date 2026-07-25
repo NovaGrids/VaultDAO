@@ -148,6 +148,14 @@ export function transformRawRecurringPayment(
     Number(raw.payment_count) > existingPayment.paymentCount
   ) {
     events.push(RecurringEvent.EXECUTED);
+    // If jitter is configured and this payment is past its first cycle, the
+    // contract will have emitted a recurring_pay_jittered event on-chain.
+    // Mirror that in the local event log for audit-trail completeness.
+    if (Number(raw.jitter_window ?? "0") > 0 && Number(raw.payment_count) > 1) {
+      if (!events.includes(RecurringEvent.JITTERED)) {
+        events.push(RecurringEvent.JITTERED);
+      }
+    }
   }
 
   // Calculate computed fields
@@ -195,6 +203,10 @@ export function transformRawRecurringPayment(
     computedStatus,
     ledgersUntilDue,
     missedPayments,
+    // Jitter fields — default to 0 for payments created before jitter support
+    // or when not returned by the RPC (optional in RawRecurringPayment).
+    jitterWindow: Number(raw.jitter_window ?? "0"),
+    jitterOffset: Number(raw.jitter_offset ?? "0"),
   };
 }
 
