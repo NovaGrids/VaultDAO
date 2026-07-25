@@ -715,3 +715,388 @@ fn test_two_payments_same_interval_different_jitter() {
     assert!(p1.jitter_offset < jitter_window);
     assert!(p2.jitter_offset < jitter_window);
 }
+
+// ============================================================================
+// Issue #1364: Recurring Payment Jitter — Load Distribution Tests
+//
+// Design notes
+// ─────────────
+// • Jitter window: [0, jitter_window).  Forward-only (non-symmetric).
+//   Consistent with the existing on-chain formula: sha256(id||ledger) % window.
+// • Randomness source: Soroban's env.crypto().sha256() — fully deterministic
+//   given the same (id, creation_ledger) pair.  No external RNG to mock;
+//   determinism is guaranteed by the ledger environment.
+// • First payment has NO jitter (always executes at creation_ledger + interval)
+//   so organisations aren't surprised by a delayed first disbursement.
+// • Jitter is applied from the second cycle onward by adding jitter_offset to
+//   the advanced next_payment_ledger.
+// • jitter_offset is fixed at creation — identical for every subsequent cycle
+//   of the same payment.
+// • When jitter_window == 0, behavior is byte-for-byte identical to the
+//   pre-jitter scheduling logic.
+// ============================================================================
+
+// ── Helper: advance to next_payment_ledger and execute, returning the payment ──
+
+fn execute_at_due(
+    env: &Env,
+    client: &crate::VaultDAOClient<'_>,
+    payment_id: u64,
+) -> crate::RecurringPayment {
+    let p = client.get_recurring_payment(&payment_id);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
+    client.execute_recurring_payment(&payment_id);
+    client.get_recurring_payment(&payment_id)
+}
+
+// ── T1: Regression — jitter disabled (window == 0) is identical to pre-jitter
+//        scheduling for both the first and second cycles. ────────────────────
+
+#[test]
+fn test_jitter_disabled_regression_first_and_second_cycle() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let interval = 1440u64;
+    let creation_ledger = env.ledger().sequence() as u64;
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &50i128,
+        &Symbol::new(&env, "salary"),
+        &interval,
+        &0u32, // max_missed_payments
+        &0u32, // jitter_window = 0 → no jitter
+    );
+
+    // ── First cycle ──────────────────────────────────────────────────────────
+    let p = client.get_recurring_payment(&payment_id);
+    assert_eq!(p.jitter_window, 0, "jitter_window must be 0");
+    assert_eq!(p.jitter_offset, 0, "jitter_offset must be 0");
+    assert_eq!(
+        p.next_payment_ledger,
+        creation_ledger + interval,
+        "first next_payment_ledger must equal creation_ledger + interval exactly"
+    );
+
+    // Execute first cycle
+    env.ledger()
+        .with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
+    client.execute_recurring_payment(&payment_id);
+
+    // ── Second cycle ─────────────────────────────────────────────────────────
+    let after_first = client.get_recurring_payment(&payment_id);
+    assert_eq!(
+        after_first.next_payment_ledger,
+        creation_ledger + 2 * interval,
+        "second next_payment_ledger must equal creation_ledger + 2*interval with no jitter"
+    );
+}
+
+// ── T2: Deterministic enabled — jitter_offset is a fixed, known value
+//        derived from sha256(id || creation_ledger) % jitter_window.
+//        We verify the exact offset is applied starting from the second cycle. ─
+
+#[test]
+fn test_jitter_enabled_deterministic_exact_offset_applied_second_cycle() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let interval = 2000u64;
+    let jitter_window = 200u32; // 10% of interval
+    let creation_ledger = env.ledger().sequence() as u64;
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "grant"),
+        &interval,
+        &0u32,
+        &jitter_window,
+    );
+
+    let p = client.get_recurring_payment(&payment_id);
+    // Capture the exact deterministic offset at creation time
+    let fixed_offset = p.jitter_offset;
+
+    // Preconditions
+    assert!(
+        fixed_offset < jitter_window,
+        "jitter_offset must be in [0, jitter_window)"
+    );
+    assert_eq!(
+        p.next_payment_ledger,
+        creation_ledger + interval,
+        "first payment must not be jittered"
+    );
+
+    // Execute first cycle (no jitter applied to this cycle's *advancement*)
+    env.ledger()
+        .with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
+    client.execute_recurring_payment(&payment_id);
+
+    let after_first = client.get_recurring_payment(&payment_id);
+    // After first payment: next_payment_ledger = creation + 2*interval + fixed_offset
+    let expected_second = creation_ledger + 2 * interval + fixed_offset as u64;
+    assert_eq!(
+        after_first.next_payment_ledger, expected_second,
+        "second cycle next_payment_ledger must be nominal + fixed_offset exactly"
+    );
+
+    // Execute second cycle to confirm jitter is also applied to the third cycle
+    env.ledger()
+        .with_mut(|l| l.sequence_number = after_first.next_payment_ledger as u32);
+    client.execute_recurring_payment(&payment_id);
+
+    let after_second = client.get_recurring_payment(&payment_id);
+    let expected_third = creation_ledger + 3 * interval + 2 * fixed_offset as u64;
+    assert_eq!(
+        after_second.next_payment_ledger, expected_third,
+        "third cycle next_payment_ledger must be nominal + 2*fixed_offset exactly"
+    );
+}
+
+// ── T3: Statistical range check — across N payments with different IDs, every
+//        jitter_offset falls strictly within [0, jitter_window). ─────────────
+
+#[test]
+fn test_jitter_offsets_always_within_window_statistical() {
+    let env = Env::default();
+    let (client, admin, token, _) = setup(&env);
+
+    let interval = 3000u64;
+    let jitter_window = 300u32; // 10% of interval
+
+    for i in 0u64..20 {
+        let recipient = soroban_sdk::Address::generate(&env);
+        let payment_id = client.schedule_payment(
+            &admin,
+            &recipient,
+            &token,
+            &(10 + i as i128),
+            &Symbol::new(&env, "dist"),
+            &interval,
+            &0u32,
+            &jitter_window,
+        );
+        // Advance ledger so each payment gets a unique creation_ledger hash
+        env.ledger().with_mut(|l| l.sequence_number += 3);
+
+        let p = client.get_recurring_payment(&payment_id);
+        assert!(
+            p.jitter_offset < jitter_window,
+            "payment {i}: jitter_offset {} must be < jitter_window {}",
+            p.jitter_offset,
+            jitter_window
+        );
+    }
+}
+
+// ── T4: Event emission — recurring_pay_jittered is emitted on second cycle
+//        with correct (nominal, jittered, offset) values, and is NOT emitted
+//        on the first cycle or when jitter_window == 0. ────────────────────
+
+#[test]
+fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let interval = 1440u64;
+    let jitter_window = 144u32; // 10%
+    let creation_ledger = env.ledger().sequence() as u64;
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &75i128,
+        &Symbol::new(&env, "payroll"),
+        &interval,
+        &0u32,
+        &jitter_window,
+    );
+
+    let p = client.get_recurring_payment(&payment_id);
+    let fixed_offset = p.jitter_offset;
+
+    // ── First execution: no jitter event expected ─────────────────────────
+    env.ledger()
+        .with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
+
+    let events_before_first_exec = env.events().all();
+    client.execute_recurring_payment(&payment_id);
+    let events_after_first_exec = env.events().all();
+
+    // Count recurring_pay_jittered events emitted during first execution
+    let jitter_events_first: Vec<_> = events_after_first_exec
+        .iter()
+        .skip(events_before_first_exec.len())
+        .filter(|e| {
+            e.0.get(0)
+                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert_eq!(
+        jitter_events_first.len(),
+        0,
+        "recurring_pay_jittered must NOT be emitted on the first cycle"
+    );
+
+    // ── Second execution: jitter event IS expected ────────────────────────
+    let after_first = client.get_recurring_payment(&payment_id);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = after_first.next_payment_ledger as u32);
+
+    let events_before_second_exec = env.events().all();
+    client.execute_recurring_payment(&payment_id);
+    let events_after_second_exec = env.events().all();
+
+    let jitter_events_second: Vec<_> = events_after_second_exec
+        .iter()
+        .skip(events_before_second_exec.len())
+        .filter(|e| {
+            e.0.get(0)
+                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert_eq!(
+        jitter_events_second.len(),
+        1,
+        "recurring_pay_jittered must be emitted exactly once on the second cycle"
+    );
+
+    // Verify event data: (nominal_next_ledger, jittered_next_ledger, jitter_offset)
+    let event_data = &jitter_events_second[0].1;
+    // nominal = creation_ledger + 2*interval (before jitter)
+    let expected_nominal = creation_ledger + 2 * interval;
+    let expected_jittered = expected_nominal + fixed_offset as u64;
+
+    let data_vec = soroban_sdk::Vec::<soroban_sdk::Val>::try_from(event_data.clone())
+        .expect("event data should be a vec");
+
+    let nominal_val = u64::try_from(data_vec.get(0).unwrap()).expect("nominal should be u64");
+    let jittered_val = u64::try_from(data_vec.get(1).unwrap()).expect("jittered should be u64");
+    let offset_val = u32::try_from(data_vec.get(2).unwrap()).expect("offset should be u32");
+
+    assert_eq!(nominal_val, expected_nominal, "event nominal_next_ledger mismatch");
+    assert_eq!(jittered_val, expected_jittered, "event jittered_next_ledger mismatch");
+    assert_eq!(offset_val, fixed_offset, "event jitter_offset mismatch");
+}
+
+#[test]
+fn test_jitter_event_not_emitted_when_window_is_zero() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let interval = 1000u64;
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "nowjitter"),
+        &interval,
+        &0u32,
+        &0u32, // jitter_window = 0
+    );
+
+    // Execute first cycle
+    let p = client.get_recurring_payment(&payment_id);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
+    client.execute_recurring_payment(&payment_id);
+
+    // Execute second cycle
+    let p2 = client.get_recurring_payment(&payment_id);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = p2.next_payment_ledger as u32);
+
+    let events_before = env.events().all();
+    client.execute_recurring_payment(&payment_id);
+    let events_after = env.events().all();
+
+    let jitter_events: Vec<_> = events_after
+        .iter()
+        .skip(events_before.len())
+        .filter(|e| {
+            e.0.get(0)
+                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert_eq!(
+        jitter_events.len(),
+        0,
+        "recurring_pay_jittered must NOT be emitted when jitter_window == 0"
+    );
+}
+
+// ── T5: Edge case — jitter window of zero is behaviorally identical to no
+//        jitter at all, even across many cycles. ───────────────────────────
+
+#[test]
+fn test_jitter_window_zero_identical_to_no_jitter_multi_cycle() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+    let recipient2 = soroban_sdk::Address::generate(&env);
+
+    let interval = 1440u64;
+    let creation_ledger = env.ledger().sequence() as u64;
+
+    // Payment A: jitter_window explicitly 0
+    let id_a = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "paymenta"),
+        &interval,
+        &0u32,
+        &0u32, // window = 0
+    );
+
+    // Both created at same ledger so their schedules must stay in lock-step
+    let id_b = client.schedule_payment(
+        &admin,
+        &recipient2,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "paymentb"),
+        &interval,
+        &0u32,
+        &0u32, // also window = 0
+    );
+
+    for cycle in 1u64..=4 {
+        let pa = client.get_recurring_payment(&id_a);
+        let pb = client.get_recurring_payment(&id_b);
+
+        // Both must be due at exactly creation_ledger + cycle * interval
+        let expected = creation_ledger + cycle * interval;
+        assert_eq!(
+            pa.next_payment_ledger, expected,
+            "cycle {cycle}: payment A next_payment_ledger mismatch"
+        );
+        assert_eq!(
+            pb.next_payment_ledger, expected,
+            "cycle {cycle}: payment B next_payment_ledger mismatch"
+        );
+
+        env.ledger()
+            .with_mut(|l| l.sequence_number = expected as u32);
+        client.execute_recurring_payment(&id_a);
+        client.execute_recurring_payment(&id_b);
+    }
+}

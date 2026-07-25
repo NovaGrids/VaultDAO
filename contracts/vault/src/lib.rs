@@ -4931,11 +4931,22 @@ impl VaultDAO {
         // Update payment schedule.
         // After the first payment (payment_count was 0), apply jitter to all subsequent cycles.
         let was_first_payment = payment.payment_count == 0;
-        payment.next_payment_ledger += total_payments * payment.interval;
+        let nominal_next_ledger = payment.next_payment_ledger + total_payments * payment.interval;
+        payment.next_payment_ledger = nominal_next_ledger;
         if !was_first_payment && payment.jitter_window > 0 {
             payment.next_payment_ledger = payment
                 .next_payment_ledger
                 .saturating_add(payment.jitter_offset as u64);
+
+            // Emit a jitter event so auditors can distinguish timing variance
+            // from scheduling bugs.  See events.rs for full field documentation.
+            crate::events::emit_recurring_payment_jittered(
+                &env,
+                payment_id,
+                nominal_next_ledger,
+                payment.next_payment_ledger,
+                payment.jitter_offset,
+            );
         }
         payment.payment_count += total_payments as u32;
         storage::set_recurring_payment(&env, &payment);
