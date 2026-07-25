@@ -358,6 +358,11 @@ pub enum VaultError {
     MaxDeadlineExtensionsReached = 47,
     OracleNotConfigured = 721,
     OraclePriceStale = 722,
+    // =========================================================
+    // Issue #1367: Gas-Price Oracle
+    // =========================================================
+    /// Gas-price oracle contract returned a zero or negative price
+    GasPriceOracleInvalidPrice = 723,
 }
 
 // Compatibility markers for CI source checks:

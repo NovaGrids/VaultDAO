@@ -2289,6 +2289,34 @@ pub struct Tag {
 // Issue #1085: Gas Cost Estimation Oracle
 // ============================================================================
 
+/// Which price source was used when producing a fee estimate.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GasPriceSource {
+    /// Live price fetched from the configured gas-price oracle.
+    Oracle,
+    /// Static `stroops_per_10k_compute_units` value from the local CostModel
+    /// (used when no oracle is configured, or on oracle failure).
+    LocalFallback,
+}
+
+/// Configuration for the gas-price oracle integration (Issue #1367).
+///
+/// Stored in instance storage and set by an admin via `set_gas_price_oracle`.
+/// When present, `estimate_proposal_cost` queries this oracle for a live
+/// stroops-per-10k-compute-units price instead of relying solely on the
+/// static `CostModel.stroops_per_10k_compute_units` constant.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GasPriceOracleConfig {
+    /// Address of the gas-price oracle contract.
+    /// The oracle must expose `lastprice(asset: Address) -> Option<VaultPriceData>`.
+    pub address: Address,
+    /// Maximum number of ledgers since the oracle's recorded timestamp before
+    /// the price is treated as stale and the local fallback is used.
+    pub max_staleness: u32,
+}
+
 /// Estimated compute cost breakdown for a proposal's execution.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -2301,6 +2329,10 @@ pub struct CostEstimate {
     pub ledger_writes: u32,
     /// Fee estimate in stroops (XLM * 10^7)
     pub fee_estimate_xlm: i128,
+    /// Stroops-per-10k-compute-units price actually used for the estimate.
+    pub price_used: i128,
+    /// Whether the price came from the oracle or the local CostModel fallback.
+    pub price_source: GasPriceSource,
 }
 
 /// Per-operation cost weights stored on-chain and updatable by admin.
