@@ -1,0 +1,96 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, "feature/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cargo-audit:
+    name: Cargo Audit (Rust Dependencies)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/vault
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo-audit
+        run: cargo audit --deny warnings
+
+  npm-audit:
+    name: NPM Audit (Node.js Dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install backend dependencies
+        run: npm --prefix backend install
+
+      - name: Run npm audit for root
+        run: npm audit --production --audit-level=high || exit 1
+
+      - name: Run npm audit for backend
+        run: npm --prefix backend audit --production --audit-level=high || exit 1
+
+  semgrep-rust:
+    name: SAST Scanning (Rust Contract Code)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/vault
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run clippy with security lints
+        run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::all
+
+      - name: Check for unsafe code
+        run: |
+          UNSAFE_COUNT=$(grep -r "unsafe {" src/ | wc -l)
+          if [ $UNSAFE_COUNT -gt 0 ]; then
+            echo "Warning: Found $UNSAFE_COUNT unsafe blocks"
+            grep -r "unsafe {" src/
+          fi
+
+  semgrep-typescript:
+    name: SAST Scanning (TypeScript Code)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run semgrep
+        run: |
+          npm install -g semgrep
+          semgrep --config=p/security-audit --json backend/src 2>&1 | tee semgrep-results.json
+          if [ -s semgrep-results.json ]; then
+            echo "⚠️ Semgrep found potential issues:"
+            cat semgrep-results.json
+          fi
