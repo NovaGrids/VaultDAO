@@ -27,13 +27,14 @@ use crate::types::{
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
-    GovernanceProposal, HolidayCalendar, InsuranceClaim, InsuranceConfig, ListMode, MergeRecord,
-    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant,
-    Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
-    ReputationConfig, RetryState, Role, RoleAssignment, ScopedDelegation, SignerTier, StakeRecord,
-    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
-    TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
-    VestingSchedule, VotingStrategy, WhitelistEntry,
+    GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, InsuranceClaim, InsuranceConfig,
+    ListMode, MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
+    PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate,
+    RecoveryProposal, Reputation, ReputationConfig, RetryState, Role, RoleAssignment,
+    ScopedDelegation, SignerTier, StakeRecord, StakingConfig, StreamRateWindow, Subscription,
+    SwapProposal, SwapResult, Tag, TemplateVarRef, TimeWeightedConfig, TokenLock,
+    TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig, VestingSchedule,
+    VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 
@@ -190,6 +191,9 @@ pub enum DataKey {
     VaultDeactivated,
     /// Active merge ID for this vault (0 if none) -> u64
     ActiveMergeId,
+    // ---- Issue #1414: Reentrancy Guard ----
+    /// Reentrancy guard for proposal execution (proposal_id) -> bool
+    ProposalInProgress(u64),
 }
 
 #[contracttype(export = false)]
@@ -312,6 +316,8 @@ pub enum FeatureKey {
     Permissions(Address),
     /// Delegated permissions (delegatee, delegator, permission as u32) -> DelegatedPermission
     DelegatedPermission(Address, Address, u32),
+    /// Auto-complete flag for a stream (stream id) -> bool (Issue #1359)
+    StreamAutoComplete(u64),
     /// Subscription by ID -> Subscription
     Subscription(u64),
     /// Subscription IDs indexed by subscriber address -> Vec<u64>
@@ -343,6 +349,9 @@ pub enum FeatureKey {
     // ---- Issue #1085: Gas Cost Estimation Oracle ----
     /// Per-operation cost model -> CostModel
     CostModel,
+    // ---- Issue #1367: Gas-Price Oracle for fee estimation ----
+    /// Live gas-price oracle configuration -> GasPriceOracleConfig
+    GasPriceOracle,
     // ---- Issue #1086: Cold Storage Config ----
     /// Cold signer configuration -> ColdSignerConfig
     ColdSignerConfig,
@@ -1024,6 +1033,23 @@ pub fn get_streaming_payment(
         .persistent()
         .get(&DataKey::Stream(id))
         .ok_or(VaultError::ProposalNotFound)
+}
+
+/// Store the auto-complete-on-insufficient-balance flag for a stream (Issue #1359).
+pub fn set_stream_auto_complete(env: &Env, stream_id: u64, enabled: bool) {
+    let key = FeatureKey::StreamAutoComplete(stream_id);
+    env.storage().persistent().set(&key, &enabled);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Read the auto-complete flag for a stream; defaults to `false` (Issue #1359).
+pub fn get_stream_auto_complete(env: &Env, stream_id: u64) -> bool {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::StreamAutoComplete(stream_id))
+        .unwrap_or(false)
 }
 
 // ============================================================================
@@ -3585,6 +3611,27 @@ pub fn set_cost_model(env: &Env, model: &CostModel) {
 }
 
 // ============================================================================
+// Issue #1367: Gas-Price Oracle Storage
+// ============================================================================
+
+/// Retrieve the gas-price oracle configuration, if one has been set by an admin.
+pub fn get_gas_price_oracle_config(env: &Env) -> Option<GasPriceOracleConfig> {
+    env.storage().instance().get(&FeatureKey::GasPriceOracle)
+}
+
+/// Persist the gas-price oracle configuration.
+pub fn set_gas_price_oracle_config(env: &Env, config: &GasPriceOracleConfig) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::GasPriceOracle, config);
+}
+
+/// Remove the gas-price oracle configuration (reverts to local-only estimation).
+pub fn clear_gas_price_oracle_config(env: &Env) {
+    env.storage().instance().remove(&FeatureKey::GasPriceOracle);
+}
+
+// ============================================================================
 // Issue #1083: Variable-Substitution Template Storage
 // ============================================================================
 
@@ -4333,4 +4380,24 @@ pub fn increment_subscription_usage(env: &Env, subscription_id: u64, metric: &Sy
     let current = usage.get(metric.clone()).unwrap_or(0);
     usage.set(metric.clone(), current + amount);
     set_subscription_usage(env, subscription_id, &usage);
+// Issue #1414: Reentrancy Guard for Proposal Execution
+// ============================================================================
+
+pub fn set_proposal_in_progress(env: &Env, proposal_id: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ProposalInProgress(proposal_id), &true);
+}
+
+pub fn is_proposal_in_progress(env: &Env, proposal_id: u64) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::ProposalInProgress(proposal_id))
+        .unwrap_or(false)
+}
+
+pub fn clear_proposal_in_progress(env: &Env, proposal_id: u64) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::ProposalInProgress(proposal_id));
 }

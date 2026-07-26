@@ -6,6 +6,7 @@ import QRSignature from '../QRSignature';
 import ProposalPhaseTimeline, { type ProposalPhase } from '../proposals/ProposalPhaseTimeline';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../hooks/useWallet';
+import { useToast } from '../../hooks/useToast';
 import VersionHistory from '../collaborative/VersionHistory';
 
 export interface Proposal {
@@ -30,12 +31,20 @@ interface ProposalDetailModalProps {
     isOpen: boolean;
     onClose: () => void;
     proposal: Proposal | null;
+    /**
+     * Optional callback invoked when the user clicks Approve.
+     * When provided, the parent owns the optimistic update; the modal
+     * simply delegates and closes. When absent, the modal calls
+     * `approveProposal` directly and shows inline errors.
+     */
+    onApprove?: (proposalId: string) => Promise<void>;
 }
 
-const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClose, proposal }) => {
+const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClose, proposal, onApprove }) => {
     const [activeTab, setActiveTab] = useState<'details' | 'comments'>('details');
     const { getProposalSignatures, approveProposal, rejectProposal, exportSignatures } = useVaultContract();
     const { address, accountRole } = useWallet();
+    const { showToast } = useToast();
     const [signers, setSigners] = useState<Signer[]>([]);
     const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
@@ -93,10 +102,20 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
         setActionLoading('approve');
         setActionError(null);
         try {
-            await approveProposal(parseInt(proposal.id));
-            onClose();
+            if (onApprove) {
+                // Delegate to parent: the parent owns the optimistic update
+                // and will show any error toasts itself.
+                await onApprove(proposal.id);
+                onClose();
+            } else {
+                // Standalone mode: call RPC directly, show errors inline and via toast.
+                await approveProposal(parseInt(proposal.id));
+                onClose();
+            }
         } catch (e) {
-            setActionError(e instanceof Error ? e.message : 'Failed to approve');
+            const msg = e instanceof Error ? e.message : 'Failed to approve';
+            setActionError(msg);
+            showToast(msg, 'error');
         } finally {
             setActionLoading(null);
         }
