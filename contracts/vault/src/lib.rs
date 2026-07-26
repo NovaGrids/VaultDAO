@@ -21,6 +21,9 @@ mod token;
 mod types;
 mod types_balance_snapshot;
 
+#[cfg(test)]
+mod test_testnet_integration;
+
 use errors::VaultError;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
