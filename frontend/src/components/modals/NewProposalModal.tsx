@@ -6,6 +6,7 @@ import IPFSUploader, { validateCID, MAX_ATTACHMENTS, type IPFSUploadResult } fro
 import FormRenderer from '../FormRenderer';
 import VoiceToText from '../VoiceToText';
 import type { FormConfig, FormSubmissionData } from '../../types/formBuilder';
+import { useProposalFormValidation, MAX_MEMO_LENGTH } from '../../hooks/useProposalFormValidation';
 
 export interface NewProposalFormData {
   recipient: string;
@@ -29,6 +30,10 @@ interface NewProposalModalProps {
   onEnableCollaboration?: () => void;
   useCustomForm?: boolean;
   customFormConfig?: FormConfig;
+  /** Per-proposal spending limit, decimal (e.g. XLM), for real-time amount validation. */
+  proposalLimit?: string;
+  /** Available balance for the currently selected token, decimal. */
+  availableBalance?: string;
 }
 
 const NewProposalModal: React.FC<NewProposalModalProps> = ({
@@ -44,12 +49,34 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   onSaveAsTemplate,
   useCustomForm = false,
   customFormConfig,
+  proposalLimit,
+  availableBalance,
 }) => {
   const { getListMode, isWhitelisted, isBlacklisted } = useVaultContract();
   const { showToast } = useToast();
-  const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [recipientListError, setRecipientListError] = useState<string | null>(null);
   const [listMode, setListMode] = useState<string>('Disabled');
   const modalRef = useFocusTrap<HTMLDivElement>(isOpen);
+
+  const { errors: fieldErrors, isValid: isFormValid } = useProposalFormValidation({
+    recipient: formData.recipient,
+    amount: formData.amount,
+    memo: formData.memo,
+    proposalLimit,
+    availableBalance,
+    recipientListError,
+  });
+  // Only surface an inline error once the user has interacted with a field,
+  // so a freshly-opened form doesn't immediately show "required" errors.
+  const [touched, setTouched] = useState<{ recipient?: boolean; amount?: boolean; memo?: boolean }>({});
+  const markTouched = (field: keyof typeof touched) =>
+    setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+
+  const visibleErrors = {
+    recipient: touched.recipient ? fieldErrors.recipient : undefined,
+    amount: touched.amount ? fieldErrors.amount : undefined,
+    memo: touched.memo ? fieldErrors.memo : undefined,
+  };
 
   const currentAttachments = formData.attachments ?? [];
   const remaining = MAX_ATTACHMENTS - currentAttachments.length;
@@ -91,7 +118,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
 
   const validateRecipient = useCallback(async () => {
     if (!formData.recipient) {
-      setRecipientError(null);
+      setRecipientListError(null);
       return;
     }
 
@@ -99,16 +126,16 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
       if (listMode === 'Whitelist') {
         const whitelisted = await isWhitelisted(formData.recipient);
         if (!whitelisted) {
-          setRecipientError('This address is not on the whitelist');
+          setRecipientListError('This address is not on the whitelist');
         } else {
-          setRecipientError(null);
+          setRecipientListError(null);
         }
       } else if (listMode === 'Blacklist') {
         const blacklisted = await isBlacklisted(formData.recipient);
         if (blacklisted) {
-          setRecipientError('This address is blacklisted');
+          setRecipientListError('This address is blacklisted');
         } else {
-          setRecipientError(null);
+          setRecipientListError(null);
         }
       }
     } catch (error) {
@@ -129,7 +156,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       validateRecipient().catch(console.error);
     } else {
-      setRecipientError(null);
+      setRecipientListError(null);
     }
      
   }, [formData.recipient, listMode, validateRecipient]);
@@ -239,17 +266,18 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
           <div>
             <VoiceToText
               value={formData.recipient}
-              onChange={(value) => onFieldChange('recipient', value)}
+              onChange={(value) => { markTouched('recipient'); onFieldChange('recipient', value); }}
+              onBlur={() => markTouched('recipient')}
               placeholder="Recipient address"
-              className={`w-full rounded-lg border ${recipientError ? 'border-red-500' : 'border-gray-600'
+              className={`w-full rounded-lg border ${visibleErrors.recipient ? 'border-red-500' : 'border-gray-600'
                 } bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500`}
-              aria-invalid={!!recipientError}
-              aria-describedby={recipientError ? 'recipient-error' : undefined}
+              aria-invalid={!!visibleErrors.recipient}
+              aria-describedby={visibleErrors.recipient ? 'recipient-error' : undefined}
               required
             />
-            {recipientError && (
+            {visibleErrors.recipient && (
               <p id="recipient-error" className="mt-1 text-sm text-red-400" role="alert">
-                {recipientError}
+                {visibleErrors.recipient}
               </p>
             )}
           </div>
@@ -259,18 +287,48 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
             placeholder="Token address"
             className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
           />
-          <VoiceToText
-            value={formData.amount}
-            onChange={(value) => onFieldChange('amount', value)}
-            placeholder="Amount"
-            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
-          />
-          <textarea
-            value={formData.memo}
-            onChange={(event) => onFieldChange('memo', event.target.value)}
-            placeholder="Memo (or click mic icon for voice input)"
-            className="h-24 w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none"
-          />
+          <div>
+            <VoiceToText
+              value={formData.amount}
+              onChange={(value) => { markTouched('amount'); onFieldChange('amount', value); }}
+              onBlur={() => markTouched('amount')}
+              placeholder="Amount"
+              className={`w-full rounded-lg border ${visibleErrors.amount ? 'border-red-500' : 'border-gray-600'
+                } bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500`}
+              aria-invalid={!!visibleErrors.amount}
+              aria-describedby={visibleErrors.amount ? 'amount-error' : undefined}
+            />
+            {visibleErrors.amount && (
+              <p id="amount-error" className="mt-1 text-sm text-red-400" role="alert">
+                {visibleErrors.amount}
+              </p>
+            )}
+          </div>
+          <div>
+            <textarea
+              value={formData.memo}
+              onChange={(event) => { markTouched('memo'); onFieldChange('memo', event.target.value); }}
+              onBlur={() => markTouched('memo')}
+              placeholder="Memo (or click mic icon for voice input)"
+              className={`h-24 w-full rounded-lg border ${visibleErrors.memo ? 'border-red-500' : 'border-gray-600'
+                } bg-gray-800 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none`}
+              aria-invalid={!!visibleErrors.memo}
+              aria-describedby={visibleErrors.memo ? 'memo-error' : 'memo-counter'}
+            />
+            <div className="mt-1 flex items-center justify-between">
+              {visibleErrors.memo ? (
+                <p id="memo-error" className="text-sm text-red-400" role="alert">
+                  {visibleErrors.memo}
+                </p>
+              ) : <span />}
+              <span
+                id="memo-counter"
+                className={`text-xs ${formData.memo.length > MAX_MEMO_LENGTH ? 'text-red-400' : 'text-gray-500'}`}
+              >
+                {formData.memo.length}/{MAX_MEMO_LENGTH}
+              </span>
+            </div>
+          </div>
 
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -320,7 +378,7 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={loading || !!recipientError}
+                disabled={loading || !isFormValid}
                 className="min-h-[44px] rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900"
                 aria-label={loading ? 'Submitting proposal' : 'Submit proposal'}
               >

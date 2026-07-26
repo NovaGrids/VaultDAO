@@ -76,6 +76,11 @@ export enum EventType {
   SUBSCRIPTION_CANCELLED = "SUBSCRIPTION_CANCELLED",
   SUBSCRIPTION_UPGRADED = "SUBSCRIPTION_UPGRADED",
   SUBSCRIPTION_EXPIRED = "SUBSCRIPTION_EXPIRED",
+  /** Emitted when jitter shifts a recurring payment's next execution ledger.
+   *  Present only when jitter_window > 0 and the payment is past its first cycle.
+   *  Auditors: timing variance equal to the jitter_offset is expected behavior. */
+  RECURRING_PAYMENT_EXECUTED = "RECURRING_PAYMENT_EXECUTED",
+  RECURRING_PAYMENT_JITTERED = "RECURRING_PAYMENT_JITTERED",
 
   // ── Recovery ──────────────────────────────────────────────────────────────
   RECOVERY_PROPOSED = "RECOVERY_PROPOSED",
@@ -443,6 +448,38 @@ export interface SubscriptionExpiredData {
   readonly subscriptionId: string;
 }
 
+// ── Recurring payment data interfaces ────────────────────────────────────────
+
+export interface RecurringPaymentExecutedData {
+  readonly paymentId: string;
+  /** The ledger at which this individual payment transfer executed. */
+  readonly paymentLedger: number;
+  readonly amount: string;
+}
+
+/**
+ * Data carried by RECURRING_PAYMENT_JITTERED events.
+ *
+ * When jitter is enabled on a recurring payment (`jitter_window > 0`) and the
+ * payment is past its first cycle, the next execution ledger is shifted forward
+ * by `jitterOffset` ledgers.  This event captures both the unshifted
+ * (`nominalNextLedger`) and the actual stored (`jitteredNextLedger`) values so
+ * that auditors can verify the timing variance is deliberate.
+ *
+ * **Audit trail note**: A difference of `jitterOffset` ledgers between
+ * consecutive execution timestamps is expected and intentional.  Do not treat
+ * it as a missed or delayed payment.
+ */
+export interface RecurringPaymentJitteredData {
+  readonly paymentId: string;
+  /** Next execution ledger without jitter: prevNextLedger + n * interval */
+  readonly nominalNextLedger: number;
+  /** Actual stored next execution ledger: nominalNextLedger + jitterOffset */
+  readonly jitteredNextLedger: number;
+  /** Ledger offset applied, in [0, jitter_window) */
+  readonly jitterOffset: number;
+}
+
 // ── Recovery data interfaces ──────────────────────────────────────────────────
 
 export interface RecoveryProposedData {
@@ -689,6 +726,8 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   subscription_cancelled: EventType.SUBSCRIPTION_CANCELLED,
   subscription_upgraded: EventType.SUBSCRIPTION_UPGRADED,
   subscription_expired: EventType.SUBSCRIPTION_EXPIRED,
+  recurring_payment_executed: EventType.RECURRING_PAYMENT_EXECUTED,
+  recurring_pay_jittered: EventType.RECURRING_PAYMENT_JITTERED,
 
   // Recovery
   recovery_proposed: EventType.RECOVERY_PROPOSED,

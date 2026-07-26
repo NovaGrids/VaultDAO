@@ -4,6 +4,7 @@
  */
 
 import { PrometheusFormatter } from "./metrics.formatter.js";
+import { OpenMetricsFormatter } from "./openmetrics.formatter.js";
 
 export type MetricType = "counter" | "gauge" | "histogram";
 
@@ -137,6 +138,13 @@ export class MetricsRegistry {
    */
   public render(): string {
     return PrometheusFormatter.format(this.snapshot());
+  }
+
+  /**
+   * Renders the current state of the registry in OpenMetrics text format.
+   */
+  public renderOpenMetrics(): string {
+    return OpenMetricsFormatter.format(this.snapshot());
   }
 }
 
