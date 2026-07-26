@@ -182,6 +182,10 @@ pub struct Config {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
+    /// Default amount for auto top-up before subscription renewal (0 = disabled)
+    pub auto_topup_amount: i128,
+    /// Whether subscription tier usage tracking is enabled
+    pub tier_usage_tracking: bool,
     /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
     pub arbitration_timeout_ledgers: u64,
     /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
@@ -989,6 +993,7 @@ pub struct StakingConfig {
     pub slash_percentage: u32,
     pub compound_lock_period: u64,
     pub compound_epoch: u64,
+    pub reward_bps_per_execution: u32,
 }
 
 impl Default for StakingConfig {
@@ -1003,6 +1008,7 @@ impl Default for StakingConfig {
             slash_percentage: 50,
             compound_lock_period: 17280, // ~1 day at 5s/ledger
             compound_epoch: 17280,       // ~1 day at 5s/ledger
+            reward_bps_per_execution: 0,
         }
     }
 }
@@ -1022,6 +1028,8 @@ pub struct StakeRecord {
     pub auto_compound: bool,
     pub reinvestment_lock_until: u64,
     pub last_compounded: u64,
+    pub staking_tier: u32,
+    pub accumulated_rewards: i128,
 }
 
 impl Default for GasConfig {
@@ -1415,6 +1423,10 @@ pub struct Subscription {
     pub grace_period_ledgers: u64,
     /// Ledger at which the subscription was paused (0 = not paused)
     pub paused_at_ledger: u64,
+    /// Source wallet for auto top-up before renewal
+    pub auto_topup_source: Option<Address>,
+    /// Amount to top-up if balance insufficient (0 = disabled)
+    pub auto_topup_amount: i128,
 }
 
 /// Payment record for subscription tracking
