@@ -15553,3 +15553,9 @@ mod test_swap_multi_token;
 mod test_token_insurance;
 #[cfg(test)]
 mod test_stream_clawback;
+#[cfg(test)]
+mod test_token_allowlist;
+#[cfg(test)]
+mod test_proposal_amendment;
+#[cfg(test)]
+mod test_overflow_checks;
