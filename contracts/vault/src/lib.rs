@@ -265,6 +265,14 @@ mod test_recurring_alerts;
 mod test_recurring_dryrun;
 #[cfg(test)]
 mod test_escrow_multisig;
+#[cfg(test)]
+mod test_multitoken_limits;
+#[cfg(test)]
+mod test_multitoken_swap;
+#[cfg(test)]
+mod test_stream_clawback;
+#[cfg(test)]
+mod test_multitoken_insurance;
 mod test_rbac_consistency;
 #[cfg(test)]
 mod test_reentrancy;
