@@ -316,6 +316,8 @@ pub enum FeatureKey {
     Permissions(Address),
     /// Delegated permissions (delegatee, delegator, permission as u32) -> DelegatedPermission
     DelegatedPermission(Address, Address, u32),
+    /// Auto-complete flag for a stream (stream id) -> bool (Issue #1359)
+    StreamAutoComplete(u64),
     /// Subscription by ID -> Subscription
     Subscription(u64),
     /// Subscription IDs indexed by subscriber address -> Vec<u64>
@@ -1023,6 +1025,23 @@ pub fn get_streaming_payment(
         .persistent()
         .get(&DataKey::Stream(id))
         .ok_or(VaultError::ProposalNotFound)
+}
+
+/// Store the auto-complete-on-insufficient-balance flag for a stream (Issue #1359).
+pub fn set_stream_auto_complete(env: &Env, stream_id: u64, enabled: bool) {
+    let key = FeatureKey::StreamAutoComplete(stream_id);
+    env.storage().persistent().set(&key, &enabled);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Read the auto-complete flag for a stream; defaults to `false` (Issue #1359).
+pub fn get_stream_auto_complete(env: &Env, stream_id: u64) -> bool {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::StreamAutoComplete(stream_id))
+        .unwrap_or(false)
 }
 
 // ============================================================================
