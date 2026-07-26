@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare, FileText, Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
@@ -11,10 +11,13 @@ import ProposalFilters, { type FilterState } from '../../components/proposals/Pr
 import ProposalComparison from '../../components/ProposalComparison';
 import TransactionSimulatorModal from '../../components/TransactionSimulatorModal';
 import { useToast } from '../../hooks/useToast';
+import { useOptimisticUpdate } from '../../hooks/useOptimisticUpdate';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useProposals } from '../../hooks/useProposals';
 import { useWallet } from '../../hooks/useWallet';
 import { filtersToSearchParams, searchParamsToFilters } from '../../utils/search';
+import { ProposalSearchIndex } from '../../utils/proposalSearchIndex';
+import { stroopsToDecimal } from '../../utils/amount';
 import { useActionReadiness } from '../../hooks/useActionReadiness';
 import { useRealtime } from '../../contexts/RealtimeContext';
 import type { TokenInfo, TokenBalance } from '../../types';
@@ -63,8 +66,9 @@ export interface Proposal {
 }
 
 const Proposals: React.FC = () => {
-  const { notify } = useToast();
-  const { rejectProposal, approveProposal, executeProposal, getUserRole, getTokenBalances } = useVaultContract();
+  const { notify, showToast } = useToast();
+  const { execute: optimisticExecute } = useOptimisticUpdate<Proposal[]>();
+  const { rejectProposal, approveProposal, executeProposal, getUserRole, getTokenBalances, getVaultConfig } = useVaultContract();
   const { address } = useWallet();
   const { isReady, checkReady } = useActionReadiness();
   const { subscribe, updatePresence, connectionStatus, trackEvent } = useRealtime();
@@ -85,6 +89,7 @@ const Proposals: React.FC = () => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
+  const [proposalSpendingLimit, setProposalSpendingLimit] = useState<string | undefined>(undefined);
   const [showComparison, setShowComparison] = useState(false);
   const [selectedForComparison, setSelectedForComparison] = useState<Set<string>>(new Set());
 
@@ -166,10 +171,60 @@ const Proposals: React.FC = () => {
     getUserRole().then(setUserRole).catch(() => setUserRole(0));
   }, [getUserRole]);
 
+  // Fetch the per-proposal spending limit for real-time amount validation
+  useEffect(() => {
+    getVaultConfig()
+      .then((config) => setProposalSpendingLimit(stroopsToDecimal(config.spendingLimit).toString()))
+      .catch(() => setProposalSpendingLimit(undefined));
+  }, [getVaultConfig]);
+
   // Sync real proposals into local state (local state handles optimistic updates)
   useEffect(() => {
     setLocalProposals(proposals);
   }, [proposals]);
+
+  // Full-text search index over proposals (id, recipient, memo, amount, status).
+  // Kept as a single long-lived instance and updated incrementally per
+  // changed/added/removed proposal rather than rebuilt on every render.
+  const searchIndexRef = useRef(new ProposalSearchIndex());
+  const indexedProposalsRef = useRef<Map<string, Proposal>>(new Map());
+
+  useEffect(() => {
+    const index = searchIndexRef.current;
+    const previous = indexedProposalsRef.current;
+    const seen = new Set<string>();
+
+    for (const proposal of localProposals) {
+      seen.add(proposal.id);
+      const prior = previous.get(proposal.id);
+      if (!prior || prior !== proposal) {
+        index.upsert({
+          id: proposal.id,
+          recipient: proposal.recipient,
+          proposer: proposal.proposer,
+          memo: proposal.memo,
+          amount: proposal.amount,
+          status: proposal.status,
+        });
+      }
+    }
+
+    for (const id of previous.keys()) {
+      if (!seen.has(id)) {
+        index.remove(id);
+      }
+    }
+
+    indexedProposalsRef.current = new Map(localProposals.map((p) => [p.id, p]));
+  }, [localProposals]);
+
+  // Runs after the index-update effect above (effects fire in declaration
+  // order within a commit), so this always queries the freshly-updated index.
+  const [searchMatchedIds, setSearchMatchedIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    const query = activeFilters.search.trim();
+    setSearchMatchedIds(query ? new Set(searchIndexRef.current.search(activeFilters.search)) : null);
+  }, [activeFilters.search, localProposals]);
 
   // Subscribe to real-time proposal updates
   useEffect(() => {
@@ -226,13 +281,9 @@ const Proposals: React.FC = () => {
   // Filter proposals by token and other filters
   const filteredProposals = useMemo(() => {
     const filtered = localProposals.filter((p) => {
-      // Search filter
-      const searchLower = activeFilters.search.toLowerCase();
-      const matchesSearch =
-        !activeFilters.search ||
-        p.proposer.toLowerCase().includes(searchLower) ||
-        p.recipient.toLowerCase().includes(searchLower) ||
-        p.memo.toLowerCase().includes(searchLower);
+      // Search filter (full-text index; supports operators like
+      // `recipient:alice amount:>1000`)
+      const matchesSearch = searchMatchedIds === null || searchMatchedIds.has(p.id);
 
       // Status filter
       const matchesStatus =
@@ -266,7 +317,7 @@ const Proposals: React.FC = () => {
         default: return dateB - dateA;
       }
     });
-  }, [localProposals, activeFilters]);
+  }, [localProposals, activeFilters, searchMatchedIds]);
 
   const handleRejectConfirm = async () => {
     if (!rejectingId) return;
@@ -308,24 +359,30 @@ const Proposals: React.FC = () => {
     const doApprove = async () => {
       setApprovingIds(prev => new Set(prev).add(proposalId));
       try {
-        await approveProposal(Number(proposalId));
-        setLocalProposals(prev => prev.map(p => {
-          if (p.id === proposalId) {
-            const newApprovals = p.approvals + 1;
-            const newApprovedBy = [...p.approvedBy, address!];
-            return {
-              ...p,
-              approvals: newApprovals,
-              approvedBy: newApprovedBy,
-              status: newApprovals >= p.threshold ? 'Approved' : p.status
-            };
-          }
-          return p;
-        }));
-        notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to approve proposal';
-        notify('proposal_rejected', errorMessage, 'error');
+        await optimisticExecute(setLocalProposals, {
+          metricLabel: 'approve_proposal',
+          applyUpdate: (prev) => prev.map(p => {
+            if (p.id === proposalId) {
+              const newApprovals = p.approvals + 1;
+              const newApprovedBy = [...p.approvedBy, address!];
+              return {
+                ...p,
+                approvals: newApprovals,
+                approvedBy: newApprovedBy,
+                status: newApprovals >= p.threshold ? 'Approved' : p.status,
+              };
+            }
+            return p;
+          }),
+          performAction: () => approveProposal(Number(proposalId)),
+          onSuccess: () => {
+            notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
+          },
+          onError: (err) => {
+            const errorMessage = err.message || 'Failed to approve proposal';
+            showToast(errorMessage, 'error');
+          },
+        });
       } finally {
         setApprovingIds(prev => {
           const newSet = new Set(prev);
@@ -395,6 +452,51 @@ const Proposals: React.FC = () => {
       onProceed: doExecute,
     });
     setSimulatorOpen(true);
+  };
+
+  /**
+   * Optimistic approve triggered from ProposalDetailModal.
+   * Immediately updates localProposals, then calls the RPC. On failure,
+   * localProposals is rolled back and a toast with the real error is shown.
+   */
+  const handleApproveFromModal = async (proposalId: string): Promise<void> => {
+    const { ready, message } = checkReady();
+    if (!ready) {
+      showToast(message ?? 'Not ready', 'error');
+      return;
+    }
+    setApprovingIds(prev => new Set(prev).add(proposalId));
+    try {
+      await optimisticExecute(setLocalProposals, {
+        metricLabel: 'approve_proposal_modal',
+        applyUpdate: (prev) => prev.map(p => {
+          if (p.id === proposalId) {
+            const newApprovals = p.approvals + 1;
+            const newApprovedBy = [...p.approvedBy, address!];
+            return {
+              ...p,
+              approvals: newApprovals,
+              approvedBy: newApprovedBy,
+              status: newApprovals >= p.threshold ? 'Approved' : p.status,
+            };
+          }
+          return p;
+        }),
+        performAction: () => approveProposal(Number(proposalId)),
+        onSuccess: () => {
+          notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
+        },
+        onError: (err) => {
+          showToast(err.message || 'Failed to approve proposal', 'error');
+        },
+      });
+    } finally {
+      setApprovingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(proposalId);
+        return newSet;
+      });
+    }
   };
 
   return (
@@ -657,6 +759,14 @@ const Proposals: React.FC = () => {
           loading={loading}
           selectedTemplateName={null}
           formData={newProposalForm}
+          proposalLimit={proposalSpendingLimit}
+          availableBalance={
+            tokenBalances.find((tb) => tb.token.address === newProposalForm.token)
+              ? stroopsToDecimal(
+                  tokenBalances.find((tb) => tb.token.address === newProposalForm.token)!.balance,
+                ).toString()
+              : undefined
+          }
           onFieldChange={(f, v) => setNewProposalForm(prev => ({ ...prev, [f]: v }))}
           onAttachmentsChange={(attachments) => setNewProposalForm(prev => ({ ...prev, attachments }))}
           onSubmit={(e) => { e.preventDefault(); setShowNewProposalModal(false); }}
@@ -664,7 +774,7 @@ const Proposals: React.FC = () => {
           onSaveAsTemplate={() => { }}
           onClose={() => setShowNewProposalModal(false)}
         />
-        <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} />
+        <ProposalDetailModal isOpen={!!selectedProposal} onClose={() => setSelectedProposal(null)} proposal={selectedProposal} onApprove={handleApproveFromModal} />
         <ConfirmationModal isOpen={showRejectModal} title="Reject Proposal" message="Are you sure you want to reject this?" onConfirm={handleRejectConfirm} onCancel={() => setShowRejectModal(false)} showReasonInput={true} isDestructive={true} />
         {showComparison && (
           <ProposalComparison

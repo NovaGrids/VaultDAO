@@ -1,6 +1,6 @@
 import type { MetricsSnapshot } from "./metrics.registry.js";
 
-function baseName(key: string): string {
+export function baseName(key: string): string {
   const idx = key.indexOf("{");
   return idx >= 0 ? key.slice(0, idx) : key;
 }

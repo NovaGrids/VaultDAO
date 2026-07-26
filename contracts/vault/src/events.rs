@@ -218,6 +218,13 @@ pub fn emit_config_updated(env: &Env, updater: &Address) {
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
 }
 
+pub fn emit_stream_burst_factor_updated(env: &Env, admin: &Address, old_factor: u32, new_factor: u32) {
+    env.events().publish(
+        (Symbol::new(env, "stream_burst_factor_updated"),),
+        (admin.clone(), old_factor, new_factor),
+    );
+}
+
 // ============================================================================
 // Oracle Events (feature/oracle-integration)
 // ============================================================================
@@ -235,6 +242,30 @@ pub fn emit_oracle_price_stale(env: &Env, asset: &Address, price_ledger: u64, cu
     env.events().publish(
         (Symbol::new(env, "oracle_price_stale"),),
         (asset.clone(), price_ledger, current_ledger),
+    );
+}
+
+// ============================================================================
+// Gas-Price Oracle Fee Estimation Events (Issue #1367)
+// ============================================================================
+
+/// Emit when a proposal fee estimate is finalized, recording which price source
+/// was used (oracle live price vs. local CostModel fallback) and the price value.
+///
+/// Topics: `("oracle_gas_price_used", proposal_id)`
+/// Data:   `(price_used, source_is_oracle: bool)`
+///
+/// `source_is_oracle = true`  → live oracle price was used.
+/// `source_is_oracle = false` → local CostModel fallback was used (oracle unavailable/stale/invalid).
+pub fn emit_oracle_gas_price_used(
+    env: &Env,
+    proposal_id: u64,
+    price_used: i128,
+    source_is_oracle: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "oracle_gas_price_used"), proposal_id),
+        (price_used, source_is_oracle),
     );
 }
 
@@ -873,6 +904,13 @@ pub fn emit_escrow_dispute_resolved(
     );
 }
 
+pub fn emit_escrow_auto_resolved(env: &Env, escrow_id: u64, amount_refunded: i128) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_auto_resolved"), escrow_id),
+        amount_refunded,
+    );
+}
+
 /// Emit when a funding round is created
 pub fn emit_funding_round_created(
     env: &Env,
@@ -1116,6 +1154,34 @@ pub fn emit_swap_executed(
     );
 }
 
+/// Emit event recording the vault's token balances immediately before and after
+/// a swap's on-chain settlement (issue #1441), so off-chain observers can verify
+/// the swap moved exactly the reported amounts.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_swap_balances(
+    env: &Env,
+    proposal_id: u64,
+    token_in: &Address,
+    token_out: &Address,
+    token_in_before: i128,
+    token_in_after: i128,
+    token_out_before: i128,
+    token_out_after: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "swap_balances"),),
+        (
+            proposal_id,
+            token_in.clone(),
+            token_out.clone(),
+            token_in_before,
+            token_in_after,
+            token_out_before,
+            token_out_after,
+        ),
+    );
+}
+
 /// Emit event when liquidity is added
 pub fn emit_liquidity_added(
     env: &Env,
@@ -1199,6 +1265,23 @@ pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amoun
     env.events().publish(
         (Symbol::new(env, "stream_claimed"), stream_id),
         (recipient.clone(), amount),
+    );
+}
+
+/// Emit when a stream is auto-completed because the vault balance can no
+/// longer sustain it (Issue #1359).
+///
+/// Topics: ("stream_auto_done", stream_id); data: (reason, available, required).
+pub fn emit_stream_auto_completed(
+    env: &Env,
+    stream_id: u64,
+    reason: Symbol,
+    available: i128,
+    required: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_auto_done"), stream_id),
+        (reason, available, required),
     );
 }
 
@@ -1544,4 +1627,120 @@ pub fn emit_gov_proposal_approved(env: &Env, id: u64, voter: &Address, count: u3
 pub fn emit_gov_proposal_executed(env: &Env, id: u64, param: u32, new_value: i128) {
     env.events()
         .publish((Symbol::new(env, "gov_executed"), id), (param, new_value));
+}
+
+// ============================================================================
+// Fee Cache Events (#1428)
+// ============================================================================
+
+pub fn emit_fee_cache_invalidated(env: &Env, proposal_id: u64, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "fee_cache_invalidated"), proposal_id),
+        admin.clone(),
+    );
+}
+
+// ============================================================================
+// Fan-Out Stream Events (#1430)
+// ============================================================================
+
+pub fn emit_fan_out_stream_created(env: &Env, stream_id: u64, creator: &Address, recipient_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "fanout_stream_created"), stream_id),
+        (creator.clone(), recipient_count),
+    );
+}
+
+pub fn emit_fan_out_payment_distributed(
+    env: &Env,
+    stream_id: u64,
+    recipient: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "fanout_payment_distributed"), stream_id),
+        (recipient.clone(), amount),
+    );
+}
+
+// ============================================================================
+// Stream Pause/Resume TTL Events (#1429)
+// ============================================================================
+
+pub fn emit_stream_paused(env: &Env, stream_id: u64, pauser: &Address, ledger: u64) {
+    env.events().publish(
+        (Symbol::new(env, "stream_paused"), stream_id),
+        (pauser.clone(), ledger),
+    );
+}
+
+pub fn emit_stream_resumed(env: &Env, stream_id: u64, resumer: &Address, pause_duration: u64) {
+    env.events().publish(
+        (Symbol::new(env, "stream_resumed"), stream_id),
+        (resumer.clone(), pause_duration),
+    );
+}
+
+// ============================================================================
+// Escrow Voting Events (#1431)
+// ============================================================================
+
+pub fn emit_escrow_release_locked_for_voting(env: &Env, escrow_id: u64, required_approvals: u32) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_release_locked"), escrow_id),
+        required_approvals,
+    );
+}
+
+pub fn emit_escrow_release_voted(
+    env: &Env,
+    escrow_id: u64,
+    voter: &Address,
+    approved: bool,
+    approval_count: u32,
+    rejection_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_release_voted"), escrow_id),
+        (voter.clone(), approved, approval_count, rejection_count),
+    );
+}
+
+// ============================================================================
+// Recurring Payment Jitter Events (issue #1364)
+// ============================================================================
+
+/// Emit when jitter is applied to a recurring payment's next execution ledger.
+///
+/// This event fires once per execution cycle (not per missed-payment catch-up
+/// transfer) whenever `jitter_window > 0` AND the payment is past its first
+/// cycle (jitter is skipped for the very first payment so it executes promptly).
+///
+/// **Audit note**: When this event is present for a payment ID, the
+/// `next_payment_ledger` stored on-chain will differ from the naive
+/// `prev_next_payment_ledger + interval` by exactly `jitter_offset` ledgers.
+/// Auditors should treat this timing variance as expected behavior, not a bug.
+///
+/// Topics: `("recurring_pay_jittered", payment_id)`
+/// Data:   `(nominal_next_ledger, jittered_next_ledger, jitter_offset)`
+///
+/// # Arguments
+/// * `payment_id`           - ID of the recurring payment.
+/// * `nominal_next_ledger`  - What `next_payment_ledger` would be without jitter
+///                            (i.e. `prev_next_payment_ledger + n * interval`).
+/// * `jittered_next_ledger` - The actual stored `next_payment_ledger` after
+///                            adding `jitter_offset`.
+/// * `jitter_offset`        - The ledger offset added (`jitter_offset` field on
+///                            the payment, in `[0, jitter_window)`).
+pub fn emit_recurring_payment_jittered(
+    env: &Env,
+    payment_id: u64,
+    nominal_next_ledger: u64,
+    jittered_next_ledger: u64,
+    jitter_offset: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "recurring_pay_jittered"), payment_id),
+        (nominal_next_ledger, jittered_next_ledger, jitter_offset),
+    );
 }
