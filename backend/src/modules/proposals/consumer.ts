@@ -21,6 +21,10 @@ import {
 import type { MetricsRegistry } from "../health/metrics.registry.js";
 import type { NotificationPublisher } from "../notifications/notification.types.js";
 import { randomUUID } from "node:crypto";
+import {
+  ProposalFingerprintStore,
+  DEFAULT_FINGERPRINT_WINDOW_LEDGERS,
+} from "./proposal-fingerprint.store.js";
 
 /**
  * Default batch size for consumer buffering.
@@ -66,12 +70,20 @@ export class ProposalActivityConsumer {
   private readonly processedEventIds = new Set<string>();
   private readonly maxDedupeSize: number;
 
+  // Fingerprint-based duplicate detection for PROPOSAL_CREATED events
+  private readonly fingerprintStore: ProposalFingerprintStore;
+
   constructor(options?: {
     batchSize?: number;
     flushIntervalMs?: number;
     maxRetries?: number;
     initialBackoffMs?: number;
     maxDedupeSize?: number;
+    /**
+     * Ledger window for fingerprint deduplication on PROPOSAL_CREATED events.
+     * Defaults to DEFAULT_FINGERPRINT_WINDOW_LEDGERS (120,960 ≈ 7 days).
+     */
+    fingerprintWindowLedgers?: number;
     metricsRegistry?: MetricsRegistry;
     notificationQueue?: NotificationPublisher;
     /** Broadcast hook — called synchronously after each record is produced. */
@@ -86,6 +98,9 @@ export class ProposalActivityConsumer {
     this.metrics = options?.metricsRegistry;
     this.notificationQueue = options?.notificationQueue;
     this.onActivity = options?.onActivity;
+    this.fingerprintStore = new ProposalFingerprintStore(
+      options?.fingerprintWindowLedgers ?? DEFAULT_FINGERPRINT_WINDOW_LEDGERS,
+    );
   }
 
   private deriveEventKey(event: NormalizedEvent): string {
@@ -290,6 +305,29 @@ export class ProposalActivityConsumer {
 
     const proposalId = this.extractProposalId(event);
     const data = this.mapActivityData(event, activityType);
+
+    // Fingerprint deduplication: only applied to PROPOSAL_CREATED events.
+    // We compute the fingerprint after mapping activity data so we have
+    // strongly-typed fields. If an identical proposal was already seen
+    // within the configured ledger window we drop it here.
+    if (activityType === ProposalActivityType.CREATED) {
+      const isNew = this.fingerprintStore.checkAndRecord(
+        event.metadata.contractId,
+        proposalId,
+        data as import("./types.js").ProposalCreatedActivityData,
+        event.metadata.ledger,
+      );
+
+      if (!isNew) {
+        this.logger.debug(
+          `dropping duplicate PROPOSAL_CREATED within fingerprint window: proposalId=${proposalId}`,
+        );
+        this.metrics?.incrementCounter(
+          "vaultdao_proposals_fingerprint_duplicates_total",
+        );
+        return null;
+      }
+    }
 
     // Increment proposal metrics
     if (this.metrics) {
@@ -681,6 +719,13 @@ export class ProposalActivityConsumer {
   }
 
   /**
+   * Returns the underlying fingerprint store (for diagnostics / testing).
+   */
+  public getFingerprintStore(): ProposalFingerprintStore {
+    return this.fingerprintStore;
+  }
+
+  /**
    * Returns the current buffer size.
    */
   public getBufferSize(): number {
@@ -725,6 +770,7 @@ export class ProposalActivityConsumer {
 export function createProposalConsumer(options?: {
   batchSize?: number;
   flushIntervalMs?: number;
+  fingerprintWindowLedgers?: number;
   metricsRegistry?: MetricsRegistry;
   notificationQueue?: NotificationPublisher;
   onActivity?: (record: ProposalActivityRecord) => void;
