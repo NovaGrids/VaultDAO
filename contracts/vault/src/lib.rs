@@ -258,6 +258,13 @@ mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
+mod test_recurring_conditions;
+#[cfg(test)]
+mod test_recurring_alerts;
+#[cfg(test)]
+mod test_recurring_dryrun;
+#[cfg(test)]
+mod test_escrow_multisig;
 mod test_rbac_consistency;
 #[cfg(test)]
 mod test_reentrancy;
