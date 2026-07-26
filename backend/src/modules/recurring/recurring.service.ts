@@ -12,9 +12,12 @@ import {
 import {
   isInBackoff,
   recordFailure,
+  resetRetryState,
   type BackoffOptions,
   type PaymentBackoffEvent,
 } from "./backoff.js";
+import type { ConsecutiveMissResetData } from "../events/types.js";
+import { EventType } from "../events/types.js";
 
 /**
  * A due payment enriched with the reason it was triggered.
@@ -25,6 +28,16 @@ import {
 export interface DuePaymentResult {
   readonly payment: NormalizedRecurringPayment;
   readonly trigger_reason: "exact" | "jitter_early" | "jitter_late";
+}
+
+/**
+ * Returned by `transformRawRecurringPayment` alongside the normalized payment
+ * when a consecutive-miss reset occurred.  Callers that have an event bus
+ * should emit this as a `CONSECUTIVE_MISS_RESET` event.
+ */
+export interface ConsecutiveMissResetEvent {
+  readonly type: typeof EventType.CONSECUTIVE_MISS_RESET;
+  readonly data: ConsecutiveMissResetData;
 }
 
 const logger = createLogger("recurring-indexer");
@@ -117,13 +130,17 @@ export class MemoryRecurringStorageAdapter implements RecurringStorageAdapter {
 
 /**
  * Transform raw contract data to normalized recurring payment.
+ *
+ * Returns the normalized payment plus an optional `ConsecutiveMissResetEvent`
+ * that callers should emit when the consecutive-miss counter transitions from
+ * a non-zero streak back to 0 (i.e. the payment is recovering after failures).
  */
 export function transformRawRecurringPayment(
   raw: RawRecurringPayment,
   contractId: string,
   ledger: number,
   existingPayment?: NormalizedRecurringPayment,
-): NormalizedRecurringPayment {
+): { payment: NormalizedRecurringPayment; resetEvent: ConsecutiveMissResetEvent | null } {
   const now = new Date().toISOString();
   const events: RecurringEvent[] = existingPayment?.events ?? [];
 
@@ -207,13 +224,39 @@ export function transformRawRecurringPayment(
     events.push(RecurringEvent.EXECUTED);
   }
 
-  // Preserve existing retry state; reset to zero on successful execution.
+  // ── Retry / backoff state ────────────────────────────────────────────────
+  //
+  // `retryCount`           — consecutive failures since last success.
+  //                          Reset to 0 on every successful execution.
+  //                          This gates backoff and scheduling behaviour.
+  //
+  // `totalMissedExecutions` — lifetime audit total; never decremented or
+  //                          reset.  Does NOT affect backoff or scheduling.
 
-  const retryCount = wasExecuted ? 0 : (existingPayment?.retryCount ?? 0);
+  const priorRetryCount = existingPayment?.retryCount ?? 0;
+  const priorTotalMissed = existingPayment?.totalMissedExecutions ?? 0;
+
+  // On successful execution: reset consecutive counter, carry forward total.
+  const retryCount = wasExecuted ? 0 : priorRetryCount;
   const lastAttemptAt = wasExecuted ? 0 : (existingPayment?.lastAttemptAt ?? 0);
   const nextRetryAt = wasExecuted ? 0 : (existingPayment?.nextRetryAt ?? 0);
+  const totalMissedExecutions = priorTotalMissed; // never reset
 
-  return {
+  // Emit a reset event only when recovering from a non-zero streak.
+  let resetEvent: ConsecutiveMissResetEvent | null = null;
+  if (wasExecuted && priorRetryCount > 0) {
+    resetEvent = {
+      type: EventType.CONSECUTIVE_MISS_RESET,
+      data: {
+        paymentId: raw.id,
+        contractId,
+        clearedConsecutiveMisses: priorRetryCount,
+        totalMissedExecutions,
+      },
+    };
+  }
+
+  const payment: NormalizedRecurringPayment = {
     paymentId: raw.id,
     proposer: raw.proposer,
     recipient: raw.recipient,
@@ -241,11 +284,14 @@ export function transformRawRecurringPayment(
     retryCount,
     lastAttemptAt,
     nextRetryAt,
+    totalMissedExecutions,
     // Jitter fields — default to 0 for payments created before jitter support
     // or when not returned by the RPC (optional in RawRecurringPayment).
     jitterWindow: Number(raw.jitter_window ?? "0"),
     jitterOffset: Number(raw.jitter_offset ?? "0"),
   };
+
+  return { payment, resetEvent };
 }
 
 /**
@@ -406,7 +452,7 @@ export class RecurringIndexerService {
 
     for (const raw of payments) {
       const existing = await this.storage.getById(raw.id);
-      const normalized = transformRawRecurringPayment(
+      const { payment: normalized, resetEvent } = transformRawRecurringPayment(
         raw,
         this.env.contractId,
         this.lastLedgerProcessed,
@@ -414,6 +460,15 @@ export class RecurringIndexerService {
       );
       await this.storage.save(normalized);
       this.totalPaymentsIndexed++;
+
+      // Log the consecutive-miss reset when a payment recovers from a streak.
+      if (resetEvent) {
+        logger.info("recurring payment consecutive-miss counter reset", {
+          paymentId: resetEvent.data.paymentId,
+          clearedConsecutiveMisses: resetEvent.data.clearedConsecutiveMisses,
+          totalMissedExecutions: resetEvent.data.totalMissedExecutions,
+        });
+      }
 
       // Emit alert on first transition to DUE — not on every sync.
       if (
@@ -699,6 +754,7 @@ export class RecurringIndexerService {
         retryCount: payment.retryCount,
         lastAttemptAt: payment.lastAttemptAt,
         nextRetryAt: payment.nextRetryAt,
+        totalMissedExecutions: payment.totalMissedExecutions,
       },
       nowSeconds,
       options,
@@ -709,6 +765,7 @@ export class RecurringIndexerService {
       retryCount: state.retryCount,
       lastAttemptAt: state.lastAttemptAt,
       nextRetryAt: state.nextRetryAt,
+      totalMissedExecutions: state.totalMissedExecutions,
     });
 
     return event;

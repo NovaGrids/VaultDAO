@@ -54,7 +54,12 @@ export enum BackoffStrategy {
  * lose retry progress.
  */
 export interface PaymentRetryState {
-  /** Number of consecutive failures since the last successful execution. */
+  /**
+   * Number of consecutive failures since the last successful execution.
+   * Reset to 0 on every successful execution.
+   * This is the value that gates backoff / scheduling behaviour — the cap
+   * applies to this counter, not to `totalMissedExecutions`.
+   */
   retryCount: number;
   /**
    * Unix timestamp (seconds) of the most recent failed execution attempt.
@@ -67,6 +72,12 @@ export interface PaymentRetryState {
    * payment.  `0` means "not in backoff — process immediately".
    */
   nextRetryAt: number;
+  /**
+   * Lifetime count of all failed execution attempts across this payment's
+   * entire history.  Never decremented or reset — purely additive for
+   * audit/history purposes.  Does NOT gate backoff or scheduling behaviour.
+   */
+  totalMissedExecutions: number;
 }
 
 /**
@@ -96,7 +107,7 @@ export interface BackoffResult {
 export interface PaymentBackoffEvent {
   /** Identifier of the recurring payment. */
   readonly paymentId: string;
-  /** New retry count after this failure. */
+  /** New consecutive retry count after this failure. */
   readonly retryCount: number;
   /** Clamped delay in seconds until the next attempt. */
   readonly delaySeconds: number;
@@ -106,6 +117,11 @@ export interface PaymentBackoffEvent {
   readonly strategy: BackoffStrategy;
   /** Unix timestamp (seconds) of the next allowed retry. */
   readonly nextRetryAt: number;
+  /**
+   * Lifetime total of all failed execution attempts for this payment
+   * (including this one).  Provided here for observer context; never reset.
+   */
+  readonly totalMissedExecutions: number;
 }
 
 // ── Core calculation ──────────────────────────────────────────────────────────
@@ -188,6 +204,7 @@ export function recordFailure(
   options: BackoffOptions = {},
 ): { state: PaymentRetryState; event: PaymentBackoffEvent } {
   const newRetryCount = current.retryCount + 1;
+  const newTotalMissed = current.totalMissedExecutions + 1;
   const strategy = options.strategy ?? BackoffStrategy.Exponential;
 
   const { delaySeconds, capHit } = calculateBackoff(newRetryCount, {
@@ -201,6 +218,7 @@ export function recordFailure(
     retryCount: newRetryCount,
     lastAttemptAt: nowSeconds,
     nextRetryAt,
+    totalMissedExecutions: newTotalMissed,
   };
 
   const event: PaymentBackoffEvent = {
@@ -210,6 +228,7 @@ export function recordFailure(
     capHit,
     strategy,
     nextRetryAt,
+    totalMissedExecutions: newTotalMissed,
   };
 
   return { state, event };
@@ -218,10 +237,24 @@ export function recordFailure(
 /**
  * Reset retry state after a successful payment execution.
  *
- * @returns A fresh `PaymentRetryState` with all counters zeroed.
+ * - Resets `retryCount`, `lastAttemptAt`, and `nextRetryAt` to 0 so the
+ *   payment is immediately schedulable again with no backoff.
+ * - Preserves `totalMissedExecutions`: the lifetime audit total is never
+ *   decremented or reset under any circumstance.
+ *
+ * @param current - The payment's current retry state (used to carry forward
+ *                  `totalMissedExecutions`).  Omit or pass a fresh state if
+ *                  called for a payment with no prior failure history.
+ * @returns A `PaymentRetryState` with consecutive counters cleared.
  */
-export function resetRetryState(): PaymentRetryState {
-  return { retryCount: 0, lastAttemptAt: 0, nextRetryAt: 0 };
+export function resetRetryState(current?: PaymentRetryState): PaymentRetryState {
+  return {
+    retryCount: 0,
+    lastAttemptAt: 0,
+    nextRetryAt: 0,
+    // Carry forward the lifetime total — it is never reset.
+    totalMissedExecutions: current?.totalMissedExecutions ?? 0,
+  };
 }
 
 /**

@@ -89,8 +89,9 @@ export interface NormalizedRecurringPayment {
 
   /**
    * Number of consecutive failures since the last successful execution.
-   * Reset to 0 after each successful execution.
-   * Used to compute the exponential/linear backoff delay.
+   * Reset to 0 on every successful execution.
+   * This is the counter that drives backoff delay and gates scheduling
+   * behaviour — the cap/threshold applies here, not to `totalMissedExecutions`.
    */
   readonly retryCount: number;
   /**
@@ -105,6 +106,12 @@ export interface NormalizedRecurringPayment {
    */
   readonly nextRetryAt: number;
   /**
+   * Lifetime count of all failed execution attempts for this payment across
+   * its entire history.  Never decremented or reset — it is a purely additive
+   * audit trail.  Does NOT gate backoff or scheduling behaviour; use
+   * `retryCount` for that.
+   */
+  readonly totalMissedExecutions: number;
    * Maximum ledger spread applied after the first cycle for load distribution.
    * 0 means jitter is disabled for this payment.
    * When non-zero, each cycle's `nextPaymentLedger` is shifted forward by
