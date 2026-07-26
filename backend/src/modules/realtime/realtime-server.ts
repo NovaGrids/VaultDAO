@@ -12,6 +12,7 @@ import type {
   RealtimeConnection,
   RealtimeConnectionLifecycleHooks,
   RealtimeEnvelope,
+  RealtimeServerOptions,
 } from "./types.js";
 
 const logger = createLogger("realtime-server");
@@ -40,12 +41,15 @@ export class RealtimeServer {
     (clientId, message) => this.deliver(clientId, message),
   );
   private readonly hooks: RealtimeConnectionLifecycleHooks;
+  private readonly maxSubscriptionsPerClient: number;
   private wss: WebSocketServer | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private started = false;
 
-  constructor(hooks: RealtimeConnectionLifecycleHooks = {}) {
+  constructor(options: RealtimeServerOptions = {}) {
+    const { maxSubscriptionsPerClient = 100, ...hooks } = options;
     this.hooks = hooks;
+    this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
   }
 
   // ---------------------------------------------------------------------------
@@ -195,6 +199,24 @@ export class RealtimeServer {
 
   public subscribe(connectionId: string, topic: RealtimeTopic): boolean {
     if (!this.connections.has(connectionId)) return false;
+
+    const currentCount = this.subscriptions.getTopics(connectionId).size;
+    if (currentCount >= this.maxSubscriptionsPerClient) {
+      const remaining = 0;
+      this.deliver(connectionId, {
+        type: "error",
+        topic,
+        ts: new Date().toISOString(),
+        payload: {
+          code: "SUBSCRIPTION_LIMIT_REACHED",
+          message: `Maximum ${this.maxSubscriptionsPerClient} subscriptions per connection`,
+          limit: this.maxSubscriptionsPerClient,
+          remaining,
+        },
+      });
+      return false;
+    }
+
     const added = this.subscriptions.subscribe(connectionId, topic);
     if (!added) return false;
 

@@ -49,6 +49,8 @@ export interface BackendEnv {
   readonly rateLimitDefaultPerMin: number;
   /** Maximum ledger jitter window for due-payment queries (default: 10 ledgers). */
   readonly jitterWindowMax: number;
+  /** Maximum number of topic subscriptions a single WebSocket client may hold (default: 100). */
+  readonly wsMaxSubscriptionsPerClient: number;
   /** Enable the daily proposal archival job (default: true). */
   readonly proposalArchivalJobEnabled: boolean;
   /** Interval in ms between archival runs (default: 86400000 = 24 h). */
@@ -269,6 +271,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     rateLimitExecutePerMin: 10,
     rateLimitDefaultPerMin: 60,
     jitterWindowMax: 10,
+    wsMaxSubscriptionsPerClient: 100,
     proposalArchivalJobEnabled: false,
     proposalArchivalJobIntervalMs: 86_400_000,
     proposalArchivalThresholdDays: 180,
@@ -362,6 +365,9 @@ export function loadEnv(): BackendEnv {
     issues,
   );
   const jitterWindowMax = readPort("JITTER_WINDOW_MAX", 10, issues);
+  const wsMaxSubscriptionsPerClient = readPort(
+    "WS_MAX_SUBSCRIPTIONS_PER_CLIENT",
+    100,
   const normalizerCacheMaxSize = readPort(
     "NORMALIZER_CACHE_MAX_SIZE",
     10_000,
@@ -470,6 +476,7 @@ export function loadEnv(): BackendEnv {
     rateLimitExecutePerMin,
     rateLimitDefaultPerMin,
     jitterWindowMax,
+    wsMaxSubscriptionsPerClient,
     proposalArchivalJobEnabled,
     proposalArchivalJobIntervalMs,
     proposalArchivalThresholdDays,
