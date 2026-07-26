@@ -103,6 +103,10 @@ pub struct InitConfig {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
+    /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
+    pub arbitration_timeout_ledgers: u64,
+    /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
+    pub approval_timeout_ledgers: u64,
 }
 
 /// Vault configuration
@@ -178,6 +182,14 @@ pub struct Config {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
+    /// Default amount for auto top-up before subscription renewal (0 = disabled)
+    pub auto_topup_amount: i128,
+    /// Whether subscription tier usage tracking is enabled
+    pub tier_usage_tracking: bool,
+    /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
+    pub arbitration_timeout_ledgers: u64,
+    /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
+    pub approval_timeout_ledgers: u64,
 }
 
 /// Audit record for a cancelled proposal
@@ -289,12 +301,36 @@ pub enum Role {
 impl Role {
     /// Check whether `actual` satisfies the `required` role.
     /// Hierarchy: Admin >= Treasurer >= Member >= Observer
-    /// Special case: Admin and DisputeArbitrator can resolve disputes
+    /// Special case: Admin and DisputeArbitrator can resolve disputes, but DisputeArbitrator
+    /// does NOT have general Admin privileges
     pub fn role_satisfies(required: Role, actual: Role) -> bool {
         match (required, actual) {
+            // Dispute resolution: both Admin and DisputeArbitrator can resolve disputes
             (Role::DisputeArbitrator, Role::Admin) => true,
             (Role::DisputeArbitrator, Role::DisputeArbitrator) => true,
-            _ => (actual as u32) >= (required as u32),
+            // Admin cannot satisfy DisputeArbitrator when checking if someone is ONLY DisputeArbitrator
+            // (DisputeArbitrator is NOT an Admin-equivalent role)
+            (Role::Admin, Role::DisputeArbitrator) => false,
+            // Standard hierarchy for other roles: higher discriminants satisfy lower requirements
+            (Role::Admin, Role::Treasurer) => false,
+            (Role::Admin, Role::Member) => false,
+            (Role::Admin, Role::Observer) => false,
+            (Role::Treasurer, Role::Admin) => true,
+            (Role::Treasurer, Role::Treasurer) => true,
+            (Role::Treasurer, Role::Member) => false,
+            (Role::Treasurer, Role::Observer) => false,
+            (Role::Member, Role::Admin) => true,
+            (Role::Member, Role::Treasurer) => true,
+            (Role::Member, Role::Member) => true,
+            (Role::Member, Role::Observer) => false,
+            (Role::Observer, Role::Admin) => true,
+            (Role::Observer, Role::Treasurer) => true,
+            (Role::Observer, Role::Member) => true,
+            (Role::Observer, Role::Observer) => true,
+            // DisputeArbitrator checking for non-dispute requirements
+            (Role::Treasurer, Role::DisputeArbitrator) => false,
+            (Role::Member, Role::DisputeArbitrator) => false,
+            (Role::Observer, Role::DisputeArbitrator) => false,
         }
     }
 }
@@ -568,6 +604,10 @@ pub struct Proposal {
     /// Voting power snapshot at proposal creation: signer -> voting_power
     /// Used by vote_on_proposal to prevent vote-buying attacks
     pub signer_snapshot: Map<Address, i128>,
+    /// Cached execution fee estimate (Issue #1428)
+    pub fee_estimate_cache: Option<i128>,
+    /// Ledger timestamp when fee cache was last computed (Issue #1428)
+    pub fee_cache_timestamp: u64,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
@@ -641,6 +681,14 @@ pub enum HolidayBehavior {
     PayLate,
 }
 
+/// Backoff strategies for recurring payment retry scheduling.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetryBackoffStrategy {
+    Linear = 0,
+    Exponential = 1,
+}
+
 /// Sorted list of administratively maintained holiday ledgers.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -679,7 +727,20 @@ pub struct RecurringPayment {
     pub jitter_window: u32,
     /// Deterministic jitter offset computed as sha256(id || creation_ledger) % jitter_window.
     /// Added to the base schedule ledger. Zero for the first payment.
+    ///
+    /// **Audit trail note**: When `jitter_window > 0`, the `next_payment_ledger` stored
+    /// after each execution (starting from the second cycle) will differ from the nominal
+    /// schedule by exactly `jitter_offset` ledgers.  Consecutive execution timestamps that
+    /// appear `interval + jitter_offset` ledgers apart (rather than exactly `interval`) are
+    /// expected and intentional — check for a `recurring_pay_jittered` on-chain event to
+    /// confirm.  Do not treat this timing variance as a missed or delayed payment.
     pub jitter_offset: u32,
+    /// Retry backoff strategy for transient recurring execution failures.
+    pub retry_strategy: RetryBackoffStrategy,
+    /// Number of failed retry attempts for the currently pending payment execution.
+    pub retry_count: u32,
+    /// Earliest ledger when the next retry may be attempted.
+    pub retry_next_ledger: u64,
 }
 
 /// On-chain token vesting schedule.
@@ -744,6 +805,10 @@ pub struct StreamingPayment {
     pub accumulated_seconds: u64,
     /// Current status
     pub status: StreamStatus,
+    /// Total duration paused (in ledgers) - Issue #1429
+    pub pause_duration: u64,
+    /// Number of pause cycles for tracking history - Issue #1429
+    pub pause_cycles: u32,
 }
 
 #[contracttype]
@@ -928,6 +993,7 @@ pub struct StakingConfig {
     pub slash_percentage: u32,
     pub compound_lock_period: u64,
     pub compound_epoch: u64,
+    pub reward_bps_per_execution: u32,
 }
 
 impl Default for StakingConfig {
@@ -942,6 +1008,7 @@ impl Default for StakingConfig {
             slash_percentage: 50,
             compound_lock_period: 17280, // ~1 day at 5s/ledger
             compound_epoch: 17280,       // ~1 day at 5s/ledger
+            reward_bps_per_execution: 0,
         }
     }
 }
@@ -961,6 +1028,8 @@ pub struct StakeRecord {
     pub auto_compound: bool,
     pub reinvestment_lock_until: u64,
     pub last_compounded: u64,
+    pub staking_tier: u32,
+    pub accumulated_rewards: i128,
 }
 
 impl Default for GasConfig {
@@ -1354,6 +1423,10 @@ pub struct Subscription {
     pub grace_period_ledgers: u64,
     /// Ledger at which the subscription was paused (0 = not paused)
     pub paused_at_ledger: u64,
+    /// Source wallet for auto top-up before renewal
+    pub auto_topup_source: Option<Address>,
+    /// Amount to top-up if balance insufficient (0 = disabled)
+    pub auto_topup_amount: i128,
 }
 
 /// Payment record for subscription tracking
@@ -1628,6 +1701,42 @@ pub enum EscrowStatus {
 /// Milestone tracking unit for progressive fund release
 #[contracttype]
 #[derive(Clone, Debug)]
+/// Pause history record for streaming payments - Issue #1429
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseRecord {
+    /// Ledger when pause started
+    pub pause_ledger: u64,
+    /// Ledger when pause ended (0 if still paused)
+    pub resume_ledger: u64,
+    /// Duration of pause in ledgers
+    pub duration_ledgers: u64,
+}
+
+/// Vote record for escrow release voting - Issue #1431
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowVote {
+    /// Signer who voted
+    pub voter: Address,
+    /// Whether they approved (true) or rejected (false)
+    pub approved: bool,
+    /// Ledger when vote was cast
+    pub voted_at: u64,
+}
+
+/// Fan-out recipient for multi-recipient streaming - Issue #1430
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FanOutRecipient {
+    /// Recipient address
+    pub address: Address,
+    /// Percentage of stream (0-100)
+    pub percentage: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
 pub struct Milestone {
     /// Unique milestone ID
     pub id: u64,
@@ -1671,6 +1780,12 @@ pub struct Escrow {
     pub expires_at: u64,
     /// Ledger when escrow was released/refunded (0 if still active)
     pub finalized_at: u64,
+    /// Whether escrow release requires signer voting approval - Issue #1431
+    pub requires_signer_approval: bool,
+    /// Count of approval votes received - Issue #1431
+    pub approval_votes: u32,
+    /// Count of rejection votes received - Issue #1431
+    pub rejection_votes: u32,
 }
 
 // ============================================================================
@@ -2289,6 +2404,34 @@ pub struct Tag {
 // Issue #1085: Gas Cost Estimation Oracle
 // ============================================================================
 
+/// Which price source was used when producing a fee estimate.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GasPriceSource {
+    /// Live price fetched from the configured gas-price oracle.
+    Oracle,
+    /// Static `stroops_per_10k_compute_units` value from the local CostModel
+    /// (used when no oracle is configured, or on oracle failure).
+    LocalFallback,
+}
+
+/// Configuration for the gas-price oracle integration (Issue #1367).
+///
+/// Stored in instance storage and set by an admin via `set_gas_price_oracle`.
+/// When present, `estimate_proposal_cost` queries this oracle for a live
+/// stroops-per-10k-compute-units price instead of relying solely on the
+/// static `CostModel.stroops_per_10k_compute_units` constant.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GasPriceOracleConfig {
+    /// Address of the gas-price oracle contract.
+    /// The oracle must expose `lastprice(asset: Address) -> Option<VaultPriceData>`.
+    pub address: Address,
+    /// Maximum number of ledgers since the oracle's recorded timestamp before
+    /// the price is treated as stale and the local fallback is used.
+    pub max_staleness: u32,
+}
+
 /// Estimated compute cost breakdown for a proposal's execution.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -2301,6 +2444,10 @@ pub struct CostEstimate {
     pub ledger_writes: u32,
     /// Fee estimate in stroops (XLM * 10^7)
     pub fee_estimate_xlm: i128,
+    /// Stroops-per-10k-compute-units price actually used for the estimate.
+    pub price_used: i128,
+    /// Whether the price came from the oracle or the local CostModel fallback.
+    pub price_source: GasPriceSource,
 }
 
 /// Per-operation cost weights stored on-chain and updatable by admin.

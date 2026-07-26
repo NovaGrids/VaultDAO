@@ -28,6 +28,7 @@ import { JobManager } from "./modules/jobs/job.manager.js";
 import { ScheduledJobRunner } from "./modules/jobs/scheduled-job-runner.js";
 import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
 import { registerDuePaymentsJob } from "./modules/jobs/recurring/due-payments-job.js";
+import { createProposalArchivalJob } from "./modules/jobs/recurring/proposal-archival.job.js";
 import type { NotificationQueue } from "./modules/notifications/notification.types.js";
 import { PriorityNotificationQueue } from "./modules/notifications/priority-queue.js";
 import { WebhookDeliveryService } from "./modules/notifications/webhook.service.js";
@@ -156,6 +157,11 @@ export async function startServer(
     "vaultdao_active_websocket_connections",
     "Current active websocket connections",
     "gauge",
+  );
+  metricsRegistry.register(
+    "vaultdao_rate_limit_hits_total",
+    "Total rate-limit rejections (429) by exhausted dimension",
+    "counter",
   );
 
   const jobManager = new JobManager(metricsRegistry);
@@ -370,6 +376,18 @@ export async function startServer(
   });
   jobManager.registerJob(governanceSnapshotJob, { replace: true });
   runtime.governanceSnapshotJob = governanceSnapshotJob;
+
+  // ── Proposal Archival Job (Issue #1366) ───────────────────────────────────
+  if (env.proposalArchivalJobEnabled) {
+    const proposalArchivalJob = createProposalArchivalJob({
+      intervalMs: env.proposalArchivalJobIntervalMs,
+      runOnStart: true,
+      aggregator: proposalActivityAggregator,
+      thresholdDays: env.proposalArchivalThresholdDays,
+      hotStorageDays: env.proposalHotStorageDays,
+    });
+    scheduledJobRunner.register(proposalArchivalJob);
+  }
 
   // ── Vault Registry (Issue #1164) ──────────────────────────────────────────
   const initialVaultAddresses = env.contractIds?.length

@@ -23,6 +23,22 @@ export interface BackendEnv {
   readonly webhooksRequestBodyLimit: string;
   readonly apiKey?: string;
   readonly apiKeyNext?: string;
+  /**
+   * Shared HMAC-SHA256 signing secret.
+   *
+   * Used by `createHmacSigningMiddleware` to verify that incoming request
+   * bodies have not been tampered with in transit. This secret is shared
+   * between the server and trusted API clients.
+   *
+   * IMPORTANT: This must be distinct from `apiKey` / `VAULT_API_KEY`.
+   * Mixing the two secrets would weaken both — one proves identity, the
+   * other proves payload integrity.
+   *
+   * Env var: `VAULT_HMAC_SECRET`
+   * When absent the HMAC middleware runs in passthrough mode (same behaviour
+   * as the API-key auth middleware when no key is configured).
+   */
+  readonly hmacSecret?: string;
   readonly cursorStorageType: "file" | "database";
   readonly databasePath: string;
   readonly rateLimitEnabled: boolean;
@@ -35,6 +51,20 @@ export interface BackendEnv {
   readonly jitterWindowMax: number;
   /** Maximum number of topic subscriptions a single WebSocket client may hold (default: 100). */
   readonly wsMaxSubscriptionsPerClient: number;
+  /** Enable the daily proposal archival job (default: true). */
+  readonly proposalArchivalJobEnabled: boolean;
+  /** Interval in ms between archival runs (default: 86400000 = 24 h). */
+  readonly proposalArchivalJobIntervalMs: number;
+  /** Archive proposals whose last activity is older than this many days (default: 180). */
+  readonly proposalArchivalThresholdDays: number;
+  /** Always keep proposals created within the last N days in hot storage (default: 7). */
+  readonly proposalHotStorageDays: number;
+  /**
+   * Maximum number of entries held in the event normalizer LRU+TTL cache.
+   * When the limit is reached the least-recently-used entry is evicted.
+   * Default: 10,000.  Configure via `NORMALIZER_CACHE_MAX_SIZE`.
+   */
+  readonly normalizerCacheMaxSize: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -242,6 +272,11 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     rateLimitDefaultPerMin: 60,
     jitterWindowMax: 10,
     wsMaxSubscriptionsPerClient: 100,
+    proposalArchivalJobEnabled: false,
+    proposalArchivalJobIntervalMs: 86_400_000,
+    proposalArchivalThresholdDays: 180,
+    proposalHotStorageDays: 7,
+    normalizerCacheMaxSize: 10_000,
     ...overrides,
   };
 }
@@ -306,6 +341,7 @@ export function loadEnv(): BackendEnv {
   );
   const apiKey = readValue("VAULT_API_KEY") ?? readValue("API_KEY");
   const apiKeyNext = readValue("VAULT_API_KEY_NEXT");
+  const hmacSecret = readValue("VAULT_HMAC_SECRET");
   const cursorStorageType = readString("CURSOR_STORAGE_TYPE", "file") as
     | "file"
     | "database";
@@ -332,6 +368,27 @@ export function loadEnv(): BackendEnv {
   const wsMaxSubscriptionsPerClient = readPort(
     "WS_MAX_SUBSCRIPTIONS_PER_CLIENT",
     100,
+  const normalizerCacheMaxSize = readPort(
+    "NORMALIZER_CACHE_MAX_SIZE",
+    10_000,
+    issues,
+  );
+
+  const proposalArchivalJobEnabled =
+    readString("PROPOSAL_ARCHIVAL_JOB_ENABLED", "true") === "true";
+  const proposalArchivalJobIntervalMs = readPort(
+    "PROPOSAL_ARCHIVAL_JOB_INTERVAL_MS",
+    86_400_000,
+    issues,
+  );
+  const proposalArchivalThresholdDays = readPort(
+    "PROPOSAL_ARCHIVAL_THRESHOLD_DAYS",
+    180,
+    issues,
+  );
+  const proposalHotStorageDays = readPort(
+    "PROPOSAL_HOT_STORAGE_DAYS",
+    7,
     issues,
   );
 
@@ -409,6 +466,7 @@ export function loadEnv(): BackendEnv {
     webhooksRequestBodyLimit,
     apiKey,
     apiKeyNext,
+    hmacSecret,
     cursorStorageType,
     databasePath,
     rateLimitEnabled,
@@ -419,5 +477,10 @@ export function loadEnv(): BackendEnv {
     rateLimitDefaultPerMin,
     jitterWindowMax,
     wsMaxSubscriptionsPerClient,
+    proposalArchivalJobEnabled,
+    proposalArchivalJobIntervalMs,
+    proposalArchivalThresholdDays,
+    proposalHotStorageDays,
+    normalizerCacheMaxSize,
   };
 }

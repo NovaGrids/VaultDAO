@@ -10,6 +10,24 @@ services:
   # ------------------------------------------------------------------------------
   # Backend Service: Node.js Indexer and Notifications API
   # ------------------------------------------------------------------------------
+  # Redis cache and event queue
+  redis:
+    image: redis:7-alpine
+    container_name: vaultdao-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - vaultdao-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # Backend Service: Node.js Indexer and Notifications API
   backend:
     build:
       context: ./backend
@@ -32,13 +50,19 @@ services:
       - EVENT_POLLING_INTERVAL_MS=10000                               # Matches backend/.env.example:71
       - CURSOR_STORAGE_TYPE=file                                      # Matches backend/.env.example:99
       - DATABASE_PATH=./vaultdao.sqlite                               # Matches backend/.env.example:103
+      - REDIS_HOST=redis                                              # Redis hostname (internal docker network)
+      - REDIS_PORT=6379                                               # Redis port
     ports:
       - "8787:8787"                                                   # Exposes the express API & healthcheck on port 8787
     volumes:
       - ./backend:/app                                                # Mount source code for hot-reloading (tsx watch)
       - /app/node_modules                                             # Prevent local node_modules from overwriting container dependencies
+      - vaultdao-db:/app/data                                         # Persist SQLite database
     networks:
       - vaultdao-net
+    depends_on:
+      redis:
+        condition: service_healthy
     # For local development hot reloading, we override the production CMD
     command: npm run dev
 
@@ -59,6 +83,15 @@ services:
       - vaultdao-net
     # Vite dev server requires --host to bind and accept host network connections (port 5173)
     command: npm run dev -- --host
+
+# ------------------------------------------------------------------------------
+# Volume Definitions for Persistent Data
+# ------------------------------------------------------------------------------
+volumes:
+  redis-data:
+    driver: local
+  vaultdao-db:
+    driver: local
 
 # ------------------------------------------------------------------------------
 # Explicitly Declared Custom Shared Network
