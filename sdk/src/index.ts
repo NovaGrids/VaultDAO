@@ -22,6 +22,7 @@ export type {
   Reputation,
   AuditEntry,
   SdkOptions,
+  SdkLogger,
   Network,
 } from "./types";
 
@@ -102,3 +103,7 @@ export {
   getTodaySpent,
   isSigner,
 } from "./contract";
+
+// Testing utilities
+export { MockVaultContract } from "./mock-contract";
+export type { FailureInjectionConfig } from "./mock-contract";

@@ -8,6 +8,7 @@ import {
   getReadinessController,
   getStatusController,
   getDetailedHealthController,
+  getVaultHealthController,
 } from "./health.controller.js";
 import { getMetricsController } from "./metrics.controller.js";
 
@@ -17,6 +18,7 @@ export function createHealthRouter(env: BackendEnv, runtime: BackendRuntime) {
   const router = Router();
 
   router.get("/health", getHealthController(env, runtime));
+  router.get("/health/vault", getVaultHealthController(env, runtime));
   router.get("/ready", getReadinessController(env, runtime));
   router.get("/drain", getDrainController(runtime));
 

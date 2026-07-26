@@ -5,3 +5,4 @@ export * from "./types.js";
 export * from "./normalizers/index.js";
 export * from "./cursor/index.js";
 export * from "./replay/index.js";
+export * from "./rpc-failover-manager.js";

@@ -143,4 +143,86 @@ describe('ProposalCard', () => {
       expect(articles[2]).toHaveAttribute('aria-label', 'Proposal #3, status: Executed');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // liveProposal prop — stale closure regression tests
+  // -------------------------------------------------------------------------
+
+  describe('liveProposal prop', () => {
+    it('renders liveProposal data when provided instead of proposal data', () => {
+      const liveProposal: Proposal = {
+        ...mockProposal,
+        status: 'Approved' as const,
+        description: 'Live description',
+      };
+
+      render(<ProposalCard proposal={mockProposal} liveProposal={liveProposal} />);
+
+      expect(screen.getByText('Approved')).toBeInTheDocument();
+      expect(screen.queryByText('Pending')).not.toBeInTheDocument();
+      expect(screen.getByText('Live description')).toBeInTheDocument();
+    });
+
+    it('falls back to proposal when liveProposal is undefined', () => {
+      render(<ProposalCard proposal={mockProposal} liveProposal={undefined} />);
+
+      expect(screen.getByText('Pending')).toBeInTheDocument();
+    });
+
+    it('aria-label reflects the live status, not the stale prop status', () => {
+      const liveProposal: Proposal = { ...mockProposal, status: 'Executed' as const };
+
+      render(<ProposalCard proposal={mockProposal} liveProposal={liveProposal} />);
+
+      const article = screen.getByRole('article');
+      expect(article).toHaveAttribute('aria-label', 'Proposal #123, status: Executed');
+    });
+
+    it('STALE CLOSURE: multiple sequential prop updates render the latest value', () => {
+      const { rerender } = render(
+        <ProposalCard proposal={mockProposal} liveProposal={{ ...mockProposal, status: 'Approved' as const }} />,
+      );
+
+      expect(screen.getByText('Approved')).toBeInTheDocument();
+
+      rerender(
+        <ProposalCard proposal={mockProposal} liveProposal={{ ...mockProposal, status: 'Executed' as const }} />,
+      );
+
+      expect(screen.getByText('Executed')).toBeInTheDocument();
+      expect(screen.queryByText('Approved')).not.toBeInTheDocument();
+      expect(screen.queryByText('Pending')).not.toBeInTheDocument();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // hasLiveUpdate indicator
+  // -------------------------------------------------------------------------
+
+  describe('hasLiveUpdate indicator', () => {
+    it('does not render live indicator when hasLiveUpdate is false', () => {
+      render(<ProposalCard proposal={mockProposal} hasLiveUpdate={false} />);
+
+      expect(screen.queryByLabelText('Live update received')).not.toBeInTheDocument();
+    });
+
+    it('does not render live indicator when hasLiveUpdate is not provided', () => {
+      render(<ProposalCard proposal={mockProposal} />);
+
+      expect(screen.queryByLabelText('Live update received')).not.toBeInTheDocument();
+    });
+
+    it('renders live indicator when hasLiveUpdate is true', () => {
+      render(<ProposalCard proposal={mockProposal} hasLiveUpdate={true} />);
+
+      expect(screen.getByLabelText('Live update received')).toBeInTheDocument();
+    });
+
+    it('live indicator has accessible label', () => {
+      render(<ProposalCard proposal={mockProposal} hasLiveUpdate={true} />);
+
+      const indicator = screen.getByLabelText('Live update received');
+      expect(indicator).toBeInTheDocument();
+    });
+  });
 });

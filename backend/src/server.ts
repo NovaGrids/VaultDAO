@@ -158,6 +158,11 @@ export async function startServer(
     "Current active websocket connections",
     "gauge",
   );
+  metricsRegistry.register(
+    "vaultdao_rate_limit_hits_total",
+    "Total rate-limit rejections (429) by exhausted dimension",
+    "counter",
+  );
 
   const jobManager = new JobManager(metricsRegistry);
 
