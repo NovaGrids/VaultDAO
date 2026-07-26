@@ -99,6 +99,56 @@ Before contributing, ensure you have the following installed:
 - **Hooks**: Follow React hooks rules (use ESLint warnings as guidance)
 - **Types**: Always use TypeScript types, avoid `any`
 
+#### Avoiding Stale Closures in Real-Time Subscriptions
+
+A **stale closure** happens when a callback (e.g. a WebSocket handler) captures
+a variable at the time it is created and never sees later updates.  This is a
+common bug in components that subscribe to live data.
+
+**The problem:**
+
+```tsx
+// ❌ BAD — the callback closes over `proposal` from the first render.
+//    When a WS update arrives, it merges into the *original* object,
+//    not the latest state.
+useEffect(() => {
+  const unsub = subscribe('proposal_updated', (update) => {
+    render({ ...proposal, ...update }); // `proposal` is always stale
+  });
+  return unsub;
+}, []); // empty deps → callback never re-created
+```
+
+**The fix — separate state + functional updater:**
+
+```tsx
+// ✅ GOOD — live data lives in its own state bucket.
+//    The functional updater receives `prev` (always the latest value),
+//    so the callback never needs to close over any external variable.
+const [liveProposal, setLiveProposal] = useState(initialProposal);
+
+const handleUpdate = useCallback((data) => {
+  setLiveProposal((prev) => ({ ...prev, ...data })); // `prev` is always fresh
+}, [/* no deps that could go stale */]);
+
+useEffect(() => {
+  const unsub = subscribe('proposal_updated', handleUpdate);
+  return unsub; // always clean up on unmount
+}, [subscribe, handleUpdate]);
+```
+
+**Rules of thumb for subscription callbacks:**
+
+1. **Never read state or props inside a subscription callback** — pass everything through `setState`'s functional updater instead.
+2. **Store mutable identifiers in a `ref`** (e.g. `proposalIdRef.current`) when you need to filter events without adding the value to `useCallback` deps.
+3. **Always return the unsubscribe function** from `useEffect` so the handler is removed when the component unmounts.
+4. **Keep `useCallback` deps minimal and stable** — prefer context values that are themselves wrapped in `useCallback`/`useMemo`.
+5. **Separate concerns** — put subscription logic in a dedicated hook (e.g. `useProposalRealtime`) and keep display components pure/presentational.
+
+See `src/hooks/useProposalRealtime.ts` for the canonical implementation and
+`src/hooks/__tests__/useProposalRealtime.test.ts` for tests that explicitly
+guard against regressions.
+
 ## 🔄 Contribution Workflow
 
 ### 1. Create a Branch

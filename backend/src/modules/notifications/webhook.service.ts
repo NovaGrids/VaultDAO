@@ -2,16 +2,22 @@
  * WebhookDeliveryService
  *
  * Handles webhook registration, HMAC-SHA256 signed delivery, exponential
- * backoff retry, and delivery record persistence.
+ * backoff retry, circuit breaker, and delivery record persistence.
  *
  * Acceptance criteria:
  * - Webhook URL must be HTTPS; HTTP URLs are rejected with a validation error.
  * - webhook.secret is stored as a SHA-256 hash and never returned in API responses.
  * - Payload is signed with HMAC-SHA256 using the raw (unhashed) secret supplied
  *   at registration time; the signature is sent in X-VaultDAO-Signature.
- * - Failed deliveries are retried up to 3 times with exponential backoff: 1s, 2s, 4s.
+ * - Failed deliveries are retried up to 5 times with exponential backoff:
+ *   1s, 2s, 4s, 8s, 16s (6 total attempts).
+ * - After 5 consecutive failures the circuit breaker opens and pauses delivery
+ *   for CIRCUIT_BREAKER_RECOVERY_MS (default 5 minutes). After the cooldown
+ *   the breaker enters half-open state and allows one probe attempt.
  * - Each delivery attempt is recorded in the webhook_deliveries store.
  * - Delivery timeout is 10 seconds per attempt.
+ * - Per-attempt metrics (attempt, status, duration, webhookId) are collected and
+ *   accessible via getMetrics().
  */
 
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -27,11 +33,23 @@ const logger = createLogger("webhook-delivery");
 /** Delivery timeout per attempt in milliseconds. */
 const DELIVERY_TIMEOUT_MS = 10_000;
 
-/** Maximum number of delivery attempts (initial + 2 retries = 3 total). */
-const MAX_ATTEMPTS = 3;
+/** Maximum number of delivery attempts (initial + 5 retries = 6 total). */
+const MAX_ATTEMPTS = 6;
 
-/** Exponential backoff delays in milliseconds: 1s, 2s, 4s. */
-const BACKOFF_DELAYS_MS = [1_000, 2_000, 4_000];
+/** Exponential backoff delays in milliseconds: 1s, 2s, 4s, 8s, 16s. */
+const BACKOFF_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+
+/**
+ * Number of consecutive failures required to open the circuit breaker
+ * for a given webhook.
+ */
+const CIRCUIT_BREAKER_THRESHOLD = 5;
+
+/**
+ * How long the circuit breaker stays open (paused) before transitioning to
+ * half-open for a recovery probe attempt (default 5 minutes).
+ */
+const CIRCUIT_BREAKER_RECOVERY_MS = 5 * 60 * 1_000;
 
 // ── Internal storage types ────────────────────────────────────────────────────
 
@@ -50,6 +68,43 @@ export interface StoredWebhookRegistration {
 /** Stored delivery record. */
 export interface StoredDeliveryRecord extends DeliveryRecord {
   readonly webhookId: string;
+}
+
+// ── Circuit breaker ───────────────────────────────────────────────────────────
+
+/**
+ * Circuit breaker states:
+ * - `closed`   — normal operation; requests flow through.
+ * - `open`     — circuit is tripped; deliveries are paused until the recovery
+ *                window elapses.
+ * - `half-open` — one probe attempt is allowed to test recovery.
+ */
+export type CircuitBreakerStatus = "closed" | "open" | "half-open";
+
+export interface CircuitBreakerState {
+  /** Current state of the breaker. */
+  status: CircuitBreakerStatus;
+  /** Number of consecutive failures since last success (or since creation). */
+  consecutiveFailures: number;
+  /** Epoch ms when the breaker was last opened. null when closed. */
+  openedAt: number | null;
+  /** Epoch ms of the last recorded state transition. */
+  lastTransitionAt: number;
+}
+
+// ── Delivery metrics ──────────────────────────────────────────────────────────
+
+export interface DeliveryAttemptMetric {
+  readonly webhookId: string;
+  readonly eventId: string;
+  /** 1-based attempt number within the current delivery run. */
+  readonly attempt: number;
+  /** `"success"` if the HTTP response was 2xx, `"failed"` otherwise. */
+  readonly status: "success" | "failed";
+  /** Wall-clock duration of the HTTP request in milliseconds. */
+  readonly durationMs: number;
+  /** ISO 8601 timestamp of the attempt. */
+  readonly recordedAt: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -94,6 +149,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function makeClosedBreaker(): CircuitBreakerState {
+  return {
+    status: "closed",
+    consecutiveFailures: 0,
+    openedAt: null,
+    lastTransitionAt: Date.now(),
+  };
+}
+
 // ── Dead-letter entry ─────────────────────────────────────────────────────────
 
 export interface DeadLetterEntry {
@@ -112,6 +176,12 @@ export class WebhookDeliveryService {
   private readonly webhooks = new Map<string, StoredWebhookRegistration>();
   private readonly deliveryStore: StorageAdapter<StoredDeliveryRecord & { id: string }>;
   private readonly deadLetters: Map<string, DeadLetterEntry> = new Map();
+
+  /** Per-webhook circuit breaker state. Keyed by webhook ID. */
+  private readonly circuitBreakers = new Map<string, CircuitBreakerState>();
+
+  /** Collected metrics — one entry per delivery attempt. */
+  private readonly metrics: DeliveryAttemptMetric[] = [];
 
   constructor(
     deliveryStore?: StorageAdapter<StoredDeliveryRecord & { id: string }>,
@@ -144,6 +214,8 @@ export class WebhookDeliveryService {
       createdAt: new Date().toISOString(),
     };
     this.webhooks.set(id, registration);
+    // Initialise circuit breaker in closed state for every new webhook.
+    this.circuitBreakers.set(id, makeClosedBreaker());
     logger.info("webhook registered", { id, url, topics });
 
     // Return public shape — secret is never included
@@ -157,6 +229,7 @@ export class WebhookDeliveryService {
   public unregister(id: string): boolean {
     const existed = this.webhooks.has(id);
     this.webhooks.delete(id);
+    this.circuitBreakers.delete(id);
     if (existed) logger.info("webhook unregistered", { id });
     return existed;
   }
@@ -171,6 +244,51 @@ export class WebhookDeliveryService {
       topics,
       createdAt,
     }));
+  }
+
+  // ── Circuit breaker ───────────────────────────────────────────────────────
+
+  /**
+   * Return the current circuit breaker state for a webhook, or undefined if
+   * no entry exists.
+   */
+  public getCircuitBreakerState(webhookId: string): CircuitBreakerState | undefined {
+    return this.circuitBreakers.get(webhookId);
+  }
+
+  /**
+   * Manually reset the circuit breaker for a webhook to closed state.
+   * Useful for operator-driven recovery without waiting for the cooldown.
+   */
+  public resetCircuitBreaker(webhookId: string): void {
+    if (!this.webhooks.has(webhookId)) {
+      throw new Error(`Webhook not found: ${webhookId}`);
+    }
+    this.circuitBreakers.set(webhookId, makeClosedBreaker());
+    logger.info("circuit breaker manually reset", { webhookId });
+  }
+
+  // ── Metrics ───────────────────────────────────────────────────────────────
+
+  /**
+   * Return a copy of all collected delivery attempt metrics.
+   */
+  public getMetrics(): DeliveryAttemptMetric[] {
+    return [...this.metrics];
+  }
+
+  /**
+   * Return metrics filtered by webhook ID.
+   */
+  public getMetricsForWebhook(webhookId: string): DeliveryAttemptMetric[] {
+    return this.metrics.filter((m) => m.webhookId === webhookId);
+  }
+
+  /**
+   * Clear all collected metrics.
+   */
+  public clearMetrics(): void {
+    this.metrics.length = 0;
   }
 
   // ── Delivery ──────────────────────────────────────────────────────────────
@@ -290,10 +408,97 @@ export class WebhookDeliveryService {
     }
   }
 
+  /**
+   * Resolve the effective circuit breaker state for a webhook, advancing from
+   * `open` → `half-open` once the recovery window has elapsed.
+   */
+  private resolveCircuitBreaker(webhookId: string): CircuitBreakerState {
+    let breaker = this.circuitBreakers.get(webhookId);
+    if (!breaker) {
+      breaker = makeClosedBreaker();
+      this.circuitBreakers.set(webhookId, breaker);
+    }
+
+    if (
+      breaker.status === "open" &&
+      breaker.openedAt !== null &&
+      Date.now() - breaker.openedAt >= CIRCUIT_BREAKER_RECOVERY_MS
+    ) {
+      // Transition open → half-open to allow a probe attempt.
+      breaker.status = "half-open";
+      breaker.lastTransitionAt = Date.now();
+      logger.info("circuit breaker transitioned to half-open", { webhookId });
+    }
+
+    return breaker;
+  }
+
+  /**
+   * Record a successful delivery against the circuit breaker: reset consecutive
+   * failure count and close the breaker if it was half-open.
+   */
+  private onDeliverySuccess(webhookId: string): void {
+    const breaker = this.circuitBreakers.get(webhookId);
+    if (!breaker) return;
+
+    if (breaker.status !== "closed") {
+      logger.info("circuit breaker closed after successful delivery", { webhookId });
+    }
+    breaker.status = "closed";
+    breaker.consecutiveFailures = 0;
+    breaker.openedAt = null;
+    breaker.lastTransitionAt = Date.now();
+  }
+
+  /**
+   * Record a delivery failure against the circuit breaker.  Opens the breaker
+   * once the threshold of consecutive failures is reached; re-opens it from
+   * half-open on a failed probe.
+   */
+  private onDeliveryFailure(webhookId: string): void {
+    const breaker = this.circuitBreakers.get(webhookId);
+    if (!breaker) return;
+
+    breaker.consecutiveFailures += 1;
+    breaker.lastTransitionAt = Date.now();
+
+    const shouldOpen =
+      breaker.status === "closed" &&
+      breaker.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD;
+
+    const shouldReopenFromHalfOpen = breaker.status === "half-open";
+
+    if (shouldOpen || shouldReopenFromHalfOpen) {
+      breaker.status = "open";
+      breaker.openedAt = Date.now();
+      logger.warn("circuit breaker opened", {
+        webhookId,
+        consecutiveFailures: breaker.consecutiveFailures,
+      });
+    }
+  }
+
   private async deliverToWebhook(
     event: NotificationEvent,
     webhook: StoredWebhookRegistration,
   ): Promise<void> {
+    // ── Circuit breaker gate ────────────────────────────────────────────────
+    const breaker = this.resolveCircuitBreaker(webhook.id);
+    if (breaker.status === "open") {
+      logger.warn("circuit breaker is open — skipping delivery", {
+        webhookId: webhook.id,
+        url: webhook.url,
+        eventId: event.id,
+        openedAt: breaker.openedAt,
+      });
+      // Record as failed (0 attempts made — circuit was open).
+      await this.recordDelivery(webhook.id, event.id, "failed", 0, "circuit breaker open");
+      return;
+    }
+
+    // When half-open, limit to a single probe attempt (no retries).
+    const maxAttempts = breaker.status === "half-open" ? 1 : MAX_ATTEMPTS;
+
     const body = JSON.stringify(event);
     const timestamp = Date.now();
     const signature = signPayload(webhook.secretRaw, body, timestamp);
@@ -301,7 +506,7 @@ export class WebhookDeliveryService {
 
     let lastError: string | null = null;
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         const backoff = BACKOFF_DELAYS_MS[attempt - 2] ?? BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
         logger.warn("webhook delivery retry", {
@@ -312,6 +517,9 @@ export class WebhookDeliveryService {
         });
         await sleep(backoff);
       }
+
+      const attemptStart = Date.now();
+      let attemptStatus: "success" | "failed" = "failed";
 
       try {
         const controller = new AbortController();
@@ -339,7 +547,11 @@ export class WebhookDeliveryService {
           throw new Error(`HTTP ${response.status} ${response.statusText}`);
         }
 
-        // Success
+        // ── Success ───────────────────────────────────────────────────────
+        attemptStatus = "success";
+        this.recordMetric(webhook.id, event.id, attempt, "success", Date.now() - attemptStart);
+        this.onDeliverySuccess(webhook.id);
+
         await this.recordDelivery(webhook.id, event.id, "delivered", attempt, null);
         logger.info("webhook delivered", {
           webhookId: webhook.id,
@@ -350,24 +562,28 @@ export class WebhookDeliveryService {
         return;
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
+        this.recordMetric(webhook.id, event.id, attempt, "failed", Date.now() - attemptStart);
         logger.warn("webhook delivery attempt failed", {
           webhookId: webhook.id,
           url: webhook.url,
           attempt,
           error: lastError,
         });
+        // suppress lint warning — attemptStatus already "failed" by default
+        void attemptStatus;
       }
     }
 
-    // All attempts exhausted — move to dead-letter queue
-    await this.recordDelivery(webhook.id, event.id, "failed", MAX_ATTEMPTS, lastError);
+    // ── All attempts exhausted ────────────────────────────────────────────
+    this.onDeliveryFailure(webhook.id);
+    await this.recordDelivery(webhook.id, event.id, "failed", maxAttempts, lastError);
 
     const dlEntry: DeadLetterEntry = {
       id: randomUUID(),
       webhookId: webhook.id,
       event,
       lastError: lastError ?? "unknown error",
-      attempts: MAX_ATTEMPTS,
+      attempts: maxAttempts,
       failedAt: new Date().toISOString(),
       replayed: false,
     };
@@ -379,6 +595,23 @@ export class WebhookDeliveryService {
       url: webhook.url,
       eventId: event.id,
       error: lastError,
+    });
+  }
+
+  private recordMetric(
+    webhookId: string,
+    eventId: string,
+    attempt: number,
+    status: "success" | "failed",
+    durationMs: number,
+  ): void {
+    this.metrics.push({
+      webhookId,
+      eventId,
+      attempt,
+      status,
+      durationMs,
+      recordedAt: new Date().toISOString(),
     });
   }
 

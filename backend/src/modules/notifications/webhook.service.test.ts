@@ -123,7 +123,7 @@ test("WebhookDeliveryService: successful delivery records delivered status", asy
   }
 });
 
-test("WebhookDeliveryService: failed delivery retries up to 3 times with exponential backoff", async () => {
+test("WebhookDeliveryService: failed delivery retries up to 6 times with exponential backoff (1s, 2s, 4s, 8s, 16s)", async () => {
   const svc = makeService();
   const reg = svc.register("https://example.com/hook", "secret", []);
 
@@ -140,14 +140,22 @@ test("WebhookDeliveryService: failed delivery retries up to 3 times with exponen
     const event = makeEvent();
     await svc.deliver(event);
 
-    // Should have attempted 3 times
-    assert.strictEqual(callCount, 3, "should attempt exactly 3 times");
+    // Should have attempted 6 times (initial + 5 retries with backoff 1s, 2s, 4s, 8s, 16s)
+    assert.strictEqual(callCount, 6, "should attempt exactly 6 times");
 
     const deliveries = await svc.getDeliveries(reg.id);
     assert.strictEqual(deliveries.length, 1);
     assert.strictEqual(deliveries[0].status, "failed");
-    assert.strictEqual(deliveries[0].attempts, 3);
+    assert.strictEqual(deliveries[0].attempts, 6);
     assert.ok(deliveries[0].error !== null, "error should be recorded");
+
+    // Verify metrics were recorded for all 6 attempts
+    const metrics = svc.getMetricsForWebhook(reg.id);
+    assert.strictEqual(metrics.length, 6, "should have metrics for all 6 attempts");
+    for (let i = 0; i < 6; i++) {
+      assert.strictEqual(metrics[i].attempt, i + 1, `attempt ${i + 1} should be recorded`);
+      assert.strictEqual(metrics[i].status, "failed", `attempt ${i + 1} should be marked failed`);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -215,4 +223,282 @@ test("WebhookDeliveryService: getDeliveries returns empty array for unknown webh
   const svc = makeService();
   const deliveries = await svc.getDeliveries("nonexistent-id");
   assert.deepStrictEqual(deliveries, []);
+});
+
+
+// ── Circuit breaker tests ────────────────────────────────────────────────────
+
+test("WebhookDeliveryService: circuit breaker opens after 5 consecutive failures", async () => {
+  const svc = makeService();
+  const reg = svc.register("https://example.com/hook", "secret", []);
+
+  let callCount = 0;
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => {
+    callCount++;
+    return new Response("Server Error", { status: 500 });
+  };
+
+  try {
+    // Send 5 events — each will trigger 6 failed attempts
+    // After 5 consecutive failures, circuit should open
+    for (let i = 0; i < 5; i++) {
+      await svc.deliver(makeEvent({ id: `evt-${i}` }));
+    }
+
+    const breaker = svc.getCircuitBreakerState(reg.id);
+    assert.ok(breaker !== undefined, "circuit breaker state should exist");
+    assert.strictEqual(breaker.status, "open", "circuit breaker should be open after 5 failures");
+    assert.strictEqual(breaker.consecutiveFailures, 5, "should track 5 consecutive failures");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("WebhookDeliveryService: circuit breaker skips delivery when open", async () => {
+  const svc = makeService();
+  svc.register("https://example.com/hook", "secret", []);
+
+  let callCount = 0;
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => {
+    callCount++;
+    return new Response("Server Error", { status: 500 });
+  };
+
+  try {
+    // Trigger 5 failures to open the circuit
+    for (let i = 0; i < 5; i++) {
+      await svc.deliver(makeEvent({ id: `evt-${i}` }));
+    }
+
+    const callCountAfterOpen = callCount;
+
+    // Now send another event — should be skipped due to open circuit
+    await svc.deliver(makeEvent({ id: "evt-skipped" }));
+
+    assert.strictEqual(callCount, callCountAfterOpen, "no HTTP calls should be made when circuit is open");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("WebhookDeliveryService: circuit breaker closes after successful delivery", async () => {
+  const svc = makeService();
+  const reg = svc.register("https://example.com/hook", "secret", []);
+
+  let callCount = 0;
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => {
+    callCount++;
+    // First 5 calls fail (to trigger circuit open), next call succeeds
+    return callCount <= 5
+      ? new Response("Server Error", { status: 500 })
+      : new Response("{}", { status: 200 });
+  };
+
+  try {
+    // Trigger 5 failures to open the circuit
+    for (let i = 0; i < 5; i++) {
+      await svc.deliver(makeEvent({ id: `evt-fail-${i}` }));
+    }
+
+    const breaker1 = svc.getCircuitBreakerState(reg.id);
+    assert.strictEqual(breaker1?.status, "open", "circuit should be open after 5 failures");
+
+    // Fast-forward time to allow transition to half-open
+    const mockNow = Date.now();
+    const circuitBreakerRecoveryMs = 5 * 60 * 1_000; // 5 minutes
+    globalThis.Date.now = () => mockNow + circuitBreakerRecoveryMs + 1000;
+
+    try {
+      // Send event — circuit transitions half-open, probe succeeds
+      await svc.deliver(makeEvent({ id: "evt-recovery" }));
+
+      const breaker2 = svc.getCircuitBreakerState(reg.id);
+      assert.strictEqual(breaker2?.status, "closed", "circuit should be closed after successful probe");
+      assert.strictEqual(breaker2?.consecutiveFailures, 0, "consecutive failures should reset");
+    } finally {
+      globalThis.Date.now = Date.now;
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("WebhookDeliveryService: circuit breaker can be manually reset", async () => {
+  const svc = makeService();
+  const reg = svc.register("https://example.com/hook", "secret", []);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("Server Error", { status: 500 });
+
+  try {
+    // Trigger failures to open the circuit
+    for (let i = 0; i < 5; i++) {
+      await svc.deliver(makeEvent({ id: `evt-${i}` }));
+    }
+
+    const breaker1 = svc.getCircuitBreakerState(reg.id);
+    assert.strictEqual(breaker1?.status, "open", "circuit should be open");
+
+    // Manually reset the circuit breaker
+    svc.resetCircuitBreaker(reg.id);
+
+    const breaker2 = svc.getCircuitBreakerState(reg.id);
+    assert.strictEqual(breaker2?.status, "closed", "circuit should be closed after manual reset");
+    assert.strictEqual(breaker2?.consecutiveFailures, 0, "consecutive failures should be reset");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ── Metrics tests ────────────────────────────────────────────────────────────
+
+test("WebhookDeliveryService: metrics are recorded for successful delivery", async () => {
+  const svc = makeService();
+  const reg = svc.register("https://example.com/hook", "secret", []);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("{}", { status: 200 });
+
+  try {
+    const event = makeEvent();
+    await svc.deliver(event);
+
+    const metrics = svc.getMetricsForWebhook(reg.id);
+    assert.strictEqual(metrics.length, 1, "should have 1 metric for successful delivery");
+    assert.strictEqual(metrics[0].webhookId, reg.id);
+    assert.strictEqual(metrics[0].eventId, event.id);
+    assert.strictEqual(metrics[0].attempt, 1);
+    assert.strictEqual(metrics[0].status, "success");
+    assert.ok(metrics[0].durationMs > 0, "duration should be recorded");
+    assert.ok(typeof metrics[0].recordedAt === "string", "recordedAt should be ISO string");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("WebhookDeliveryService: metrics track all attempts for failed delivery", async () => {
+  const svc = makeService();
+  const reg = svc.register("https://example.com/hook", "secret", []);
+
+  let attemptCount = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    attemptCount++;
+    return new Response("Server Error", { status: 500 });
+  };
+
+  try {
+    const event = makeEvent();
+    await svc.deliver(event);
+
+    const metrics = svc.getMetricsForWebhook(reg.id);
+    assert.strictEqual(metrics.length, 6, "should have metrics for all 6 attempts");
+
+    for (let i = 0; i < 6; i++) {
+      assert.strictEqual(metrics[i].attempt, i + 1, `attempt ${i + 1} should be recorded`);
+      assert.strictEqual(metrics[i].status, "failed", `attempt ${i + 1} should be marked failed`);
+      assert.strictEqual(metrics[i].eventId, event.id);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("WebhookDeliveryService: metrics can be filtered by webhook", async () => {
+  const svc = makeService();
+  const reg1 = svc.register("https://webhook1.example.com/hook", "secret1", []);
+  const reg2 = svc.register("https://webhook2.example.com/hook", "secret2", []);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("{}", { status: 200 });
+
+  try {
+    // Send events to both webhooks
+    await svc.deliver(makeEvent({ id: "evt-1" }));
+    await svc.deliver(makeEvent({ id: "evt-2" }));
+
+    const metrics1 = svc.getMetricsForWebhook(reg1.id);
+    const metrics2 = svc.getMetricsForWebhook(reg2.id);
+
+    assert.strictEqual(metrics1.length, 1, "webhook 1 should have 1 metric");
+    assert.strictEqual(metrics2.length, 1, "webhook 2 should have 1 metric");
+    assert.strictEqual(metrics1[0].webhookId, reg1.id);
+    assert.strictEqual(metrics2[0].webhookId, reg2.id);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("WebhookDeliveryService: metrics can be cleared", async () => {
+  const svc = makeService();
+  svc.register("https://example.com/hook", "secret", []);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("{}", { status: 200 });
+
+  try {
+    const event = makeEvent();
+    await svc.deliver(event);
+
+    let metrics = svc.getMetrics();
+    assert.strictEqual(metrics.length, 1, "should have 1 metric after delivery");
+
+    svc.clearMetrics();
+
+    metrics = svc.getMetrics();
+    assert.strictEqual(metrics.length, 0, "should have no metrics after clear");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ── Half-open circuit breaker behavior tests ────────────────────────────────
+
+test("WebhookDeliveryService: half-open circuit allows single probe attempt", async () => {
+  const svc = makeService();
+  svc.register("https://example.com/hook", "secret", []);
+
+  let attemptCount = 0;
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => {
+    attemptCount++;
+    return attemptCount <= 5
+      ? new Response("Server Error", { status: 500 })
+      : new Response("{}", { status: 200 });
+  };
+
+  try {
+    // Trigger 5 failures to open the circuit
+    for (let i = 0; i < 5; i++) {
+      await svc.deliver(makeEvent({ id: `evt-fail-${i}` }));
+    }
+
+    const totalAttemptsBefore = attemptCount;
+
+    // Simulate time passage to half-open
+    const mockNow = Date.now();
+    const circuitBreakerRecoveryMs = 5 * 60 * 1_000;
+    globalThis.Date.now = () => mockNow + circuitBreakerRecoveryMs + 1000;
+
+    try {
+      // In half-open, only 1 attempt should be made (no retries)
+      await svc.deliver(makeEvent({ id: "evt-probe" }));
+
+      const totalAttemptsAfter = attemptCount;
+      const attemptsForProbe = totalAttemptsAfter - totalAttemptsBefore;
+
+      assert.strictEqual(attemptsForProbe, 1, "half-open should make only 1 probe attempt");
+    } finally {
+      globalThis.Date.now = Date.now;
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
