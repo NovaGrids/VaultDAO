@@ -3,6 +3,10 @@
  * These are used by the indexer, automation system, and frontend.
  */
 
+// Re-export backoff types so consumers can import from a single path.
+export type { PaymentRetryState, BackoffOptions, BackoffResult, PaymentBackoffEvent } from "./backoff.js";
+export { BackoffStrategy, calculateBackoff, recordFailure, resetRetryState, isInBackoff, MAX_BACKOFF_SECONDS, DEFAULT_BASE_DELAY_SECONDS } from "./backoff.js";
+
 /**
  * Recurring payment status states.
  */
@@ -80,6 +84,26 @@ export interface NormalizedRecurringPayment {
   readonly ledgersUntilDue: number;
   /** Number of missed payments when overdue */
   readonly missedPayments: number;
+
+  // ── Retry / backoff state ─────────────────────────────────────────────────
+
+  /**
+   * Number of consecutive failures since the last successful execution.
+   * Reset to 0 after each successful execution.
+   * Used to compute the exponential/linear backoff delay.
+   */
+  readonly retryCount: number;
+  /**
+   * Unix timestamp (seconds) of the most recent failed execution attempt.
+   * `0` means the payment has never been attempted or was reset after success.
+   */
+  readonly lastAttemptAt: number;
+  /**
+   * Unix timestamp (seconds) before which the scheduler must skip this
+   * payment.  `0` means "not in backoff — process immediately".
+   * Computed as `lastAttemptAt + backoffDelaySeconds`.
+   */
+  readonly nextRetryAt: number;
   /**
    * Maximum ledger spread applied after the first cycle for load distribution.
    * 0 means jitter is disabled for this payment.
