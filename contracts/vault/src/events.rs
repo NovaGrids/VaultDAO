@@ -721,6 +721,20 @@ pub fn emit_retry_scheduled(
     );
 }
 
+/// Emit when a recurring payment retry is scheduled after a failed transfer
+pub fn emit_recurring_retry_scheduled(
+    env: &Env,
+    payment_id: u64,
+    retry_count: u32,
+    next_retry_ledger: u64,
+    error_code: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "recurring_retry_scheduled"), payment_id),
+        (retry_count, next_retry_ledger, error_code),
+    );
+}
+
 /// Emit when a retry execution attempt is made
 #[allow(dead_code)]
 pub fn emit_retry_attempted(env: &Env, proposal_id: u64, retry_count: u32, executor: &Address) {

@@ -65,6 +65,12 @@ export interface NormalizedRecurringPayment {
   readonly intervalLedgers: number;
   /** Next scheduled execution ledger */
   readonly nextPaymentLedger: number;
+  /** Retry backoff strategy for transient failures */
+  readonly retryStrategy: "LINEAR" | "EXPONENTIAL";
+  /** Number of failed retry attempts for the currently pending payment execution */
+  readonly retryCount: number;
+  /** Ledger when the next retry may be attempted */
+  readonly retryNextLedger: number;
   /** Total payments made so far */
   readonly paymentCount: number;
   /** Current status based on state tracking */
@@ -128,6 +134,9 @@ export interface RawRecurringPayment {
   readonly memo: string;
   readonly interval: string;
   readonly next_payment_ledger: string;
+  readonly retry_strategy: string;
+  readonly retry_count: string;
+  readonly retry_next_ledger: string;
   readonly payment_count: string;
   readonly is_active: boolean;
   /**

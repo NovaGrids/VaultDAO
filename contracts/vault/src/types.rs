@@ -677,6 +677,14 @@ pub enum HolidayBehavior {
     PayLate,
 }
 
+/// Backoff strategies for recurring payment retry scheduling.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetryBackoffStrategy {
+    Linear = 0,
+    Exponential = 1,
+}
+
 /// Sorted list of administratively maintained holiday ledgers.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -723,6 +731,12 @@ pub struct RecurringPayment {
     /// expected and intentional — check for a `recurring_pay_jittered` on-chain event to
     /// confirm.  Do not treat this timing variance as a missed or delayed payment.
     pub jitter_offset: u32,
+    /// Retry backoff strategy for transient recurring execution failures.
+    pub retry_strategy: RetryBackoffStrategy,
+    /// Number of failed retry attempts for the currently pending payment execution.
+    pub retry_count: u32,
+    /// Earliest ledger when the next retry may be attempted.
+    pub retry_next_ledger: u64,
 }
 
 /// On-chain token vesting schedule.
