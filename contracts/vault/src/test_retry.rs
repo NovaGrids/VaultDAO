@@ -3,7 +3,7 @@ mod tests {
     use crate::storage;
     use crate::types;
     use crate::{VaultDAO, VaultDAOClient};
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{testutils::Address as _, Address, Env, Symbol};
 
     fn setup_vault_with_retry() -> (
         Env,

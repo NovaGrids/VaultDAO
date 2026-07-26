@@ -8,6 +8,11 @@ import {
   buildReadinessPayload,
   buildDetailedHealthPayload,
 } from "./health.service.js";
+import {
+  buildVaultHealthPayload,
+  createDefaultVaultHealthProbes,
+  parseVaultHealthLevel,
+} from "./vault-health.service.js";
 import { success, error } from "../../shared/http/response.js";
 
 export function getHealthController(
@@ -53,6 +58,35 @@ export function getReadinessController(
         { exposeDetails: true },
       );
     }
+  };
+}
+
+/**
+ * GET /health/vault?level=basic|detailed|full (Issue #1377).
+ *
+ * Responds 200 for `healthy`/`degraded` and 503 for `unhealthy`, always with
+ * the per-check breakdown attached.
+ */
+export function getVaultHealthController(
+  env: BackendEnv,
+  runtime: BackendRuntime,
+): RequestHandler {
+  const probes = createDefaultVaultHealthProbes(env, runtime);
+
+  return async (request, response) => {
+    const level = parseVaultHealthLevel(request.query.level);
+    const payload = await buildVaultHealthPayload(level, probes);
+
+    if (payload.status === "unhealthy") {
+      error(
+        response,
+        { message: "Vault health check failed", status: 503, details: payload },
+        { exposeDetails: true },
+      );
+      return;
+    }
+
+    success(response, payload);
   };
 }
 

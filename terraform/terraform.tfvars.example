@@ -1,0 +1,70 @@
+# VaultDAO Terraform Configuration Example
+# Copy this to terraform.tfvars and fill in with actual values
+
+aws_region = "us-east-1"
+environment = "production"
+
+# VPC Configuration
+vpc_cidr = "10.0.0.0/16"
+public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+database_subnet_cidrs = ["10.0.20.0/24", "10.0.21.0/24"]
+
+# EKS Configuration
+kubernetes_version = "1.28"
+cluster_public_access_cidrs = ["0.0.0.0/0"]
+node_instance_types = ["t3.large"]
+node_group_desired_size = 3
+node_group_max_size = 10
+node_group_min_size = 2
+
+# Backend Service Configuration
+backend_image = "vaultdao/backend:latest"
+backend_port = 3000
+backend_replica_count = 3
+backend_cpu_requests = "500m"
+backend_memory_requests = "512Mi"
+backend_cpu_limits = "1000m"
+backend_memory_limits = "1Gi"
+
+# Database Configuration
+db_engine = "postgres"
+db_engine_version = "15.3"
+db_instance_class = "db.t3.medium"
+db_allocated_storage = 100
+db_multi_az = true
+db_backup_retention_days = 30
+db_name = "vaultdao"
+db_username = "postgres"
+db_skip_final_snapshot = false
+
+# Redis Configuration
+redis_engine_version = "7.0"
+redis_node_type = "cache.t3.medium"
+redis_num_cache_nodes = 2
+redis_parameter_group_name = "default.redis7"
+redis_automatic_failover = true
+
+# RPC Pool Configuration
+rpc_providers = [
+  {
+    name     = "infura"
+    endpoint = "https://mainnet.infura.io/v3/YOUR_INFURA_KEY"
+    priority = 1
+  },
+  {
+    name     = "alchemy"
+    endpoint = "https://eth-mainnet.alchemyapi.io/v2/YOUR_ALCHEMY_KEY"
+    priority = 2
+  }
+]
+primary_rpc_provider_idx = 0
+
+# Monitoring Configuration
+prometheus_retention = "15d"
+grafana_admin_password = "SET_A_STRONG_PASSWORD"
+alert_email = "ops-team@vaultdao.io"
+slack_webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Logging Configuration
+log_level = "info"

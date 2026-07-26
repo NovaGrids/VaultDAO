@@ -1,0 +1,287 @@
+groups:
+  - name: vaultdao.rules
+    interval: 30s
+    rules:
+      # API Performance Alerts
+      - alert: HighErrorRate
+        expr: |
+          (
+            increase(vaultdao_http_requests_total{status=~"5.."}[5m])
+            /
+            increase(vaultdao_http_requests_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: backend
+        annotations:
+          summary: "High error rate detected"
+          description: |
+            Error rate is {{ $value | humanizePercentage }} for service {{ $labels.service }}
+            Affected endpoint: {{ $labels.endpoint }}
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99, rate(vaultdao_http_request_duration_seconds_bucket[5m])) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: "API latency is high"
+          description: |
+            P99 latency is {{ $value }}ms
+            Endpoint: {{ $labels.endpoint }}
+
+      # RPC Provider Alerts
+      - alert: RPCProviderDown
+        expr: vaultdao_rpc_provider_health == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: rpc
+        annotations:
+          summary: "RPC provider {{ $labels.provider }} is down"
+          description: |
+            RPC provider {{ $labels.provider }} has been unreachable for 1 minute
+            Last error: {{ $labels.error }}
+
+      - alert: RPCProviderSlow
+        expr: |
+          histogram_quantile(0.95, rate(vaultdao_rpc_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: rpc
+        annotations:
+          summary: "RPC provider {{ $labels.provider }} is slow"
+          description: |
+            P95 response time from {{ $labels.provider }} is {{ $value }}s
+            Current rate limit: {{ $labels.rate_limit }}%
+
+      - alert: AllRPCProvidersFailing
+        expr: |
+          count(vaultdao_rpc_provider_health == 0) == count(vaultdao_rpc_provider_health)
+        for: 1m
+        labels:
+          severity: critical
+          component: rpc
+        annotations:
+          summary: "All RPC providers are failing"
+          description: |
+            All configured RPC providers are currently unavailable
+            Immediate action required
+
+      # Event Processing Alerts
+      - alert: EventProcessingLagHigh
+        expr: vaultdao_event_processing_lag_seconds > 300
+        for: 10m
+        labels:
+          severity: high
+          component: events
+        annotations:
+          summary: "Event processing lag is high"
+          description: |
+            Event processing lag is {{ $value | humanizeDuration }}
+            Last processed block: {{ $labels.last_block }}
+
+      - alert: EventProcessingLagCritical
+        expr: vaultdao_event_processing_lag_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+          component: events
+        annotations:
+          summary: "Event processing lag is critical"
+          description: |
+            Event processing lag is {{ $value | humanizeDuration }}
+            Queue depth: {{ $labels.queue_depth }} events
+
+      - alert: EventQueueFull
+        expr: vaultdao_event_queue_depth > 10000
+        for: 5m
+        labels:
+          severity: critical
+          component: events
+        annotations:
+          summary: "Event queue is nearly full"
+          description: |
+            Event queue depth is {{ $value }} / 10000
+            Processing rate: {{ $labels.processing_rate }} events/sec
+
+      # Storage Alerts
+      - alert: StorageUsageCritical
+        expr: |
+          (
+            node_filesystem_size_bytes - node_filesystem_avail_bytes
+          ) / node_filesystem_size_bytes > 0.9
+        for: 5m
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "Storage usage is critical"
+          description: |
+            {{ $labels.device }} is {{ $value | humanizePercentage }} full
+            Available space: {{ | humanize1024 }}
+
+      - alert: StorageUsageWarning
+        expr: |
+          (
+            node_filesystem_size_bytes - node_filesystem_avail_bytes
+          ) / node_filesystem_size_bytes > 0.75
+        for: 30m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Storage usage is high"
+          description: |
+            {{ $labels.device }} is {{ $value | humanizePercentage }} full
+
+      # Database Alerts
+      - alert: DatabaseConnectionPoolExhausted
+        expr: vaultdao_db_connections_active / vaultdao_db_connections_max > 0.9
+        for: 5m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database connection pool is nearly exhausted"
+          description: |
+            {{ $value | humanizePercentage }} of connection pool is in use
+            Active connections: {{ $labels.active }} / {{ $labels.max }}
+
+      - alert: DatabaseSlowQueries
+        expr: rate(vaultdao_db_slow_queries_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High rate of slow database queries"
+          description: |
+            {{ $value | humanize }} slow queries per second
+            Threshold: > 100ms
+
+      - alert: DatabaseReplicationLag
+        expr: vaultdao_db_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: high
+          component: database
+        annotations:
+          summary: "Database replication lag is high"
+          description: |
+            Replication lag is {{ $value | humanizeDuration }}
+            This may affect failover capabilities
+
+      # Redis Cache Alerts
+      - alert: RedisMemoryUsageHigh
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis memory usage is high"
+          description: |
+            Redis is using {{ $value | humanizePercentage }} of available memory
+            Current: {{ $labels.used }} / {{ $labels.max }}
+
+      - alert: RedisEvictions
+        expr: rate(redis_evicted_keys_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis is evicting keys"
+          description: |
+            Redis is evicting keys at rate {{ $value }} keys/sec
+            This indicates insufficient memory
+
+      # Contract Health Alerts
+      - alert: ContractHealthDegraded
+        expr: vaultdao_contract_health_status < 0.5
+        for: 5m
+        labels:
+          severity: high
+          component: contracts
+        annotations:
+          summary: "Contract {{ $labels.contract }} health is degraded"
+          description: |
+            Health score: {{ $value | humanizePercentage }}
+            Last update: {{ $labels.last_update }}
+
+      # Node Resource Alerts
+      - alert: NodeHighCPUUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "Node {{ $labels.instance }} has high CPU usage"
+          description: "CPU usage is {{ $value | humanize }}%"
+
+      - alert: NodeHighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "Node {{ $labels.instance }} has high memory usage"
+          description: "Memory usage is {{ $value | humanize }}%"
+
+      # Kubernetes Alerts
+      - alert: KubernetesPodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: kubernetes
+        annotations:
+          summary: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is crash looping"
+          description: |
+            Container restarts in last 15 minutes: {{ $value }}
+
+      - alert: KubernetesNodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: kubernetes
+        annotations:
+          summary: "Kubernetes node {{ $labels.node }} is not ready"
+          description: "Node has been in NotReady state for 5 minutes"
+
+      - alert: KubernetesPersistentvolumeclaim
+        expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          component: kubernetes
+        annotations:
+          summary: "Kubernetes PersistentVolumeClaim {{ $labels.persistentvolumeclaim }} usage is {{ $value | humanizePercentage }}"
+
+  # Recording Rules for optimization
+  - name: vaultdao.recording
+    interval: 15s
+    rules:
+      - record: job:vaultdao_http_requests:rate5m
+        expr: rate(vaultdao_http_requests_total[5m])
+
+      - record: job:vaultdao_http_request_duration:histogram_quantile:95
+        expr: histogram_quantile(0.95, rate(vaultdao_http_request_duration_seconds_bucket[5m]))
+
+      - record: job:vaultdao_http_request_duration:histogram_quantile:99
+        expr: histogram_quantile(0.99, rate(vaultdao_http_request_duration_seconds_bucket[5m]))
+
+      - record: job:vaultdao_rpc_errors:rate5m
+        expr: rate(vaultdao_rpc_errors_total[5m])
+
+      - record: job:vaultdao_events_processed:rate5m
+        expr: rate(vaultdao_events_processed_total[5m])

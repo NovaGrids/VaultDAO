@@ -218,6 +218,13 @@ pub fn emit_config_updated(env: &Env, updater: &Address) {
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
 }
 
+pub fn emit_stream_burst_factor_updated(env: &Env, admin: &Address, old_factor: u32, new_factor: u32) {
+    env.events().publish(
+        (Symbol::new(env, "stream_burst_factor_updated"),),
+        (admin.clone(), old_factor, new_factor),
+    );
+}
+
 // ============================================================================
 // Oracle Events (feature/oracle-integration)
 // ============================================================================
@@ -235,6 +242,30 @@ pub fn emit_oracle_price_stale(env: &Env, asset: &Address, price_ledger: u64, cu
     env.events().publish(
         (Symbol::new(env, "oracle_price_stale"),),
         (asset.clone(), price_ledger, current_ledger),
+    );
+}
+
+// ============================================================================
+// Gas-Price Oracle Fee Estimation Events (Issue #1367)
+// ============================================================================
+
+/// Emit when a proposal fee estimate is finalized, recording which price source
+/// was used (oracle live price vs. local CostModel fallback) and the price value.
+///
+/// Topics: `("oracle_gas_price_used", proposal_id)`
+/// Data:   `(price_used, source_is_oracle: bool)`
+///
+/// `source_is_oracle = true`  → live oracle price was used.
+/// `source_is_oracle = false` → local CostModel fallback was used (oracle unavailable/stale/invalid).
+pub fn emit_oracle_gas_price_used(
+    env: &Env,
+    proposal_id: u64,
+    price_used: i128,
+    source_is_oracle: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "oracle_gas_price_used"), proposal_id),
+        (price_used, source_is_oracle),
     );
 }
 
@@ -690,6 +721,20 @@ pub fn emit_retry_scheduled(
     );
 }
 
+/// Emit when a recurring payment retry is scheduled after a failed transfer
+pub fn emit_recurring_retry_scheduled(
+    env: &Env,
+    payment_id: u64,
+    retry_count: u32,
+    next_retry_ledger: u64,
+    error_code: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "recurring_retry_scheduled"), payment_id),
+        (retry_count, next_retry_ledger, error_code),
+    );
+}
+
 /// Emit when a retry execution attempt is made
 #[allow(dead_code)]
 pub fn emit_retry_attempted(env: &Env, proposal_id: u64, retry_count: u32, executor: &Address) {
@@ -870,6 +915,13 @@ pub fn emit_escrow_dispute_resolved(
     env.events().publish(
         (Symbol::new(env, "escrow_resolved"), escrow_id),
         (arbitrator.clone(), released_to_recipient),
+    );
+}
+
+pub fn emit_escrow_auto_resolved(env: &Env, escrow_id: u64, amount_refunded: i128) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_auto_resolved"), escrow_id),
+        amount_refunded,
     );
 }
 
@@ -1230,6 +1282,23 @@ pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amoun
     );
 }
 
+/// Emit when a stream is auto-completed because the vault balance can no
+/// longer sustain it (Issue #1359).
+///
+/// Topics: ("stream_auto_done", stream_id); data: (reason, available, required).
+pub fn emit_stream_auto_completed(
+    env: &Env,
+    stream_id: u64,
+    reason: Symbol,
+    available: i128,
+    required: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_auto_done"), stream_id),
+        (reason, available, required),
+    );
+}
+
 pub fn emit_cross_vault_proposed(
     env: &Env,
     proposal_id: u64,
@@ -1572,6 +1641,83 @@ pub fn emit_gov_proposal_approved(env: &Env, id: u64, voter: &Address, count: u3
 pub fn emit_gov_proposal_executed(env: &Env, id: u64, param: u32, new_value: i128) {
     env.events()
         .publish((Symbol::new(env, "gov_executed"), id), (param, new_value));
+}
+
+// ============================================================================
+// Fee Cache Events (#1428)
+// ============================================================================
+
+pub fn emit_fee_cache_invalidated(env: &Env, proposal_id: u64, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "fee_cache_invalidated"), proposal_id),
+        admin.clone(),
+    );
+}
+
+// ============================================================================
+// Fan-Out Stream Events (#1430)
+// ============================================================================
+
+pub fn emit_fan_out_stream_created(env: &Env, stream_id: u64, creator: &Address, recipient_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "fanout_stream_created"), stream_id),
+        (creator.clone(), recipient_count),
+    );
+}
+
+pub fn emit_fan_out_payment_distributed(
+    env: &Env,
+    stream_id: u64,
+    recipient: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "fanout_payment_distributed"), stream_id),
+        (recipient.clone(), amount),
+    );
+}
+
+// ============================================================================
+// Stream Pause/Resume TTL Events (#1429)
+// ============================================================================
+
+pub fn emit_stream_paused(env: &Env, stream_id: u64, pauser: &Address, ledger: u64) {
+    env.events().publish(
+        (Symbol::new(env, "stream_paused"), stream_id),
+        (pauser.clone(), ledger),
+    );
+}
+
+pub fn emit_stream_resumed(env: &Env, stream_id: u64, resumer: &Address, pause_duration: u64) {
+    env.events().publish(
+        (Symbol::new(env, "stream_resumed"), stream_id),
+        (resumer.clone(), pause_duration),
+    );
+}
+
+// ============================================================================
+// Escrow Voting Events (#1431)
+// ============================================================================
+
+pub fn emit_escrow_release_locked_for_voting(env: &Env, escrow_id: u64, required_approvals: u32) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_release_locked"), escrow_id),
+        required_approvals,
+    );
+}
+
+pub fn emit_escrow_release_voted(
+    env: &Env,
+    escrow_id: u64,
+    voter: &Address,
+    approved: bool,
+    approval_count: u32,
+    rejection_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_release_voted"), escrow_id),
+        (voter.clone(), approved, approval_count, rejection_count),
+    );
 }
 
 // ============================================================================
