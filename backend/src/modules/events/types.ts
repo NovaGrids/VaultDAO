@@ -95,6 +95,7 @@ export enum EventType {
   RETRY_SCHEDULED = "RETRY_SCHEDULED",
   RETRY_ATTEMPTED = "RETRY_ATTEMPTED",
   RETRIES_EXHAUSTED = "RETRIES_EXHAUSTED",
+  PAYMENT_BACKOFF_INCREASED = "PAYMENT_BACKOFF_INCREASED",
   TOKENS_LOCKED = "TOKENS_LOCKED",
   LOCK_EXTENDED = "LOCK_EXTENDED",
   TOKENS_UNLOCKED = "TOKENS_UNLOCKED",
@@ -538,6 +539,25 @@ export interface RetriesExhaustedData {
   readonly maxAttempts: number;
 }
 
+/**
+ * Emitted each time a recurring payment's backoff delay increases after a
+ * failed execution attempt (including once the 7-day cap is reached).
+ */
+export interface PaymentBackoffIncreasedData {
+  /** ID of the recurring payment that failed. */
+  readonly paymentId: string;
+  /** Retry count after this failure. */
+  readonly retryCount: number;
+  /** Clamped delay in seconds until the next allowed attempt. */
+  readonly delaySeconds: number;
+  /** Whether the 7-day hard cap was applied. */
+  readonly capHit: boolean;
+  /** Strategy that produced this result ("Exponential" | "Linear"). */
+  readonly strategy: string;
+  /** Unix timestamp (seconds) of the next allowed retry. */
+  readonly nextRetryAt: number;
+}
+
 export interface TokensLockedData {
   readonly address: string;
   readonly amount: string;
@@ -691,6 +711,7 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   retry_scheduled: EventType.RETRY_SCHEDULED,
   retry_attempted: EventType.RETRY_ATTEMPTED,
   retries_exhausted: EventType.RETRIES_EXHAUSTED,
+  payment_backoff_increased: EventType.PAYMENT_BACKOFF_INCREASED,
   tokens_locked: EventType.TOKENS_LOCKED,
   lock_extended: EventType.LOCK_EXTENDED,
   tokens_unlocked: EventType.TOKENS_UNLOCKED,
