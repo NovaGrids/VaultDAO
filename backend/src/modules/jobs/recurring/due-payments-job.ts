@@ -29,6 +29,7 @@ import {
   DUE_PAYMENT_IDEMPOTENCY_HIT_COUNTER,
   DUE_PAYMENT_BATCH_SIZE_GAUGE,
 } from "../../health/metrics.registry.js";
+import type { BackoffOptions } from "../../recurring/backoff.js";
 
 const logger = createLogger("due-payments-job");
 
@@ -102,11 +103,13 @@ export function createDuePaymentsScheduledJob(
     jitterWindowMax?: number;
     metricsRegistry?: MetricsRegistry;
     idempotencySet?: IdempotencySet;
+    backoffOptions?: BackoffOptions;
   } = {},
 ): ScheduledJob {
   const jitterWindowMax = options.jitterWindowMax ?? 10;
   const metricsRegistry = options.metricsRegistry;
   const idempotencySet = options.idempotencySet ?? new IdempotencySet();
+  const backoffOptions = options.backoffOptions ?? {};
 
   // Register metrics if a registry was provided
   if (metricsRegistry) {

@@ -265,6 +265,106 @@ export class VaultError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// Observability / Logging
+// ---------------------------------------------------------------------------
+
+/**
+ * Additional structured context attached to each log call.
+ *
+ * The SDK populates common fields automatically (e.g. `method`, `contractId`,
+ * `txHash`). Callers may receive additional ad-hoc fields in the future, so
+ * implementations should treat this as an open record.
+ */
+export interface LogContext {
+  /** Contract method being invoked, e.g. `"propose_transfer"`. */
+  method?: string;
+  /** Deployed contract ID the call targets. */
+  contractId?: string;
+  /** Transaction XDR hash (available after signing/submission). */
+  txHash?: string;
+  /** Elapsed time in milliseconds (available after a call completes). */
+  durationMs?: number;
+  /** On-chain error code when a `VaultError` is thrown. */
+  errorCode?: number;
+  /** Human-readable error message. */
+  errorMessage?: string;
+  /** Any additional structured data. */
+  [key: string]: unknown;
+}
+
+/**
+ * Logger interface that VaultDAO SDK accepts for custom observability.
+ *
+ * Implement this interface to route SDK telemetry to any logging backend
+ * (console, Winston, Pino, Datadog, etc.).
+ *
+ * @example
+ * ```ts
+ * import pino from "pino";
+ *
+ * const log = pino();
+ *
+ * const opts = buildOptions("testnet", CONTRACT_ID, {
+ *   logger: {
+ *     debug: (msg, ctx) => log.debug(ctx, msg),
+ *     info:  (msg, ctx) => log.info(ctx, msg),
+ *     warn:  (msg, ctx) => log.warn(ctx, msg),
+ *     error: (msg, ctx) => log.error(ctx, msg),
+ *   },
+ * });
+ * ```
+ *
+ * @example — console logger
+ * ```ts
+ * const opts = buildOptions("testnet", CONTRACT_ID, {
+ *   logger: {
+ *     debug: (msg, ctx) => console.debug("[VaultDAO]", msg, ctx),
+ *     info:  (msg, ctx) => console.info("[VaultDAO]",  msg, ctx),
+ *     warn:  (msg, ctx) => console.warn("[VaultDAO]",  msg, ctx),
+ *     error: (msg, ctx) => console.error("[VaultDAO]", msg, ctx),
+ *   },
+ * });
+ * ```
+ */
+export interface SdkLogger {
+  /**
+   * Verbose diagnostic messages — RPC call lifecycle, simulation steps.
+   * These are high-frequency and typically disabled in production.
+   */
+  debug(message: string, context?: LogContext): void;
+
+  /**
+   * Informational messages — successful transactions, notable state changes.
+   */
+  info(message: string, context?: LogContext): void;
+
+  /**
+   * Recoverable issues — e.g. polling retries, unexpected but non-fatal states.
+   */
+  warn(message: string, context?: LogContext): void;
+
+  /**
+   * Errors that prevented an operation from completing.
+   */
+  error(message: string, context?: LogContext): void;
+}
+
+/**
+ * A silent no-op logger used when no custom logger is provided.
+ * All methods are empty and impose zero runtime overhead.
+ */
+export const noopLogger: SdkLogger = {
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  debug: () => {},
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  info: () => {},
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  warn: () => {},
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  error: () => {},
+};
+
+// ---------------------------------------------------------------------------
 // SDK config
 // ---------------------------------------------------------------------------
 
@@ -279,4 +379,28 @@ export interface SdkOptions {
   rpcUrl: string;
   /** Stellar network passphrase. */
   networkPassphrase: string;
+  /**
+   * Optional custom logger for SDK observability.
+   *
+   * When omitted the SDK operates silently (no-op logger).
+   * Provide any object that satisfies {@link SdkLogger} to capture
+   * debug/info/warn/error events emitted during RPC calls, transaction
+   * building, signing, and submission.
+   *
+   * @example
+   * ```ts
+   * const opts: SdkOptions = {
+   *   contractId: "CXXX...",
+   *   rpcUrl: "https://soroban-testnet.stellar.org",
+   *   networkPassphrase: Networks.TESTNET,
+   *   logger: {
+   *     debug: (msg, ctx) => console.debug(msg, ctx),
+   *     info:  (msg, ctx) => console.info(msg, ctx),
+   *     warn:  (msg, ctx) => console.warn(msg, ctx),
+   *     error: (msg, ctx) => console.error(msg, ctx),
+   *   },
+   * };
+   * ```
+   */
+  logger?: SdkLogger;
 }

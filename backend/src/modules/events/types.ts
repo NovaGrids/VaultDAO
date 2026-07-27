@@ -76,6 +76,11 @@ export enum EventType {
   SUBSCRIPTION_CANCELLED = "SUBSCRIPTION_CANCELLED",
   SUBSCRIPTION_UPGRADED = "SUBSCRIPTION_UPGRADED",
   SUBSCRIPTION_EXPIRED = "SUBSCRIPTION_EXPIRED",
+  /** Emitted when jitter shifts a recurring payment's next execution ledger.
+   *  Present only when jitter_window > 0 and the payment is past its first cycle.
+   *  Auditors: timing variance equal to the jitter_offset is expected behavior. */
+  RECURRING_PAYMENT_EXECUTED = "RECURRING_PAYMENT_EXECUTED",
+  RECURRING_PAYMENT_JITTERED = "RECURRING_PAYMENT_JITTERED",
 
   // ── Recovery ──────────────────────────────────────────────────────────────
   RECOVERY_PROPOSED = "RECOVERY_PROPOSED",
@@ -90,6 +95,8 @@ export enum EventType {
   RETRY_SCHEDULED = "RETRY_SCHEDULED",
   RETRY_ATTEMPTED = "RETRY_ATTEMPTED",
   RETRIES_EXHAUSTED = "RETRIES_EXHAUSTED",
+  PAYMENT_BACKOFF_INCREASED = "PAYMENT_BACKOFF_INCREASED",
+  CONSECUTIVE_MISS_RESET = "CONSECUTIVE_MISS_RESET",
   TOKENS_LOCKED = "TOKENS_LOCKED",
   LOCK_EXTENDED = "LOCK_EXTENDED",
   TOKENS_UNLOCKED = "TOKENS_UNLOCKED",
@@ -441,6 +448,38 @@ export interface SubscriptionExpiredData {
   readonly subscriptionId: string;
 }
 
+// ── Recurring payment data interfaces ────────────────────────────────────────
+
+export interface RecurringPaymentExecutedData {
+  readonly paymentId: string;
+  /** The ledger at which this individual payment transfer executed. */
+  readonly paymentLedger: number;
+  readonly amount: string;
+}
+
+/**
+ * Data carried by RECURRING_PAYMENT_JITTERED events.
+ *
+ * When jitter is enabled on a recurring payment (`jitter_window > 0`) and the
+ * payment is past its first cycle, the next execution ledger is shifted forward
+ * by `jitterOffset` ledgers.  This event captures both the unshifted
+ * (`nominalNextLedger`) and the actual stored (`jitteredNextLedger`) values so
+ * that auditors can verify the timing variance is deliberate.
+ *
+ * **Audit trail note**: A difference of `jitterOffset` ledgers between
+ * consecutive execution timestamps is expected and intentional.  Do not treat
+ * it as a missed or delayed payment.
+ */
+export interface RecurringPaymentJitteredData {
+  readonly paymentId: string;
+  /** Next execution ledger without jitter: prevNextLedger + n * interval */
+  readonly nominalNextLedger: number;
+  /** Actual stored next execution ledger: nominalNextLedger + jitterOffset */
+  readonly jitteredNextLedger: number;
+  /** Ledger offset applied, in [0, jitter_window) */
+  readonly jitterOffset: number;
+}
+
 // ── Recovery data interfaces ──────────────────────────────────────────────────
 
 export interface RecoveryProposedData {
@@ -499,6 +538,55 @@ export interface RetryAttemptedData {
 export interface RetriesExhaustedData {
   readonly targetId: string;
   readonly maxAttempts: number;
+}
+
+/**
+ * Emitted each time a recurring payment's backoff delay increases after a
+ * failed execution attempt (including once the 7-day cap is reached).
+ */
+export interface PaymentBackoffIncreasedData {
+  /** ID of the recurring payment that failed. */
+  readonly paymentId: string;
+  /** Consecutive retry count after this failure. */
+  readonly retryCount: number;
+  /** Clamped delay in seconds until the next allowed attempt. */
+  readonly delaySeconds: number;
+  /** Whether the 7-day hard cap was applied. */
+  readonly capHit: boolean;
+  /** Strategy that produced this result ("Exponential" | "Linear"). */
+  readonly strategy: string;
+  /** Unix timestamp (seconds) of the next allowed retry. */
+  readonly nextRetryAt: number;
+  /**
+   * Lifetime total of all failed execution attempts for this payment
+   * (including this one).  Provided for observer context; never reset.
+   */
+  readonly totalMissedExecutions: number;
+}
+
+/**
+ * Emitted when a recurring payment's consecutive-miss counter is reset to 0
+ * because a previously-failing payment executed successfully.
+ *
+ * Only emitted when the counter was greater than 0 before the reset (i.e. the
+ * payment is genuinely recovering from a missed-execution streak).  Payments
+ * that succeed without ever having missed are not eligible.
+ */
+export interface ConsecutiveMissResetData {
+  /** ID of the recurring payment that recovered. */
+  readonly paymentId: string;
+  /** Contract / vault identifier the payment belongs to. */
+  readonly contractId: string;
+  /**
+   * The consecutive-miss count that was just cleared (always ≥ 1).
+   * This is the value of `retryCount` immediately before the reset.
+   */
+  readonly clearedConsecutiveMisses: number;
+  /**
+   * Lifetime total of failed execution attempts for this payment.
+   * Preserved here for audit context; was not affected by this reset.
+   */
+  readonly totalMissedExecutions: number;
 }
 
 export interface TokensLockedData {
@@ -638,6 +726,8 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   subscription_cancelled: EventType.SUBSCRIPTION_CANCELLED,
   subscription_upgraded: EventType.SUBSCRIPTION_UPGRADED,
   subscription_expired: EventType.SUBSCRIPTION_EXPIRED,
+  recurring_payment_executed: EventType.RECURRING_PAYMENT_EXECUTED,
+  recurring_pay_jittered: EventType.RECURRING_PAYMENT_JITTERED,
 
   // Recovery
   recovery_proposed: EventType.RECOVERY_PROPOSED,
@@ -652,6 +742,8 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   retry_scheduled: EventType.RETRY_SCHEDULED,
   retry_attempted: EventType.RETRY_ATTEMPTED,
   retries_exhausted: EventType.RETRIES_EXHAUSTED,
+  payment_backoff_increased: EventType.PAYMENT_BACKOFF_INCREASED,
+  consecutive_miss_reset: EventType.CONSECUTIVE_MISS_RESET,
   tokens_locked: EventType.TOKENS_LOCKED,
   lock_extended: EventType.LOCK_EXTENDED,
   tokens_unlocked: EventType.TOKENS_UNLOCKED,
