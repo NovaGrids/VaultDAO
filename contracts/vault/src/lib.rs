@@ -247,6 +247,11 @@ mod test_cross_vault;
 #[cfg(test)]
 mod test_disputes;
 #[cfg(test)]
+mod test_escrow_expiration;
+#[cfg(test)]
+mod test_escrow_milestone_partial_release;
+#[cfg(test)]
+mod test_escrow_multisig_arbitration;
 mod test_escrow_timeout;
 #[cfg(test)]
 mod test_fees;
@@ -298,6 +303,7 @@ mod test_streaming;
 #[cfg(test)]
 mod test_subscriptions;
 #[cfg(test)]
+mod test_subscription_downgrade_grace;
 mod test_proposal_expiration;
 #[cfg(test)]
 mod test_tag_taxonomy;
