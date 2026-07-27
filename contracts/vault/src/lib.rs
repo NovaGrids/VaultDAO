@@ -255,9 +255,15 @@ mod test_gas_price_oracle;
 #[cfg(test)]
 mod test_hooks;
 #[cfg(test)]
+mod test_circular_dependency;
+#[cfg(test)]
+mod test_cold_signature_replay;
+#[cfg(test)]
 mod test_merge;
 #[cfg(test)]
 mod test_notification_prefs;
+#[cfg(test)]
+mod test_threshold_reduction;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
@@ -291,6 +297,8 @@ mod test_stream_burst_config;
 mod test_streaming;
 #[cfg(test)]
 mod test_subscriptions;
+#[cfg(test)]
+mod test_proposal_expiration;
 #[cfg(test)]
 mod test_tag_taxonomy;
 #[cfg(test)]
