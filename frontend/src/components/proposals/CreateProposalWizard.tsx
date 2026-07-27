@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import { TypingIndicator } from './TypingIndicator';
 import { OnlineUsers } from './OnlineUsers';
@@ -8,6 +9,7 @@ import { Users, AlertTriangle, Save, Globe } from 'lucide-react';
 import type { ProposalDraft } from '../../types/collaboration';
 
 export const CreateProposalWizard: React.FC = () => {
+  const { t } = useTranslation();
   const { address } = useWallet();
   const [draftId] = useState<string>(() => {
     const savedId = localStorage.getItem('vaultdao_current_draft_id');
@@ -76,7 +78,7 @@ export const CreateProposalWizard: React.FC = () => {
     
     // Process submission logic here (e.g. smart contract interaction)
     console.log('Submitting proposal:', formState);
-    alert('Proposal submitted successfully!');
+    alert(t('proposals.submittedSuccess'));
     localStorage.removeItem('vaultdao_current_draft_id');
     localStorage.removeItem(`draft-${draftId}`);
   };
