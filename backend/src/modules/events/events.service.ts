@@ -2,7 +2,7 @@ import { createLogger } from "../../shared/logging/logger.js";
 import type { BackendEnv } from "../../config/env.js";
 import type { ContractEvent, PollingState } from "./events.types.js";
 import type { CursorStorage } from "./cursor/index.js";
-import { EventNormalizer } from "./normalizers/index.js";
+import { CachingEventNormalizer } from "./normalizers/caching-event-normalizer.js";
 import type { ProposalActivityConsumer } from "../proposals/consumer.js";
 import type { EventWebSocketServer } from "../websocket/websocket.server.js";
 import type { SnapshotService } from "../snapshots/snapshot.service.js";
@@ -55,6 +55,7 @@ export class EventPollingService {
   private processedEventIds: Set<string> = new Set();
   private readonly MAX_PROCESSED_IDS = 1000;
   private readonly rpcClient: SorobanRpcClient;
+  private readonly cachingNormalizer: CachingEventNormalizer;
 
   private readonly circuitBreaker: CircuitBreaker;
 
@@ -71,6 +72,10 @@ export class EventPollingService {
     this.rpcClient =
       rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
     this.circuitBreaker = circuitBreaker ?? new CircuitBreaker();
+    this.cachingNormalizer = new CachingEventNormalizer(
+      env.normalizerCacheMaxSize,
+      metrics,
+    );
   }
 
   /**
@@ -352,7 +357,7 @@ export class EventPollingService {
   private async processEvent(event: ContractEvent): Promise<void> {
     const topic = event.topic[0] ?? "";
     try {
-      const normalized = EventNormalizer.normalize(event);
+      const normalized = this.cachingNormalizer.normalize(event);
 
       // Proposal events → proposalConsumer
       if (this.proposalConsumer && PROPOSAL_TOPICS.has(topic)) {

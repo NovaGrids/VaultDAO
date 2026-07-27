@@ -316,6 +316,8 @@ pub enum FeatureKey {
     Permissions(Address),
     /// Delegated permissions (delegatee, delegator, permission as u32) -> DelegatedPermission
     DelegatedPermission(Address, Address, u32),
+    /// Auto-complete flag for a stream (stream id) -> bool (Issue #1359)
+    StreamAutoComplete(u64),
     /// Subscription by ID -> Subscription
     Subscription(u64),
     /// Subscription IDs indexed by subscriber address -> Vec<u64>
@@ -390,6 +392,14 @@ pub enum FeatureKey {
     NextGovernanceId,
     /// Deadline extension count per proposal -> u32
     DeadlineExtensionCount(u64),
+    /// Staking tier for a proposer (Address) -> u32
+    ProposerStakingTier(Address),
+    /// Execution count for tier progression (Address) -> u64
+    ProposerExecutionCount(Address),
+    /// Accumulated rewards for a proposer (Address) -> i128
+    ProposerAccumulatedRewards(Address),
+    /// Subscription tier usage tracking (subscription_id) -> Map of usage metrics
+    SubscriptionUsage(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1023,6 +1033,23 @@ pub fn get_streaming_payment(
         .persistent()
         .get(&DataKey::Stream(id))
         .ok_or(VaultError::ProposalNotFound)
+}
+
+/// Store the auto-complete-on-insufficient-balance flag for a stream (Issue #1359).
+pub fn set_stream_auto_complete(env: &Env, stream_id: u64, enabled: bool) {
+    let key = FeatureKey::StreamAutoComplete(stream_id);
+    env.storage().persistent().set(&key, &enabled);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Read the auto-complete flag for a stream; defaults to `false` (Issue #1359).
+pub fn get_stream_auto_complete(env: &Env, stream_id: u64) -> bool {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::StreamAutoComplete(stream_id))
+        .unwrap_or(false)
 }
 
 // ============================================================================
@@ -4273,6 +4300,86 @@ pub fn get_template_version(
 }
 
 // ============================================================================
+// Staking Tier Progression (#1438)
+// ============================================================================
+
+pub fn get_proposer_staking_tier(env: &Env, proposer: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposerStakingTier(proposer.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_proposer_staking_tier(env: &Env, proposer: &Address, tier: u32) {
+    let key = FeatureKey::ProposerStakingTier(proposer.clone());
+    env.storage().persistent().set(&key, &tier);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_proposer_execution_count(env: &Env, proposer: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposerExecutionCount(proposer.clone()))
+        .unwrap_or(0)
+}
+
+pub fn increment_proposer_execution_count(env: &Env, proposer: &Address) -> u64 {
+    let count = get_proposer_execution_count(env, proposer) + 1;
+    let key = FeatureKey::ProposerExecutionCount(proposer.clone());
+    env.storage().persistent().set(&key, &count);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    count
+}
+
+// ============================================================================
+// Staking Rewards Accrual (#1439)
+// ============================================================================
+
+pub fn get_proposer_accumulated_rewards(env: &Env, proposer: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposerAccumulatedRewards(proposer.clone()))
+        .unwrap_or(0)
+}
+
+pub fn add_proposer_rewards(env: &Env, proposer: &Address, amount: i128) {
+    let current = get_proposer_accumulated_rewards(env, proposer);
+    let new_total = current + amount;
+    let key = FeatureKey::ProposerAccumulatedRewards(proposer.clone());
+    env.storage().persistent().set(&key, &new_total);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Subscription Tier Usage Tracking (#1437)
+// ============================================================================
+
+pub fn get_subscription_usage(env: &Env, subscription_id: u64) -> Map<Symbol, i128> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::SubscriptionUsage(subscription_id))
+        .unwrap_or_else(|| Map::new(env))
+}
+
+pub fn set_subscription_usage(env: &Env, subscription_id: u64, usage: &Map<Symbol, i128>) {
+    let key = FeatureKey::SubscriptionUsage(subscription_id);
+    env.storage().persistent().set(&key, usage);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn increment_subscription_usage(env: &Env, subscription_id: u64, metric: &Symbol, amount: i128) {
+    let mut usage = get_subscription_usage(env, subscription_id);
+    let current = usage.get(metric.clone()).unwrap_or(0);
+    usage.set(metric.clone(), current + amount);
+    set_subscription_usage(env, subscription_id, &usage);
 // Issue #1414: Reentrancy Guard for Proposal Execution
 // ============================================================================
 

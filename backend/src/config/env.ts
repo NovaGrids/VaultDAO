@@ -49,6 +49,34 @@ export interface BackendEnv {
   readonly rateLimitDefaultPerMin: number;
   /** Maximum ledger jitter window for due-payment queries (default: 10 ledgers). */
   readonly jitterWindowMax: number;
+  /** Maximum number of topic subscriptions a single WebSocket client may hold (default: 100). */
+  readonly wsMaxSubscriptionsPerClient: number;
+  /** Enable the daily proposal archival job (default: true). */
+  readonly proposalArchivalJobEnabled: boolean;
+  /** Interval in ms between archival runs (default: 86400000 = 24 h). */
+  readonly proposalArchivalJobIntervalMs: number;
+  /** Archive proposals whose last activity is older than this many days (default: 180). */
+  readonly proposalArchivalThresholdDays: number;
+  /** Always keep proposals created within the last N days in hot storage (default: 7). */
+  readonly proposalHotStorageDays: number;
+  /**
+   * Maximum number of entries held in the event normalizer LRU+TTL cache.
+   * When the limit is reached the least-recently-used entry is evicted.
+   * Default: 10,000.  Configure via `NORMALIZER_CACHE_MAX_SIZE`.
+   */
+  readonly normalizerCacheMaxSize: number;
+  /**
+   * Ledger window used by the proposal fingerprint deduplication store.
+   *
+   * A PROPOSAL_CREATED event is considered a duplicate only when an
+   * identical fingerprint was recorded within this many ledgers.
+   * Fingerprints older than the window are allowed through, enabling
+   * legitimate re-submissions after the cooling-off period.
+   *
+   * Default: 120,960 ledgers ≈ 7 days at ~5 s per ledger on Stellar.
+   * Env var: `PROPOSAL_FINGERPRINT_WINDOW_LEDGERS`
+   */
+  readonly proposalFingerprintWindowLedgers: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -255,6 +283,13 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     rateLimitExecutePerMin: 10,
     rateLimitDefaultPerMin: 60,
     jitterWindowMax: 10,
+    wsMaxSubscriptionsPerClient: 100,
+    proposalArchivalJobEnabled: false,
+    proposalArchivalJobIntervalMs: 86_400_000,
+    proposalArchivalThresholdDays: 180,
+    proposalHotStorageDays: 7,
+    normalizerCacheMaxSize: 10_000,
+    proposalFingerprintWindowLedgers: 120_960,
     ...overrides,
   };
 }
@@ -343,6 +378,39 @@ export function loadEnv(): BackendEnv {
     issues,
   );
   const jitterWindowMax = readPort("JITTER_WINDOW_MAX", 10, issues);
+  const wsMaxSubscriptionsPerClient = readPort(
+    "WS_MAX_SUBSCRIPTIONS_PER_CLIENT",
+    100,
+    issues,
+  );
+  const normalizerCacheMaxSize = readPort(
+    "NORMALIZER_CACHE_MAX_SIZE",
+    10_000,
+    issues,
+  );
+  const proposalFingerprintWindowLedgers = readPort(
+    "PROPOSAL_FINGERPRINT_WINDOW_LEDGERS",
+    120_960,
+    issues,
+  );
+
+  const proposalArchivalJobEnabled =
+    readString("PROPOSAL_ARCHIVAL_JOB_ENABLED", "true") === "true";
+  const proposalArchivalJobIntervalMs = readPort(
+    "PROPOSAL_ARCHIVAL_JOB_INTERVAL_MS",
+    86_400_000,
+    issues,
+  );
+  const proposalArchivalThresholdDays = readPort(
+    "PROPOSAL_ARCHIVAL_THRESHOLD_DAYS",
+    180,
+    issues,
+  );
+  const proposalHotStorageDays = readPort(
+    "PROPOSAL_HOT_STORAGE_DAYS",
+    7,
+    issues,
+  );
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -428,5 +496,12 @@ export function loadEnv(): BackendEnv {
     rateLimitExecutePerMin,
     rateLimitDefaultPerMin,
     jitterWindowMax,
+    wsMaxSubscriptionsPerClient,
+    proposalArchivalJobEnabled,
+    proposalArchivalJobIntervalMs,
+    proposalArchivalThresholdDays,
+    proposalHotStorageDays,
+    normalizerCacheMaxSize,
+    proposalFingerprintWindowLedgers,
   };
 }

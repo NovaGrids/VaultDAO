@@ -28,6 +28,7 @@ import { JobManager } from "./modules/jobs/job.manager.js";
 import { ScheduledJobRunner } from "./modules/jobs/scheduled-job-runner.js";
 import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
 import { registerDuePaymentsJob } from "./modules/jobs/recurring/due-payments-job.js";
+import { createProposalArchivalJob } from "./modules/jobs/recurring/proposal-archival.job.js";
 import type { NotificationQueue } from "./modules/notifications/notification.types.js";
 import { PriorityNotificationQueue } from "./modules/notifications/priority-queue.js";
 import { WebhookDeliveryService } from "./modules/notifications/webhook.service.js";
@@ -251,7 +252,7 @@ export async function startServer(
     runtime.lifecycleManager = lifecycleManager;
   }
 
-  const wsServer = new EventWebSocketServer(server);
+  const wsServer = new EventWebSocketServer(server, env.wsMaxSubscriptionsPerClient);
   runtime.wsServer = wsServer;
 
   // Determine cursor storage and run one-time file→database migration if needed
@@ -375,6 +376,18 @@ export async function startServer(
   });
   jobManager.registerJob(governanceSnapshotJob, { replace: true });
   runtime.governanceSnapshotJob = governanceSnapshotJob;
+
+  // ── Proposal Archival Job (Issue #1366) ───────────────────────────────────
+  if (env.proposalArchivalJobEnabled) {
+    const proposalArchivalJob = createProposalArchivalJob({
+      intervalMs: env.proposalArchivalJobIntervalMs,
+      runOnStart: true,
+      aggregator: proposalActivityAggregator,
+      thresholdDays: env.proposalArchivalThresholdDays,
+      hotStorageDays: env.proposalHotStorageDays,
+    });
+    scheduledJobRunner.register(proposalArchivalJob);
+  }
 
   // ── Vault Registry (Issue #1164) ──────────────────────────────────────────
   const initialVaultAddresses = env.contractIds?.length

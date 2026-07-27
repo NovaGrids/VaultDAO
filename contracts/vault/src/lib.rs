@@ -21,6 +21,9 @@ mod token;
 mod types;
 mod types_balance_snapshot;
 
+#[cfg(test)]
+mod test_testnet_integration;
+
 use errors::VaultError;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
@@ -258,6 +261,21 @@ mod test_notification_prefs;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
+mod test_recurring_conditions;
+#[cfg(test)]
+mod test_recurring_alerts;
+#[cfg(test)]
+mod test_recurring_dryrun;
+#[cfg(test)]
+mod test_escrow_multisig;
+#[cfg(test)]
+mod test_multitoken_limits;
+#[cfg(test)]
+mod test_multitoken_swap;
+#[cfg(test)]
+mod test_stream_clawback;
+#[cfg(test)]
+mod test_multitoken_insurance;
 mod test_rbac_consistency;
 #[cfg(test)]
 mod test_reentrancy;
@@ -4600,6 +4618,9 @@ impl VaultDAO {
             holiday_behavior: HolidayBehavior::PayLate,
             jitter_window: effective_jitter_window,
             jitter_offset,
+            retry_strategy: crate::types::RetryBackoffStrategy::Exponential,
+            retry_count: 0,
+            retry_next_ledger: 0,
         };
 
         storage::set_recurring_payment(&env, &payment);
@@ -5121,7 +5142,14 @@ impl VaultDAO {
             payment.skip_holidays,
             &payment.holiday_behavior,
         );
-        if current_ledger < due_ledger {
+        let effective_due_ledger = if payment.retry_count > 0
+            && payment.retry_next_ledger > due_ledger
+        {
+            payment.retry_next_ledger
+        } else {
+            due_ledger
+        };
+        if current_ledger < effective_due_ledger {
             return Err(VaultError::TimelockNotExpired); // Reuse error for "Too Early"
         }
 
@@ -5162,20 +5190,20 @@ impl VaultDAO {
             return Err(VaultError::ExceedsWeeklyLimit);
         }
 
-        // Check balance
-        let balance = token::balance(&env, &payment.token);
-        if balance < total_amount {
-            return Err(VaultError::InsufficientBalance);
-        }
-
         // Revalidate recipient against current whitelist/blacklist policies.
         Self::validate_recipient(&env, &payment.recipient)?;
 
-        // Execute all payments
-        for i in 0..total_payments {
-            token::transfer(&env, &payment.token, &payment.recipient, payment.amount);
+        // Attempt transfer of the full due amount.
+        // If the transfer fails, schedule a retry and preserve the current payment state.
+        if token::try_transfer(&env, &payment.token, &payment.recipient, total_amount).is_err() {
+            Self::schedule_recurring_retry(&env, &mut payment, current_ledger);
+            storage::set_recurring_payment(&env, &payment);
+            storage::extend_instance_ttl(&env);
+            return Ok(());
+        }
 
-            // Emit event for each payment with sequential ledger timestamp
+        // Emit an event for each payment with sequential ledger timestamp.
+        for i in 0..total_payments {
             let payment_ledger = if i == 0 {
                 due_ledger
             } else {
@@ -5191,6 +5219,10 @@ impl VaultDAO {
                 (payment_id, payment_ledger, payment.amount),
             );
         }
+
+        // Reset retry state after a successful execution.
+        payment.retry_count = 0;
+        payment.retry_next_ledger = 0;
 
         // Update limits with total amount
         storage::add_daily_spent(&env, today, total_amount);
@@ -5221,6 +5253,35 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    fn schedule_recurring_retry(env: &Env, payment: &mut crate::RecurringPayment, current_ledger: u64) {
+        payment.retry_count = payment.retry_count.saturating_add(1);
+        let max_backoff = 17_280 * 7; // 7 days in ledgers
+        let backoff = match payment.retry_strategy {
+            crate::types::RetryBackoffStrategy::Linear => payment
+                .interval
+                .saturating_mul(payment.retry_count as u64)
+                .min(max_backoff),
+            crate::types::RetryBackoffStrategy::Exponential => {
+                let exponent = core::cmp::min(payment.retry_count.saturating_sub(1), 30);
+                payment
+                    .interval
+                    .checked_shl(exponent as u32)
+                    .unwrap_or(max_backoff)
+                    .min(max_backoff)
+            }
+        };
+
+        payment.retry_next_ledger = current_ledger.saturating_add(backoff);
+
+        events::emit_recurring_retry_scheduled(
+            env,
+            payment.id,
+            payment.retry_count,
+            payment.retry_next_ledger,
+            0,
+        );
     }
 
     /// Get a recurring payment by ID
@@ -5525,6 +5586,31 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+        // Auto-complete on insufficient balance (Issue #1359).
+        //
+        // When the flag is set for this stream and the vault can no longer
+        // cover the claimable amount, the stream is retired instead of being
+        // left Active at a loss. This returns `Ok(0)` rather than an error so
+        // the status transition is persisted.
+        if storage::get_stream_auto_complete(&env, stream_id) {
+            let available = token::get_vault_balance(&env, &stream.token_addr);
+            if available < claimable {
+                stream.accumulated_seconds = total_active_seconds;
+                stream.last_update_timestamp = now;
+                stream.status = StreamStatus::Completed;
+                storage::set_streaming_payment(&env, &stream);
+
+                events::emit_stream_auto_completed(
+                    &env,
+                    stream_id,
+                    Symbol::new(&env, "insufficient_balance"),
+                    available,
+                    claimable,
+                );
+                return Ok(0);
+            }
+        }
+
         // Transfer claimable tokens to recipient
         if token::try_transfer(&env, &stream.token_addr, &recipient, claimable).is_err() {
             return Err(VaultError::InsufficientBalance);
@@ -5544,6 +5630,40 @@ impl VaultDAO {
         events::emit_stream_claimed(&env, stream_id, &recipient, claimable);
 
         Ok(claimable)
+    }
+
+    /// Enable or disable auto-completion for a stream (Issue #1359).
+    ///
+    /// When enabled, [`Self::claim_stream`] retires the stream (status
+    /// `Completed`) as soon as the vault balance can no longer cover the
+    /// claimable amount, instead of leaving it Active and failing on every
+    /// claim.
+    ///
+    /// # Errors
+    /// Returns [`VaultError::ProposalNotFound`] if the stream does not exist.
+    /// Returns [`VaultError::Unauthorized`] if caller is not sender or Admin.
+    pub fn set_stream_auto_complete(
+        env: Env,
+        caller: Address,
+        stream_id: u64,
+        enabled: bool,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let stream = storage::get_streaming_payment(&env, stream_id)?;
+        let role = storage::get_role(&env, &caller);
+        if stream.sender != caller && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::set_stream_auto_complete(&env, stream_id, enabled);
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Read the auto-complete flag for a stream (Issue #1359).
+    pub fn get_stream_auto_complete(env: Env, stream_id: u64) -> bool {
+        storage::get_stream_auto_complete(&env, stream_id)
     }
 
     /// Pause an active stream, freezing token accumulation.
@@ -11685,7 +11805,14 @@ impl VaultDAO {
     // Advanced Permissions (Issue: feature/advanced-permissions)
     // ========================================================================
 
-    /// Maximum depth of a delegation chain to prevent unbounded traversal.
+    /// Maximum number of hops allowed in a permission delegation chain.
+    ///
+    /// Rationale (Issue #1354): every hop makes the origin of an authority
+    /// harder to audit, and chain traversal costs one storage read per signer
+    /// per hop. Three hops covers the realistic "owner -> deputy -> stand-in"
+    /// case while keeping traversal bounded at `3 * signers` reads. The limit
+    /// is enforced *before* each hop is taken, so a chain can never be walked
+    /// past this depth even if storage contains a cycle.
     const MAX_DELEGATION_DEPTH: u32 = 3;
 
     /// Grant a specific permission to an address.
@@ -11796,12 +11923,24 @@ impl VaultDAO {
             return Err(VaultError::NotInitialized);
         }
 
+        // A delegation to self is always a one-hop cycle.
+        if delegator == delegatee {
+            return Err(VaultError::InvalidAmount);
+        }
+
         // Delegator must hold the permission.
         if !Self::check_permission(&env, &delegator, &permission) {
             return Err(VaultError::Unauthorized);
         }
 
-        // Guard against unbounded delegation chains.
+        // Reject the delegation if the delegatee already sits upstream of the
+        // delegator: adding this edge would close a cycle (Issue #1354).
+        if Self::delegation_would_cycle(&env, &delegator, &delegatee, &permission) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Guard against unbounded delegation chains: refuse before the chain
+        // would grow past MAX_DELEGATION_DEPTH, rather than truncating later.
         let depth = Self::delegation_depth(&env, &delegator, &permission, 0);
         if depth >= Self::MAX_DELEGATION_DEPTH {
             return Err(VaultError::InsufficientRole);
@@ -11892,31 +12031,93 @@ impl VaultDAO {
         false
     }
 
-    /// Recursively count delegation hops above `addr` for a given permission.
+    /// Count delegation hops above `addr` for a given permission.
+    ///
+    /// Thin wrapper over [`Self::walk_delegation_chain`]; see there for the
+    /// cycle and depth guarantees (Issue #1354).
     fn delegation_depth(
         env: &Env,
         addr: &Address,
         permission: &types::Permission,
         depth: u32,
     ) -> u32 {
-        if depth >= Self::MAX_DELEGATION_DEPTH {
-            return depth;
-        }
+        Self::walk_delegation_chain(env, addr, None, permission, depth).0
+    }
+
+    /// Returns true if the delegation chain above `start` already contains
+    /// `target`, meaning a new `target -> start` delegation would close a
+    /// cycle (Issue #1354).
+    fn delegation_would_cycle(
+        env: &Env,
+        start: &Address,
+        target: &Address,
+        permission: &types::Permission,
+    ) -> bool {
+        Self::walk_delegation_chain(env, start, Some(target), permission, 0).1
+    }
+
+    /// Walk the delegation chain upstream from `start`, returning the depth
+    /// reached and whether `target` was encountered on the way.
+    ///
+    /// The walk is iterative rather than recursive and is guarded twice
+    /// (Issue #1354):
+    ///
+    /// 1. the depth limit is checked *before* taking the next hop, so the
+    ///    traversal never steps past [`Self::MAX_DELEGATION_DEPTH`];
+    /// 2. every visited address is recorded and never revisited, so a
+    ///    circular delegation (A -> B -> C -> A) terminates instead of
+    ///    exhausting the stack.
+    fn walk_delegation_chain(
+        env: &Env,
+        start: &Address,
+        target: Option<&Address>,
+        permission: &types::Permission,
+        depth: u32,
+    ) -> (u32, bool) {
         let config = match storage::get_config(env) {
             Ok(c) => c,
-            Err(_) => return depth,
+            Err(_) => return (depth, false),
         };
         let now = env.ledger().sequence() as u64;
-        for signer in config.signers.iter() {
-            if let Some(dp) =
-                storage::get_delegated_permission(env, addr, &signer, *permission as u32)
-            {
-                if now <= dp.expires_at {
-                    return Self::delegation_depth(env, &signer, permission, depth + 1);
+
+        let mut visited: Vec<Address> = Vec::new(env);
+        visited.push_back(start.clone());
+
+        let mut current = start.clone();
+        let mut current_depth = depth;
+
+        loop {
+            // Guard *before* the hop, not after: never traverse past the limit.
+            if current_depth >= Self::MAX_DELEGATION_DEPTH {
+                return (current_depth, false);
+            }
+
+            let mut next: Option<Address> = None;
+            for signer in config.signers.iter() {
+                if let Some(dp) =
+                    storage::get_delegated_permission(env, &current, &signer, *permission as u32)
+                {
+                    if now <= dp.expires_at && !visited.contains(&signer) {
+                        next = Some(signer.clone());
+                        break;
+                    }
                 }
             }
+
+            match next {
+                Some(upstream) => {
+                    if let Some(target) = target {
+                        if &upstream == target {
+                            return (current_depth + 1, true);
+                        }
+                    }
+                    visited.push_back(upstream.clone());
+                    current = upstream;
+                    current_depth += 1;
+                }
+                None => return (current_depth, false),
+            }
         }
-        depth
     }
 
     /// Map role to inherited permissions.
@@ -15559,3 +15760,6 @@ mod test_token_allowlist;
 mod test_proposal_amendment;
 #[cfg(test)]
 mod test_overflow_checks;
+mod test_delegation_depth;
+#[cfg(test)]
+mod test_stream_autocomplete;

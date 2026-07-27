@@ -721,6 +721,20 @@ pub fn emit_retry_scheduled(
     );
 }
 
+/// Emit when a recurring payment retry is scheduled after a failed transfer
+pub fn emit_recurring_retry_scheduled(
+    env: &Env,
+    payment_id: u64,
+    retry_count: u32,
+    next_retry_ledger: u64,
+    error_code: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "recurring_retry_scheduled"), payment_id),
+        (retry_count, next_retry_ledger, error_code),
+    );
+}
+
 /// Emit when a retry execution attempt is made
 #[allow(dead_code)]
 pub fn emit_retry_attempted(env: &Env, proposal_id: u64, retry_count: u32, executor: &Address) {
@@ -1268,6 +1282,23 @@ pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amoun
     );
 }
 
+/// Emit when a stream is auto-completed because the vault balance can no
+/// longer sustain it (Issue #1359).
+///
+/// Topics: ("stream_auto_done", stream_id); data: (reason, available, required).
+pub fn emit_stream_auto_completed(
+    env: &Env,
+    stream_id: u64,
+    reason: Symbol,
+    available: i128,
+    required: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_auto_done"), stream_id),
+        (reason, available, required),
+    );
+}
+
 pub fn emit_cross_vault_proposed(
     env: &Env,
     proposal_id: u64,
@@ -1686,6 +1717,10 @@ pub fn emit_escrow_release_voted(
     env.events().publish(
         (Symbol::new(env, "escrow_release_voted"), escrow_id),
         (voter.clone(), approved, approval_count, rejection_count),
+    );
+}
+
+// ============================================================================
 // Recurring Payment Jitter Events (issue #1364)
 // ============================================================================
 

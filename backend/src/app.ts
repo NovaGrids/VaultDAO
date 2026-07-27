@@ -40,6 +40,7 @@ import { createErrorMiddleware } from "./shared/errors/handleError.js";
 import { CorsAllowlist } from "./shared/http/corsAllowlist.js";
 import { initFeatureFlags, getFeatureFlags } from "./shared/feature-flags.js";
 import { initRpcPool } from "./shared/rpc-pool.js";
+import { createDrainMiddleware } from "./shared/http/drain.js";
 
 export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
@@ -60,6 +61,13 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   // Remove X-Powered-By header
   app.disable("x-powered-by");
+
+  // ── Drain middleware (must be first) ────────────────────────────────────────
+  // Increments the in-flight counter for every request and returns 503 once
+  // the server has begun shutting down, allowing active requests to complete.
+  if (runtime.lifecycleManager) {
+    app.use(createDrainMiddleware(runtime.lifecycleManager));
+  }
 
   // Security headers middleware
   app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -296,6 +304,10 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       cursorCleanupJobEnabled: env.cursorCleanupJobEnabled,
       cursorCleanupJobIntervalMs: env.cursorCleanupJobIntervalMs,
       cursorRetentionDays: env.cursorRetentionDays,
+      proposalArchivalJobEnabled: env.proposalArchivalJobEnabled,
+      proposalArchivalJobIntervalMs: env.proposalArchivalJobIntervalMs,
+      proposalArchivalThresholdDays: env.proposalArchivalThresholdDays,
+      proposalHotStorageDays: env.proposalHotStorageDays,
       corsOrigin: env.corsOrigin,
       requestBodyLimit: env.requestBodyLimit,
       notificationsRequestBodyLimit: env.notificationsRequestBodyLimit,

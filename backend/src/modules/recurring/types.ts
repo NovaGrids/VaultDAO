@@ -3,6 +3,10 @@
  * These are used by the indexer, automation system, and frontend.
  */
 
+// Re-export backoff types so consumers can import from a single path.
+export type { PaymentRetryState, BackoffOptions, BackoffResult, PaymentBackoffEvent } from "./backoff.js";
+export { BackoffStrategy, calculateBackoff, recordFailure, resetRetryState, isInBackoff, MAX_BACKOFF_SECONDS, DEFAULT_BASE_DELAY_SECONDS } from "./backoff.js";
+
 /**
  * Recurring payment status states.
  */
@@ -61,6 +65,12 @@ export interface NormalizedRecurringPayment {
   readonly intervalLedgers: number;
   /** Next scheduled execution ledger */
   readonly nextPaymentLedger: number;
+  /** Retry backoff strategy for transient failures */
+  readonly retryStrategy: "LINEAR" | "EXPONENTIAL";
+  /** Number of failed retry attempts for the currently pending payment execution */
+  readonly retryCount: number;
+  /** Ledger when the next retry may be attempted */
+  readonly retryNextLedger: number;
   /** Total payments made so far */
   readonly paymentCount: number;
   /** Current status based on state tracking */
@@ -74,7 +84,34 @@ export interface NormalizedRecurringPayment {
   readonly ledgersUntilDue: number;
   /** Number of missed payments when overdue */
   readonly missedPayments: number;
+
+  // ── Retry / backoff state ─────────────────────────────────────────────────
+
   /**
+   * Number of consecutive failures since the last successful execution.
+   * Reset to 0 on every successful execution.
+   * This is the counter that drives backoff delay and gates scheduling
+   * behaviour — the cap/threshold applies here, not to `totalMissedExecutions`.
+   */
+  readonly retryCount: number;
+  /**
+   * Unix timestamp (seconds) of the most recent failed execution attempt.
+   * `0` means the payment has never been attempted or was reset after success.
+   */
+  readonly lastAttemptAt: number;
+  /**
+   * Unix timestamp (seconds) before which the scheduler must skip this
+   * payment.  `0` means "not in backoff — process immediately".
+   * Computed as `lastAttemptAt + backoffDelaySeconds`.
+   */
+  readonly nextRetryAt: number;
+  /**
+   * Lifetime count of all failed execution attempts for this payment across
+   * its entire history.  Never decremented or reset — it is a purely additive
+   * audit trail.  Does NOT gate backoff or scheduling behaviour; use
+   * `retryCount` for that.
+   */
+  readonly totalMissedExecutions: number;
    * Maximum ledger spread applied after the first cycle for load distribution.
    * 0 means jitter is disabled for this payment.
    * When non-zero, each cycle's `nextPaymentLedger` is shifted forward by
@@ -104,6 +141,9 @@ export interface RawRecurringPayment {
   readonly memo: string;
   readonly interval: string;
   readonly next_payment_ledger: string;
+  readonly retry_strategy: string;
+  readonly retry_count: string;
+  readonly retry_next_ledger: string;
   readonly payment_count: string;
   readonly is_active: boolean;
   /**
