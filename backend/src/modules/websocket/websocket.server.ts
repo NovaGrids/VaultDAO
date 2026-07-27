@@ -661,7 +661,7 @@ export class EventWebSocketServer extends EventEmitter {
   private handleUnsubscribe(
     ws: WebSocket,
     message: any,
-    _connectionId: string,
+    connectionId: string,
   ) {
     const topics: string[] | undefined = Array.isArray(message.topics)
       ? message.topics
@@ -674,12 +674,43 @@ export class EventWebSocketServer extends EventEmitter {
       return;
     }
 
+    // Track state before removal for cleanup verification
+    const before = new Set(sub.subscriptions);
+
+    const removedTopics: string[] = [];
+    const failedTopics: string[] = [];
+
     for (const t of topics) {
       let norm = t;
       if (!t.includes(":")) {
         norm = `notification:events:${t.toUpperCase()}`;
       }
+
+      if (!before.has(norm)) {
+        // Topic was not subscribed — nothing to remove
+        continue;
+      }
+
       sub.subscriptions.delete(norm);
+
+      // Verify cleanup: topic must no longer be present
+      if (sub.subscriptions.has(norm)) {
+        failedTopics.push(norm);
+        logger.warn("unsubscribe cleanup failed: topic still present after removal", {
+          connectionId,
+          topic: norm,
+        });
+      } else {
+        removedTopics.push(norm);
+      }
+    }
+
+    if (failedTopics.length > 0) {
+      logger.error("unsubscribe incomplete: some topics were not cleaned up", {
+        connectionId,
+        failedTopics,
+        remainingSubscriptions: Array.from(sub.subscriptions),
+      });
     }
 
     // If all subscriptions have been removed, revert to authenticated state.
@@ -691,12 +722,22 @@ export class EventWebSocketServer extends EventEmitter {
     }
 
     this.clients.set(ws, sub);
+
+    // Emit cleanup event with subscriber identity and affected topics
     ws.send(
       JSON.stringify({
         type: "unsubscribed",
-        topics: Array.from(sub.subscriptions),
+        subscriber: connectionId,
+        removedTopics,
+        remainingTopics: Array.from(sub.subscriptions),
       }),
     );
+
+    logger.info("client unsubscribed", {
+      connectionId,
+      removedTopics,
+      remainingSubscriptions: sub.subscriptions.size,
+    });
   }
 
   private findWs(connectionId: string): WebSocket | undefined {

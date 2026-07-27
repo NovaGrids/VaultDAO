@@ -233,6 +233,145 @@ test("WebSocket Server", async (t) => {
     assert.doesNotThrow(() => runtime.wsServer?.broadcastEvent(badEvent));
   });
 
+  // ---------------------------------------------------------------------------
+  // Unsubscribe cleanup verification (#1373)
+  // ---------------------------------------------------------------------------
+
+  await t.test("no events received after unsubscribe — subscription fully cleaned up", async () => {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve) => ws.on("open", resolve));
+
+    // Subscribe to a topic
+    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_executed"] }));
+    await waitForMessage(ws, (m) => m.type === "subscribed");
+
+    // Now unsubscribe
+    ws.send(JSON.stringify({ type: "unsubscribe", topics: ["proposal_executed"] }));
+    const unsubMsg = await waitForMessage(ws, (m) => m.type === "unsubscribed");
+
+    // Confirm the topic is gone from remainingTopics
+    assert.ok(Array.isArray(unsubMsg.remainingTopics), "remainingTopics must be an array");
+    assert.equal(
+      unsubMsg.remainingTopics.includes("notification:events:PROPOSAL_EXECUTED"),
+      false,
+      "unsubscribed topic must not appear in remainingTopics",
+    );
+
+    // Broadcast the event — client should NOT receive it
+    const receivedEvents: any[] = [];
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "contract_event") receivedEvents.push(msg);
+    });
+
+    const event: ContractEvent = {
+      id: "after-unsub-1",
+      contractId: "CDTEST",
+      topic: ["proposal_executed"],
+      value: {},
+      ledger: 200,
+      ledgerClosedAt: new Date().toISOString(),
+    };
+
+    runtime.wsServer?.broadcastEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(receivedEvents.length, 0, "no events should arrive after unsubscribe");
+    ws.close();
+  });
+
+  await t.test("unsubscribed envelope includes subscriber identity and removedTopics", async () => {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve) => ws.on("open", resolve));
+
+    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_approved"] }));
+    await waitForMessage(ws, (m) => m.type === "subscribed");
+
+    ws.send(JSON.stringify({ type: "unsubscribe", topics: ["proposal_approved"] }));
+    const msg = await waitForMessage(ws, (m) => m.type === "unsubscribed");
+
+    assert.ok(typeof msg.subscriber === "string" && msg.subscriber.length > 0,
+      "envelope must include a non-empty subscriber field");
+    assert.ok(Array.isArray(msg.removedTopics), "envelope must include removedTopics array");
+    assert.ok(
+      msg.removedTopics.includes("notification:events:PROPOSAL_APPROVED"),
+      "removedTopics must list the normalized topic that was removed",
+    );
+
+    ws.close();
+  });
+
+  await t.test("unsubscribing a topic does not affect other active subscriptions", async () => {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve) => ws.on("open", resolve));
+
+    // Subscribe to two topics
+    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_approved", "proposal_executed"] }));
+    await waitForMessage(ws, (m) => m.type === "subscribed");
+
+    // Unsubscribe from one
+    ws.send(JSON.stringify({ type: "unsubscribe", topics: ["proposal_executed"] }));
+    const unsubMsg = await waitForMessage(ws, (m) => m.type === "unsubscribed");
+
+    // The retained topic must still appear in remainingTopics
+    assert.ok(
+      unsubMsg.remainingTopics.includes("notification:events:PROPOSAL_APPROVED"),
+      "retained topic must remain in remainingTopics",
+    );
+    assert.equal(
+      unsubMsg.remainingTopics.includes("notification:events:PROPOSAL_EXECUTED"),
+      false,
+      "removed topic must not appear in remainingTopics",
+    );
+
+    // Broadcast to retained topic — must be delivered
+    const received: any[] = [];
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "contract_event") received.push(msg.payload);
+    });
+
+    runtime.wsServer?.broadcastEvent({
+      id: "retained-evt",
+      contractId: "CDTEST",
+      topic: ["proposal_approved"],
+      value: {},
+      ledger: 300,
+      ledgerClosedAt: new Date().toISOString(),
+    });
+
+    runtime.wsServer?.broadcastEvent({
+      id: "removed-evt",
+      contractId: "CDTEST",
+      topic: ["proposal_executed"],
+      value: {},
+      ledger: 301,
+      ledgerClosedAt: new Date().toISOString(),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(received.length, 1, "only the retained topic event should arrive");
+    assert.equal(received[0].id, "retained-evt");
+
+    ws.close();
+  });
+
+  await t.test("unsubscribing a topic not subscribed to is a no-op", async () => {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve) => ws.on("open", resolve));
+
+    // Do NOT subscribe to anything first — then try unsubscribing
+    ws.send(JSON.stringify({ type: "unsubscribe", topics: ["proposal_created"] }));
+    const msg = await waitForMessage(ws, (m) => m.type === "unsubscribed");
+
+    // removedTopics should be empty since there was nothing to remove
+    assert.ok(Array.isArray(msg.removedTopics), "removedTopics must still be an array");
+    assert.equal(msg.removedTopics.length, 0, "removedTopics must be empty for a no-op unsubscribe");
+
+    ws.close();
+  });
+
   // Clean up server
   runtime.wsServer?.stop();
   await runtime.jobManager.stopAll();
