@@ -152,13 +152,23 @@ export class ProposalAggregator {
 }
 
 /**
+ * Record of an event hash with timestamp for deduplication window.
+ */
+interface EventHashEntry {
+  readonly timestamp: string;
+  readonly ledger: number;
+}
+
+/**
  * ProposalActivityAggregator
  *
  * Aggregates proposal activity records into summaries and statistics.
  * Supports in-memory aggregation with hooks for persistence integration.
+ * Implements deduplication window to allow re-adding identical events after expiry.
  */
 export class ProposalActivityAggregator {
   private static readonly DEFAULT_MAX_PROPOSALS = 10_000;
+  private static readonly DEFAULT_DEDUP_WINDOW_LEDGERS = 10; // configurable, default 10 ledgers
   private readonly logger = createLogger("proposal-aggregator");
 
   private proposalCache: Map<string, ProposalActivityRecord[]> = new Map();
@@ -167,21 +177,116 @@ export class ProposalActivityAggregator {
   private onRecordAdded?: (record: ProposalActivityRecord) => void;
   private maxProposals: number;
 
+  // Deduplication window tracking: event hash -> {timestamp, ledger}
+  private eventHashWindow: Map<string, EventHashEntry> = new Map();
+  private dedupWindowLedgers: number;
+
   constructor(options?: {
     onRecordAdded?: (record: ProposalActivityRecord) => void;
     maxProposals?: number;
+    dedupWindowLedgers?: number;
   }) {
     this.onRecordAdded = options?.onRecordAdded;
     this.maxProposals =
       options?.maxProposals && options.maxProposals > 0
         ? Math.floor(options.maxProposals)
         : ProposalActivityAggregator.DEFAULT_MAX_PROPOSALS;
+    this.dedupWindowLedgers =
+      options?.dedupWindowLedgers && options.dedupWindowLedgers > 0
+        ? Math.floor(options.dedupWindowLedgers)
+        : ProposalActivityAggregator.DEFAULT_DEDUP_WINDOW_LEDGERS;
+  }
+
+  /**
+   * Compute a stable hash of the record for deduplication.
+   * Uses proposal ID, event type, timestamp, and transaction hash to identify duplicates.
+   */
+  private computeEventHash(record: ProposalActivityRecord): string {
+    const key = `${record.proposalId}:${record.type}:${record.timestamp}:${record.metadata.transactionHash}:${record.metadata.eventIndex}`;
+    // Simple hash: use first 12 chars of base64-encoded key
+    return Buffer.from(key).toString("base64").substring(0, 32);
+  }
+
+  /**
+   * Check if event is a duplicate (within the dedup window).
+   * Returns true if it's new/allowed, false if it's a duplicate still within window.
+   */
+  private isEventDuplicate(record: ProposalActivityRecord, ledger: number): boolean {
+    const hash = this.computeEventHash(record);
+    const existing = this.eventHashWindow.get(hash);
+
+    if (existing === undefined) {
+      // New event — record it
+      this.eventHashWindow.set(hash, {
+        timestamp: record.timestamp,
+        ledger,
+      });
+      return false; // not a duplicate
+    }
+
+    // Check if within window
+    const age = ledger - existing.ledger;
+    if (age <= this.dedupWindowLedgers) {
+      this.logger.debug(
+        `duplicate event detected: proposalId=${record.proposalId} type=${record.type} ` +
+          `age=${age} window=${this.dedupWindowLedgers}`,
+      );
+      return true; // within window → reject as duplicate
+    }
+
+    // Outside window — allow and refresh the entry
+    this.logger.debug(
+      `event outside dedup window, allowing re-add: proposalId=${record.proposalId} ` +
+        `age=${age} window=${this.dedupWindowLedgers}`,
+    );
+    this.eventHashWindow.set(hash, {
+      timestamp: record.timestamp,
+      ledger,
+    });
+    return false; // allow re-add after window expiry
+  }
+
+  /**
+   * Prune deduplication window entries older than configured ledger window.
+   */
+  private pruneDeduplicationWindow(currentLedger: number): void {
+    const cutoff = currentLedger - this.dedupWindowLedgers;
+    let pruned = 0;
+
+    for (const [hash, entry] of this.eventHashWindow) {
+      if (entry.ledger < cutoff) {
+        this.eventHashWindow.delete(hash);
+        pruned++;
+      }
+    }
+
+    if (pruned > 0) {
+      this.logger.debug(
+        `pruned ${pruned} expired deduplication entries`,
+      );
+    }
   }
 
   /**
    * Adds a single activity record to the aggregator.
+   * Skips duplicates within the deduplication window.
+   * Accepts ledger number for window calculation (defaults to 0 if not provided).
    */
-  public addRecord(record: ProposalActivityRecord): void {
+  public addRecord(record: ProposalActivityRecord, currentLedger: number = 0): void {
+    // Check deduplication window
+    if (this.isEventDuplicate(record, currentLedger)) {
+      this.logger.debug("skipping duplicate record", {
+        activityId: record.activityId,
+        proposalId: record.proposalId,
+      });
+      return;
+    }
+
+    // Prune old entries from dedup window occasionally
+    if (currentLedger > 0 && currentLedger % 100 === 0) {
+      this.pruneDeduplicationWindow(currentLedger);
+    }
+
     // Add to proposal cache
     const existing = this.proposalCache.get(record.proposalId) ?? [];
     existing.push(record);
@@ -236,10 +341,11 @@ export class ProposalActivityAggregator {
 
   /**
    * Adds multiple activity records to the aggregator.
+   * Optionally accepts current ledger for dedup window tracking.
    */
-  public addRecords(records: ProposalActivityRecord[]): void {
+  public addRecords(records: ProposalActivityRecord[], currentLedger: number = 0): void {
     for (const record of records) {
-      this.addRecord(record);
+      this.addRecord(record, currentLedger);
     }
   }
 
@@ -551,6 +657,29 @@ export class ProposalActivityAggregator {
       total += records.length;
     }
     return total;
+  }
+
+  /**
+   * Gets the number of entries in the deduplication window.
+   * Useful for diagnostics and monitoring.
+   */
+  public getDedupWindowSize(): number {
+    return this.eventHashWindow.size;
+  }
+
+  /**
+   * Gets the configured deduplication window in ledgers.
+   */
+  public getDedupWindowLedgers(): number {
+    return this.dedupWindowLedgers;
+  }
+
+  /**
+   * Manually prune deduplication window entries.
+   * Call with current ledger number for proper cleanup.
+   */
+  public pruneDedup(currentLedger: number): void {
+    this.pruneDeduplicationWindow(currentLedger);
   }
 }
 
