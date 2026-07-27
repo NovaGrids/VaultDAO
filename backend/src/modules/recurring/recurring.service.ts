@@ -12,7 +12,6 @@ import {
 import {
   isInBackoff,
   recordFailure,
-  resetRetryState,
   type BackoffOptions,
   type PaymentBackoffEvent,
 } from "./backoff.js";
@@ -176,7 +175,7 @@ export function transformRawRecurringPayment(
   ) {
     if (!events.includes(RecurringEvent.EXECUTED)) {
       events.push(RecurringEvent.EXECUTED);
-    events.push(RecurringEvent.EXECUTED);
+    }
     // If jitter is configured and this payment is past its first cycle, the
     // contract will have emitted a recurring_pay_jittered event on-chain.
     // Mirror that in the local event log for audit-trail completeness.
@@ -220,10 +219,6 @@ export function transformRawRecurringPayment(
     existingPayment !== undefined &&
     Number(raw.payment_count) > existingPayment.paymentCount;
 
-  if (wasExecuted) {
-    events.push(RecurringEvent.EXECUTED);
-  }
-
   // ── Retry / backoff state ────────────────────────────────────────────────
   //
   // `retryCount`           — consecutive failures since last success.
@@ -266,7 +261,7 @@ export function transformRawRecurringPayment(
     intervalLedgers: Number(raw.interval),
     nextPaymentLedger: nextPaymentLedger,
     retryStrategy,
-    retryCount: Number(raw.retry_count || "0"),
+    retryCount,
     retryNextLedger: retryNextLedger,
     paymentCount: Number(raw.payment_count),
     status,
@@ -281,7 +276,6 @@ export function transformRawRecurringPayment(
     computedStatus,
     ledgersUntilDue,
     missedPayments,
-    retryCount,
     lastAttemptAt,
     nextRetryAt,
     totalMissedExecutions,
@@ -528,7 +522,6 @@ export class RecurringIndexerService {
     if (currentLedger !== undefined) {
       all = all.map((payment) => {
         // Calculate computed fields based on current ledger
-        const nextPaymentLedger = payment.nextPaymentLedger;
         const interval = payment.intervalLedgers;
 
         const effectiveLedger = Math.max(payment.nextPaymentLedger, payment.retryNextLedger);
@@ -632,25 +625,22 @@ export class RecurringIndexerService {
         payment.nextPaymentLedger,
         payment.retryNextLedger ?? 0,
       );
-      return effectiveLedger >= windowStart && effectiveLedger <= windowEnd;
+      if (effectiveLedger < windowStart || effectiveLedger > windowEnd) {
+        return false;
+      }
+      // Skip payments that are still within their backoff window.
+      // This is the guard that eliminates the tight-polling loop when
+      // a vault balance issue causes repeated failures.
+      return !isInBackoff(
+        {
+          retryCount: payment.retryCount,
+          lastAttemptAt: payment.lastAttemptAt,
+          nextRetryAt: payment.nextRetryAt,
+          totalMissedExecutions: payment.totalMissedExecutions,
+        },
+        nowSeconds,
+      );
     });
-    const inWindow = all.filter(
-      (payment) =>
-        payment.status !== RecurringStatus.CANCELLED &&
-        payment.nextPaymentLedger >= windowStart &&
-        payment.nextPaymentLedger <= windowEnd &&
-        // Skip payments that are still within their backoff window.
-        // This is the guard that eliminates the tight-polling loop when
-        // a vault balance issue causes repeated failures.
-        !isInBackoff(
-          {
-            retryCount: payment.retryCount,
-            lastAttemptAt: payment.lastAttemptAt,
-            nextRetryAt: payment.nextRetryAt,
-          },
-          nowSeconds,
-        ),
-    );
 
     return inWindow.map((payment) => {
       const effectiveLedger = Math.max(payment.nextPaymentLedger, payment.retryNextLedger);

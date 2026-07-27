@@ -218,7 +218,12 @@ pub fn emit_config_updated(env: &Env, updater: &Address) {
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
 }
 
-pub fn emit_stream_burst_factor_updated(env: &Env, admin: &Address, old_factor: u32, new_factor: u32) {
+pub fn emit_stream_burst_factor_updated(
+    env: &Env,
+    admin: &Address,
+    old_factor: u32,
+    new_factor: u32,
+) {
     env.events().publish(
         (Symbol::new(env, "stream_burst_factor_updated"),),
         (admin.clone(), old_factor, new_factor),
@@ -1658,7 +1663,12 @@ pub fn emit_fee_cache_invalidated(env: &Env, proposal_id: u64, admin: &Address) 
 // Fan-Out Stream Events (#1430)
 // ============================================================================
 
-pub fn emit_fan_out_stream_created(env: &Env, stream_id: u64, creator: &Address, recipient_count: u32) {
+pub fn emit_fan_out_stream_created(
+    env: &Env,
+    stream_id: u64,
+    creator: &Address,
+    recipient_count: u32,
+) {
     env.events().publish(
         (Symbol::new(env, "fanout_stream_created"), stream_id),
         (creator.clone(), recipient_count),

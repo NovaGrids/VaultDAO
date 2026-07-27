@@ -48,7 +48,6 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
             quorum_percentage: 0,
-            arbitration_timeout_ledgers: 0,
         },
     );
 
