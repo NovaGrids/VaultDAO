@@ -1,139 +1,166 @@
-# Security Policy
+# Security Vulnerability Disclosure Process
 
-VaultDAO handles treasury funds on-chain. We take security seriously, and we'd rather hear about a problem from you, privately and early, than find out about it from an exploit. This document explains what's in scope, how to report a vulnerability, what response times you can realistically expect, and what happens after you report something.
+VaultDAO handles treasury funds through on-chain governance and contract-controlled transfers. Please report suspected vulnerabilities privately so maintainers can investigate and coordinate a fix before public details put user funds at risk.
 
-This policy is a companion to [`AUDIT_SCOPE.md`](./AUDIT_SCOPE.md), which catalogues known attack surfaces and open findings in the contract today — read that first if you're looking for a starting point rather than reporting something new.
+This policy explains what is in scope, how to submit a report, what information to include, how severity is classified, and how disclosure and bounty decisions are handled. It complements [`../AUDIT_SCOPE.md`](../AUDIT_SCOPE.md), which documents known attack surfaces, invariants, and previously identified findings.
 
 ## Supported Versions
 
-VaultDAO is currently in **Beta (Open Source MVP)**. We focus our security efforts on the latest version on `main`; there is no long-term-support branch at this stage.
+VaultDAO is currently in beta as an open-source MVP. Security support focuses on the latest code on `main`; there is no long-term-support branch yet.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+| Version | Supported |
+| --- | --- |
+| `0.1.x` | Yes |
+| `< 0.1` | No |
 
 ## Scope
 
 ### In scope
 
-- **Smart contract vulnerabilities** in `contracts/vault/src/` — anything that lets value move, be locked, or be destroyed in a way the contract's rules don't intend. Concretely: authentication or authorization bypasses (acting as a role you don't hold, or having a role do more than it should), spending-limit or timelock bypasses, integer overflow/underflow that changes a balance or amount, double-execution of a proposal, cross-contract call risks (a malicious or non-standard token contract manipulating vault state), and any way to drain, lock, or misdirect funds.
-- **Governance bypasses** — anything that lets a proposal execute, or a privileged action occur, without the approvals/conditions the contract claims to require (see [`AUDIT_SCOPE.md`](./AUDIT_SCOPE.md) §2 for the formal invariants this contract is supposed to uphold).
-- **Backend or frontend issues with on-chain consequences** — for example, if the frontend constructs a transaction that doesn't match what the user approved, or the backend's event-indexing logic could be tricked into recording an incorrect on-chain state that downstream automation acts on.
-- **Dependency vulnerabilities** with a realistic path to exploitation in this project's actual usage (not just "this crate/package has a CVE somewhere in its changelog" — explain how it's reachable here).
+Reports are in scope when they show a realistic way to break VaultDAO's security guarantees or put funds, governance, or signer authority at risk. Examples include:
+
+- Smart contract exploits in `contracts/vault/src/` that allow theft, loss, permanent locking, or misdirection of funds.
+- Authentication or authorization bypasses, including acting as a role the caller does not hold or expanding a role beyond its intended authority.
+- Governance bypasses where proposals, upgrades, dispute actions, or privileged configuration changes execute without the required approvals, quorum, role, timelock, or other condition.
+- Timelock, spending-limit, signer-tier, or multisig threshold bypasses.
+- Double execution, replay, inconsistent proposal state, or cross-contract call behavior that changes vault state in an unintended way.
+- Integer overflow, underflow, rounding, or accounting errors that can affect balances, limits, fees, streaming payments, recurring payments, staking, insurance, or escrow logic.
+- Frontend or backend issues with on-chain consequences, such as building a transaction different from what the user approved or indexing events in a way that downstream automation could trust incorrectly.
+- Dependency vulnerabilities with a concrete path to exploitation in VaultDAO's actual code or deployment flow.
 
 ### Out of scope
 
-- **Gas/CPU-budget optimization.** A function costing more than it strictly needs to is a performance issue, not a security one, unless the cost itself enables a denial-of-service (see "within-contract resource exhaustion" below, which *is* in scope).
-- **UX issues** — confusing error messages, unclear button labels, missing loading states. File these as a regular bug report instead.
-- **Theoretical attacks requiring physical access** to a signer's device, or to Anthropic/Stellar/GitHub's own infrastructure. We care about attacks against VaultDAO's code, not about defending against someone who already has a signer's unlocked laptop.
-- **Social engineering, phishing, or key-compromise scenarios themselves.** If you find a way the *contract* makes a compromised key more dangerous than it should be (for example, no way to revoke a compromised signer quickly), that's in scope. "I could trick someone into approving a transaction" is a phishing report, not a VaultDAO vulnerability report, unless the contract's own UI/flow is what made the trick possible.
-- **Issues only reproducible on a fork/local devnet that don't reflect real network behavior**, unless you can show the same logic would hold on Testnet/Mainnet.
-- **Already-known issues.** Check [`AUDIT_SCOPE.md`](./AUDIT_SCOPE.md) (especially its "Prior Issues" section) and open issues/PRs before reporting — if it's already tracked, a duplicate report doesn't need the private channel below; a comment or a regular issue referencing the existing one is fine.
-- **Spam, rate-limiting, or volumetric denial-of-service against the network itself** (as opposed to a single contract call doing unbounded work — that's in scope).
+The following issues should use normal public issues or pull requests unless they directly enable one of the in-scope impacts above:
 
-If you're not sure whether something qualifies, report it anyway through the process below. We'd much rather triage a borderline report than miss a real one because someone assumed it didn't count.
+- Gas, CPU, budget, or storage optimization without a security impact.
+- UX bugs, confusing labels, missing loading states, copy changes, or documentation typos.
+- Theoretical attacks that require physical access to a signer's device or prior compromise of Stellar, Soroban, GitHub, or a maintainer's infrastructure.
+- Social engineering, phishing, or private-key compromise by itself. A contract or UI behavior that makes such compromise unexpectedly worse may still be in scope.
+- Reports that only reproduce on a local fork or devnet and do not map to Testnet, Mainnet, or the current code's real execution model.
+- Already-known issues documented in [`../AUDIT_SCOPE.md`](../AUDIT_SCOPE.md), open issues, or merged pull requests, unless your report adds new exploitability, impact, or reproduction evidence.
+- Volumetric denial-of-service against the public network, as opposed to a VaultDAO contract path with unbounded or attacker-amplified work.
+- Compile errors or duplicate declarations that prevent deployment. Those are important bugs, but they are not private security vulnerabilities because undeployable code cannot be exploited as deployed code.
 
-## Reporting a Vulnerability
+When in doubt, report privately. Maintainers can redirect out-of-scope reports to the public tracker after triage.
 
-**Do not open a public GitHub issue, pull request, or discussion thread for a security vulnerability.** Public disclosure before a fix is available puts user funds at risk.
+## Reporting Process
 
-### Preferred: GitHub Private Vulnerability Reporting
+Do not open a public GitHub issue, pull request, discussion, or social media thread for a suspected security vulnerability.
 
-This repository should be configured to accept private vulnerability reports directly through GitHub — go to the repository's **Security** tab → **Advisories** → **Report a vulnerability**. This is the preferred channel because it requires no email setup on your end, creates a private collaboration space automatically, and lets you track the report's status directly.
+### Preferred channel: GitHub private vulnerability reporting
 
-> **Maintainer note:** if the "Report a vulnerability" button isn't visible on the Security tab, private vulnerability reporting has not yet been enabled for this repository. An admin needs to turn this on under **Settings → Security → Private vulnerability reporting**. Until that's done, the email channel below is the only working option, and this note should be removed once it's enabled.
+Use GitHub's private reporting flow:
 
-### Backup: Email
+1. Open the repository on GitHub.
+2. Go to **Security**.
+3. Choose **Advisories**.
+4. Select **Report a vulnerability**.
+5. Paste the report details using [`.github/SECURITY_ADVISORY_TEMPLATE.md`](../../.github/SECURITY_ADVISORY_TEMPLATE.md).
 
-If private reporting isn't available, or you prefer email: **`[MAINTAINER ACTION REQUIRED: insert a real, monitored security contact address or PGP-capable address here]`**.
+This channel is preferred because it creates a private GitHub Security Advisory workspace, supports maintainer collaboration, and matches GitHub's advisory workflow for affected versions, patched versions, CVEs, and coordinated disclosure.
 
-We are not going to put a placeholder-looking fake address in this document — if you're a maintainer reading this and that bracketed text is still here, that means nobody has filled it in yet, and you should not assume vulnerability reports are reaching anyone.
+If the **Report a vulnerability** button is not visible, repository administrators need to enable private vulnerability reporting under **Settings -> Security -> Private vulnerability reporting**.
 
-### What to include in your report
+### Backup channel: encrypted email
 
-A good report lets us understand and reproduce the issue without back-and-forth. Include:
+The maintainers have not published a monitored encrypted security email address yet. Until they do, use GitHub private vulnerability reporting.
 
-1. **A clear description** of the vulnerability and which contract function(s), or which frontend/backend code path, it affects.
-2. **Reproduction steps** — ideally a minimal sequence of contract calls (or a small Rust test using the existing test harness in `contracts/vault/src/test.rs`) that demonstrates the issue. If it's a frontend/backend issue, a reproducible request/response sequence.
-3. **Impact assessment** — what can an attacker actually do? Steal funds? Lock funds? Bypass a specific role check? Be specific about *whose* funds and under *what* preconditions (does it require being a signer already? Admin? No special access at all?).
-4. **A suggested fix**, if you have one — even a rough idea. We will independently verify any suggested fix; offering one speeds up triage but isn't required.
-5. **Your assessment of severity**, using the table below, and your reasoning — we may reclassify after triage, but a starting assessment helps us prioritize incoming reports.
+Maintainers should add a real security contact here before announcing an email-based intake path. The address should be monitored, accept encrypted reports, and have a published PGP key or equivalent encryption instructions.
 
-A ready-to-use report template is provided at [`.github/SECURITY_ADVISORY_TEMPLATE.md`](../../.github/SECURITY_ADVISORY_TEMPLATE.md) — copy it into the description field of the GitHub advisory form.
+## What To Include
+
+A strong report should let maintainers reproduce the issue without guessing. Include:
+
+- Summary of the vulnerability and the worst-case impact.
+- Affected component, such as a contract function, frontend transaction-building path, backend indexer path, deployment script, or dependency.
+- Affected versions, branches, commit hashes, deployed contract IDs, networks, or configuration assumptions if known.
+- Reproduction steps. For contract issues, a minimal Rust test using the existing `contracts/vault` test harness is ideal.
+- Preconditions, including whether the attacker needs to be a signer, Admin, Treasurer, DisputeArbitrator, token contract deployer, ordinary user, or completely unauthenticated caller.
+- Impact assessment: what can be stolen, locked, bypassed, corrupted, replayed, or executed unexpectedly.
+- Suggested severity using the table below, plus reasoning.
+- Suggested fix or mitigation, if you have one.
+- Whether you believe the issue is actively exploited.
+- Disclosure and credit preferences.
+
+Use [`.github/SECURITY_ADVISORY_TEMPLATE.md`](../../.github/SECURITY_ADVISORY_TEMPLATE.md) as the report format.
 
 ## Response SLA
 
-These timelines reflect what an actively-developed, community-driven, beta-stage project can realistically commit to — we are not a funded security team with 24/7 on-call coverage, and we'd rather state an honest timeline than promise something we routinely miss.
+These targets are intended to be realistic for a community-driven beta project. They are not a 24/7 emergency response guarantee.
 
-| Stage | Target timeline | Notes |
-|---|---|---|
-| **Acknowledgement** | Within 48 hours | A human will confirm we've seen your report. This is not the same as triage — it just means someone has read it. |
-| **Triage** (initial severity assessment, confirm it's reproducible) | Within 7 days | For a report that's clear and reproducible, triage is often faster. Complex reports involving multiple interacting contract subsystems (see [`AUDIT_SCOPE.md`](./AUDIT_SCOPE.md) for how interconnected some of this contract's logic is) may take the full window. |
-| **Fix timeline — Critical** | Best effort, typically within 7–14 days of triage | Depends on whether a fix requires a contract redeploy/migration versus a frontend/backend patch. We will communicate a specific target once triage is complete, and update you if that target slips. |
-| **Fix timeline — High** | Typically within 30 days of triage | |
-| **Fix timeline — Medium** | Next regular release cycle | |
-| **Fix timeline — Low** | Best effort, no fixed deadline | Tracked, but may be addressed alongside other work rather than urgently. |
+| Stage | Target timeline | What to expect |
+| --- | --- | --- |
+| Acknowledgement | Within 48 hours | A maintainer confirms the report was received and is being reviewed. |
+| Initial triage | Within 7 days | Maintainers attempt to reproduce the issue, decide whether it is in scope, and assign an initial severity. |
+| Critical fix target | Best effort within 7 to 14 days after triage | The project may prioritize emergency mitigations, pausing if available, private patches, redeploy guidance, or coordinated user migration. |
+| High fix target | Typically within 30 days after triage | The issue should be fixed or explicitly mitigated before the next security-sensitive release. |
+| Medium fix target | Next regular release cycle | The issue is tracked and fixed with normal release planning. |
+| Low fix target | Best effort, no fixed deadline | The issue is tracked and may be bundled with hardening or cleanup work. |
 
-We will not commit to a guaranteed turnaround under 48 hours for acknowledgement — given this project's current size and structure, promising same-day or few-hour response would not be a commitment we could reliably keep, and a broken promise is worse than an honest one.
+If a report is being actively exploited, say so clearly in the initial submission. Active exploitation may require faster mitigations or earlier public guidance.
+
 ## Severity Classification
 
-Severity is assessed by combining **impact** (what can happen) with **likelihood** (how easy is it to trigger, and does it require privileged access). Examples below are drawn from this contract's actual code — not generic web-security examples — including findings already documented in [`AUDIT_SCOPE.md`](./AUDIT_SCOPE.md). Listing a known issue here is not a contradiction of its status there; it illustrates the category using a real, verified example, and the audit-scope document remains the source of truth for that finding's current status.
+Severity combines impact and likelihood. Maintainers may reclassify after triage.
 
-| Severity | Definition | VaultDAO-specific example | Fix urgency |
-|---|---|---|---|
-| **Critical** | Direct, unprivileged path to theft, loss, or permanent lock of vault funds; or a complete bypass of a core governance guarantee that requires no special access to trigger. | A contract upgrade that deploys code different from what signers actually approved. `AUDIT_SCOPE.md` §1.6 documents that `execute_upgrade` currently substitutes a hardcoded placeholder hash instead of the hash unanimously approved in `propose_upgrade` — meaning the entire timelocked, unanimous-approval upgrade governance process has no causal connection to what code actually runs. If this resulted in a usable, unintended contract being deployed (rather than the call simply failing), that would be Critical: it defeats every other security guarantee in the contract at once, since a malicious upgrade could rewrite any rule. | Immediate — would justify pausing the contract (if a pause mechanism is available) and an out-of-band fix, not waiting for the next release cycle. |
-| **High** | A bypass of a specific, named security control (timelock, spending limit, role boundary) that doesn't require unprivileged access to trigger, but causes serious, hard-to-reverse impact once triggered — including by a legitimately-privileged-but-not-fully-trusted actor, or by ordinary administrative misconfiguration. | The unilateral signer-tier execution path (`can_execute_unilaterally`, see `AUDIT_SCOPE.md` §1.3) never checks the transfer amount against `config.timelock_threshold`, and `set_signer_tier` never validates a tier's limit against that threshold either. An Admin who grants a signer a tier limit above the timelock threshold — plausibly by mistake, since nothing warns them of the interaction — gives that signer the ability to instantly execute large transfers that the timelock exists specifically to delay, with no opportunity for other signers to review or cancel. | Within the current release cycle; should not ship a new version without addressing or explicitly documenting this as intended behavior. |
-| **Medium** | A real gap in a defense-in-depth mechanism, or a logic inconsistency that produces incorrect-but-bounded results, where exploitation requires specific conditions, existing privileged access, or produces limited (not total) impact. | The spending-limit refund bug (`AUDIT_SCOPE.md` §1.4): `refund_spending_limits` credits whatever day/week bucket is current *at the time of refund*, not the bucket the original spend was debited from. If a proposal is created on day N and cancelled on day N+1, day N's bucket stays incorrectly debited while day N+1 gets an unearned credit. The drift is real and demonstrable, but bounded per-incident by the proposal's own amount, and doesn't grant unbounded extra spending room in one step. | Next regular release; worth fixing before it compounds across many cancel/expire cycles. |
-| **Low** | An issue that weakens confidence in the code's correctness or maintainability, or a very narrow edge case with minimal practical impact, but doesn't on its own enable fund loss or a meaningful access-control bypass. | Raw (non-`checked`/non-`saturating`) `i128` multiplication on user-influenced values like `stream.rate * total_active_seconds` (`AUDIT_SCOPE.md` §1.5), combined with no `[profile.release] overflow-checks = true` in `Cargo.toml`. `i128`'s width makes practical overflow unlikely with realistic token amounts, but there's no compile-time or runtime safety net if an assumption about realistic input sizes turns out to be wrong elsewhere. | Tracked; bundle with other hardening work rather than treating as urgent on its own. |
+| Severity | Definition | VaultDAO-specific examples | Fix priority |
+| --- | --- | --- | --- |
+| Critical | Direct path to steal, destroy, permanently lock, or arbitrarily redirect vault funds; or a complete governance or upgrade bypass that can compromise all other controls. | A proposal execution path that transfers funds without required signer approval; a contract upgrade path that deploys code different from the hash signers approved; a cross-contract call pattern that allows the same approved transfer to execute more than once. | Immediate emergency response. |
+| High | Bypass of a core security control with serious financial or governance impact, even if it requires privileged access, misconfiguration, or specific setup. | A signer-tier limit that lets one signer bypass the configured timelock for large transfers; an Admin-only role path that unintentionally grants Admin-equivalent authority to a narrower role; a spending-limit bypass that allows a signer to exceed daily or weekly treasury controls. | Prioritize in the current release cycle. |
+| Medium | Real security weakness with bounded impact, meaningful preconditions, or defense-in-depth failure that could become severe when combined with another issue. | Refund accounting that credits the wrong day or week bucket after cancellation; raw arithmetic on user-influenced payment or stream amounts where overflow is unlikely but not explicitly prevented; event indexing that could mislead downstream automation without changing on-chain state. | Fix in the next regular release cycle. |
+| Low | Narrow edge case, hardening issue, misleading state, or maintainability concern with minimal practical impact by itself. | Missing validation that only affects impossible or undeployed configurations; incomplete security logging; unclear error handling around rejected proposals where funds and permissions remain safe. | Track and bundle with hardening work. |
 
-### A note on conservative classification
-
-If you're unsure whether something is High or Medium, report it as the higher severity and explain your reasoning — we will downgrade after triage if warranted, but we'd rather start cautious. The same principle that governs `AUDIT_SCOPE.md`'s own risk ratings applies here: when exploitability is genuinely uncertain, treat it as more severe until proven otherwise, not less.
-
-### A note on "duplicate declaration" style bugs
-
-Several issues found in this codebase recently (a duplicate struct field, a duplicate enum variant, duplicate test function names — see `AUDIT_SCOPE.md` §4 for the full list) are **compile-time errors, not exploitable vulnerabilities** — a contract that fails to compile cannot be deployed in that state at all. These don't need a private security report; a normal public bug report or PR is the right channel, since there's no secret to protect (the bug is visible to anyone reading the source, and reporting it publicly doesn't create new risk). Use the private channel above specifically for issues that are exploitable *once deployed*, not for things that prevent deployment entirely.
+If you are unsure between two levels, choose the higher one and explain why. Maintainers will downgrade if the impact or exploitability is lower than reported.
 
 ## Responsible Disclosure Timeline
 
-1. **You report.** Through GitHub private vulnerability reporting (preferred) or the email channel above.
-2. **We acknowledge** within 48 hours (see SLA above).
-3. **We triage** within 7 days — confirming reproducibility, assigning a severity per the table above, and, if accepted, opening a private GitHub Security Advisory draft (if not already created via the private-reporting flow) so we can collaborate with you directly, including inviting you to a temporary private fork if a fix needs to be developed collaboratively.
-4. **We fix**, on the timeline implied by severity (see SLA table above). We'll keep you updated if the timeline changes — we'd rather tell you a fix is taking longer than expected than go silent.
-5. **Coordinated disclosure.** Once a fix is deployed (or, for issues that can't be meaningfully "fixed" via redeploy — like something that already executed on Mainnet — once we've assessed and communicated the impact), we'll agree with you on a disclosure date. Our default expectation, absent an agreed alternative, is **30 days after a fix ships**, giving users time to upgrade/migrate before full public details are published. This mirrors common industry practice (for reference, the GitHub Security Lab's own public template defaults to 90 days from *first report*, which — given our faster expected fix timeline above — would usually land after our fix is already out).
-6. **Public disclosure.** We will publish the GitHub Security Advisory (requesting a CVE if appropriate) and credit you, if you'd like credit, once disclosure is appropriate. If you believe a vulnerability is being actively exploited in the wild, tell us immediately — that changes our timeline, and we may disclose mitigations faster even before a full fix, to help users protect themselves.
-7. **You may disclose independently after the agreed date**, or sooner if we go unresponsive well past the SLA above with no explanation — we ask that you make a good-faith effort to reach us through both channels above first, and check the repository for any public acknowledgement (e.g., a recent commit or advisory) before assuming we've gone silent.
+The default process is:
+
+1. You submit a private report through GitHub private vulnerability reporting.
+2. Maintainers acknowledge within 48 hours.
+3. Maintainers triage within 7 days, assign severity, and confirm whether the report is accepted.
+4. If accepted, maintainers use a private GitHub Security Advisory draft to coordinate investigation, fix development, affected version notes, patched version notes, and disclosure text.
+5. Maintainers develop and validate a fix or mitigation according to severity.
+6. Once the fix is available, maintainers coordinate a disclosure date with you. The default target is public disclosure 30 days after the fix ships, unless active exploitation, user migration risk, or mutual agreement requires a different timeline.
+7. Public disclosure happens through the GitHub Security Advisory, release notes, and any required user migration or mitigation guidance. Maintainers may request a CVE when appropriate.
+
+Researchers should not disclose technical details publicly before a fix or mitigation is available unless the project becomes unresponsive well beyond the SLA and good-faith attempts to reconnect have failed. Before independent disclosure, check the repository for recent maintainer activity, commits, releases, or advisory updates.
 
 ## Bug Bounty Program
 
-VaultDAO does not currently have a funded bug bounty program. We want to be upfront about that rather than imply one exists. What we can commit to today:
+VaultDAO does not currently have a funded bug bounty program. Reports are welcome, but maintainers have not approved reward tiers or payment logistics.
 
-- **Public credit** in the published security advisory and in release notes, if you want it (you can also choose to remain anonymous).
-- **A `SECURITY.md` mention** in a "Hall of Fame"-style acknowledgements section, if/when this project adds one.
+Current commitments:
 
-**Bounty scope, reward tiers, and payment method are TBD by maintainers.** If and when a funded bounty program launches, it will be announced here with concrete numbers, not vague ranges, and this section will be updated to reflect:
-- Which severities qualify for a reward (likely Critical/High only, to start)
-- Reward amounts or ranges per severity tier
-- Payment method (most likely on-chain, given the project's nature — but this needs an explicit decision from maintainers, including how it interacts with regional/legal constraints on paying anonymous reporters)
-- Whether reports on the *audit findings already listed in `AUDIT_SCOPE.md`* are bounty-eligible (typically, already-known/already-disclosed issues are excluded from bounty programs, since the point of a bounty is to surface *new* information)
+- Public credit in the advisory and release notes if you want credit.
+- Anonymous disclosure if you prefer not to be named.
+- Good-faith collaboration through the private advisory workflow.
 
-If you're a maintainer reading this and want to stand up a bounty program, decide those four things first, then replace this section — don't announce a program before reward amounts and payment logistics are actually settled, since reneging on an implied reward is worse for community trust than not having a program yet.
+Program details are TBD by maintainers, including:
 
-## Security Considerations for VaultDAO
+- Which assets, networks, and versions are bounty-eligible.
+- Which severities qualify for rewards.
+- Reward amounts or ranges for Critical, High, Medium, and Low reports.
+- Payment method, including whether rewards are paid on-chain and what compliance requirements apply.
+- Whether known findings in [`../AUDIT_SCOPE.md`](../AUDIT_SCOPE.md) are excluded from rewards.
+- Rules for duplicate reports, public disclosure before fix, testing on live deployments, and reports involving third-party services.
 
-The following measures exist in the current implementation:
+No reward should be considered promised until this section is updated with concrete terms.
 
-- **Rust for memory safety** — the smart contract is written in Rust, which prevents common low-level memory vulnerabilities (buffer overflows, use-after-free) by construction.
-- **Soroban sandboxing** — the contract runs in the Soroban host environment, which enforces resource limits (the "budget" system — see `docs/reference/TESTING.md` §2.10 for how to test against it) and call-level security boundaries.
-- **Multi-signature logic** — critical actions require M-of-N approval (`config.threshold`), with an additional unilateral-execution path for small amounts under a signer's configured tier limit (see the High-severity example above for why this needs careful configuration).
-- **Timelocks** — transfers at or above `config.timelock_threshold` are delayed until `unlock_ledger`, giving other signers a window to notice and cancel an unauthorized or mistaken proposal — except via the unilateral path noted above.
-- **RBAC** — a five-role hierarchy (`Observer < Member < Treasurer < Admin`, plus `DisputeArbitrator`) gates sensitive functions. See `AUDIT_SCOPE.md` §1.2 for a known inconsistency in how this hierarchy is enforced across different functions.
+## Safe Harbor
 
-This list describes what the contract is *designed* to do, not an independent guarantee that every code path correctly implements it — that's precisely what `AUDIT_SCOPE.md` and a future third-party audit are for.
+VaultDAO asks researchers to act in good faith:
 
-## Audits
+- Do not access, modify, exfiltrate, or destroy user funds or private data.
+- Do not interrupt public networks, third-party services, or other users.
+- Use the minimum testing needed to prove the issue.
+- Stop testing and report immediately if you encounter live funds, private data, or active exploitation.
+- Follow the [`../CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md) when interacting with maintainers and contributors.
 
-VaultDAO has **not yet undergone a formal third-party security audit**. Users should interact with the platform at their own risk and avoid depositing significant funds until an audit is completed.
+Reports that follow this policy will be treated as authorized security research by the project maintainers, subject to applicable law and third-party platform rules.
 
-See [`AUDIT_SCOPE.md`](./AUDIT_SCOPE.md) for the attack surface catalogue, formal invariants, and known findings that will guide that audit once it's commissioned.
+## Audits And Known Findings
+
+VaultDAO has not yet completed a formal third-party security audit. Users should treat the project as beta software and avoid depositing significant funds until audits, fixes, and deployment guidance mature.
+
+For current attack-surface notes, invariants, and known findings, read [`../AUDIT_SCOPE.md`](../AUDIT_SCOPE.md).
