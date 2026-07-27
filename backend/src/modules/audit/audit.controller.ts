@@ -1,7 +1,10 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
-import { validatePagination } from "../../shared/http/validateQuery.js";
+import {
+  validatePagination,
+  validateCursorPagination,
+} from "../../shared/http/validateQuery.js";
 import type { AuditService } from "./audit.service.js";
 import { AuditRpcError, verifyAuditChain, streamAuditCsv } from "./audit.service.js";
 
@@ -34,11 +37,48 @@ export function getAuditController(service: AuditService): RequestHandler {
       return;
     }
 
-    const pagination = validatePagination(request, response);
-    if (!pagination) return;
-
     const verify =
       getSingleQueryString(request.query as Record<string, unknown>, "verify") === "true";
+
+    // Use cursor pagination when `cursor` param is present or `offset` is absent
+    const isCursorMode =
+      typeof request.query.cursor === "string" ||
+      request.query.offset === undefined;
+
+    if (isCursorMode) {
+      const cursorQuery = validateCursorPagination(request, response);
+      if (!cursorQuery) return;
+
+      try {
+        const page = await service.getAuditTrail(
+          contractId,
+          cursorQuery.cursor?.offset ?? 0,
+          cursorQuery.limit,
+          verify,
+          typeof request.query.cursor === "string" ? request.query.cursor : null,
+        );
+        success(response, page);
+      } catch (err) {
+        if (err instanceof AuditRpcError) {
+          error(response, {
+            message: err.message,
+            status: 502,
+            code: ErrorCode.INTERNAL_ERROR,
+          });
+          return;
+        }
+        error(response, {
+          message: "Failed to fetch audit trail",
+          status: 500,
+          code: ErrorCode.INTERNAL_ERROR,
+        });
+      }
+      return;
+    }
+
+    // Legacy offset pagination path
+    const pagination = validatePagination(request, response);
+    if (!pagination) return;
 
     try {
       const page = await service.getAuditTrail(

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Response as ExpressResponse } from "express";
+import { encodeCursor, decodeCursor } from "../../shared/http/validateQuery.js";
 import type {
   AuditEntry,
   AuditPage,
@@ -227,7 +228,18 @@ export class AuditService {
     offset: number,
     limit: number,
     verify = false,
+    cursor?: string | null,
   ): Promise<AuditPage> {
+    // If a cursor is provided, decode it and use its offset as the starting
+    // point. Invalid cursors silently fall back to the supplied offset.
+    let resolvedOffset = offset;
+    if (cursor) {
+      const decoded = decodeCursor(cursor);
+      if (decoded !== null) {
+        resolvedOffset = decoded.offset;
+      }
+    }
+
     let response: globalThis.Response;
     try {
       response = await this.fetchFn(this.rpcUrl, {
@@ -238,7 +250,7 @@ export class AuditService {
           id: 1,
           method: "simulateTransaction",
           params: {
-            transaction: this.buildInvocationXdr(contractId, offset, limit),
+            transaction: this.buildInvocationXdr(contractId, resolvedOffset, limit),
           },
         }),
       });
@@ -268,10 +280,19 @@ export class AuditService {
 
     const { entries, total } = json.result;
 
-    const page: AuditPage = { data: entries, total, offset, limit };
+    const page: AuditPage = { data: entries, total, offset: resolvedOffset, limit };
 
     if (verify) {
       page.verification = verifyAuditChain(entries);
+    }
+
+    // Build next_cursor when more pages remain
+    const nextOffset = resolvedOffset + entries.length;
+    if (entries.length > 0 && nextOffset < total) {
+      const lastEntry = entries[entries.length - 1]!;
+      page.nextCursor = encodeCursor({ lastId: lastEntry.id, offset: nextOffset });
+    } else {
+      page.nextCursor = null;
     }
 
     return page;

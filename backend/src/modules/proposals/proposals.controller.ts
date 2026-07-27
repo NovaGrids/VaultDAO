@@ -4,9 +4,12 @@ import { ErrorCode } from "../../shared/http/errorCodes.js";
 import {
   validatePagination,
   validateRequiredString,
+  validateCursorPagination,
+  encodeCursor,
 } from "../../shared/http/validateQuery.js";
 import type { ProposalActivityAggregator } from "./aggregator.js";
 import type { ProposalActivityPersistence } from "./types.js";
+import type { ProposalActivityRecord } from "./types.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 
 /** TTL for proposal list cache: 30 seconds */
@@ -20,6 +23,74 @@ export function getAllProposalsController(
     const contractId = validateRequiredString(req, res, "contractId");
     if (!contractId) return;
 
+    // Support cursor-based pagination when `cursor` param is present (or `limit`
+    // alone is provided without `offset`), and fall back to offset pagination.
+    const isCursorMode =
+      typeof req.query.cursor === "string" || req.query.offset === undefined;
+
+    if (isCursorMode) {
+      const cursorQuery = validateCursorPagination(req, res);
+      if (!cursorQuery) return;
+
+      const cacheKey = `proposals:cursor:${contractId}:${req.query.cursor ?? ""}:${cursorQuery.limit}`;
+
+      try {
+        if (cache) {
+          const cached = cache.get(cacheKey);
+          if (cached !== null) {
+            res.json(cached);
+            return;
+          }
+        }
+
+        const all = await persistence.getByContractId(contractId);
+        const total = all.length;
+
+        let startIndex = 0;
+        if (cursorQuery.cursor) {
+          const { lastId, offset: fallbackOffset } = cursorQuery.cursor;
+          // Seek by lastId first; fall back to offset if not found
+          const foundIdx = all.findIndex(
+            (r: ProposalActivityRecord) => r.activityId === lastId,
+          );
+          startIndex = foundIdx !== -1 ? foundIdx + 1 : fallbackOffset;
+        }
+
+        const endIndex = Math.min(startIndex + cursorQuery.limit, total);
+        const data = all.slice(startIndex, endIndex);
+
+        // Build next_cursor if there are more items after this page
+        let nextCursor: string | null = null;
+        if (endIndex < total) {
+          const lastItem = data[data.length - 1];
+          if (lastItem) {
+            nextCursor = encodeCursor({ lastId: lastItem.activityId, offset: endIndex });
+          }
+        }
+
+        const payload = {
+          data,
+          total,
+          limit: cursorQuery.limit,
+          nextCursor,
+        };
+
+        if (cache) {
+          cache.set(cacheKey, { ok: true, data: payload }, PROPOSALS_CACHE_TTL_MS);
+        }
+
+        success(res, payload);
+      } catch (err) {
+        error(res, {
+          message: "Failed to fetch proposals",
+          status: 500,
+          code: ErrorCode.INTERNAL_ERROR,
+        });
+      }
+      return;
+    }
+
+    // Legacy offset pagination path (backward compatible)
     const pagination = validatePagination(req, res);
     if (!pagination) return;
 
