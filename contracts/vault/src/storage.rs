@@ -4380,6 +4380,9 @@ pub fn increment_subscription_usage(env: &Env, subscription_id: u64, metric: &Sy
     let current = usage.get(metric.clone()).unwrap_or(0);
     usage.set(metric.clone(), current + amount);
     set_subscription_usage(env, subscription_id, &usage);
+}
+
+// ============================================================================
 // Issue #1414: Reentrancy Guard for Proposal Execution
 // ============================================================================
 
