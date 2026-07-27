@@ -322,6 +322,9 @@ mod test_stream_pause_ttl;
 #[cfg(test)]
 mod test_escrow_voting;
 mod test_proposal_management;
+#[cfg(test)]
+mod test_cache_invalidation;
+
 
 #[cfg(test)]
 pub mod mock_oracle {
@@ -3164,6 +3167,25 @@ impl VaultDAO {
 
         Ok(())
     }
+
+    /// Invalidate a cache tag for backend and on-chain listeners (#1459).
+    ///
+    /// Allows an admin to explicitly signal cache invalidation for a specific tag.
+    ///
+    /// # Arguments
+    /// * `admin` - Caller; must hold the `Admin` role and authorize.
+    /// * `tag`   - Tag symbol to invalidate (e.g. `contract-snapshots`, `proposal-123`, `role-GABC...`).
+    pub fn invalidate_cache(env: Env, admin: Address, tag: Symbol) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        events::emit_cache_invalidated(&env, tag, &admin);
+        Ok(())
+    }
+
 
     // ========================================================================
     // Issue #1064: Streaming Rate Limiter
