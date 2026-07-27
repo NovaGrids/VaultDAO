@@ -36,6 +36,7 @@ import {
   requestIdStorage,
 } from "./shared/http/requestId.js";
 import { createRequestLogger } from "./shared/http/requestLogger.js";
+import { createRequestContextMiddleware } from "./shared/http/requestContext.js";
 import { createErrorMiddleware } from "./shared/errors/handleError.js";
 import { CorsAllowlist } from "./shared/http/corsAllowlist.js";
 import { initFeatureFlags, getFeatureFlags } from "./shared/feature-flags.js";
@@ -130,6 +131,10 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     (req as any).requestId = id;
     requestIdStorage.run(id, next);
   });
+
+  // Request context middleware — must follow the request-ID middleware so
+  // `req.requestId` is already populated when the context is built.
+  app.use(createRequestContextMiddleware());
 
   // Global rate limiter — catch-all DoS protection for all endpoints (1000 req/min per IP)
   // Token-bucket algorithm: smooth burst tolerance, no fixed-window double-spend.
