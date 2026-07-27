@@ -65,6 +65,18 @@ export interface BackendEnv {
    * Default: 10,000.  Configure via `NORMALIZER_CACHE_MAX_SIZE`.
    */
   readonly normalizerCacheMaxSize: number;
+  /**
+   * Ledger window used by the proposal fingerprint deduplication store.
+   *
+   * A PROPOSAL_CREATED event is considered a duplicate only when an
+   * identical fingerprint was recorded within this many ledgers.
+   * Fingerprints older than the window are allowed through, enabling
+   * legitimate re-submissions after the cooling-off period.
+   *
+   * Default: 120,960 ledgers ≈ 7 days at ~5 s per ledger on Stellar.
+   * Env var: `PROPOSAL_FINGERPRINT_WINDOW_LEDGERS`
+   */
+  readonly proposalFingerprintWindowLedgers: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -277,6 +289,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     proposalArchivalThresholdDays: 180,
     proposalHotStorageDays: 7,
     normalizerCacheMaxSize: 10_000,
+    proposalFingerprintWindowLedgers: 120_960,
     ...overrides,
   };
 }
@@ -368,9 +381,16 @@ export function loadEnv(): BackendEnv {
   const wsMaxSubscriptionsPerClient = readPort(
     "WS_MAX_SUBSCRIPTIONS_PER_CLIENT",
     100,
+    issues,
+  );
   const normalizerCacheMaxSize = readPort(
     "NORMALIZER_CACHE_MAX_SIZE",
     10_000,
+    issues,
+  );
+  const proposalFingerprintWindowLedgers = readPort(
+    "PROPOSAL_FINGERPRINT_WINDOW_LEDGERS",
+    120_960,
     issues,
   );
 
@@ -482,5 +502,6 @@ export function loadEnv(): BackendEnv {
     proposalArchivalThresholdDays,
     proposalHotStorageDays,
     normalizerCacheMaxSize,
+    proposalFingerprintWindowLedgers,
   };
 }
