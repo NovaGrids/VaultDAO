@@ -226,6 +226,73 @@ export interface SnapshotStorageAdapter {
   getStats(contractId: string): Promise<SnapshotStats | null>;
 }
 
+// ── Snapshot consistency verification ─────────────────────────────────────────
+
+/**
+ * A single discrepancy between the event-built snapshot and current on-chain
+ * state, discovered during consistency verification.
+ */
+export interface SnapshotConsistencyMismatch {
+  /** The field or entity that diverged (e.g. "signers", "totalSigners"). */
+  readonly field: string;
+  /** Value observed on-chain (the source of truth). */
+  readonly onChain: unknown;
+  /** Value derived from the event-built snapshot. */
+  readonly snapshot: unknown;
+  /** Human-readable explanation of the divergence. */
+  readonly detail: string;
+}
+
+/**
+ * Result of verifying an event-built snapshot against current on-chain state.
+ * `consistent` is the boolean the caller usually cares about; the remaining
+ * fields describe *how* the two states diverged for logging and alerting.
+ */
+export interface SnapshotConsistencyResult {
+  readonly consistent: boolean;
+  readonly contractId: string;
+  /** ISO timestamp of when the verification ran. */
+  readonly checkedAt: string;
+  /** Last ledger the verified snapshot had processed. */
+  readonly snapshotLedger: number;
+  /** Sorted list of signers reported by the contract on-chain. */
+  readonly onChainSigners: string[];
+  /** Sorted list of active signers held in the snapshot. */
+  readonly snapshotSigners: string[];
+  /** Every discrepancy found; empty when `consistent` is true. */
+  readonly mismatches: SnapshotConsistencyMismatch[];
+}
+
+/**
+ * Minimal view of the on-chain vault configuration required for consistency
+ * checks. `VaultService.getVaultConfig` satisfies this structurally.
+ */
+export interface OnChainConfigProvider {
+  getVaultConfig(contractId: string): Promise<{
+    readonly signers: string[];
+    readonly threshold: number;
+  }>;
+}
+
+/**
+ * Event payload emitted after every snapshot consistency verification.
+ */
+export interface SnapshotVerificationEvent {
+  readonly id: string;
+  readonly topic: string;
+  readonly source: string;
+  readonly createdAt: string;
+  readonly payload: Record<string, unknown>;
+}
+
+/**
+ * Minimal event sink used to publish verification outcomes.
+ * `WebhookDeliveryService.deliver` satisfies this structurally.
+ */
+export interface SnapshotVerificationEmitter {
+  deliver(event: SnapshotVerificationEvent): Promise<void>;
+}
+
 export interface GovernanceSnapshotData {
   readonly contractId: string;
   readonly totalSigners: number;

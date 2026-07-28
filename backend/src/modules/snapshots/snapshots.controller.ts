@@ -192,6 +192,32 @@ export function createSnapshotControllers(
     }
   };
 
+  const verifyConsistency: RequestHandler = async (req, res) => {
+    try {
+      const contractId = req.params.contractId as string;
+      const result = await service.verifySnapshotConsistency(contractId);
+      // 200 regardless of outcome: the verification itself succeeded. Callers
+      // read `consistent` (and `mismatches`) to decide how to react.
+      success(res, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/no snapshot found/i.test(message)) {
+        return error(res, { message: "Snapshot not found", status: 404 });
+      }
+      if (/on-chain config provider/i.test(message)) {
+        return error(res, {
+          message: "Consistency verification is not configured",
+          status: 501,
+        });
+      }
+      console.error(
+        `[snapshot-controller] verifyConsistency error (reqId=${req.headers["x-request-id"]})`,
+        err,
+      );
+      error(res, { message: "Verification failed", status: 502 });
+    }
+  };
+
   return {
     getSnapshot,
     getSigners,
@@ -199,6 +225,7 @@ export function createSnapshotControllers(
     getRoles,
     getStats,
     rebuildSnapshot,
+    verifyConsistency,
   };
 }
 
