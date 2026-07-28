@@ -103,10 +103,6 @@ pub struct InitConfig {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
-    /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
-    pub arbitration_timeout_ledgers: u64,
-    /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
-    pub approval_timeout_ledgers: u64,
 }
 
 /// Vault configuration
@@ -331,6 +327,11 @@ impl Role {
             (Role::Treasurer, Role::DisputeArbitrator) => false,
             (Role::Member, Role::DisputeArbitrator) => false,
             (Role::Observer, Role::DisputeArbitrator) => false,
+            // Same-role and remaining DisputeArbitrator cross-checks
+            (Role::Admin, Role::Admin) => true,
+            (Role::DisputeArbitrator, Role::Observer) => false,
+            (Role::DisputeArbitrator, Role::Member) => false,
+            (Role::DisputeArbitrator, Role::Treasurer) => false,
         }
     }
 }
@@ -608,6 +609,13 @@ pub struct Proposal {
     pub fee_estimate_cache: Option<i128>,
     /// Ledger timestamp when fee cache was last computed (Issue #1428)
     pub fee_cache_timestamp: u64,
+    /// Day-number bucket where spending was reserved at creation (Issue #1345)
+    pub spend_day: u64,
+    /// Week-number bucket where spending was reserved at creation (Issue #1345)
+    pub spend_week: u64,
+    /// True once spend_day/spend_week were recorded at reservation time (Issue #1345).
+    /// False on legacy proposals that predate these fields (Soroban default).
+    pub has_spend_buckets: bool,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
@@ -1701,6 +1709,19 @@ pub enum EscrowStatus {
 /// Milestone tracking unit for progressive fund release
 #[contracttype]
 #[derive(Clone, Debug)]
+pub struct Milestone {
+    /// Unique milestone ID
+    pub id: u64,
+    /// Percentage of total escrow amount (0-100)
+    pub percentage: u32,
+    /// Ledger when this milestone can be marked complete
+    pub release_ledger: u64,
+    /// Whether this milestone has been verified as complete
+    pub is_completed: bool,
+    /// Ledger when milestone was completed (0 if not completed)
+    pub completion_ledger: u64,
+}
+
 /// Pause history record for streaming payments - Issue #1429
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -1733,21 +1754,6 @@ pub struct FanOutRecipient {
     pub address: Address,
     /// Percentage of stream (0-100)
     pub percentage: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct Milestone {
-    /// Unique milestone ID
-    pub id: u64,
-    /// Percentage of total escrow amount (0-100)
-    pub percentage: u32,
-    /// Ledger when this milestone can be marked complete
-    pub release_ledger: u64,
-    /// Whether this milestone has been verified as complete
-    pub is_completed: bool,
-    /// Ledger when milestone was completed (0 if not completed)
-    pub completion_ledger: u64,
 }
 
 /// Escrow agreement holding funds with milestone-based releases

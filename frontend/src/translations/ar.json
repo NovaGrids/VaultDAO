@@ -22,7 +22,17 @@
     "previous": "السابق",
     "retry": "حاول مرة أخرى",
     "notFound": "غير موجود",
-    "loadingEllipsis": "جاري التحميل..."
+    "loadingEllipsis": "جاري التحميل...",
+    "detected": "تم الكشف",
+    "installRequired": "التثبيت مطلوب",
+    "hide": "إخفاء",
+    "refresh": "تحديث",
+    "confirmDeleteTemplate": "هل أنت متأكد من رغبتك في حذف هذا القالب؟",
+    "templateImportedSuccess": "تم استيراد القالب بنجاح!",
+    "invalidTemplateFormat": "تنسيق القالب غير صالح",
+    "failedToImportTemplate": "فشل استيراد القالب",
+    "formSubmittedPreview": "تم إرسال النموذج بنجاح (وضع المعاينة)",
+    "confirmClearErrorHistory": "هل تريد مسح كل سجل الأخطاء؟"
   },
   "navigation": {
     "dashboard": "لوحة التحكم",
@@ -66,7 +76,8 @@
     "tokenContractAddress": "عنوان عقد الرمز",
     "adding": "جاري الإضافة...",
     "failedToLoadBalance": "فشل في تحميل الرصيد",
-    "refreshBalance": "تحديث الرصيد"
+    "refreshBalance": "تحديث الرصيد",
+    "signers": "الموقعون"
   },
   "proposals": {
     "title": "الاقتراحات",
@@ -78,7 +89,8 @@
     "reject": "الرفض",
     "pending": "معلق",
     "approved": "موافق عليه",
-    "rejected": "مرفوض"
+    "rejected": "مرفوض",
+    "submittedSuccess": "تم تقديم الاقتراح بنجاح!"
   },
   "transactions": {
     "title": "المعاملات",
@@ -107,7 +119,8 @@
     "amount": "يرجى إدخال مبلغ صحيح",
     "selectOption": "يرجى اختيار خيار",
     "submit": "إرسال",
-    "reset": "إعادة تعيين"
+    "reset": "إعادة تعيين",
+    "circularDependencies": "اعتماديات دائرية في المنطق!"
   },
   "language": {
     "selectLanguage": "اختر اللغة",
@@ -145,5 +158,108 @@
     "approve": "يوافق",
     "reject": "يرفض",
     "create_payment": "إنشاء الدفع"
+  },
+  "nav": {
+    "overview": "نظرة عامة",
+    "proposals": "المقترحات",
+    "recurringPayments": "المدفوعات المتكررة",
+    "escrow": "الضمان",
+    "governance": "الحوكمة",
+    "activity": "النشاط",
+    "templates": "القوالب",
+    "analytics": "التحليلات",
+    "errorAnalytics": "تحليلات الأخطاء",
+    "settings": "الإعدادات"
+  },
+  "onboarding": {
+    "tourDesc": "قم بجولة سريعة للتعرف على جميع الميزات."
+  },
+  "portfolio": {
+    "title": "نظرة عامة على المحفظة",
+    "totalValue": "القيمة الإجمالية",
+    "allocation": "توزيع الرموز",
+    "lowBalance": "رصيد منخفض",
+    "estimate": "تقدير"
+  },
+  "voice": {
+    "start": "بدء الاستماع",
+    "stop": "إيقاف الاستماع",
+    "permissionRequired": "إذن الميكروفون مطلوب",
+    "timedOut": "انتهت مهلة الاستماع",
+    "timedOutHint": "حاول مرة أخرى أو قل كلمة التنبيه",
+    "settings": "إعدادات الصوت",
+    "wakeWord": "كلمة التنبيه",
+    "availableCommands": "الأوامر المتاحة",
+    "notSupported": "الإدخال الصوتي غير مدعوم في هذا المتصفح"
+  },
+  "settings": {
+    "title": "الإعدادات",
+    "vaultConfig": "إعدادات الخزنة",
+    "vaultConfigDesc": "الموقعون والحدود وقيود الإنفاق لهذه الخزنة",
+    "yourRole": "دورك",
+    "signerSetNote": "أنت أحد الموقعين على هذه الخزنة",
+    "notSignerSetNote": "أنت لست أحد الموقعين على هذه الخزنة",
+    "threshold": "حد الموافقة",
+    "approvalsNeeded": "عدد موافقات الموقعين المطلوبة لتنفيذ الاقتراح",
+    "timelock": "القفل الزمني",
+    "timelockTrigger": "يتم التفعيل فوق",
+    "timelockDelay": "التأخير",
+    "signers": "الموقعون",
+    "currentWallet": "محفظتك",
+    "signerListUnavailable": "قائمة الموقعين غير متوفرة",
+    "spendingLimits": "حدود الإنفاق",
+    "perProposal": "لكل اقتراح",
+    "daily": "يومي",
+    "weekly": "أسبوعي",
+    "supportedWallets": "المحافظ المدعومة",
+    "supportedWalletsDesc": "المحافظ التي يمكنك استخدامها للاتصال بـ VaultDAO",
+    "roleManagement": "إدارة الأدوار",
+    "exportHistory": "سجل التصدير",
+    "exportHistoryDesc": "ملفات التدقيق والتوقيع المُصدَّرة سابقًا",
+    "reExport": "إعادة التصدير",
+    "clearHistory": "مسح السجل",
+    "noExportHistory": "لا يوجد سجل تصدير",
+    "noExportHistoryDesc": "ستظهر الملفات المُصدَّرة هنا",
+    "recipientLists": "قوائم المستلمين",
+    "manageLists": "إدارة القوائم",
+    "recipientListsDesc": "عناوين المستلمين في القوائم البيضاء والسوداء",
+    "onboarding": "التأهيل",
+    "restartTour": "إعادة تشغيل الجولة",
+    "onboardingDesc": "إعادة تشغيل الجولة الإرشادية للمنتج",
+    "wrongNetwork": "شبكة خاطئة",
+    "viewOnExplorer": "عرض في المستكشف",
+    "loadingVaultConfig": "جارٍ تحميل إعدادات الخزنة...",
+    "updateThreshold": "تحديث الحد",
+    "readOnly": "للقراءة فقط",
+    "removeSignerTitle": "إزالة الموقّع",
+    "addSigner": "إضافة موقّع",
+    "stellarAddressPlaceholder": "عنوان ستيلر G...",
+    "downloadAgain": "تنزيل مرة أخرى",
+    "reDownloadUnavailable": "إعادة التنزيل غير متاحة (لا يوجد محتوى مخزّن)",
+    "reExportAria": "إعادة تصدير {{filename}}",
+    "reExportUnavailable": "إعادة التصدير غير متاحة",
+    "clearExportHistoryAria": "مسح سجل التصدير",
+    "removeSignerModalTitle": "إزالة الموقّع",
+    "removeSignerModalMessage": "هل تريد إزالة {{address}} من موقّعي الخزنة؟ لا يمكن التراجع عن هذا إلا بإعادة إضافته.",
+    "removing": "جارٍ الإزالة…",
+    "remove": "إزالة",
+    "language": "اللغة",
+    "languageDesc": "اختر لغة العرض لـ VaultDAO"
+  },
+  "performance": {
+    "title": "الأداء",
+    "subtitle": "مؤشرات الويب الأساسية ومقاييس الموارد",
+    "thresholds": "الحدود",
+    "good": "جيد",
+    "warning": "يحتاج إلى تحسين",
+    "largestResources": "أكبر الموارد",
+    "allGood": "جميع المقاييس تبدو جيدة",
+    "lcp": "أكبر عرض للمحتوى",
+    "fid": "تأخير أول إدخال",
+    "cls": "التحول التراكمي للتخطيط",
+    "ttfb": "الوقت حتى أول بايت",
+    "fcp": "أول عرض للمحتوى",
+    "memoryUsage": "استخدام الذاكرة",
+    "heapUsage": "استخدام الكومة"
   }
 }

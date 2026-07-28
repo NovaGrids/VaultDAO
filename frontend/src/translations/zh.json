@@ -22,7 +22,17 @@
     "previous": "上一步",
     "retry": "重试",
     "notFound": "未找到",
-    "loadingEllipsis": "加载中..."
+    "loadingEllipsis": "加载中...",
+    "detected": "已检测",
+    "installRequired": "需要安装",
+    "hide": "隐藏",
+    "refresh": "刷新",
+    "confirmDeleteTemplate": "确定要删除此模板吗？",
+    "templateImportedSuccess": "模板导入成功！",
+    "invalidTemplateFormat": "模板格式无效",
+    "failedToImportTemplate": "导入模板失败",
+    "formSubmittedPreview": "表单提交成功（预览模式）",
+    "confirmClearErrorHistory": "要清除所有错误历史记录吗？"
   },
   "navigation": {
     "dashboard": "仪表板",
@@ -66,7 +76,8 @@
     "tokenContractAddress": "代币合约地址",
     "adding": "添加中...",
     "failedToLoadBalance": "加载余额失败",
-    "refreshBalance": "刷新余额"
+    "refreshBalance": "刷新余额",
+    "signers": "签署人"
   },
   "proposals": {
     "title": "提案",
@@ -78,7 +89,8 @@
     "reject": "拒绝",
     "pending": "待处理",
     "approved": "已批准",
-    "rejected": "已拒绝"
+    "rejected": "已拒绝",
+    "submittedSuccess": "提案提交成功！"
   },
   "transactions": {
     "title": "交易",
@@ -107,7 +119,8 @@
     "amount": "请输入有效金额",
     "selectOption": "请选择一个选项",
     "submit": "提交",
-    "reset": "重置"
+    "reset": "重置",
+    "circularDependencies": "逻辑中存在循环依赖！"
   },
   "language": {
     "selectLanguage": "选择语言",
@@ -145,5 +158,108 @@
     "approve": "批准",
     "reject": "拒绝",
     "create_payment": "创建付款"
+  },
+  "nav": {
+    "overview": "概览",
+    "proposals": "提案",
+    "recurringPayments": "定期付款",
+    "escrow": "托管",
+    "governance": "治理",
+    "activity": "活动",
+    "templates": "模板",
+    "analytics": "分析",
+    "errorAnalytics": "错误分析",
+    "settings": "设置"
+  },
+  "onboarding": {
+    "tourDesc": "快速浏览一下，了解所有功能。"
+  },
+  "portfolio": {
+    "title": "投资组合概览",
+    "totalValue": "总价值",
+    "allocation": "代币分配",
+    "lowBalance": "余额不足",
+    "estimate": "估算"
+  },
+  "voice": {
+    "start": "开始聆听",
+    "stop": "停止聆听",
+    "permissionRequired": "需要麦克风权限",
+    "timedOut": "聆听超时",
+    "timedOutHint": "请重试或说出唤醒词",
+    "settings": "语音设置",
+    "wakeWord": "唤醒词",
+    "availableCommands": "可用命令",
+    "notSupported": "此浏览器不支持语音输入"
+  },
+  "settings": {
+    "title": "设置",
+    "vaultConfig": "金库配置",
+    "vaultConfigDesc": "此金库的签署人、阈值和支出限额",
+    "yourRole": "您的角色",
+    "signerSetNote": "您是此金库的签署人",
+    "notSignerSetNote": "您不是此金库的签署人",
+    "threshold": "批准阈值",
+    "approvalsNeeded": "执行提案所需的签署人批准数量",
+    "timelock": "时间锁",
+    "timelockTrigger": "触发阈值",
+    "timelockDelay": "延迟",
+    "signers": "签署人",
+    "currentWallet": "您的钱包",
+    "signerListUnavailable": "签署人列表不可用",
+    "spendingLimits": "支出限额",
+    "perProposal": "每项提案",
+    "daily": "每日",
+    "weekly": "每周",
+    "supportedWallets": "支持的钱包",
+    "supportedWalletsDesc": "您可用于连接 VaultDAO 的钱包",
+    "roleManagement": "角色管理",
+    "exportHistory": "导出历史",
+    "exportHistoryDesc": "先前导出的审计和签名文件",
+    "reExport": "重新导出",
+    "clearHistory": "清除历史记录",
+    "noExportHistory": "没有导出历史记录",
+    "noExportHistoryDesc": "导出的文件将显示在此处",
+    "recipientLists": "收件人列表",
+    "manageLists": "管理列表",
+    "recipientListsDesc": "白名单和黑名单收件人地址",
+    "onboarding": "入门引导",
+    "restartTour": "重新开始导览",
+    "onboardingDesc": "重新播放产品引导教程",
+    "wrongNetwork": "网络错误",
+    "viewOnExplorer": "在浏览器中查看",
+    "loadingVaultConfig": "正在加载金库配置...",
+    "updateThreshold": "更新阈值",
+    "readOnly": "只读",
+    "removeSignerTitle": "移除签署人",
+    "addSigner": "添加签署人",
+    "stellarAddressPlaceholder": "G... Stellar 地址",
+    "downloadAgain": "再次下载",
+    "reDownloadUnavailable": "无法重新下载（没有存储的内容）",
+    "reExportAria": "重新导出 {{filename}}",
+    "reExportUnavailable": "无法重新导出",
+    "clearExportHistoryAria": "清除导出历史记录",
+    "removeSignerModalTitle": "移除签署人",
+    "removeSignerModalMessage": "要将 {{address}} 从金库签署人中移除吗？除非重新添加，否则无法撤销此操作。",
+    "removing": "正在移除…",
+    "remove": "移除",
+    "language": "语言",
+    "languageDesc": "选择 VaultDAO 的显示语言"
+  },
+  "performance": {
+    "title": "性能",
+    "subtitle": "核心网页指标和资源指标",
+    "thresholds": "阈值",
+    "good": "良好",
+    "warning": "需要改进",
+    "largestResources": "最大资源",
+    "allGood": "所有指标状态良好",
+    "lcp": "最大内容绘制",
+    "fid": "首次输入延迟",
+    "cls": "累积布局偏移",
+    "ttfb": "首字节时间",
+    "fcp": "首次内容绘制",
+    "memoryUsage": "内存使用情况",
+    "heapUsage": "堆内存使用情况"
   }
 }

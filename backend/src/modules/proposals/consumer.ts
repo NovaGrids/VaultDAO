@@ -114,6 +114,10 @@ export class ProposalActivityConsumer {
   private isDuplicate(event: NormalizedEvent): boolean {
     const key = this.deriveEventKey(event);
     if (this.processedEventIds.has(key)) {
+      // Emit dedup metric
+      this.metrics?.incrementCounter("vaultdao_proposals_consumer_duplicates_total", {
+        reason: "event_id",
+      });
       return true;
     }
     if (this.processedEventIds.size >= this.maxDedupeSize) {

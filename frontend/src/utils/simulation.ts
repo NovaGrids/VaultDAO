@@ -299,3 +299,6 @@ export function isWarning(errorCode?: string): boolean {
     const warningCodes = ['TIMELOCK_ACTIVE', 'THRESHOLD_NOT_MET'];
     return errorCode ? warningCodes.includes(errorCode) : false;
 }
+
+export * from './vaultSimulator';
+

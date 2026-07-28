@@ -151,6 +151,17 @@ export class EventWebSocketServer extends EventEmitter {
     super();
     this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
     this.metrics = metrics ?? null;
+    metricsOrMaxSubs?: MetricsRegistry | number,
+    maxSubscriptionsPerClient = 100,
+  ) {
+    super();
+    if (typeof metricsOrMaxSubs === "number") {
+      this.maxSubscriptionsPerClient = metricsOrMaxSubs;
+      this.metrics = null;
+    } else {
+      this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
+      this.metrics = metricsOrMaxSubs ?? null;
+    }
     if (this.metrics) {
       this.registerMetrics(this.metrics);
     }

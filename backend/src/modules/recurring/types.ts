@@ -88,13 +88,6 @@ export interface NormalizedRecurringPayment {
   // ── Retry / backoff state ─────────────────────────────────────────────────
 
   /**
-   * Number of consecutive failures since the last successful execution.
-   * Reset to 0 on every successful execution.
-   * This is the counter that drives backoff delay and gates scheduling
-   * behaviour — the cap/threshold applies here, not to `totalMissedExecutions`.
-   */
-  readonly retryCount: number;
-  /**
    * Unix timestamp (seconds) of the most recent failed execution attempt.
    * `0` means the payment has never been attempted or was reset after success.
    */
@@ -112,6 +105,7 @@ export interface NormalizedRecurringPayment {
    * `retryCount` for that.
    */
   readonly totalMissedExecutions: number;
+  /**
    * Maximum ledger spread applied after the first cycle for load distribution.
    * 0 means jitter is disabled for this payment.
    * When non-zero, each cycle's `nextPaymentLedger` is shifted forward by
@@ -141,9 +135,9 @@ export interface RawRecurringPayment {
   readonly memo: string;
   readonly interval: string;
   readonly next_payment_ledger: string;
-  readonly retry_strategy: string;
-  readonly retry_count: string;
-  readonly retry_next_ledger: string;
+  readonly retry_strategy?: string;
+  readonly retry_count?: string;
+  readonly retry_next_ledger?: string;
   readonly payment_count: string;
   readonly is_active: boolean;
   /**
@@ -205,3 +199,59 @@ export const CONTRACT_RECURRING_EVENT_MAP: Record<string, RecurringEvent> = {
   recurring_payment_executed: RecurringEvent.EXECUTED,
   recurring_pay_jittered: RecurringEvent.JITTERED,
 };
+
+// ── Predictive scheduling types (#1454) ──────────────────────────────────────
+
+/**
+ * A single projected due date for a recurring payment, as returned by
+ * `predictRecurringDues()`.
+ *
+ * The `ledger` field carries the absolute ledger number at which the payment
+ * is expected to be due.  `occurrenceIndex` is 1-based (first projected
+ * occurrence = 1).
+ */
+export interface PredictedDue {
+  /** Payment identifier. */
+  readonly paymentId: string;
+  /** Proposer address. */
+  readonly proposer: string;
+  /** Recipient address. */
+  readonly recipient: string;
+  /** Token address / symbol. */
+  readonly token: string;
+  /** Payment amount. */
+  readonly amount: string;
+  /** Absolute ledger at which this occurrence is expected to be due. */
+  readonly ledger: number;
+  /** Ledgers from `currentLedger` until this occurrence is due. */
+  readonly ledgersFromNow: number;
+  /**
+   * 1-based index of this occurrence within the prediction window.
+   * The nearest upcoming due date for a payment has occurrenceIndex = 1.
+   */
+  readonly occurrenceIndex: number;
+  /**
+   * Prediction confidence.
+   *
+   * - `"high"`   : Payment has a clean execution history (no recent failures,
+   *               no missed payments).
+   * - `"medium"` : Payment has had at least one transient failure but has not
+   *               missed a complete cycle.
+   * - `"low"`    : Payment is currently overdue or has active retry backoff —
+   *               the actual ledger may drift.
+   */
+  readonly confidence: "high" | "medium" | "low";
+}
+
+/**
+ * Emitted event that records a prediction query.
+ * Consumers (e.g. audit log, websocket) can subscribe to these.
+ */
+export interface RecurringPredictionEvent {
+  readonly type: "RECURRING_PREDICTION_QUERIED";
+  readonly windowLedgers: number;
+  readonly currentLedger: number;
+  /** Number of predictions returned. */
+  readonly resultCount: number;
+  readonly queriedAt: string;
+}

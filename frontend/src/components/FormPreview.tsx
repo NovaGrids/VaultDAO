@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import type { FormField } from '../types/formBuilder';
 import FormRenderer from './FormRenderer';
 
@@ -8,6 +9,7 @@ interface FormPreviewProps {
 }
 
 const FormPreview: React.FC<FormPreviewProps> = ({ fields, onPreviewSubmit }) => {
+  const { t } = useTranslation();
   const config = {
     id: 'preview',
     name: 'Live Preview',
@@ -35,7 +37,7 @@ const FormPreview: React.FC<FormPreviewProps> = ({ fields, onPreviewSubmit }) =>
         onSubmit={(data) => {
           console.log('Preview form submitted:', data);
           onPreviewSubmit?.(data);
-          alert('Form submitted successfully (Preview Mode)');
+          alert(t('common.formSubmittedPreview'));
         }}
         submitButtonText="Submit Proposal"
       />
