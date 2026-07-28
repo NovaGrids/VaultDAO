@@ -623,6 +623,7 @@ impl VaultDAO {
             // Timeouts are configured post-init via dedicated setters; use safe defaults here.
             arbitration_timeout_ledgers: 17_280 * 30, // 30 days
             approval_timeout_ledgers: 0,
+            exec_window_ledgers: 0, // Set via set_exec_window_ledgers post-init (Issue #1349)
         };
 
         // Apply staking config from InitConfig
@@ -1085,6 +1086,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -1159,6 +1161,7 @@ impl VaultDAO {
         ) {
             proposal.approvals.push_back(proposer.clone());
             proposal.status = ProposalStatus::Approved;
+            proposal.approved_at = current_ledger;
             Self::try_execute_transfer(&env, &proposer, &mut proposal, current_ledger)?;
             proposal.status = ProposalStatus::Executed;
             proposal.execution_ledger = current_ledger;
@@ -1386,6 +1389,7 @@ impl VaultDAO {
                 spend_day: storage::get_day_number(&env),
                 spend_week: storage::get_week_number(&env),
                 has_spend_buckets: true,
+            approved_at: 0,
             };
 
             storage::set_proposal(&env, &proposal);
@@ -1994,6 +1998,49 @@ impl VaultDAO {
                 metrics.success_rate_bps(),
             );
             return Err(VaultError::PermissionExpired);
+        }
+
+        // Check execution window: approved_at + exec_window_ledgers
+        let config = storage::get_config(&env)?;
+        if config.exec_window_ledgers > 0
+            && proposal.approved_at > 0
+            && current_ledger > proposal.approved_at + config.exec_window_ledgers
+        {
+            // Refund spending limits (same as regular expiry above)
+            if proposal.status != ProposalStatus::Expired {
+                storage::refund_spending_limits(
+                    &env,
+                    proposal.amount,
+                    proposal.spend_day,
+                    proposal.spend_week,
+                );
+                storage::refund_token_spending_limits(
+                    &env,
+                    &proposal.token,
+                    proposal.amount,
+                    proposal.spend_day,
+                    proposal.spend_week,
+                );
+            }
+            proposal.status = ProposalStatus::Expired;
+            storage::tag_index_prune_proposal(&env, &proposal.tags, proposal_id);
+            storage::set_proposal(&env, &proposal);
+            storage::metrics_on_expiry(&env);
+            events::emit_execution_window_expired(
+                &env,
+                proposal_id,
+                proposal.approved_at,
+                config.exec_window_ledgers,
+            );
+            let metrics = storage::get_metrics(&env);
+            events::emit_metrics_updated(
+                &env,
+                metrics.executed_count,
+                metrics.rejected_count,
+                metrics.expired_count,
+                metrics.success_rate_bps(),
+            );
+            return Err(VaultError::ProposalExecutionWindowExpired);
         }
 
         // Check Timelock
@@ -3624,6 +3671,7 @@ impl VaultDAO {
                 tier_usage_tracking: false,
                 arbitration_timeout_ledgers: 17_280 * 30,
                 approval_timeout_ledgers: 0,
+                exec_window_ledgers: 0,
             }
         });
         (config.quorum, config.quorum_percentage)
@@ -4097,6 +4145,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -4606,6 +4655,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -8383,6 +8433,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -8885,6 +8936,30 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Set the execution window in ledgers after approval before proposals auto-expire.
+    /// A value of 0 disables the execution window (default on init).
+    pub fn set_exec_window_ledgers(
+        env: Env,
+        admin: Address,
+        ledgers: u64,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.exec_window_ledgers = ledgers;
+        storage::set_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_exec_window_ledgers_updated(&env, &admin, ledgers);
+
+        Ok(())
+    }
+
     /// Get the current gas configuration.
     pub fn get_gas_config(env: Env) -> GasConfig {
         storage::get_gas_config(&env)
@@ -9274,6 +9349,7 @@ impl VaultDAO {
                 }
             } else {
                 proposal.status = ProposalStatus::Approved;
+                proposal.approved_at = current_ledger;
                 proposal.unlock_ledger = if proposal.amount >= config.timelock_threshold {
                     current_ledger + config.timelock_delay
                 } else {
@@ -9960,6 +10036,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -11183,6 +11260,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -13508,6 +13586,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -14473,6 +14552,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -14740,6 +14820,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -14969,6 +15050,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
 
         storage::set_proposal(&env, &new_proposal);
@@ -15137,6 +15219,7 @@ impl VaultDAO {
             spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
+            approved_at: 0,
         };
         storage::set_proposal(&env, &new_proposal);
 

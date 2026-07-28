@@ -119,6 +119,24 @@ pub fn emit_proposal_expired(env: &Env, proposal_id: u64, expires_at: u64) {
     );
 }
 
+/// Emit when the execution window ledgers configuration is updated.
+pub fn emit_exec_window_ledgers_updated(env: &Env, admin: &Address, ledgers: u64) {
+    env.events().publish(
+        (Symbol::new(env, "exec_window_ledgers_updated"), admin.clone()),
+        ledgers,
+    );
+}
+
+/// Emit when an approved proposal's execution window has passed and it auto-expires.
+/// This is separate from voting deadline expiry — the proposal was approved but
+/// not executed within the configured `exec_window_ledgers`.
+pub fn emit_execution_window_expired(env: &Env, proposal_id: u64, approved_at: u64, execution_window: u64) {
+    env.events().publish(
+        (Symbol::new(env, "execution_window_expired"), proposal_id),
+        (approved_at, execution_window),
+    );
+}
+
 pub fn emit_proposal_deadline_rejected(env: &Env, proposal_id: u64, voting_deadline: u64) {
     env.events().publish(
         (Symbol::new(env, "proposal_deadline_rejected"), proposal_id),

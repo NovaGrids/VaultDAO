@@ -354,6 +354,8 @@ pub enum VaultError {
     CannotRemoveSigner = 85,
     DuplicateProposal = 26,
     ExecutionWindowExpired = 27,
+    /// Approved proposal's execution window has passed (issue #1349)
+    ProposalExecutionWindowExpired = 28,
     GasLimitExceeded = 161,
     InsurancePoolInsufficient = 111,
     InvalidDeadline = 44,
