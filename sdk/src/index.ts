@@ -104,6 +104,17 @@ export {
   isSigner,
 } from "./contract";
 
+// Batch orchestration
+export {
+  createBatchOrchestrator,
+  BatchProposalOrchestrator,
+} from "./batch-orchestrator";
+
+export type {
+  BatchTransfer,
+  RetryConfig,
+} from "./batch-orchestrator";
+
 // Testing utilities
 export { MockVaultContract } from "./mock-contract";
 export type { FailureInjectionConfig } from "./mock-contract";
