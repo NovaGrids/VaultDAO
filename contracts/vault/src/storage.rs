@@ -645,6 +645,14 @@ pub fn get_proposal(env: &Env, id: u64) -> Result<Proposal, VaultError> {
         .get(&DataKey::Proposal(id))
         .ok_or(VaultError::ProposalNotFound)?;
     proposal.attachments = get_attachments(env, id);
+    // Issue #1345: migrate legacy proposals that predate spend bucket fields.
+    // `has_spend_buckets == false` is the Soroban default for old stored proposals.
+    if !proposal.has_spend_buckets {
+        proposal.spend_day = get_day_number(env);
+        proposal.spend_week = get_week_number(env);
+        proposal.has_spend_buckets = true;
+        set_proposal(env, &proposal);
+    }
     Ok(proposal)
 }
 
@@ -1473,16 +1481,16 @@ pub fn add_amendment_record(env: &Env, record: &ProposalAmendment) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
-/// Refund spending limits when a proposal is cancelled
-pub fn refund_spending_limits(env: &Env, amount: i128) {
+/// Refund spending limits when a proposal is cancelled.
+///
+/// Credits the original day/week buckets where the spend was reserved
+/// (Issue #1345), not the current ledger's buckets.
+pub fn refund_spending_limits(env: &Env, amount: i128, spend_day: u64, spend_week: u64) {
     // Use atomic try_deduct helpers to ensure counters never go negative.
     // Each helper reads, validates, and writes in a single storage call,
     // preventing double-refund if two cancellations land in the same ledger.
-    let today = get_day_number(env);
-    try_deduct_daily_spent(env, today, amount);
-
-    let week = get_week_number(env);
-    try_deduct_weekly_spent(env, week, amount);
+    try_deduct_daily_spent(env, spend_day, amount);
+    try_deduct_weekly_spent(env, spend_week, amount);
 }
 // ============================================================================
 // Comments
@@ -2933,20 +2941,27 @@ pub fn remove_token_spending_config(env: &Env, token: &Address) {
 }
 
 /// Refund per-token spending when a proposal is cancelled.
-pub fn refund_token_spending_limits(env: &Env, token: &Address, amount: i128) {
-    let today = get_day_number(env);
-    let current_daily = get_token_daily_spent(env, token, today);
+///
+/// Credits the original day/week buckets where the spend was reserved
+/// (Issue #1345), not the current ledger's buckets.
+pub fn refund_token_spending_limits(
+    env: &Env,
+    token: &Address,
+    amount: i128,
+    spend_day: u64,
+    spend_week: u64,
+) {
+    let current_daily = get_token_daily_spent(env, token, spend_day);
     let refunded_daily = current_daily.saturating_sub(amount).max(0);
-    let key_daily = DataKey::TokenDailySpent(token.clone(), today);
+    let key_daily = DataKey::TokenDailySpent(token.clone(), spend_day);
     env.storage().temporary().set(&key_daily, &refunded_daily);
     env.storage()
         .temporary()
         .extend_ttl(&key_daily, DAY_IN_LEDGERS * 2, DAY_IN_LEDGERS * 2);
 
-    let week = get_week_number(env);
-    let current_weekly = get_token_weekly_spent(env, token, week);
+    let current_weekly = get_token_weekly_spent(env, token, spend_week);
     let refunded_weekly = current_weekly.saturating_sub(amount).max(0);
-    let key_weekly = DataKey::TokenWeeklySpent(token.clone(), week);
+    let key_weekly = DataKey::TokenWeeklySpent(token.clone(), spend_week);
     env.storage().temporary().set(&key_weekly, &refunded_weekly);
     env.storage()
         .temporary()
@@ -4375,7 +4390,12 @@ pub fn set_subscription_usage(env: &Env, subscription_id: u64, usage: &Map<Symbo
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
-pub fn increment_subscription_usage(env: &Env, subscription_id: u64, metric: &Symbol, amount: i128) {
+pub fn increment_subscription_usage(
+    env: &Env,
+    subscription_id: u64,
+    metric: &Symbol,
+    amount: i128,
+) {
     let mut usage = get_subscription_usage(env, subscription_id);
     let current = usage.get(metric.clone()).unwrap_or(0);
     usage.set(metric.clone(), current + amount);

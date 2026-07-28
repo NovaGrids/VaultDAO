@@ -88,13 +88,6 @@ export interface NormalizedRecurringPayment {
   // ── Retry / backoff state ─────────────────────────────────────────────────
 
   /**
-   * Number of consecutive failures since the last successful execution.
-   * Reset to 0 on every successful execution.
-   * This is the counter that drives backoff delay and gates scheduling
-   * behaviour — the cap/threshold applies here, not to `totalMissedExecutions`.
-   */
-  readonly retryCount: number;
-  /**
    * Unix timestamp (seconds) of the most recent failed execution attempt.
    * `0` means the payment has never been attempted or was reset after success.
    */
@@ -142,9 +135,9 @@ export interface RawRecurringPayment {
   readonly memo: string;
   readonly interval: string;
   readonly next_payment_ledger: string;
-  readonly retry_strategy: string;
-  readonly retry_count: string;
-  readonly retry_next_ledger: string;
+  readonly retry_strategy?: string;
+  readonly retry_count?: string;
+  readonly retry_next_ledger?: string;
   readonly payment_count: string;
   readonly is_active: boolean;
   /**

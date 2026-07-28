@@ -139,15 +139,22 @@ export class EventWebSocketServer extends EventEmitter {
   /** room → set of WebSocket connections */
   private rooms: Map<string, Set<WebSocket>> = new Map();
   private readonly maxSubscriptionsPerClient: number;
-
-  constructor(server: Server, maxSubscriptionsPerClient = 100) {
-    this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private readonly metrics: MetricsRegistry | null;
 
-  constructor(server: Server, metrics?: MetricsRegistry) {
+  constructor(
+    server: Server,
+    metricsOrMaxSubs?: MetricsRegistry | number,
+    maxSubscriptionsPerClient = 100,
+  ) {
     super();
-    this.metrics = metrics ?? null;
+    if (typeof metricsOrMaxSubs === "number") {
+      this.maxSubscriptionsPerClient = metricsOrMaxSubs;
+      this.metrics = null;
+    } else {
+      this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
+      this.metrics = metricsOrMaxSubs ?? null;
+    }
     if (this.metrics) {
       this.registerMetrics(this.metrics);
     }
