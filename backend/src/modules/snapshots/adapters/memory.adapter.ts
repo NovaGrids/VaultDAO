@@ -23,6 +23,8 @@ import { Role } from "../types.js";
  */
 export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
   private snapshots: Map<string, ContractSnapshot> = new Map();
+  private snapshotHistory: Map<string, ContractSnapshot[]> = new Map();
+  private readonly maxHistorySize = 5;
 
   /**
    * Get the current snapshot for a contract.
@@ -32,17 +34,76 @@ export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
   }
 
   /**
-   * Save a snapshot for a contract.
+   * Save a snapshot for a contract and retain up to 5 history snapshots.
    */
   async saveSnapshot(snapshot: ContractSnapshot): Promise<void> {
-    this.snapshots.set(snapshot.contractId, snapshot);
+    const snapId = snapshot.snapshotId ?? `snap_${snapshot.lastProcessedLedger}_${snapshot.lastProcessedEventId || Date.now()}`;
+    const snapWithId: ContractSnapshot = {
+      ...snapshot,
+      snapshotId: snapId,
+    };
+    this.snapshots.set(snapshot.contractId, snapWithId);
+
+    let history = this.snapshotHistory.get(snapshot.contractId) ?? [];
+    const clonedSigners = new Map(snapWithId.signers);
+    const clonedRoles = new Map(snapWithId.roles);
+    const historicalSnap: ContractSnapshot = {
+      ...snapWithId,
+      signers: clonedSigners,
+      roles: clonedRoles,
+    };
+
+    history.push(historicalSnap);
+    if (history.length > this.maxHistorySize) {
+      history = history.slice(history.length - this.maxHistorySize);
+    }
+    this.snapshotHistory.set(snapshot.contractId, history);
   }
 
   /**
-   * Clear snapshot for a contract.
+   * Clear snapshot and history for a contract.
    */
   async clearSnapshot(contractId: string): Promise<void> {
     this.snapshots.delete(contractId);
+    this.snapshotHistory.delete(contractId);
+  }
+
+  /**
+   * Get snapshot history (up to last 5).
+   */
+  async getSnapshotHistory(contractId: string): Promise<ContractSnapshot[]> {
+    return this.snapshotHistory.get(contractId) ?? [];
+  }
+
+  /**
+   * Find snapshot by snapshotId or lastProcessedLedger.
+   */
+  async getSnapshotById(contractId: string, snapshotId: string | number): Promise<ContractSnapshot | null> {
+    const history = await this.getSnapshotHistory(contractId);
+    const idStr = String(snapshotId);
+    return (
+      history.find(
+        (s) =>
+          s.snapshotId === idStr ||
+          String(s.lastProcessedLedger) === idStr
+      ) ?? null
+    );
+  }
+
+  /**
+   * Restore a snapshot from history.
+   */
+  async restoreSnapshot(contractId: string, snapshotId: string | number): Promise<ContractSnapshot | null> {
+    const target = await this.getSnapshotById(contractId, snapshotId);
+    if (!target) return null;
+
+    const restored: ContractSnapshot = {
+      ...target,
+      signers: new Map(target.signers),
+      roles: new Map(target.roles),
+    };
+    this.snapshots.set(contractId, restored);
+    return restored;
   }
 
   /**
