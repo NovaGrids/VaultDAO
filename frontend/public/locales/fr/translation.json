@@ -22,7 +22,17 @@
     "previous": "Précédent",
     "retry": "Réessayer",
     "notFound": "Non trouvé",
-    "loadingEllipsis": "Chargement..."
+    "loadingEllipsis": "Chargement...",
+    "detected": "Détecté",
+    "installRequired": "Installation requise",
+    "hide": "Masquer",
+    "refresh": "Actualiser",
+    "confirmDeleteTemplate": "Voulez-vous vraiment supprimer ce modèle ?",
+    "templateImportedSuccess": "Modèle importé avec succès !",
+    "invalidTemplateFormat": "Format de modèle invalide",
+    "failedToImportTemplate": "Échec de l'importation du modèle",
+    "formSubmittedPreview": "Formulaire envoyé avec succès (mode aperçu)",
+    "confirmClearErrorHistory": "Effacer tout l'historique des erreurs ?"
   },
   "navigation": {
     "dashboard": "Tableau de Bord",
@@ -66,7 +76,8 @@
     "tokenContractAddress": "Adresse du Contrat de Jeton",
     "adding": "Ajout...",
     "failedToLoadBalance": "Impossible de charger le solde",
-    "refreshBalance": "Actualiser le solde"
+    "refreshBalance": "Actualiser le solde",
+    "signers": "Signataires"
   },
   "proposals": {
     "title": "Propositions",
@@ -78,7 +89,8 @@
     "reject": "Rejeter",
     "pending": "En Attente",
     "approved": "Approuvé",
-    "rejected": "Rejeté"
+    "rejected": "Rejeté",
+    "submittedSuccess": "Proposition soumise avec succès !"
   },
   "transactions": {
     "title": "Transactions",
@@ -107,7 +119,8 @@
     "amount": "Veuillez entrer un montant valide",
     "selectOption": "Veuillez sélectionner une option",
     "submit": "Soumettre",
-    "reset": "Réinitialiser"
+    "reset": "Réinitialiser",
+    "circularDependencies": "Dépendances circulaires dans la logique !"
   },
   "language": {
     "selectLanguage": "Sélectionner la Langue",
@@ -145,5 +158,108 @@
     "approve": "Approuver",
     "reject": "Rejeter",
     "create_payment": "Créer un paiement"
+  },
+  "nav": {
+    "overview": "Aperçu",
+    "proposals": "Propositions",
+    "recurringPayments": "Paiements récurrents",
+    "escrow": "Séquestre",
+    "governance": "Gouvernance",
+    "activity": "Activité",
+    "templates": "Modèles",
+    "analytics": "Analytique",
+    "errorAnalytics": "Analytique des erreurs",
+    "settings": "Paramètres"
+  },
+  "onboarding": {
+    "tourDesc": "Faites une visite rapide pour découvrir toutes les fonctionnalités."
+  },
+  "portfolio": {
+    "title": "Aperçu du portefeuille",
+    "totalValue": "Valeur totale",
+    "allocation": "Allocation des jetons",
+    "lowBalance": "Solde faible",
+    "estimate": "estimation"
+  },
+  "voice": {
+    "start": "Démarrer l'écoute",
+    "stop": "Arrêter l'écoute",
+    "permissionRequired": "Autorisation du microphone requise",
+    "timedOut": "L'écoute a expiré",
+    "timedOutHint": "Réessayez ou dites le mot de réveil",
+    "settings": "Paramètres vocaux",
+    "wakeWord": "Mot de réveil",
+    "availableCommands": "Commandes disponibles",
+    "notSupported": "La saisie vocale n'est pas prise en charge par ce navigateur"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "vaultConfig": "Configuration du coffre",
+    "vaultConfigDesc": "Signataires, seuils et limites de dépenses de ce coffre",
+    "yourRole": "Votre rôle",
+    "signerSetNote": "Vous êtes signataire de ce coffre",
+    "notSignerSetNote": "Vous n'êtes pas signataire de ce coffre",
+    "threshold": "Seuil d'approbation",
+    "approvalsNeeded": "Nombre d'approbations de signataires requises pour exécuter une proposition",
+    "timelock": "Verrouillage temporel",
+    "timelockTrigger": "Se déclenche au-dessus de",
+    "timelockDelay": "Délai",
+    "signers": "Signataires",
+    "currentWallet": "Votre portefeuille",
+    "signerListUnavailable": "La liste des signataires n'est pas disponible",
+    "spendingLimits": "Limites de dépenses",
+    "perProposal": "Par proposition",
+    "daily": "Quotidien",
+    "weekly": "Hebdomadaire",
+    "supportedWallets": "Portefeuilles pris en charge",
+    "supportedWalletsDesc": "Portefeuilles que vous pouvez utiliser pour vous connecter à VaultDAO",
+    "roleManagement": "Gestion des rôles",
+    "exportHistory": "Historique des exports",
+    "exportHistoryDesc": "Fichiers d'audit et de signature précédemment exportés",
+    "reExport": "Réexporter",
+    "clearHistory": "Effacer l'historique",
+    "noExportHistory": "Aucun historique d'export",
+    "noExportHistoryDesc": "Les fichiers exportés apparaîtront ici",
+    "recipientLists": "Listes de destinataires",
+    "manageLists": "Gérer les listes",
+    "recipientListsDesc": "Adresses de destinataires en liste blanche et noire",
+    "onboarding": "Intégration",
+    "restartTour": "Redémarrer la visite",
+    "onboardingDesc": "Rejouer la visite guidée du produit",
+    "wrongNetwork": "Mauvais réseau",
+    "viewOnExplorer": "Voir sur l'explorateur",
+    "loadingVaultConfig": "Chargement de la configuration du coffre...",
+    "updateThreshold": "Mettre à jour le seuil",
+    "readOnly": "Lecture seule",
+    "removeSignerTitle": "Supprimer le signataire",
+    "addSigner": "Ajouter un signataire",
+    "stellarAddressPlaceholder": "Adresse Stellar G...",
+    "downloadAgain": "Télécharger à nouveau",
+    "reDownloadUnavailable": "Retéléchargement indisponible (aucun contenu enregistré)",
+    "reExportAria": "Réexporter {{filename}}",
+    "reExportUnavailable": "Réexportation indisponible",
+    "clearExportHistoryAria": "Effacer l'historique des exports",
+    "removeSignerModalTitle": "Supprimer le signataire",
+    "removeSignerModalMessage": "Retirer {{address}} des signataires du coffre ? Cette action est irréversible sans le rajouter.",
+    "removing": "Suppression…",
+    "remove": "Supprimer",
+    "language": "Langue",
+    "languageDesc": "Choisissez la langue d'affichage de VaultDAO"
+  },
+  "performance": {
+    "title": "Performance",
+    "subtitle": "Core Web Vitals et métriques des ressources",
+    "thresholds": "Seuils",
+    "good": "Bon",
+    "warning": "À améliorer",
+    "largestResources": "Ressources les plus volumineuses",
+    "allGood": "Toutes les métriques sont bonnes",
+    "lcp": "Largest Contentful Paint",
+    "fid": "Délai de première entrée",
+    "cls": "Changement de mise en page cumulé",
+    "ttfb": "Délai jusqu'au premier octet",
+    "fcp": "First Contentful Paint",
+    "memoryUsage": "Utilisation de la mémoire",
+    "heapUsage": "Utilisation du tas"
   }
 }

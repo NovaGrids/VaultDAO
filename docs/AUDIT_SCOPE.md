@@ -1,6 +1,6 @@
 # Audit Scope
 
-This document defines the attack surface of the VaultDAO smart contract (`contracts/vault/src/lib.rs`) for a third-party security audit. It is a companion to [`SECURITY.md`](./SECURITY.md), which covers vulnerability disclosure; this document covers what an auditor should examine, what the contract claims to guarantee, and where the team's own analysis already found gaps.
+This document defines the attack surface of the VaultDAO smart contract (`contracts/vault/src/lib.rs`) for a third-party security audit. It is a companion to [`SECURITY.md`](./reference/SECURITY.md), which covers vulnerability disclosure; this document covers what an auditor should examine, what the contract claims to guarantee, and where the team's own analysis already found gaps.
 
 **How this document was produced:** every finding below was traced against the actual current source on `main` (Soroban SDK `22.0.8`), not inferred from documentation or comments. Where a finding references a specific function or line, that reference was verified at the time of writing. Risk ratings follow a conservative bias as instructed: when exploitability is uncertain, the rating reflects the more severe interpretation rather than the more charitable one.
 

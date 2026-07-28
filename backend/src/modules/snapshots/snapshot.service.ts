@@ -25,6 +25,10 @@ import { Role } from "./types.js";
 import { SnapshotNormalizer } from "./normalizer.js";
 import { EventNormalizer } from "../events/normalizers/index.js";
 import type { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
+import {
+  SnapshotRebuildLockManager,
+  InMemoryLockBackend,
+} from "./rebuild-lock.manager.js";
 
 import { createLogger } from "../../shared/logging/logger.js";
 
@@ -78,12 +82,34 @@ function validateSnapshot(snapshot: ContractSnapshot): boolean {
  *
  * Aggregates signer and role state from normalized events.
  * Maintains current-state snapshots for fast queries.
+ * Prevents concurrent rebuilds with lock-based synchronization.
  */
 export class SnapshotService {
+  private readonly lockManager: SnapshotRebuildLockManager;
+
   constructor(
     private readonly adapter: SnapshotStorageAdapter,
     private readonly rpc?: SorobanRpcClient,
-  ) {}
+    options?: {
+      lockManager?: SnapshotRebuildLockManager;
+    },
+  ) {
+    // Use provided lock manager or create default
+    this.lockManager =
+      options?.lockManager ??
+      new SnapshotRebuildLockManager({
+        backend: new InMemoryLockBackend(),
+      });
+
+    // Register lock event handlers for logging
+    this.lockManager.onLockAcquired((contractId) => {
+      logger.info("snapshot rebuild lock acquired", { contractId });
+    });
+
+    this.lockManager.onLockReleased((contractId) => {
+      logger.info("snapshot rebuild lock released", { contractId });
+    });
+  }
 
   /**
    * Process a single normalized event and update snapshot.
@@ -257,12 +283,32 @@ export class SnapshotService {
 
   /**
    * Rebuild snapshot from scratch using event replay.
+   * Uses distributed lock to prevent concurrent rebuilds.
    */
   async rebuildSnapshot(
     events: NormalizedEvent[],
     options: SnapshotRebuildOptions,
   ): Promise<SnapshotUpdateResult> {
     const { contractId, clearExisting = true } = options;
+
+    // Attempt to acquire lock
+    const lockId = await this.lockManager.acquireLock(contractId);
+    if (!lockId) {
+      const message =
+        "rebuild already in progress for this contract — try again later";
+      logger.warn("[snapshot-service] rebuild lock failed", {
+        contractId,
+        message,
+      });
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        error: message,
+      };
+    }
 
     try {
       // Clear existing snapshot if requested
@@ -302,12 +348,16 @@ export class SnapshotService {
         lastProcessedLedger: 0,
         error: String(error),
       };
+    } finally {
+      // Always release lock
+      await this.lockManager.releaseLock(contractId, lockId);
     }
   }
 
   /**
    * Rebuild snapshot by fetching events directly from the Soroban RPC.
    * Processes events in batches of 200 to avoid memory spikes.
+   * Uses distributed lock to prevent concurrent rebuilds.
    * No-op if no RPC client was injected.
    */
   async rebuildFromRpc(
@@ -328,69 +378,93 @@ export class SnapshotService {
       };
     }
 
-    await this.adapter.clearSnapshot(contractId);
-
-    let totalSignersUpdated = 0;
-    let totalRolesUpdated = 0;
-    let totalEventsProcessed = 0;
-    let lastProcessedLedger = 0;
-    const errors: string[] = [];
-
-    let currentLedger = startLedger;
-
-    while (currentLedger <= endLedger) {
-      const batchEnd = Math.min(
-        currentLedger + REBUILD_BATCH_SIZE - 1,
-        endLedger,
-      );
-
-      try {
-        const rawEvents = await this.rpc.getContractEvents({
-          startLedger: currentLedger,
-          filters: [{ type: "contract", contractIds: [contractId] }],
-          pagination: { limit: REBUILD_BATCH_SIZE },
-        });
-
-        const inRange = rawEvents.filter((e) => e.ledger <= batchEnd);
-        const normalized = inRange.map((e) => EventNormalizer.normalize(e));
-
-        console.log(
-          `[snapshot-service] rebuildFromRpc batch ledgers ${currentLedger}-${batchEnd}: ${normalized.length} events`,
-        );
-
-        if (normalized.length > 0) {
-          const result = await this.processEvents(normalized);
-          totalSignersUpdated += result.signersUpdated;
-          totalRolesUpdated += result.rolesUpdated;
-          totalEventsProcessed += result.eventsProcessed;
-          lastProcessedLedger = Math.max(
-            lastProcessedLedger,
-            result.lastProcessedLedger,
-          );
-          if (!result.success && result.error) {
-            errors.push(result.error);
-          }
-        }
-      } catch (error) {
-        const msg = String(error);
-        console.error(
-          `[snapshot-service] rebuildFromRpc error at ledger ${currentLedger}:`,
-          error,
-        );
-        errors.push(msg);
-      }
-
-      currentLedger = batchEnd + 1;
+    // Attempt to acquire lock
+    const lockId = await this.lockManager.acquireLock(contractId);
+    if (!lockId) {
+      const message =
+        "rebuild already in progress for this contract — try again later";
+      logger.warn("[snapshot-service] rebuildFromRpc lock failed", {
+        contractId,
+        message,
+      });
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        error: message,
+      };
     }
 
-    return {
-      success: errors.length === 0,
-      signersUpdated: totalSignersUpdated,
-      rolesUpdated: totalRolesUpdated,
-      eventsProcessed: totalEventsProcessed,
-      lastProcessedLedger,
-      error: errors.length > 0 ? errors.join("; ") : undefined,
-    };
+    try {
+      await this.adapter.clearSnapshot(contractId);
+
+      let totalSignersUpdated = 0;
+      let totalRolesUpdated = 0;
+      let totalEventsProcessed = 0;
+      let lastProcessedLedger = 0;
+      const errors: string[] = [];
+
+      let currentLedger = startLedger;
+
+      while (currentLedger <= endLedger) {
+        const batchEnd = Math.min(
+          currentLedger + REBUILD_BATCH_SIZE - 1,
+          endLedger,
+        );
+
+        try {
+          const rawEvents = await this.rpc.getContractEvents({
+            startLedger: currentLedger,
+            filters: [{ type: "contract", contractIds: [contractId] }],
+            pagination: { limit: REBUILD_BATCH_SIZE },
+          });
+
+          const inRange = rawEvents.filter((e) => e.ledger <= batchEnd);
+          const normalized = inRange.map((e) => EventNormalizer.normalize(e));
+
+          console.log(
+            `[snapshot-service] rebuildFromRpc batch ledgers ${currentLedger}-${batchEnd}: ${normalized.length} events`,
+          );
+
+          if (normalized.length > 0) {
+            const result = await this.processEvents(normalized);
+            totalSignersUpdated += result.signersUpdated;
+            totalRolesUpdated += result.rolesUpdated;
+            totalEventsProcessed += result.eventsProcessed;
+            lastProcessedLedger = Math.max(
+              lastProcessedLedger,
+              result.lastProcessedLedger,
+            );
+            if (!result.success && result.error) {
+              errors.push(result.error);
+            }
+          }
+        } catch (error) {
+          const msg = String(error);
+          console.error(
+            `[snapshot-service] rebuildFromRpc error at ledger ${currentLedger}:`,
+            error,
+          );
+          errors.push(msg);
+        }
+
+        currentLedger = batchEnd + 1;
+      }
+
+      return {
+        success: errors.length === 0,
+        signersUpdated: totalSignersUpdated,
+        rolesUpdated: totalRolesUpdated,
+        eventsProcessed: totalEventsProcessed,
+        lastProcessedLedger,
+        error: errors.length > 0 ? errors.join("; ") : undefined,
+      };
+    } finally {
+      // Always release lock
+      await this.lockManager.releaseLock(contractId, lockId);
+    }
   }
 
   /**

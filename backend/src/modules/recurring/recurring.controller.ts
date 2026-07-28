@@ -481,3 +481,70 @@ export function triggerSyncController(
     }
   };
 }
+
+/**
+ * GET /api/v1/recurring/predict?windowLedgers=<n>[&currentLedger=<n>]
+ *
+ * Projects the next due dates for all active/due recurring payments within
+ * `windowLedgers` ledgers of `currentLedger` (defaults to the indexer's last
+ * processed ledger).
+ *
+ * Query parameters
+ * - windowLedgers  (required) – projection horizon, integer 1–1 048 576.
+ * - currentLedger  (optional) – ledger to project from; defaults to the
+ *                               indexer's lastLedgerProcessed.
+ *
+ * Response: { data: PredictedDue[], total: number, windowLedgers: number, currentLedger: number }
+ */
+export function predictRecurringDuesController(
+  service: RecurringIndexerService,
+): RequestHandler {
+  return async (request, response) => {
+    const rawWindow = validateOptionalInteger(request, response, "windowLedgers");
+    // null means validateOptionalInteger already sent a 400 (invalid type).
+    if (rawWindow === null) return;
+    // undefined means the param was absent — windowLedgers is required.
+    if (rawWindow === undefined) {
+      error(response, {
+        message: "windowLedgers is required and must be a positive integer (1–1048576)",
+        status: 400,
+        code: ErrorCode.BAD_REQUEST,
+      });
+      return;
+    }
+    if (rawWindow <= 0 || rawWindow > 1_048_576) {
+      error(response, {
+        message: "windowLedgers must be between 1 and 1048576",
+        status: 400,
+        code: ErrorCode.BAD_REQUEST,
+      });
+      return;
+    }
+
+    const rawCurrent = validateOptionalInteger(request, response, "currentLedger");
+    // null means validateOptionalInteger already sent a 400.
+    if (rawCurrent === null) return;
+    // undefined means the param was absent — that is fine (optional).
+    const currentLedger = rawCurrent !== undefined ? rawCurrent : undefined;
+
+    try {
+      const predictions = await service.predictRecurringDues(rawWindow, currentLedger);
+      const effectiveLedger =
+        currentLedger ?? service.getStatus().lastLedgerProcessed;
+
+      success(response, {
+        data: predictions,
+        total: predictions.length,
+        windowLedgers: rawWindow,
+        currentLedger: effectiveLedger,
+      });
+    } catch (err) {
+      error(response, {
+        message: "Failed to predict recurring dues",
+        status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
+        details: err instanceof Error ? err.message : undefined,
+      });
+    }
+  };
+}

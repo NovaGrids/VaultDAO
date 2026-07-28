@@ -368,6 +368,12 @@ pub enum VaultError {
     // =========================================================
     /// Gas-price oracle contract returned a zero or negative price
     GasPriceOracleInvalidPrice = 723,
+
+    // =========================================================
+    // Issue #1361: Atomic Batch Rollback
+    // =========================================================
+    /// A transfer failed during batch commit despite passing pre-commit simulation
+    BatchCommitFailed = 1120,
 }
 
 // Compatibility markers for CI source checks:

@@ -199,3 +199,59 @@ export const CONTRACT_RECURRING_EVENT_MAP: Record<string, RecurringEvent> = {
   recurring_payment_executed: RecurringEvent.EXECUTED,
   recurring_pay_jittered: RecurringEvent.JITTERED,
 };
+
+// ── Predictive scheduling types (#1454) ──────────────────────────────────────
+
+/**
+ * A single projected due date for a recurring payment, as returned by
+ * `predictRecurringDues()`.
+ *
+ * The `ledger` field carries the absolute ledger number at which the payment
+ * is expected to be due.  `occurrenceIndex` is 1-based (first projected
+ * occurrence = 1).
+ */
+export interface PredictedDue {
+  /** Payment identifier. */
+  readonly paymentId: string;
+  /** Proposer address. */
+  readonly proposer: string;
+  /** Recipient address. */
+  readonly recipient: string;
+  /** Token address / symbol. */
+  readonly token: string;
+  /** Payment amount. */
+  readonly amount: string;
+  /** Absolute ledger at which this occurrence is expected to be due. */
+  readonly ledger: number;
+  /** Ledgers from `currentLedger` until this occurrence is due. */
+  readonly ledgersFromNow: number;
+  /**
+   * 1-based index of this occurrence within the prediction window.
+   * The nearest upcoming due date for a payment has occurrenceIndex = 1.
+   */
+  readonly occurrenceIndex: number;
+  /**
+   * Prediction confidence.
+   *
+   * - `"high"`   : Payment has a clean execution history (no recent failures,
+   *               no missed payments).
+   * - `"medium"` : Payment has had at least one transient failure but has not
+   *               missed a complete cycle.
+   * - `"low"`    : Payment is currently overdue or has active retry backoff —
+   *               the actual ledger may drift.
+   */
+  readonly confidence: "high" | "medium" | "low";
+}
+
+/**
+ * Emitted event that records a prediction query.
+ * Consumers (e.g. audit log, websocket) can subscribe to these.
+ */
+export interface RecurringPredictionEvent {
+  readonly type: "RECURRING_PREDICTION_QUERIED";
+  readonly windowLedgers: number;
+  readonly currentLedger: number;
+  /** Number of predictions returned. */
+  readonly resultCount: number;
+  readonly queriedAt: string;
+}

@@ -448,11 +448,14 @@ pub fn emit_batch_executed(env: &Env, executor: &Address, executed_count: u32, f
     );
 }
 
-/// Emit when a batch execution partially failed and was rolled back
-pub fn emit_batch_rolled_back(env: &Env, executor: &Address, rolled_back_count: u32) {
+/// Emit when a batch execution failed and was rolled back / aborted.
+///
+/// `reason` is the `VaultError` discriminant (as u32) that caused the abort,
+/// so off-chain indexers can surface *why* the batch didn't commit.
+pub fn emit_batch_rolled_back(env: &Env, executor: &Address, rolled_back_count: u32, reason: u32) {
     env.events().publish(
         (Symbol::new(env, "batch_rolled_back"),),
-        (executor.clone(), rolled_back_count),
+        (executor.clone(), rolled_back_count, reason),
     );
 }
 
@@ -1768,3 +1771,12 @@ pub fn emit_recurring_payment_jittered(
         (nominal_next_ledger, jittered_next_ledger, jitter_offset),
     );
 }
+
+/// Emit when a cache tag is invalidated by admin (#1459)
+pub fn emit_cache_invalidated(env: &Env, tag: Symbol, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "cache_invalidated"), tag),
+        admin.clone(),
+    );
+}
+

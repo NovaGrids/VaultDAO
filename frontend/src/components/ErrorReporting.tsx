@@ -15,6 +15,8 @@ export interface ReportPayload {
   message: string;
   stack?: string;
   context?: string;
+  user?: string;
+  page?: string;
   retryCount?: number;
 }
 
@@ -65,21 +67,26 @@ async function sendToBackend(payload: ReportPayload): Promise<boolean> {
 
 /**
  * Report an error: record for analytics, queue if offline, send to backend if online.
+ * Returns the local analytics id (for display as a support reference).
  */
-export function reportError(error: VaultError | ReportPayload): void {
+export function reportError(error: VaultError | ReportPayload): string {
   const payload: ReportPayload = {
     code: 'code' in error ? error.code : 'UNKNOWN',
     message: 'message' in error ? error.message : String(error),
     stack: 'stack' in error ? (error as { stack?: string }).stack : undefined,
     context: 'context' in error ? error.context : undefined,
+    user: 'user' in error ? (error as ReportPayload).user : undefined,
+    page: 'page' in error ? (error as ReportPayload).page : undefined,
     retryCount: 'retryCount' in error ? (error as ReportPayload).retryCount : undefined,
   };
 
-  recordError({
+  const id = recordError({
     code: payload.code,
     message: payload.message,
     stack: payload.stack,
     context: payload.context,
+    user: payload.user,
+    page: payload.page,
     retryCount: payload.retryCount,
   });
 
@@ -96,6 +103,8 @@ export function reportError(error: VaultError | ReportPayload): void {
     q.push(payload);
     setQueue(q);
   }
+
+  return id;
 }
 
 /**
