@@ -2171,6 +2171,71 @@ pub struct FeeStructure {
     pub enabled: bool,
 }
 
+/// A single fee tier within a [`VaultTemplate`]. The volume threshold is
+/// expressed as a percentage of the per-proposal spending limit rather than
+/// an absolute amount, so the tier ladder scales with the target vault's size.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TemplateFeeTier {
+    /// Cumulative volume threshold, as a percentage of the per-proposal spending limit
+    pub volume_threshold_ratio_percent: u32,
+    /// Fee rate in basis points (e.g., 100 = 1%)
+    pub fee_bps: u32,
+}
+
+/// Sanitized, serializable snapshot of a vault's configuration shape, suitable
+/// for cloning into a freshly-deployed vault via `initialize_from_template`.
+///
+/// Signer/veto/hook/treasury addresses and absolute amounts are never
+/// included — only ratios (relative to the per-proposal spending limit or
+/// signer count), structural settings, and a feature-enablement bitmask.
+/// Private configuration (e.g. oracle keys, recovery guardians) is excluded.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VaultTemplate {
+    /// Template format version, for forward compatibility as the shape evolves
+    pub version: u32,
+    /// Required approvals as a percentage of signer count (1-100, ceil-rounded)
+    pub threshold_ratio_percent: u32,
+    /// Quorum requirement as a percentage of signer count (0 = disabled)
+    pub quorum_percentage: u32,
+    /// Delay in ledgers for timelocked proposals
+    pub timelock_delay_ledgers: u64,
+    /// Timelock trigger threshold, as a percentage of the per-proposal spending limit (0 = disabled)
+    pub timelock_threshold_pct: u32,
+    /// Veto window in ledgers after proposal creation (0 = veto disabled)
+    pub veto_window_ledgers: u64,
+    /// Daily spending limit, as a percentage of the per-proposal spending limit
+    pub daily_limit_ratio_percent: u32,
+    /// Weekly spending limit, as a percentage of the per-proposal spending limit
+    pub weekly_limit_ratio_percent: u32,
+    /// Dynamic fee tier ladder (volume thresholds are relative, not absolute)
+    pub fee_tiers: Vec<TemplateFeeTier>,
+    /// Base fee rate in basis points (used if no tier matches)
+    pub base_fee_bps: u32,
+    /// Bitmask of enabled optional features — see `VaultTemplate::FEATURE_*` constants
+    pub enabled_features: u32,
+    /// Grace period in ledgers after voting deadline before auto-expiry
+    pub grace_period_ledgers: u64,
+    /// Vote weight model
+    pub vote_weight: VoteWeight,
+    /// High impact score threshold (0-100)
+    pub high_impact_threshold: u32,
+    /// Minimum delay in ledgers before admin role can be rotated
+    pub admin_rotation_delay: u64,
+}
+
+impl VaultTemplate {
+    /// Template format version produced by the current contract build.
+    pub const CURRENT_VERSION: u32 = 1;
+
+    pub const FEATURE_WHITELIST_MODE: u32 = 1 << 0;
+    pub const FEATURE_RETRY: u32 = 1 << 1;
+    pub const FEATURE_STAKING: u32 = 1 << 2;
+    pub const FEATURE_FEE_COLLECTION: u32 = 1 << 3;
+}
+
+
 impl FeeStructure {
     pub fn default(env: &Env) -> Self {
         // Use contract's own address as default treasury

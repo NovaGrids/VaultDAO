@@ -45,9 +45,10 @@ use types::{
     RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
     ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig, StreamRateWindow,
     StreamStatus, StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier,
-    SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy, TokenSpendingConfig,
-    TransferDetails, VaultAction, VaultMetrics, VaultOracleConfig, VaultPriceData, VelocityConfig,
-    VestingSchedule, VoteChoice, VoteWeight, VotingStrategy, WhitelistEntry,
+    SwapProposal, SwapResult, TemplateFeeTier, TemplateOverrides, ThresholdStrategy,
+    TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics, VaultOracleConfig,
+    VaultPriceData, VaultTemplate, VelocityConfig, VestingSchedule, VoteChoice, VoteWeight,
+    VotingStrategy, WhitelistEntry,
 };
 use types_balance_snapshot::BalanceSnapshot;
 
@@ -443,6 +444,8 @@ mod test_cache_invalidation;
 mod test_amendment_diff;
 #[cfg(test)]
 mod test_supersession_chain;
+#[cfg(test)]
+mod test_vault_template;
 
 
 
@@ -652,6 +655,202 @@ impl VaultDAO {
 
         Ok(())
     }
+
+    // ========================================================================
+    // Vault template export / clone
+    // ========================================================================
+
+    /// Export a sanitized, serializable template of this vault's configuration
+    /// shape, suitable for cloning into new vault deployments.
+    ///
+    /// Signer/veto/hook/treasury addresses are stripped and absolute amounts
+    /// (spending/daily/weekly limits, fee-tier volume thresholds, timelock
+    /// threshold) are normalized into percentages of the per-proposal spending
+    /// limit, so the template can be reapplied at any scale via
+    /// [`Self::initialize_from_template`]. Private configuration is never
+    /// exported since `Config` does not hold any.
+    pub fn export_vault_template(env: Env) -> Result<VaultTemplate, VaultError> {
+        let config = storage::get_config(&env)?;
+        let fee_structure = storage::get_fee_structure(&env);
+
+        let ratio_percent = |amount: i128, base: i128| -> u32 {
+            if base <= 0 {
+                return 0;
+            }
+            (amount.max(0) * 100 / base).clamp(0, u32::MAX as i128) as u32
+        };
+
+        let signer_count = config.signers.len().max(1);
+        let threshold_ratio_percent =
+            (config.threshold.saturating_mul(100) + signer_count - 1) / signer_count;
+
+        let mut fee_tiers: Vec<TemplateFeeTier> = Vec::new(&env);
+        for tier in fee_structure.tiers.iter() {
+            fee_tiers.push_back(TemplateFeeTier {
+                volume_threshold_ratio_percent: ratio_percent(
+                    tier.volume_threshold,
+                    config.spending_limit,
+                ),
+                fee_bps: tier.fee_bps,
+            });
+        }
+
+        let mut enabled_features: u32 = 0;
+        if config.whitelist_mode {
+            enabled_features |= VaultTemplate::FEATURE_WHITELIST_MODE;
+        }
+        if config.retry_config.enabled {
+            enabled_features |= VaultTemplate::FEATURE_RETRY;
+        }
+        if config.staking_config.enabled {
+            enabled_features |= VaultTemplate::FEATURE_STAKING;
+        }
+        if fee_structure.enabled {
+            enabled_features |= VaultTemplate::FEATURE_FEE_COLLECTION;
+        }
+
+        Ok(VaultTemplate {
+            version: VaultTemplate::CURRENT_VERSION,
+            threshold_ratio_percent,
+            quorum_percentage: config.quorum_percentage,
+            timelock_delay_ledgers: config.timelock_delay,
+            timelock_threshold_pct: ratio_percent(
+                config.timelock_threshold,
+                config.spending_limit,
+            ),
+            veto_window_ledgers: config.veto_window_ledgers,
+            daily_limit_ratio_percent: ratio_percent(config.daily_limit, config.spending_limit),
+            weekly_limit_ratio_percent: ratio_percent(config.weekly_limit, config.spending_limit),
+            fee_tiers,
+            base_fee_bps: fee_structure.base_fee_bps,
+            enabled_features,
+            grace_period_ledgers: config.grace_period_ledgers,
+            vote_weight: config.vote_weight,
+            high_impact_threshold: config.high_impact_threshold,
+            admin_rotation_delay: config.admin_rotation_delay,
+        })
+    }
+
+    /// Initialize a freshly-deployed vault from a previously exported
+    /// [`VaultTemplate`], as an alternative to [`Self::initialize`].
+    ///
+    /// Ratios in the template are scaled by `base_spending_limit` to derive
+    /// concrete daily/weekly limits, timelock threshold, and fee-tier volume
+    /// thresholds for the new vault. Delegates to [`Self::initialize`], so it
+    /// inherits the same first-time-only guard — a vault (whether started via
+    /// `initialize` or `initialize_from_template`) can only be initialized once.
+    ///
+    /// # Arguments
+    /// * `admin` - Initial administrator address (must authorize)
+    /// * `template` - Previously exported vault configuration template
+    /// * `signers` - Authorized signers for the new vault
+    /// * `base_spending_limit` - Per-proposal spending limit for the new vault;
+    ///   daily/weekly limits, timelock threshold, and fee tiers are derived
+    ///   from this via the template's ratios
+    ///
+    /// # Errors
+    /// - [`VaultError::InvalidTemplate`] if the template fails validation (e.g.
+    ///   `threshold_ratio_percent` outside 1-100, or `quorum_percentage` / `high_impact_threshold` above 100)
+    /// - [`VaultError::AlreadyInitialized`] if the vault has already been initialized
+    /// - [`VaultError::NoSigners`] if `signers` is empty
+    /// - [`VaultError::InvalidAmount`] if `base_spending_limit` is not positive
+    pub fn initialize_from_template(
+        env: Env,
+        admin: Address,
+        template: VaultTemplate,
+        signers: Vec<Address>,
+        base_spending_limit: i128,
+    ) -> Result<(), VaultError> {
+        if template.threshold_ratio_percent == 0 || template.threshold_ratio_percent > 100 {
+            return Err(VaultError::InvalidTemplate);
+        }
+        if template.quorum_percentage > 100 || template.high_impact_threshold > 100 {
+            return Err(VaultError::InvalidTemplate);
+        }
+        if base_spending_limit <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let signer_count = signers.len();
+        let threshold = if signer_count > 0 {
+            let raw = (template.threshold_ratio_percent * signer_count + 99) / 100;
+            raw.clamp(1, signer_count)
+        } else {
+            1
+        };
+
+        let daily_limit =
+            (base_spending_limit * template.daily_limit_ratio_percent as i128 / 100)
+                .max(base_spending_limit);
+        let weekly_limit =
+            (base_spending_limit * template.weekly_limit_ratio_percent as i128 / 100)
+                .max(daily_limit);
+        let timelock_threshold =
+            base_spending_limit * template.timelock_threshold_pct as i128 / 100;
+
+        let init_config = InitConfig {
+            signers: signers.clone(),
+            threshold,
+            quorum: 0,
+            quorum_percentage: template.quorum_percentage,
+            spending_limit: base_spending_limit,
+            daily_limit,
+            weekly_limit,
+            timelock_threshold,
+            timelock_delay: template.timelock_delay_ledgers,
+            velocity_limit: VelocityConfig {
+                limit: 0,
+                window: 0,
+                per_token_limit: 0,
+            },
+            threshold_strategy: ThresholdStrategy::Fixed,
+            default_voting_deadline: 0,
+            veto_addresses: Vec::new(&env),
+            veto_window_ledgers: template.veto_window_ledgers,
+            retry_config: RetryConfig {
+                enabled: template.enabled_features & VaultTemplate::FEATURE_RETRY != 0,
+                max_retries: 0,
+                initial_backoff_ledgers: 0,
+                max_retry_delay: 0,
+            },
+            recovery_config: RecoveryConfig::default(&env),
+            staking_config: StakingConfig {
+                enabled: template.enabled_features & VaultTemplate::FEATURE_STAKING != 0,
+                ..StakingConfig::default()
+            },
+            proposal_id_prefix: 0,
+            whitelist_mode: template.enabled_features & VaultTemplate::FEATURE_WHITELIST_MODE != 0,
+            grace_period_ledgers: template.grace_period_ledgers,
+            vote_weight: template.vote_weight.clone(),
+            high_impact_threshold: template.high_impact_threshold,
+            admin_rotation_delay: template.admin_rotation_delay,
+            pre_execution_hooks: Vec::new(&env),
+            post_execution_hooks: Vec::new(&env),
+        };
+
+        Self::initialize(env.clone(), admin, init_config)?;
+
+        let mut fee_tiers: Vec<types::FeeTier> = Vec::new(&env);
+        for tier in template.fee_tiers.iter() {
+            fee_tiers.push_back(types::FeeTier {
+                volume_threshold: base_spending_limit * tier.volume_threshold_ratio_percent as i128
+                    / 100,
+                fee_bps: tier.fee_bps,
+            });
+        }
+        let fee_structure = types::FeeStructure {
+            tiers: fee_tiers,
+            base_fee_bps: template.base_fee_bps,
+            reputation_discount_threshold: 750,
+            reputation_discount_percentage: 50,
+            treasury: env.current_contract_address(),
+            enabled: template.enabled_features & VaultTemplate::FEATURE_FEE_COLLECTION != 0,
+        };
+        storage::set_fee_structure(&env, &fee_structure);
+
+        Ok(())
+    }
+
 
     // ========================================================================
     // Proposal Management

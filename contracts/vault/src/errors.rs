@@ -388,6 +388,12 @@ pub enum VaultError {
     SupersessionCycleDetected = 1122,
     /// Supersession chain exceeds the maximum traversal depth
     SupersessionChainTooLong = 1123,
+
+    // =========================================================
+    // Vault template export/clone
+    // =========================================================
+    /// VaultTemplate failed validation (e.g. invalid threshold ratio)
+    InvalidTemplate = 1124,
 }
 
 // Compatibility markers for CI source checks:
