@@ -374,6 +374,12 @@ pub enum VaultError {
     // =========================================================
     /// A transfer failed during batch commit despite passing pre-commit simulation
     BatchCommitFailed = 1120,
+
+    // =========================================================
+    // Amendment diff viewer
+    // =========================================================
+    /// compare_amendments was called with an index outside the amendment history bounds
+    AmendmentIndexOutOfBounds = 1121,
 }
 
 // Compatibility markers for CI source checks:

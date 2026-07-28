@@ -212,6 +212,34 @@ pub struct ProposalAmendment {
     pub new_amount: i128,
     pub old_memo: Symbol,
     pub new_memo: Symbol,
+    /// Free-form reason/comment explaining why the amendment was made (empty symbol if none given)
+    pub reason: Symbol,
+}
+
+/// Diff between two points in a proposal's amendment history, highlighting
+/// which fields changed and, for the amount, by how much.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AmendmentDiff {
+    pub proposal_id: u64,
+    /// Index into amendment history used as the "before" side of the diff
+    pub from_index: u32,
+    /// Index into amendment history used as the "after" side of the diff
+    pub to_index: u32,
+    pub recipient_changed: bool,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub amount_changed: bool,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    /// new_amount - old_amount (signed delta)
+    pub amount_delta: i128,
+    pub memo_changed: bool,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
+    pub reason_changed: bool,
+    pub old_reason: Symbol,
+    pub new_reason: Symbol,
 }
 
 /// Threshold strategy for dynamic approval requirements

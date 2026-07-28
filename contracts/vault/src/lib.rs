@@ -30,8 +30,8 @@ use soroban_sdk::{
     contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Vec,
 };
 use types::{
-    AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction, BridgeConfig,
-    CancellationRecord, Capability, CapabilityToken, Comment, Condition, ConditionLogic, Config,
+    AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
+    BridgeConfig, CancellationRecord, Capability, CapabilityToken, Comment, Condition, ConditionLogic, Config,
     ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig, CrossVaultProposal,
     CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory, DexConfig, Dispute,
     DisputeResolution, DisputeStatus, Escrow, EscrowStatus, ExecutionFeeEstimate, FundingMilestone,
@@ -439,6 +439,10 @@ mod test_escrow_voting;
 mod test_proposal_management;
 #[cfg(test)]
 mod test_cache_invalidation;
+#[cfg(test)]
+mod test_amendment_diff;
+
+
 
 
 #[cfg(test)]
@@ -3127,6 +3131,7 @@ impl VaultDAO {
     /// * `new_recipient` - New recipient address for the transfer
     /// * `new_amount` - New transfer amount (must be positive and within limits)
     /// * `new_memo` - New descriptive symbol for the transaction
+    /// * `reason` - Free-form reason/comment for the amendment, stored in history for auditing
     ///
     /// # Returns
     /// `Ok(())` on success
@@ -3151,6 +3156,7 @@ impl VaultDAO {
         new_recipient: Address,
         new_amount: i128,
         new_memo: Symbol,
+        reason: Symbol,
     ) -> Result<(), VaultError> {
         proposer.require_auth();
 
@@ -3262,6 +3268,7 @@ impl VaultDAO {
             new_amount,
             old_memo: proposal.memo.clone(),
             new_memo: new_memo.clone(),
+            reason: reason.clone(),
         };
 
         proposal.recipient = new_recipient;
@@ -3306,6 +3313,54 @@ impl VaultDAO {
     /// - `old_memo` / `new_memo` - Memo change
     pub fn get_proposal_amendments(env: Env, proposal_id: u64) -> Vec<ProposalAmendment> {
         storage::get_amendment_history(&env, proposal_id)
+    }
+
+    /// Compare two amendments in a proposal's history and produce a diff.
+    ///
+    /// Indexes are positions into the vector returned by [`Self::get_proposal_amendments`]
+    /// (0-based, chronological order). The diff is computed between the resulting
+    /// (post-amendment) recipient/amount/memo/reason at `v1_index` and at `v2_index`,
+    /// so callers can compare any two points in the history, not just adjacent ones.
+    ///
+    /// # Arguments
+    /// * `proposal_id` - ID of the proposal whose amendment history to compare
+    /// * `v1_index` - Index of the "before" amendment
+    /// * `v2_index` - Index of the "after" amendment
+    ///
+    /// # Errors
+    /// - [`VaultError::AmendmentIndexOutOfBounds`] if either index is out of range
+    pub fn compare_amendments(
+        env: Env,
+        proposal_id: u64,
+        v1_index: u32,
+        v2_index: u32,
+    ) -> Result<AmendmentDiff, VaultError> {
+        let history = storage::get_amendment_history(&env, proposal_id);
+        if v1_index >= history.len() || v2_index >= history.len() {
+            return Err(VaultError::AmendmentIndexOutOfBounds);
+        }
+
+        let v1 = history.get(v1_index).unwrap();
+        let v2 = history.get(v2_index).unwrap();
+
+        Ok(AmendmentDiff {
+            proposal_id,
+            from_index: v1_index,
+            to_index: v2_index,
+            recipient_changed: v1.new_recipient != v2.new_recipient,
+            old_recipient: v1.new_recipient.clone(),
+            new_recipient: v2.new_recipient.clone(),
+            amount_changed: v1.new_amount != v2.new_amount,
+            old_amount: v1.new_amount,
+            new_amount: v2.new_amount,
+            amount_delta: v2.new_amount - v1.new_amount,
+            memo_changed: v1.new_memo != v2.new_memo,
+            old_memo: v1.new_memo.clone(),
+            new_memo: v2.new_memo.clone(),
+            reason_changed: v1.reason != v2.reason,
+            old_reason: v1.reason.clone(),
+            new_reason: v2.reason.clone(),
+        })
     }
 
     // ========================================================================
