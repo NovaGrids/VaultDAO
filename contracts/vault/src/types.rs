@@ -186,6 +186,8 @@ pub struct Config {
     pub arbitration_timeout_ledgers: u64,
     /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
     pub approval_timeout_ledgers: u64,
+    /// Execution window in ledgers after approval before the proposal auto-expires (0 = no window).
+    pub exec_window_ledgers: u64,
 }
 
 /// Audit record for a cancelled proposal
@@ -616,6 +618,9 @@ pub struct Proposal {
     /// True once spend_day/spend_week were recorded at reservation time (Issue #1345).
     /// False on legacy proposals that predate these fields (Soroban default).
     pub has_spend_buckets: bool,
+    /// Ledger when the proposal was approved (0 = not yet approved).
+    /// Used to enforce the execution window (Issue #1349).
+    pub approved_at: u64,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
