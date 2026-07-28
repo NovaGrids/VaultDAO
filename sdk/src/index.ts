@@ -29,6 +29,16 @@ export type {
 // Enums & errors
 export { Role, ProposalStatus, VaultErrorCode, VaultError } from "./types";
 
+// Error code registry
+export type { ErrorRegistryEntry } from "./errors";
+export {
+  ERROR_REGISTRY,
+  ERROR_REGISTRY as DEFAULT_ERROR_REGISTRY,
+  getErrorEntry,
+  getErrorDescription,
+  getAllErrorEntries,
+} from "./errors";
+
 // Utility functions
 export type { WalletConnection } from "./utils";
 export {

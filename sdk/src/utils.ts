@@ -16,6 +16,7 @@ import {
 } from "stellar-sdk";
 import type { SdkOptions, Network, SdkLogger } from "./types";
 import { VaultError, VaultErrorCode, noopLogger } from "./types";
+import { getErrorDescription } from "./errors";
 
 // ---------------------------------------------------------------------------
 // Network helpers
@@ -299,7 +300,8 @@ export function parseError(err: unknown): VaultError | Error {
   if (match) {
     const code = parseInt(match[1], 10) as VaultErrorCode;
     if (code in VaultErrorCode) {
-      return new VaultError(code);
+      const description = getErrorDescription(code);
+      return new VaultError(code, description);
     }
   }
 
