@@ -2141,8 +2141,16 @@ impl VaultDAO {
         Ok(())
     }
 
-    /// Execute a batch transaction atomically: either all proposals succeed or
-    /// any partial progress is attempted to be reversed and the batch is marked RolledBack.
+    /// Execute a batch transaction atomically: every transfer is validated and
+    /// simulated against current vault balances *before* any funds move, so a
+    /// batch either commits in full or aborts with nothing executed.
+    ///
+    /// Only if every simulated transfer would succeed does phase 3 actually
+    /// move funds. A commit-phase failure at that point is an unexpected
+    /// deviation from the simulation (e.g. a recipient deauthorized mid-flight)
+    /// and falls back to the previous best-effort reverse-transfer rollback,
+    /// which is not guaranteed to succeed since it requires recipient
+    /// cooperation - that fallback path is the exception, not the norm.
     pub fn execute_batch(env: Env, executor: Address, batch_id: u64) -> Result<(), VaultError> {
         executor.require_auth();
 
@@ -2156,46 +2164,83 @@ impl VaultDAO {
         batch.status = BatchStatus::Executing;
         storage::set_batch(&env, &batch);
 
-        let mut executed_transfers: Vec<(u64, Address, Address, i128)> = Vec::new(&env); // (proposal_id, token, recipient, amount)
-        let mut executed_count: u32 = 0;
-        let mut failed_count: u32 = 0;
-        let mut first_failure_reason: Option<VaultError> = None;
+        let mut planned_transfers: Vec<(u64, Address, Address, i128)> = Vec::new(&env); // (proposal_id, token, recipient, amount)
+        let mut abort_reason: Option<VaultError> = None;
 
-        // Phase 1: Validate all proposals before executing any transfers
+        // Phase 1: Validate every proposal and collect its planned transfer.
+        // Nothing is executed here - this only decides whether the batch is
+        // eligible to proceed to simulation.
         for i in 0..batch.proposal_ids.len() {
             let pid = batch.proposal_ids.get(i).unwrap();
             let proposal = match storage::get_proposal(&env, pid) {
                 Ok(p) => p,
                 Err(e) => {
-                    first_failure_reason = Some(e);
-                    failed_count += 1;
+                    abort_reason = Some(e);
                     break;
                 }
             };
 
             if proposal.status != ProposalStatus::Approved {
-                first_failure_reason = Some(VaultError::ProposalNotApproved);
-                failed_count += 1;
+                abort_reason = Some(VaultError::ProposalNotApproved);
                 break;
             }
 
             let current_ledger = env.ledger().sequence() as u64;
             if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
-                first_failure_reason = Some(VaultError::TimelockNotExpired);
-                failed_count += 1;
+                abort_reason = Some(VaultError::TimelockNotExpired);
                 break;
             }
 
             // Ensure dependencies executed
             if let Err(e) = Self::ensure_dependencies_executable(&env, &proposal) {
-                first_failure_reason = Some(e);
-                failed_count += 1;
+                abort_reason = Some(e);
                 break;
+            }
+
+            planned_transfers.push_back((
+                pid,
+                proposal.token.clone(),
+                proposal.recipient.clone(),
+                proposal.amount,
+            ));
+        }
+
+        // Phase 2: Simulate - verify the vault holds enough of each token to
+        // cover every planned transfer, aggregated per token since several
+        // proposals in the same batch may draw on the same token balance.
+        // This never moves funds; it only reads current balances.
+        if abort_reason.is_none() {
+            let mut required_per_token: Vec<(Address, i128)> = Vec::new(&env);
+
+            for i in 0..planned_transfers.len() {
+                let (_, token_addr, _, amount) = planned_transfers.get(i).unwrap();
+                let mut found = false;
+                for j in 0..required_per_token.len() {
+                    let (existing_token, existing_amount) = required_per_token.get(j).unwrap();
+                    if existing_token == token_addr {
+                        required_per_token.set(j, (existing_token, existing_amount + amount));
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    required_per_token.push_back((token_addr, amount));
+                }
+            }
+
+            for i in 0..required_per_token.len() {
+                let (token_addr, required_amount) = required_per_token.get(i).unwrap();
+                if token::get_vault_balance(&env, &token_addr) < required_amount {
+                    abort_reason = Some(VaultError::InsufficientBalance);
+                    break;
+                }
             }
         }
 
-        // If validation failed, mark batch as failed without executing anything
-        if failed_count > 0 {
+        // If validation or simulation failed, abort the entire batch without
+        // executing a single transfer - there is nothing to roll back.
+        if let Some(reason) = abort_reason {
+            let failed_count = batch.proposal_ids.len();
             batch.status = BatchStatus::RolledBack;
             batch.executed_count = 0;
             batch.failed_count = failed_count;
@@ -2208,41 +2253,37 @@ impl VaultDAO {
                     failed_count,
                 },
             );
-            events::emit_batch_rolled_back(&env, &executor, 0);
-            return first_failure_reason.map_or(Ok(()), Err);
+            events::emit_batch_rolled_back(&env, &executor, 0, reason as u32);
+            return Err(reason);
         }
 
-        // Phase 2: Execute all transfers atomically
-        for i in 0..batch.proposal_ids.len() {
-            let pid = batch.proposal_ids.get(i).unwrap();
-            let mut proposal = storage::get_proposal(&env, pid).unwrap(); // Already validated above
+        // Phase 3: Every proposal validated and every transfer simulated
+        // successfully - commit them all.
+        let mut executed_transfers: Vec<(u64, Address, Address, i128)> = Vec::new(&env);
+        let mut executed_count: u32 = 0;
+        let mut commit_failure: Option<VaultError> = None;
 
-            // Attempt transfer using token::try_transfer to avoid panicking
-            if token::try_transfer(&env, &proposal.token, &proposal.recipient, proposal.amount)
-                .is_ok()
-            {
-                // Mark executed and store transfer details for potential rollback
+        for i in 0..planned_transfers.len() {
+            let (pid, token_addr, recipient, amount) = planned_transfers.get(i).unwrap();
+
+            if token::try_transfer(&env, &token_addr, &recipient, amount).is_ok() {
+                let mut proposal = storage::get_proposal(&env, pid).unwrap(); // validated above
                 proposal.status = ProposalStatus::Executed;
                 proposal.execution_ledger = env.ledger().sequence() as u64;
                 storage::set_proposal(&env, &proposal);
-                executed_transfers.push_back((
-                    pid,
-                    proposal.token.clone(),
-                    proposal.recipient.clone(),
-                    proposal.amount,
-                ));
+                executed_transfers.push_back((pid, token_addr.clone(), recipient.clone(), amount));
                 executed_count += 1;
                 storage::create_audit_entry(&env, AuditAction::ExecuteProposal, &executor, pid);
             } else {
-                // Transfer failed - initiate rollback
-                failed_count += 1;
+                // Unexpected: simulation predicted this transfer would
+                // succeed. Stop committing further transfers and unwind
+                // whatever this run already moved.
+                commit_failure = Some(VaultError::BatchCommitFailed);
                 break;
             }
         }
 
-        // Phase 3: Handle success or rollback
-        if failed_count == 0 {
-            // All transfers succeeded
+        if commit_failure.is_none() {
             batch.status = BatchStatus::Completed;
             batch.executed_count = executed_count;
             batch.failed_count = 0;
@@ -2252,31 +2293,24 @@ impl VaultDAO {
                 batch.id,
                 &BatchExecutionResult {
                     executed_count,
-                    failed_count,
+                    failed_count: 0,
                 },
             );
-            events::emit_batch_executed(&env, &executor, executed_count, failed_count);
+            events::emit_batch_executed(&env, &executor, executed_count, 0);
             return Ok(());
         }
 
-        // Partial failure: attempt rollback of completed transfers
+        // Best-effort rollback of the transfers this run already committed.
+        // Not guaranteed to succeed - it requires the recipient to authorize
+        // the reverse transfer - so the rollback state is persisted for
+        // off-chain reconciliation regardless of outcome.
         let mut rollback_entries: Vec<(Address, i128)> = Vec::new(&env);
-        let mut _rollback_successful = false;
 
         for j in 0..executed_transfers.len() {
             let (pid, token_addr, recipient, amount) = executed_transfers.get(j).unwrap();
-
-            // Record the recipient and amount for rollback state
             rollback_entries.push_back((recipient.clone(), amount));
 
-            // Attempt to transfer from the recipient back to vault
-            // This requires the recipient to have authorized the transfer or
-            // the token contract to allow this operation
-            if token::transfer_from_vault(&env, &token_addr, &recipient, amount).is_err() {
-                _rollback_successful = false;
-                // Continue attempting other rollbacks even if one fails
-            } else {
-                // Reset proposal status to Approved to reflect successful rollback
+            if token::transfer_from_vault(&env, &token_addr, &recipient, amount).is_ok() {
                 if let Ok(mut proposal) = storage::get_proposal(&env, pid) {
                     proposal.status = ProposalStatus::Approved;
                     storage::set_proposal(&env, &proposal);
@@ -2284,7 +2318,7 @@ impl VaultDAO {
             }
         }
 
-        // Update batch status and store rollback information
+        let failed_count = (planned_transfers.len() - executed_count) as u32;
         batch.status = BatchStatus::RolledBack;
         batch.executed_count = executed_count;
         batch.failed_count = failed_count;
@@ -2299,10 +2333,16 @@ impl VaultDAO {
             },
         );
 
-        events::emit_batch_rolled_back(&env, &executor, executed_count);
+        events::emit_batch_rolled_back(
+            &env,
+            &executor,
+            executed_count,
+            commit_failure.unwrap() as u32,
+        );
 
-        // Return success even if rollback partially failed - the rollback state is persisted
-        // for off-chain reconciliation
+        // Return success even though the commit-phase rollback may have
+        // partially failed - the rollback state is persisted above for
+        // off-chain reconciliation.
         Ok(())
     }
 
