@@ -6,6 +6,7 @@ import type { Server } from "node:http";
 import { createLogger } from "../../shared/logging/logger.js";
 import type { ContractEvent } from "../events/events.types.js";
 import type { MetricsRegistry } from "../health/metrics.registry.js";
+import { validateEventFilter } from "../events/filters/event-filter.validator.js";
 
 const logger = createLogger("websocket-server");
 
@@ -144,6 +145,12 @@ export class EventWebSocketServer extends EventEmitter {
 
   constructor(
     server: Server,
+    maxSubscriptionsPerClient = 100,
+    metrics?: MetricsRegistry,
+  ) {
+    super();
+    this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
+    this.metrics = metrics ?? null;
     metricsOrMaxSubs?: MetricsRegistry | number,
     maxSubscriptionsPerClient = 100,
   ) {
@@ -606,21 +613,44 @@ export class EventWebSocketServer extends EventEmitter {
   }
 
   private handleSubscribe(ws: WebSocket, message: any, connectionId: string) {
-    const topics: string[] | undefined = Array.isArray(message.topics)
+    const rawTopics: unknown = Array.isArray(message?.topics)
       ? message.topics
-      : Array.isArray(message.payload?.eventTypes)
+      : Array.isArray(message?.payload?.eventTypes)
         ? message.payload.eventTypes
         : undefined;
 
     const sub = this.clients.get(ws);
     if (!sub) return;
 
-    if (!topics || topics.length === 0) {
+    if (!Array.isArray(rawTopics) || rawTopics.length === 0) {
       ws.send(
         JSON.stringify({ type: "error", message: "Invalid topic format" }),
       );
       return;
     }
+
+    // Validate the subscribe filter before it touches any normalization or
+    // matching logic — a malformed filter (wrong types, oversized arrays,
+    // SQL-like strings) is rejected here with a clear error instead of
+    // risking a crash further downstream.
+    const validation = validateEventFilter({ eventTypes: rawTopics });
+    if (!validation.ok) {
+      logger.warn("rejected malformed subscribe filter", {
+        connectionId,
+        errors: validation.errors,
+      });
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "INVALID_FILTER",
+          message: "Invalid subscribe filter",
+          errors: validation.errors,
+        }),
+      );
+      return;
+    }
+
+    const topics = validation.filter.eventTypes;
 
     for (const t of topics) {
       // normalize: accept legacy short names like 'proposal_executed' and full 'notification:events:FOO'

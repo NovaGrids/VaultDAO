@@ -8,6 +8,12 @@
 import { EventNormalizer } from "../normalizers/index.js";
 import { FileCursorAdapter } from "../cursor/file-cursor.adapter.js";
 import { SorobanRpcClient } from "../../../shared/rpc/soroban-rpc.client.js";
+import {
+  sortAndSequenceEvents,
+  dedupeEvents,
+  validateReplayIntegrity,
+  type SequencedEvent,
+} from "./event-sequence.js";
 import type {
   ReplayOptions,
   EventProcessingResult,
@@ -211,13 +217,85 @@ export class EventReplayService {
     // Filter to the requested ledger window (RPC returns from startLedger onwards)
     const inRange = events.filter((e) => e.ledger <= endLedger);
 
+    // Transaction reordering upstream can make the RPC return events out of
+    // order within/across ledgers — restore deterministic order before the
+    // batch is handed to consumers.
+    const ordered = sortAndSequenceEvents(inRange);
+
     return {
-      events: inRange,
+      events: ordered,
       startLedger,
       endLedger,
       latestLedger: endLedger,
       hasMore: events.length > inRange.length,
     };
+  }
+
+  /**
+   * Fetches, deterministically orders, and deduplicates all contract events
+   * in `[fromLedger, toLedger]` (inclusive), without dispatching them to any
+   * registered consumers or touching cursor state.
+   *
+   * Events are sorted by `(ledger, tx_index, event_index)` — never trusting
+   * RPC response order — and each is annotated with a per-ledger
+   * `eventSequenceNumber`. Duplicate ids (e.g. from overlapping fetch
+   * windows) are removed, keeping the earliest occurrence in sequence order.
+   */
+  public async replayEvents(
+    fromLedger: number,
+    toLedger: number,
+  ): Promise<SequencedEvent[]> {
+    if (
+      !Number.isInteger(fromLedger) ||
+      !Number.isInteger(toLedger) ||
+      fromLedger < 0 ||
+      toLedger < fromLedger
+    ) {
+      throw new RangeError(
+        `Invalid replay range: fromLedger=${fromLedger}, toLedger=${toLedger}`,
+      );
+    }
+
+    const contractId = this.options.contractId ?? this.env.contractId;
+    const collected: ContractEvent[] = [];
+    let currentLedger = fromLedger;
+
+    while (currentLedger <= toLedger) {
+      const batchEndLedger = Math.min(
+        currentLedger + this.options.batchSize - 1,
+        toLedger,
+      );
+
+      const events = await this.rpc.getContractEvents({
+        startLedger: currentLedger,
+        filters: [{ type: "contract", contractIds: [contractId] }],
+        pagination: { limit: this.options.batchSize },
+      });
+
+      for (const event of events) {
+        if (event.ledger >= currentLedger && event.ledger <= batchEndLedger) {
+          collected.push(event);
+        }
+      }
+
+      currentLedger = batchEndLedger + 1;
+    }
+
+    const sorted = sortAndSequenceEvents(collected);
+
+    const integrity = validateReplayIntegrity(sorted);
+    if (integrity.duplicateIds.length > 0) {
+      this.log(
+        `[replay] replayEvents: ${integrity.duplicateIds.length} duplicate event id(s) detected in range ${fromLedger}-${toLedger}; de-duplicating.`,
+      );
+    }
+    if (integrity.possibleGaps.length > 0) {
+      this.log(
+        `[replay] replayEvents: ${integrity.possibleGaps.length} possible event_index gap(s) detected in range ${fromLedger}-${toLedger}.`,
+      );
+    }
+
+    return dedupeEvents(sorted);
   }
 
   /**
