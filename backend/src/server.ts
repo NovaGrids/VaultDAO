@@ -31,6 +31,8 @@ import { registerDuePaymentsJob } from "./modules/jobs/recurring/due-payments-jo
 import { createProposalArchivalJob } from "./modules/jobs/recurring/proposal-archival.job.js";
 import type { NotificationQueue } from "./modules/notifications/notification.types.js";
 import { PriorityNotificationQueue } from "./modules/notifications/priority-queue.js";
+import { NotificationQueueStore } from "./modules/notifications/notification-queue.store.js";
+import { NotificationQueueCleanupJob } from "./modules/jobs/recurring/notification-queue-cleanup.job.js";
 import { WebhookDeliveryService } from "./modules/notifications/webhook.service.js";
 import { CacheManager } from "./shared/cache/cache-manager.js";
 import { createLogger } from "./shared/logging/logger.js";
@@ -65,6 +67,7 @@ export interface BackendRuntime {
   readonly wsServer?: EventWebSocketServer;
   readonly metricsRegistry: MetricsRegistry;
   readonly notificationQueue?: PriorityNotificationQueue;
+  readonly notificationQueueStore?: NotificationQueueStore;
   readonly cacheManager?: CacheManager;
   readonly dbCursorAdapter?: DatabaseCursorAdapter;
   readonly snapshotDiffService?: SnapshotDiffService;
@@ -166,8 +169,11 @@ export async function startServer(
 
   const jobManager = new JobManager(metricsRegistry);
 
-  // Priority notification queue (replaces basic InMemoryNotificationQueue)
-  const priorityNotificationQueue = new PriorityNotificationQueue();
+  // Priority notification queue (replaces basic InMemoryNotificationQueue),
+  // backed by SQLite so pending/failed notifications survive a restart.
+  const notificationQueueStore = new NotificationQueueStore(env.notificationsDbPath);
+  const priorityNotificationQueue = new PriorityNotificationQueue(notificationQueueStore);
+  priorityNotificationQueue.restore();
   const jobNotificationPublisher =
     notificationQueue ?? priorityNotificationQueue;
   const scheduledJobRunner = new ScheduledJobRunner({
@@ -218,6 +224,7 @@ export async function startServer(
     scheduledJobRunner,
     metricsRegistry,
     notificationQueue: priorityNotificationQueue,
+    notificationQueueStore,
     webhookDeliveryService,
     cacheManager,
     lifecycleManager: lifecycleManager ?? null,
@@ -291,6 +298,17 @@ export async function startServer(
     recurringIndexerService,
     jobNotificationPublisher,
   );
+
+  if (env.notificationsCleanupJobEnabled) {
+    scheduledJobRunner.register(
+      new NotificationQueueCleanupJob(
+        env.notificationsCleanupJobIntervalMs,
+        true,
+        notificationQueueStore,
+        env.notificationsRetentionDays,
+      ),
+    );
+  }
 
   // Multi-contract indexing: determine contract IDs to index
   const contractIds =

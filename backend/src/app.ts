@@ -186,6 +186,13 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   );
   const adminAuthMiddleware = requireApiKey(() => authKeyState.primary);
 
+  // Monitoring-friendly queue stats endpoint — intentionally registered before
+  // the /api/v1/notifications auth mount below so it requires no auth.
+  app.get("/api/v1/notifications/queue/stats", (_req, res) => {
+    const stats = runtime.notificationQueue?.getStats() ?? { total: 0 };
+    success(res, stats);
+  });
+
   // API key authentication for external integration endpoints (webhooks, notifications)
   app.use("/api/v1/webhooks", authMiddleware);
   app.use("/api/v1/notifications", authMiddleware);
