@@ -17,6 +17,8 @@ import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
 import { createAuditRouter } from "./modules/audit/audit.routes.js";
+import { createErrorsRouter } from "./modules/errors/errors.routes.js";
+import { ErrorsService } from "./modules/errors/errors.service.js";
 import { createNotificationsRouter } from "./modules/notifications/notifications.routes.js";
 import { createWebhookRouter } from "./modules/notifications/webhook.routes.js";
 import { createCacheRouter } from "./shared/cache/cache.routes.js";
@@ -441,6 +443,12 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     hmacMiddleware,
     createAuditRouter(env.sorobanRpcUrl, adminAuthMiddleware),
   );
+
+  // Client-side error collection (ErrorBoundary reporting). POST is
+  // intentionally unauthenticated — the browser cannot hold an API key or
+  // HMAC secret — but is covered by the global/write rate limiters above.
+  // GET (listing) is admin-gated since it may surface sensitive stack traces.
+  v1Router.use("/errors", createErrorsRouter(new ErrorsService(), adminAuthMiddleware));
 
   if (runtime.cacheManager) {
     v1Router.use(

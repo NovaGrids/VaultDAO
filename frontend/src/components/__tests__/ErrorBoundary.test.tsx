@@ -73,9 +73,7 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Go Home')).toBeInTheDocument();
   });
 
-  it('logs error to analytics when VITE_ERROR_REPORTING_ENABLED is set', () => {
-    vi.stubEnv('VITE_ERROR_REPORTING_ENABLED', 'true');
-
+  it('always logs error to analytics and displays the generated error ID', () => {
     render(
       <ErrorBoundary>
         <ThrowingComponent message="Analytics test error" />
@@ -88,20 +86,24 @@ describe('ErrorBoundary', () => {
         message: 'Analytics test error',
       })
     );
-
-    vi.unstubAllEnvs();
+    expect(screen.getByText('MOCK_ID_1')).toBeInTheDocument();
   });
 
-  it('does NOT log error to analytics when VITE_ERROR_REPORTING_ENABLED is not set', () => {
-    vi.unstubAllEnvs();
+  it('attaches the current wallet address and page path as error metadata', () => {
+    localStorage.setItem('vaultdao_last_account', 'GTESTACCOUNT123');
 
     render(
       <ErrorBoundary>
-        <ThrowingComponent message="Should not report" />
+        <ThrowingComponent message="metadata test error" />
       </ErrorBoundary>
     );
 
-    expect(recordError).not.toHaveBeenCalled();
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: 'GTESTACCOUNT123',
+        page: window.location.pathname,
+      })
+    );
   });
 
   // ── Context-specific recovery actions ──────────────────────────────────────
