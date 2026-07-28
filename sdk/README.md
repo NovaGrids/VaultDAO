@@ -12,17 +12,18 @@ The official TypeScript SDK for building on VaultDAO — a decentralized treasur
 4. [Core Concepts](#core-concepts)
 5. [Creating Your First Proposal](#creating-your-first-proposal)
 6. [Voting and Execution](#voting-and-execution)
-7. [Setting Up Recurring Payments](#setting-up-recurring-payments)
-8. [Reading Audit Logs](#reading-audit-logs)
-9. [Event Subscription (WebSocket)](#event-subscription-websocket)
-10. [Streaming Payments](#streaming-payments)
-11. [Escrow Operations](#escrow-operations)
-12. [Proposal Templates](#proposal-templates)
-13. [Recovery Operations](#recovery-operations)
-14. [Error Handling](#error-handling)
-15. [TypeScript Types Reference](#typescript-types-reference)
-16. [Common Mistakes](#common-mistakes)
-17. [Examples](#examples)
+7. [Batch Transaction Orchestration](#batch-transaction-orchestration)
+8. [Setting Up Recurring Payments](#setting-up-recurring-payments)
+9. [Reading Audit Logs](#reading-audit-logs)
+10. [Event Subscription (WebSocket)](#event-subscription-websocket)
+11. [Streaming Payments](#streaming-payments)
+12. [Escrow Operations](#escrow-operations)
+13. [Proposal Templates](#proposal-templates)
+14. [Recovery Operations](#recovery-operations)
+15. [Error Handling](#error-handling)
+16. [TypeScript Types Reference](#typescript-types-reference)
+17. [Common Mistakes](#common-mistakes)
+18. [Examples](#examples)
 
 ---
 
@@ -349,6 +350,164 @@ console.log(`Executed! Funds transferred. Tx: ${txHash}`);
 ### Complete Voting Workflow
 
 See [sdk/examples/vote-proposal.ts](./examples/vote-proposal.ts) for a complete example that checks proposal status, approves, and executes in sequence.
+
+---
+
+## Batch Transaction Orchestration
+
+For applications that need to create, approve, and execute multiple proposals in a controlled workflow, the SDK provides `BatchProposalOrchestrator` — a fluent builder that simplifies batch operations with state tracking and retry logic.
+
+### Use Cases
+
+- **Payroll automation**: Create multiple salary proposals in one batch
+- **Bulk payments**: Process vendor payments, refunds, or rewards
+- **Multi-signer workflows**: Track approvals from different signers
+- **Resilient operations**: Automatic retry with exponential backoff for transient failures
+
+### Basic Batch Workflow
+
+```typescript
+import { createBatchOrchestrator } from "@vaultdao/sdk";
+
+const opts = buildOptions("testnet", "CCONTRACTID...");
+
+// Create orchestrator
+const orchestrator = createBatchOrchestrator(opts);
+
+// Builder pattern: fluently add transfers
+orchestrator
+  .addTransfer({
+    recipientPublicKey: "GSALARY1...",
+    tokenAddress: "CDLZFC3...", // XLM SAC
+    amount: BigInt(10_000_000), // 1 XLM
+    description: "Alice salary",
+  })
+  .addTransfer({
+    recipientPublicKey: "GSALARY2...",
+    tokenAddress: "CDLZFC3...",
+    amount: BigInt(15_000_000), // 1.5 XLM
+    description: "Bob salary",
+  })
+  .addTransfer({
+    recipientPublicKey: "GVENDOR...",
+    tokenAddress: "CDLZFC3...",
+    amount: BigInt(50_000_000), // 5 XLM
+    description: "Q4 vendor payment",
+  });
+
+// Get transfers before submission
+const transfers = orchestrator.getTransfers();
+console.log(`Ready to propose ${transfers.length} transfers`);
+```
+
+### Creating Proposals in Batch
+
+```typescript
+// Propose all transfers
+const createdTxHashes = await orchestrator.createProposals(wallet.publicKey);
+console.log(`Created ${createdTxHashes.length} proposals`);
+
+// After on-chain indexing, manually register proposal IDs from events
+orchestrator.addCreatedProposalIds(["proposal-1", "proposal-2", "proposal-3"]);
+```
+
+### Approving Proposals with Retry Logic
+
+The orchestrator automatically retries failed approvals with exponential backoff:
+
+```typescript
+// Custom retry configuration (optional)
+const orchestrator = createBatchOrchestrator(opts, {
+  maxAttempts: 3,              // Retry up to 3 times
+  initialBackoffMs: 1000,      // Start with 1 second delay
+  maxBackoffMs: 10000,         // Cap backoff at 10 seconds
+});
+
+// Approve all proposals from a signer
+const approvedCount = await orchestrator.approveAllProposals(wallet.publicKey);
+console.log(`Approved ${approvedCount} proposals`);
+
+// Or approve specific proposals
+await orchestrator.approveProposal(wallet.publicKey, "proposal-1");
+```
+
+### Executing Proposals
+
+```typescript
+// Execute all proposals
+const executedIds = await orchestrator.executeAllProposals(wallet.publicKey);
+console.log(`Executed ${executedIds.length} proposals`);
+
+// Or execute specific proposals
+await orchestrator.executeProposal(wallet.publicKey, "proposal-1");
+```
+
+### Full Orchestration Workflow
+
+For complete automation, use `executeFullOrchestration()`:
+
+```typescript
+const result = await orchestrator.executeFullOrchestration(
+  proposerPublicKey,    // Creates proposals
+  approverPublicKey,    // Approves proposals
+  executorPublicKey,    // Executes proposals
+);
+
+console.log(`Orchestration Results:`);
+console.log(`  Created: ${result.created}`);
+console.log(`  Approved: ${result.approved}`);
+console.log(`  Executed: ${result.executed}`);
+console.log(`  Failed: ${result.failed}`);
+
+if (result.errors.length > 0) {
+  console.log(`Errors:`);
+  for (const error of result.errors) {
+    console.log(`  ${error.step}: ${error.error}`);
+  }
+}
+```
+
+### State Tracking and Diagnostics
+
+The orchestrator tracks state throughout the workflow for debugging:
+
+```typescript
+// Get all created proposal IDs
+const createdIds = orchestrator.getCreatedProposalIds();
+
+// Get executed proposal IDs
+const executedIds = orchestrator.getExecutedProposalIds();
+
+// Retrieve all errors encountered
+const errors = orchestrator.getErrors();
+
+// Inspect full state
+const state = orchestrator.getState();
+console.log(`Transfers: ${state.transfers.length}`);
+console.log(`Created: ${state.createdProposalIds.length}`);
+console.log(`Executed: ${state.executedProposalIds.length}`);
+console.log(`Approvals: ${state.approvalCounts.size} unique proposals`);
+```
+
+### Resetting and Reusing
+
+Reset the orchestrator to start a new batch:
+
+```typescript
+orchestrator.reset();
+
+// Now add new transfers
+orchestrator.addTransfer({
+  recipientPublicKey: "GNEWRECIPIENT...",
+  tokenAddress: "CDLZFC3...",
+  amount: BigInt(20_000_000),
+  description: "New payment batch",
+});
+```
+
+### Complete Example
+
+See [sdk/examples/batch-orchestration.ts](./examples/batch-orchestration.ts) for a full working example with all features.
 
 ---
 
