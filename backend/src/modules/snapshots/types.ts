@@ -47,6 +47,7 @@ export interface SignerSnapshot {
  */
 export interface ContractSnapshot {
   readonly contractId: string;
+  readonly snapshotId?: string;
   readonly signers: Map<string, SignerSnapshot>;
   readonly roles: Map<string, RoleSnapshot>;
   readonly lastProcessedLedger: number;
@@ -61,6 +62,7 @@ export interface ContractSnapshot {
  */
 export interface SerializableContractSnapshot {
   readonly contractId: string;
+  readonly snapshotId?: string;
   readonly signers: Record<string, SignerSnapshot>;
   readonly roles: Record<string, RoleSnapshot>;
   readonly lastProcessedLedger: number;
@@ -147,6 +149,24 @@ export interface SnapshotUpdateResult {
 }
 
 /**
+ * Snapshot rollback options.
+ */
+export interface SnapshotRollbackOptions {
+  readonly contractId: string;
+  readonly toSnapshotId: string | number;
+  readonly reason?: string;
+}
+
+/**
+ * Snapshot rollback result.
+ */
+export interface SnapshotRollbackResult extends SnapshotUpdateResult {
+  readonly rollbackSnapshotId: string | number;
+  readonly eventsReplayed: number;
+  readonly reason: string;
+}
+
+/**
  * Snapshot storage adapter interface.
  */
 export interface SnapshotStorageAdapter {
@@ -164,6 +184,21 @@ export interface SnapshotStorageAdapter {
    * Clear snapshot for a contract.
    */
   clearSnapshot(contractId: string): Promise<void>;
+
+  /**
+   * Get historical snapshots for a contract (up to last 5).
+   */
+  getSnapshotHistory?(contractId: string): Promise<ContractSnapshot[]>;
+
+  /**
+   * Get a snapshot by its ID or target ledger.
+   */
+  getSnapshotById?(contractId: string, snapshotId: string | number): Promise<ContractSnapshot | null>;
+
+  /**
+   * Restore a snapshot from history.
+   */
+  restoreSnapshot?(contractId: string, snapshotId: string | number): Promise<ContractSnapshot | null>;
 
   /**
    * Get all signers for a contract.

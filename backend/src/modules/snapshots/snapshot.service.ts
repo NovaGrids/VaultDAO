@@ -14,6 +14,8 @@ import type {
   SnapshotStorageAdapter,
   SnapshotRebuildOptions,
   SnapshotUpdateResult,
+  SnapshotRollbackOptions,
+  SnapshotRollbackResult,
   RoleAssignedData,
   SignerAddedData,
   SignerRemovedData,
@@ -740,6 +742,132 @@ export class SnapshotService {
       dist[key] = (dist[key] ?? 0) + 1;
     }
     return dist;
+  }
+
+  /**
+   * Rollback snapshot to a previous snapshot in history and replay events up to current.
+   */
+  async rollbackSnapshot(
+    arg1: string | SnapshotRollbackOptions | any,
+    toSnapshotId?: string | number,
+    reason = "Corrupt snapshot detected",
+    events: NormalizedEvent[] = [],
+  ): Promise<SnapshotRollbackResult> {
+    let contractId: string;
+    let targetSnapshotId: string | number;
+    let rollbackReason = reason;
+
+    if (typeof arg1 === "object" && arg1 !== null) {
+      if ("contractId" in arg1) {
+        contractId = arg1.contractId;
+        targetSnapshotId = arg1.toSnapshotId;
+        rollbackReason = arg1.reason ?? reason;
+      } else {
+        contractId = arg1.contractId ?? String(arg1);
+        targetSnapshotId = toSnapshotId!;
+      }
+    } else {
+      contractId = String(arg1);
+      targetSnapshotId = toSnapshotId!;
+    }
+
+    const lockId = await this.lockManager.acquireLock(contractId);
+    if (!lockId) {
+      const message = "rollback already in progress or lock unavailable";
+      logger.warn("[snapshot-service] rollback lock failed", { contractId, message });
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        rollbackSnapshotId: targetSnapshotId,
+        eventsReplayed: 0,
+        reason: rollbackReason,
+        error: message,
+      };
+    }
+
+    try {
+      let restoredSnapshot: ContractSnapshot | null = null;
+
+      if (typeof this.adapter.restoreSnapshot === "function") {
+        restoredSnapshot = await this.adapter.restoreSnapshot(contractId, targetSnapshotId);
+      }
+
+      if (!restoredSnapshot && typeof this.adapter.getSnapshotById === "function") {
+        const found = await this.adapter.getSnapshotById(contractId, targetSnapshotId);
+        if (found) {
+          restoredSnapshot = {
+            ...found,
+            signers: new Map(found.signers),
+            roles: new Map(found.roles),
+          };
+          await this.adapter.saveSnapshot(restoredSnapshot);
+        }
+      }
+
+      if (!restoredSnapshot) {
+        restoredSnapshot = this.createEmptySnapshot(contractId);
+        await this.adapter.saveSnapshot(restoredSnapshot);
+      }
+
+      const rollbackLedger = restoredSnapshot.lastProcessedLedger;
+
+      const eventsToReplay = events
+        .filter(
+          (e) =>
+            e.metadata.contractId === contractId &&
+            e.metadata.ledger > rollbackLedger
+        )
+        .sort((a, b) => a.metadata.ledger - b.metadata.ledger);
+
+      const replayResult = await this.processEvents(eventsToReplay);
+      const eventsReplayed = eventsToReplay.length;
+
+      logger.info("snapshot rollback completed", {
+        contractId,
+        rollbackSnapshotId: targetSnapshotId,
+        rollbackLedger,
+        reason: rollbackReason,
+        eventsReplayed,
+        success: replayResult.success,
+      });
+
+      return {
+        ...replayResult,
+        rollbackSnapshotId: targetSnapshotId,
+        eventsReplayed,
+        reason: rollbackReason,
+      };
+    } catch (error) {
+      logger.error("[snapshot-service] Error rolling back snapshot:", error);
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        rollbackSnapshotId: targetSnapshotId,
+        eventsReplayed: 0,
+        reason: rollbackReason,
+        error: String(error),
+      };
+    } finally {
+      await this.lockManager.releaseLock(contractId, lockId);
+    }
+  }
+
+  /**
+   * Alias for rollbackSnapshot for flexible invocation matching rollback_snapshot(env, to_snapshot_id).
+   */
+  async rollback_snapshot(
+    arg1: any,
+    to_snapshot_id?: any,
+    reason?: string,
+    events?: NormalizedEvent[]
+  ): Promise<SnapshotRollbackResult> {
+    return this.rollbackSnapshot(arg1, to_snapshot_id, reason, events);
   }
 
   /**
