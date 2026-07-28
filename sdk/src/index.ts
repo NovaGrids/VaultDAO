@@ -128,3 +128,15 @@ export type {
 // Testing utilities
 export { MockVaultContract } from "./mock-contract";
 export type { FailureInjectionConfig } from "./mock-contract";
+
+// Caching layer
+export {
+  ContractCache,
+  getGlobalCache,
+  destroyGlobalCache,
+} from "./cache";
+export type {
+  CacheEntry,
+  CacheStats,
+  CacheMetrics,
+} from "./cache";
