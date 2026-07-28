@@ -746,6 +746,18 @@ try {
 }
 ```
 
+### Error Registry
+
+You can inspect the full SDK error registry directly or lookup a single description by code:
+
+```typescript
+import { ERROR_REGISTRY, getErrorDescription, VaultErrorCode } from "@vaultdao/sdk";
+
+const entry = ERROR_REGISTRY[VaultErrorCode.ProposalExpired];
+console.log(entry?.description);
+console.log(getErrorDescription(VaultErrorCode.ProposalExpired));
+```
+
 ### Error Codes Reference
 
 | Code | Name | Meaning |

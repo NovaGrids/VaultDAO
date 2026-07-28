@@ -255,12 +255,25 @@ export enum VaultErrorCode {
 
 /** Thrown when the contract returns a known error code. */
 export class VaultError extends Error {
+  public readonly description?: string;
+
   constructor(
     public readonly code: VaultErrorCode,
     message?: string
   ) {
-    super(message ?? `VaultError(${code}): ${VaultErrorCode[code]}`);
+    const fallback = `VaultError(${code}): ${VaultErrorCode[code]}`;
+    super(message ?? fallback);
     this.name = "VaultError";
+    this.description = message ?? fallback;
+  }
+
+  public toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      code: this.code,
+      message: this.message,
+      description: this.description,
+    };
   }
 }
 

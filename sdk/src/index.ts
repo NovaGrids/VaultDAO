@@ -33,6 +33,7 @@ export { Role, ProposalStatus, VaultErrorCode, VaultError } from "./types";
 export type { ErrorRegistryEntry } from "./errors";
 export {
   ERROR_REGISTRY,
+  ERROR_REGISTRY as DEFAULT_ERROR_REGISTRY,
   getErrorEntry,
   getErrorDescription,
   getAllErrorEntries,
