@@ -35,8 +35,12 @@ import type {
   AuditEntry,
   SdkOptions,
   SdkLogger,
+  StateDiff,
+  StateChangeEntry,
+  StateChangeValue,
 } from "./types";
 import { Role, ProposalStatus, VaultError, VaultErrorCode, noopLogger } from "./types";
+import { extractStateDiff } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Internal Types
@@ -515,7 +519,7 @@ export class MockVaultContract {
       );
     }
 
-    payment.nextPaymentLedger = this.currentLedger + payment.interval;
+    payment.nextPaymentLedger = payment.nextPaymentLedger + payment.interval;
     payment.paymentCount++;
 
     this.logger.info("Recurring payment executed", { paymentId, count: payment.paymentCount });
@@ -569,5 +573,56 @@ export class MockVaultContract {
 
     this.config.signers.splice(index, 1);
     this.logger.info("Signer removed", { signer: signerPublicKey });
+  }
+
+  /**
+   * Simulate a transaction or mock action and return state diffs showing created and modified keys.
+   */
+  public simulateWithStateDiff(tx: any): StateDiff {
+    this.checkFailure("simulateWithStateDiff");
+    if (typeof tx === "object" && tx !== null && ("modifiedKeys" in tx || "changes" in tx || "stateChanges" in tx)) {
+      return extractStateDiff(tx);
+    }
+    const changes: StateChangeEntry[] = [];
+    const modifiedKeys: Record<string, StateChangeValue> = {};
+    const newKeys: string[] = [];
+
+    if (typeof tx === "object" && tx !== null) {
+      for (const [key, val] of Object.entries(tx)) {
+        if (typeof val === "object" && val !== null && ("before" in (val as any) || "after" in (val as any))) {
+          const before = (val as any).before ?? null;
+          const after = (val as any).after ?? null;
+          const isNew = before === null || before === undefined;
+          changes.push({ key, before, after, isNew });
+          if (isNew) {
+            newKeys.push(key);
+          } else {
+            modifiedKeys[key] = { before, after };
+          }
+        }
+      }
+    }
+
+    if (changes.length === 0) {
+      const configKey = "vault_config";
+      if (this.config) {
+        modifiedKeys[configKey] = {
+          before: { threshold: this.config.threshold },
+          after: { threshold: this.config.threshold, updated: true },
+        };
+        changes.push({
+          key: configKey,
+          before: { threshold: this.config.threshold },
+          after: { threshold: this.config.threshold, updated: true },
+          isNew: false,
+        });
+      }
+    }
+
+    return { modifiedKeys, newKeys, changes };
+  }
+
+  public simulate_with_state_diff(tx: any): StateDiff {
+    return this.simulateWithStateDiff(tx);
   }
 }

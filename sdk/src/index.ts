@@ -24,6 +24,9 @@ export type {
   SdkOptions,
   SdkLogger,
   Network,
+  StateDiff,
+  StateChangeValue,
+  StateChangeEntry,
 } from "./types";
 
 // Enums & errors
@@ -46,6 +49,9 @@ export {
   connectWallet,
   buildTransaction,
   signAndSubmit,
+  extractStateDiff,
+  simulateWithStateDiff,
+  simulate_with_state_diff,
   parseError,
   NETWORK_PASSPHRASES,
   DEFAULT_RPC_URLS,

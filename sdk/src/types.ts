@@ -417,3 +417,32 @@ export interface SdkOptions {
    */
   logger?: SdkLogger;
 }
+
+// ---------------------------------------------------------------------------
+// Transaction Simulation & State Diffing (#1456)
+// ---------------------------------------------------------------------------
+
+/** Before and after values for a modified key. */
+export interface StateChangeValue {
+  before: unknown | null;
+  after: unknown | null;
+}
+
+/** Individual key state change details. */
+export interface StateChangeEntry {
+  key: string;
+  before: unknown | null;
+  after: unknown | null;
+  isNew: boolean;
+}
+
+/** State diff result extracted from transaction simulation. */
+export interface StateDiff {
+  /** Record of modified existing keys showing before and after values. */
+  modifiedKeys: Record<string, StateChangeValue>;
+  /** List of brand new keys created during simulation. */
+  newKeys: string[];
+  /** Detailed list of all state changes. */
+  changes: StateChangeEntry[];
+}
+
