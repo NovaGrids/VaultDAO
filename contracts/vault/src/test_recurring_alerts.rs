@@ -190,9 +190,10 @@ fn test_alert_emitted_at_threshold() {
     // Verify alert event was emitted
     let events = env.events().all();
     let has_alert_event = events.iter().any(|(_, event)| {
-        event.topics.iter().any(|topic| {
-            topic.to_string().contains("RecurringPaymentAlertEmitted")
-        })
+        event
+            .topics
+            .iter()
+            .any(|topic| topic.to_string().contains("RecurringPaymentAlertEmitted"))
     });
 
     // In real test, this would be true; for now we verify state

@@ -122,7 +122,10 @@ pub fn emit_proposal_expired(env: &Env, proposal_id: u64, expires_at: u64) {
 /// Emit when the execution window ledgers configuration is updated.
 pub fn emit_exec_window_ledgers_updated(env: &Env, admin: &Address, ledgers: u64) {
     env.events().publish(
-        (Symbol::new(env, "exec_window_ledgers_updated"), admin.clone()),
+        (
+            Symbol::new(env, "exec_window_ledgers_updated"),
+            admin.clone(),
+        ),
         ledgers,
     );
 }
@@ -130,7 +133,12 @@ pub fn emit_exec_window_ledgers_updated(env: &Env, admin: &Address, ledgers: u64
 /// Emit when an approved proposal's execution window has passed and it auto-expires.
 /// This is separate from voting deadline expiry — the proposal was approved but
 /// not executed within the configured `exec_window_ledgers`.
-pub fn emit_execution_window_expired(env: &Env, proposal_id: u64, approved_at: u64, execution_window: u64) {
+pub fn emit_execution_window_expired(
+    env: &Env,
+    proposal_id: u64,
+    approved_at: u64,
+    execution_window: u64,
+) {
     env.events().publish(
         (Symbol::new(env, "execution_window_expired"), proposal_id),
         (approved_at, execution_window),
@@ -1792,9 +1800,60 @@ pub fn emit_recurring_payment_jittered(
 
 /// Emit when a cache tag is invalidated by admin (#1459)
 pub fn emit_cache_invalidated(env: &Env, tag: Symbol, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "cache_invalidated"), tag), admin.clone());
+}
+
+// ============================================================================
+// Issue #1091: Keeper Network Lifecycle Hooks
+// ============================================================================
+
+/// Emit when a keeper hook is successfully registered
+pub fn emit_keeper_hook_registered(
+    env: &Env,
+    keeper: &soroban_sdk::Address,
+    event_type_id: u32,
+    callback_contract: &soroban_sdk::Address,
+) {
     env.events().publish(
-        (Symbol::new(env, "cache_invalidated"), tag),
-        admin.clone(),
+        (Symbol::new(env, "keeper_hook_registered"), event_type_id),
+        (keeper.clone(), callback_contract.clone()),
     );
 }
 
+/// Emit when a keeper hook is removed
+pub fn emit_keeper_hook_removed(env: &Env, keeper: &soroban_sdk::Address, event_type_id: u32) {
+    env.events().publish(
+        (Symbol::new(env, "keeper_hook_removed"), event_type_id),
+        keeper.clone(),
+    );
+}
+
+/// Emit when a keeper hook callback is successfully triggered and fee paid
+pub fn emit_keeper_hook_triggered(
+    env: &Env,
+    keeper: &soroban_sdk::Address,
+    callback_contract: &soroban_sdk::Address,
+    event_type_id: u32,
+    payload: u64,
+    fee_paid: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "keeper_hook_triggered"), event_type_id),
+        (keeper.clone(), callback_contract.clone(), payload, fee_paid),
+    );
+}
+
+/// Emit when a keeper hook callback fails (non-blocking — vault continues)
+pub fn emit_keeper_hook_failed(
+    env: &Env,
+    keeper: &soroban_sdk::Address,
+    callback_contract: &soroban_sdk::Address,
+    event_type_id: u32,
+    payload: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "keeper_hook_failed"), event_type_id),
+        (keeper.clone(), callback_contract.clone(), payload),
+    );
+}

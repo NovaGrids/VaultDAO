@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::types::{ConditionLogic, InitConfig, Priority, Role, ThresholdStrategy, VelocityConfig, VoteWeight, ProposalStatus};
+    use crate::types::{
+        ConditionLogic, InitConfig, Priority, ProposalStatus, Role, ThresholdStrategy,
+        VelocityConfig, VoteWeight,
+    };
     use crate::{VaultDAO, VaultDAOClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},

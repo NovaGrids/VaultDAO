@@ -19,7 +19,7 @@ use soroban_sdk::{
 fn default_insurance_config() -> InsuranceConfig {
     InsuranceConfig {
         provider: Address::generate(&Env::default()),
-        premium_rate: 100,        // 1%
+        premium_rate: 100, // 1%
         coverage_amount: 1_000_000i128,
         expiry_ledger: 100_000,
         claim_payout_address: Address::generate(&Env::default()),
@@ -103,7 +103,7 @@ fn test_set_token_specific_insurance_config() {
 
     let insurance_config = InsuranceConfig {
         provider: Address::generate(&env),
-        premium_rate: 150,        // 1.5%
+        premium_rate: 150, // 1.5%
         coverage_amount: 500_000i128,
         expiry_ledger: 200_000,
         claim_payout_address: Address::generate(&env),

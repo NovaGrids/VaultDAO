@@ -111,7 +111,10 @@ fn test_simulate_successful_payment_execution() {
     // Verify projected state
     assert_eq!(result.will_execute, true);
     assert_eq!(result.projected_payment_count, 1u32);
-    assert_eq!(result.projected_next_payment_ledger, payment.next_payment_ledger + interval);
+    assert_eq!(
+        result.projected_next_payment_ledger,
+        payment.next_payment_ledger + interval
+    );
     assert_eq!(result.amount_transferred, amount);
     assert_eq!(result.success, true);
 }
@@ -195,7 +198,10 @@ fn test_simulate_condition_not_met_skips() {
     assert_eq!(result.amount_transferred, 0i128);
 
     // Next payment ledger should still advance
-    assert_eq!(result.projected_next_payment_ledger, payment.next_payment_ledger + interval);
+    assert_eq!(
+        result.projected_next_payment_ledger,
+        payment.next_payment_ledger + interval
+    );
 }
 
 // ============================================================================
@@ -320,7 +326,10 @@ fn test_projected_state_returned_accurately() {
     assert_eq!(result.current_balance_before, 100_000i128);
     assert_eq!(result.current_balance_after, 100_000i128 - amount);
     assert_eq!(result.projected_payment_count, payment.payment_count + 1);
-    assert_eq!(result.projected_next_payment_ledger, payment.next_payment_ledger + interval);
+    assert_eq!(
+        result.projected_next_payment_ledger,
+        payment.next_payment_ledger + interval
+    );
     assert_eq!(result.amount_transferred, amount);
     assert_eq!(result.will_execute, true);
     assert_eq!(result.skipped, false);
@@ -404,7 +413,10 @@ fn test_simulate_exceeds_daily_limit_fails() {
     assert_eq!(result.will_execute, false);
     assert_eq!(result.success, false);
     assert_eq!(result.error_reason.is_some(), true);
-    assert!(result.error_reason.unwrap().contains("daily") || result.error_reason.unwrap().contains("limit"));
+    assert!(
+        result.error_reason.unwrap().contains("daily")
+            || result.error_reason.unwrap().contains("limit")
+    );
 }
 
 // ============================================================================

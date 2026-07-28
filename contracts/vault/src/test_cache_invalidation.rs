@@ -21,44 +21,46 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
 
-    client.initialize(
-        &admin,
-        &InitConfig {
-            whitelist_mode: false,
-            grace_period_ledgers: 100,
-            vote_weight: crate::types::VoteWeight::Flat,
-            high_impact_threshold: 70,
-            admin_rotation_delay: 1440,
-            signers,
-            threshold: 1,
-            quorum: 0,
-            quorum_percentage: 0,
-            default_voting_deadline: 0,
-            spending_limit: 1_000_000,
-            daily_limit: 5_000_000,
-            weekly_limit: 10_000_000,
-            timelock_threshold: 999_999,
-            timelock_delay: 0,
-            velocity_limit: VelocityConfig {
-                limit: 100,
-                window: 3600,
-                per_token_limit: 0,
+    client
+        .initialize(
+            &admin,
+            &InitConfig {
+                whitelist_mode: false,
+                grace_period_ledgers: 100,
+                vote_weight: crate::types::VoteWeight::Flat,
+                high_impact_threshold: 70,
+                admin_rotation_delay: 1440,
+                signers,
+                threshold: 1,
+                quorum: 0,
+                quorum_percentage: 0,
+                default_voting_deadline: 0,
+                spending_limit: 1_000_000,
+                daily_limit: 5_000_000,
+                weekly_limit: 10_000_000,
+                timelock_threshold: 999_999,
+                timelock_delay: 0,
+                velocity_limit: VelocityConfig {
+                    limit: 100,
+                    window: 3600,
+                    per_token_limit: 0,
+                },
+                threshold_strategy: ThresholdStrategy::Fixed,
+                pre_execution_hooks: Vec::new(env),
+                post_execution_hooks: Vec::new(env),
+                veto_addresses: Vec::new(env),
+                veto_window_ledgers: 0,
+                retry_config: RetryConfig {
+                    max_retry_delay: 0,
+                    enabled: false,
+                    max_retries: 0,
+                    initial_backoff_ledgers: 0,
+                },
+                token_daily_limits: Vec::new(env),
+                token_weekly_limits: Vec::new(env),
             },
-            threshold_strategy: ThresholdStrategy::Fixed,
-            pre_execution_hooks: Vec::new(env),
-            post_execution_hooks: Vec::new(env),
-            veto_addresses: Vec::new(env),
-            veto_window_ledgers: 0,
-            retry_config: RetryConfig {
-                max_retry_delay: 0,
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
-            },
-            token_daily_limits: Vec::new(env),
-            token_weekly_limits: Vec::new(env),
-        },
-    ).unwrap();
+        )
+        .unwrap();
 
     (client, admin, member)
 }

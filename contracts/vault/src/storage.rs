@@ -27,14 +27,14 @@ use crate::types::{
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
-    GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, InsuranceClaim, InsuranceConfig,
-    ListMode, MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
-    PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate,
-    RecoveryProposal, Reputation, ReputationConfig, RetryState, Role, RoleAssignment,
-    ScopedDelegation, SignerTier, StakeRecord, StakingConfig, StreamRateWindow, Subscription,
-    SwapProposal, SwapResult, Tag, TemplateVarRef, TimeWeightedConfig, TokenLock,
-    TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig, VestingSchedule,
-    VotingStrategy, WhitelistEntry,
+    GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType, HookRegistration,
+    InsuranceClaim, InsuranceConfig, ListMode, MergeRecord, MultiPhaseProposal,
+    NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant, Proposal,
+    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
+    ReputationConfig, RetryState, Role, RoleAssignment, ScopedDelegation, SignerTier, StakeRecord,
+    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
+    TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
+    VestingSchedule, VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 
@@ -400,6 +400,11 @@ pub enum FeatureKey {
     ProposerAccumulatedRewards(Address),
     /// Subscription tier usage tracking (subscription_id) -> Map of usage metrics
     SubscriptionUsage(u64),
+    // ---- Issue #1091: Keeper Network Lifecycle Hooks ----
+    /// Registered keeper hooks for a specific event type -> Vec<HookRegistration>
+    KeeperHooks(u32),
+    /// Total keeper hook count across all event types -> u32
+    KeeperHookCount,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -4423,4 +4428,55 @@ pub fn clear_proposal_in_progress(env: &Env, proposal_id: u64) {
     env.storage()
         .instance()
         .remove(&DataKey::ProposalInProgress(proposal_id));
+}
+
+// ============================================================================
+// Issue #1091: Keeper Network Lifecycle Hooks
+// ============================================================================
+
+/// Maximum keeper hooks registered per event type.
+pub const MAX_KEEPER_HOOKS_PER_EVENT: u32 = 5;
+/// Maximum total keeper hooks across all event types per vault.
+pub const MAX_KEEPER_HOOKS_TOTAL: u32 = 20;
+
+fn hook_event_key(event_type: &HookEventType) -> FeatureKey {
+    FeatureKey::KeeperHooks(event_type.clone() as u32)
+}
+
+/// Return all registered hooks for a given event type (empty vec if none).
+pub fn get_keeper_hooks(env: &Env, event_type: &HookEventType) -> Vec<HookRegistration> {
+    let key = hook_event_key(event_type);
+    env.storage()
+        .persistent()
+        .get::<_, Vec<HookRegistration>>(&key)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Persist the hooks vec for an event type and extend its TTL.
+pub fn set_keeper_hooks(env: &Env, event_type: &HookEventType, hooks: &Vec<HookRegistration>) {
+    let key = hook_event_key(event_type);
+    env.storage().persistent().set(&key, hooks);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Get the total number of keeper hooks registered across all event types.
+pub fn get_keeper_hook_count(env: &Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<_, u32>(&FeatureKey::KeeperHookCount)
+        .unwrap_or(0)
+}
+
+/// Set the total number of keeper hooks.
+pub fn set_keeper_hook_count(env: &Env, count: u32) {
+    env.storage()
+        .persistent()
+        .set(&FeatureKey::KeeperHookCount, &count);
+    env.storage().persistent().extend_ttl(
+        &FeatureKey::KeeperHookCount,
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL,
+    );
 }

@@ -376,6 +376,16 @@ pub enum VaultError {
     // =========================================================
     /// A transfer failed during batch commit despite passing pre-commit simulation
     BatchCommitFailed = 1120,
+
+    // =========================================================
+    // Issue #1091: Keeper Network Lifecycle Hooks
+    // =========================================================
+    /// Maximum hooks per event type (5) or total hooks (20) exceeded
+    HookLimitExceeded = 1200,
+    /// Hook registration not found for the specified keeper/event pair
+    HookNotFound = 1201,
+    /// A hook for this keeper+event_type combination already exists
+    HookAlreadyRegistered = 1202,
 }
 
 // Compatibility markers for CI source checks:

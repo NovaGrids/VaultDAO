@@ -390,9 +390,10 @@ fn test_skipped_event_emitted_when_condition_not_met() {
     let events = env.events().all();
     let has_skipped_event = events.iter().any(|(_, event)| {
         // Event data contains RecurringPaymentSkipped marker
-        event.topics.iter().any(|topic| {
-            topic.to_string().contains("RecurringPaymentSkipped")
-        })
+        event
+            .topics
+            .iter()
+            .any(|topic| topic.to_string().contains("RecurringPaymentSkipped"))
     });
 
     // Note: In real implementation, we would verify the actual event
@@ -438,7 +439,10 @@ fn test_get_recurring_payment_condition_returns_stored_condition() {
     let retrieved_condition = client.get_recurring_payment_condition(&payment_id);
     assert!(retrieved_condition.is_some());
     // Verify it's a balance condition with correct threshold
-    assert_eq!(retrieved_condition.unwrap().balance_threshold, Some(balance_threshold));
+    assert_eq!(
+        retrieved_condition.unwrap().balance_threshold,
+        Some(balance_threshold)
+    );
 }
 
 // ============================================================================
