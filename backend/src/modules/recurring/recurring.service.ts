@@ -2,11 +2,13 @@ import type { BackendEnv } from "../../config/env.js";
 import { createLogger } from "../../shared/logging/logger.js";
 import {
   NormalizedRecurringPayment,
+  PredictedDue,
   RawRecurringPayment,
   RecurringCursor,
   RecurringEvent,
   RecurringFilter,
   RecurringIndexerState,
+  RecurringPredictionEvent,
   RecurringStatus,
 } from "./types.js";
 import {
@@ -769,6 +771,126 @@ export class RecurringIndexerService {
     });
 
     return event;
+  }
+
+  /**
+   * Project the next N due dates for every active/due recurring payment that
+   * falls within `windowLedgers` ledgers of `currentLedger`.
+   *
+   * Algorithm
+   * ---------
+   * For each non-cancelled payment whose first upcoming cycle lands at or
+   * before `currentLedger + windowLedgers`:
+   *   1. Walk forward through successive cycles (nextPaymentLedger + n *
+   *      intervalLedgers) until we exceed the window.
+   *   2. Assign a confidence score:
+   *      - `"high"`   – clean history (retryCount = 0, not overdue).
+   *      - `"medium"` – has had at least one failure (retryCount > 0) but is
+   *                     not currently overdue.
+   *      - `"low"`    – currently overdue or in active backoff.
+   *   3. Sort results by ascending ledger.
+   *
+   * At query time the method emits a `RECURRING_PREDICTION_QUERIED` log entry
+   * so the prediction is always visible in the audit trail.
+   *
+   * @param windowLedgers  – How many ledgers ahead to project (must be > 0).
+   * @param currentLedger  – The ledger to project from.  Defaults to the
+   *                         indexer's `lastLedgerProcessed`.
+   * @returns Sorted array of PredictedDue entries (empty when no payments
+   *          are due within the window).
+   */
+  public async predictRecurringDues(
+    windowLedgers: number,
+    currentLedger?: number,
+  ): Promise<PredictedDue[]> {
+    if (windowLedgers <= 0) {
+      throw new Error("windowLedgers must be a positive integer");
+    }
+
+    const effectiveLedger = currentLedger ?? this.lastLedgerProcessed;
+    const windowEnd = effectiveLedger + windowLedgers;
+
+    // Fetch all non-cancelled payments.
+    const all = await this.storage.getAll();
+    const active = all.filter(
+      (p) => p.status !== RecurringStatus.CANCELLED,
+    );
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const predictions: PredictedDue[] = [];
+
+    for (const payment of active) {
+      const interval = payment.intervalLedgers;
+      if (interval <= 0) continue; // defensive: skip degenerate payments
+
+      // Determine the first upcoming execution ledger.
+      // For overdue payments the first occurrence is already past — we still
+      // include it (occurrenceIndex 1) to surface it as a planning signal.
+      const firstDue = Math.max(
+        payment.nextPaymentLedger,
+        payment.retryNextLedger ?? 0,
+      );
+
+      if (firstDue > windowEnd) continue; // entirely outside window
+
+      // Confidence scoring.
+      const isOverdue = firstDue < effectiveLedger;
+      const inBackoff = isInBackoff(
+        {
+          retryCount: payment.retryCount,
+          lastAttemptAt: payment.lastAttemptAt,
+          nextRetryAt: payment.nextRetryAt,
+        },
+        nowSeconds,
+      );
+      let confidence: PredictedDue["confidence"];
+      if (isOverdue || inBackoff) {
+        confidence = "low";
+      } else if (payment.retryCount > 0 || payment.missedPayments > 0) {
+        confidence = "medium";
+      } else {
+        confidence = "high";
+      }
+
+      // Emit every cycle within the window.
+      let occurrenceIndex = 1;
+      let ledger = firstDue;
+      while (ledger <= windowEnd) {
+        predictions.push({
+          paymentId: payment.paymentId,
+          proposer: payment.proposer,
+          recipient: payment.recipient,
+          token: payment.token,
+          amount: payment.amount,
+          ledger,
+          ledgersFromNow: ledger - effectiveLedger,
+          occurrenceIndex,
+          confidence,
+        });
+        occurrenceIndex++;
+        ledger += interval;
+      }
+    }
+
+    // Sort by ascending ledger, then by paymentId for stability.
+    predictions.sort((a, b) => a.ledger - b.ledger || a.paymentId.localeCompare(b.paymentId));
+
+    // Emit prediction event to the audit trail.
+    const predictionEvent: RecurringPredictionEvent = {
+      type: "RECURRING_PREDICTION_QUERIED",
+      windowLedgers,
+      currentLedger: effectiveLedger,
+      resultCount: predictions.length,
+      queriedAt: new Date().toISOString(),
+    };
+
+    logger.info("recurring prediction queried", {
+      windowLedgers: predictionEvent.windowLedgers,
+      currentLedger: predictionEvent.currentLedger,
+      resultCount: predictionEvent.resultCount,
+    });
+
+    return predictions;
   }
 
   /**
