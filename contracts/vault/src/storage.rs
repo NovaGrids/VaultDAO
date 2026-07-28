@@ -194,6 +194,11 @@ pub enum DataKey {
     // ---- Issue #1414: Reentrancy Guard ----
     /// Reentrancy guard for proposal execution (proposal_id) -> bool
     ProposalInProgress(u64),
+    // ---- Issue #23: Proposal Supersession Chain ----
+    /// Proposal ID -> ID of the proposal it supersedes (its parent in the chain), if any
+    Supersedes(u64),
+    /// Proposal ID -> ID of the proposal that superseded it (its direct child), if any
+    SupersededBy(u64),
 }
 
 #[contracttype(export = false)]
@@ -1479,6 +1484,38 @@ pub fn add_amendment_record(env: &Env, record: &ProposalAmendment) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Record that `new_id` supersedes `old_id`: links both directions so the
+/// chain can be walked forward (old -> new) and backward (new -> old).
+pub fn set_supersession_link(env: &Env, old_id: u64, new_id: u64) {
+    let supersedes_key = DataKey::Supersedes(new_id);
+    env.storage().persistent().set(&supersedes_key, &old_id);
+    env.storage()
+        .persistent()
+        .extend_ttl(&supersedes_key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+
+    let superseded_by_key = DataKey::SupersededBy(old_id);
+    env.storage().persistent().set(&superseded_by_key, &new_id);
+    env.storage().persistent().extend_ttl(
+        &superseded_by_key,
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL,
+    );
+}
+
+/// The proposal ID that `proposal_id` supersedes (its parent), if any.
+pub fn get_supersedes(env: &Env, proposal_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Supersedes(proposal_id))
+}
+
+/// The proposal ID that superseded `proposal_id` (its direct child), if any.
+pub fn get_superseded_by(env: &Env, proposal_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SupersededBy(proposal_id))
 }
 
 /// Refund spending limits when a proposal is cancelled.

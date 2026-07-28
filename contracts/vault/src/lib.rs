@@ -441,6 +441,8 @@ mod test_proposal_management;
 mod test_cache_invalidation;
 #[cfg(test)]
 mod test_amendment_diff;
+#[cfg(test)]
+mod test_supersession_chain;
 
 
 
@@ -4272,7 +4274,10 @@ impl VaultDAO {
         condition_logic: ConditionLogic,
         insurance_amount: i128,
     ) -> Result<u64, VaultError> {
-        proposer.require_auth();
+        // Note: authorization is enforced by `propose_transfer_internal` below, which
+        // calls `proposer.require_auth()`. Soroban's auth host rejects a second
+        // `require_auth()` for the same address within one invocation tree, so this
+        // function must not call it again here.
         storage::extend_instance_ttl(&env);
 
         // Verify the proposer authorized the old proposal
@@ -4323,6 +4328,9 @@ impl VaultDAO {
         );
         storage::set_proposal(&env, &new_proposal);
 
+        // Record the parent/child link so the supersession chain can be traversed.
+        storage::set_supersession_link(&env, old_proposal_id, new_proposal_id);
+
         // Emit event for supersession
         events::emit_proposal_cancelled(
             &env,
@@ -4334,6 +4342,51 @@ impl VaultDAO {
 
         Ok(new_proposal_id)
     }
+
+    /// Direct child of `proposal_id` in the supersession chain, if any.
+    ///
+    /// Returns the ID of the proposal that superseded `proposal_id` via
+    /// [`Self::supersede_proposal`], or `None` if it has not been superseded.
+    pub fn get_superseded_by(env: Env, proposal_id: u64) -> Option<u64> {
+        storage::get_superseded_by(&env, proposal_id)
+    }
+
+    /// Walk the supersession chain backward from `proposal_id`, returning all
+    /// ancestors (the proposals it (transitively) supersedes), nearest first.
+    ///
+    /// Traversal is defensive: it caps at `MAX_SUPERSESSION_DEPTH` hops and
+    /// tracks visited IDs so a malformed/cyclic chain cannot cause unbounded work.
+    ///
+    /// # Errors
+    /// - [`VaultError::SupersessionCycleDetected`] if a proposal appears twice in the chain
+    /// - [`VaultError::SupersessionChainTooLong`] if the chain exceeds the depth cap
+    pub fn get_supercession_chain(env: Env, proposal_id: u64) -> Result<Vec<u64>, VaultError> {
+        // Bounds worst-case traversal cost; far beyond any realistic supersession chain.
+        const MAX_SUPERSESSION_DEPTH: u32 = 64;
+
+        let mut chain: Vec<u64> = Vec::new(&env);
+        let mut current = proposal_id;
+
+        loop {
+            if chain.len() >= MAX_SUPERSESSION_DEPTH {
+                return Err(VaultError::SupersessionChainTooLong);
+            }
+
+            match storage::get_supersedes(&env, current) {
+                Some(parent_id) => {
+                    if chain.contains(parent_id) || parent_id == proposal_id {
+                        return Err(VaultError::SupersessionCycleDetected);
+                    }
+                    chain.push_back(parent_id);
+                    current = parent_id;
+                }
+                None => break,
+            }
+        }
+
+        Ok(chain)
+    }
+
 
     // ========================================================================
     // Issue #1425: Implement Proposal Approval Timeout Mechanism

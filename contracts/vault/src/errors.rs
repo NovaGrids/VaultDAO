@@ -380,6 +380,14 @@ pub enum VaultError {
     // =========================================================
     /// compare_amendments was called with an index outside the amendment history bounds
     AmendmentIndexOutOfBounds = 1121,
+
+    // =========================================================
+    // Issue #23: Proposal supersession chain traversal
+    // =========================================================
+    /// Supersession chain traversal detected a cycle (defensive; should not occur in normal operation)
+    SupersessionCycleDetected = 1122,
+    /// Supersession chain exceeds the maximum traversal depth
+    SupersessionChainTooLong = 1123,
 }
 
 // Compatibility markers for CI source checks:
