@@ -1758,3 +1758,12 @@ pub fn emit_recurring_payment_jittered(
         (nominal_next_ledger, jittered_next_ledger, jitter_offset),
     );
 }
+
+/// Emit when a cache tag is invalidated by admin (#1459)
+pub fn emit_cache_invalidated(env: &Env, tag: Symbol, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "cache_invalidated"), tag),
+        admin.clone(),
+    );
+}
+
