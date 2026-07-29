@@ -166,6 +166,16 @@ fn test_majority_approval() {
     client.vote_on_insurance_claim(&voter1, &claim_id, &true);
     client.vote_on_insurance_claim(&voter2, &claim_id, &true);
 
+    // Issue #1355: a majority no longer auto-executes — the claim stays pending
+    // until the voting period is explicitly closed.
+    assert_eq!(
+        client.get_insurance_claim(&claim_id).status,
+        types::InsuranceClaimStatus::Pending
+    );
+
+    env.ledger().set_sequence_number(1_200);
+    client.close_insurance_claim_voting(&admin, &claim_id);
+
     let claim = client.get_insurance_claim(&claim_id);
     assert_eq!(claim.status, types::InsuranceClaimStatus::Approved);
 }
@@ -201,6 +211,9 @@ fn test_majority_rejection_slashes_bond() {
     client.vote_on_insurance_claim(&voter1, &claim_id, &false);
     client.vote_on_insurance_claim(&voter2, &claim_id, &false);
     client.vote_on_insurance_claim(&voter3, &claim_id, &false);
+
+    env.ledger().set_sequence_number(1_200);
+    client.close_insurance_claim_voting(&admin, &claim_id);
 
     let claim = client.get_insurance_claim(&claim_id);
     assert_eq!(claim.status, types::InsuranceClaimStatus::Rejected);

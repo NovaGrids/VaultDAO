@@ -400,17 +400,23 @@ pub fn emit_stake_locked(
     );
 }
 
-/// Emit when stake is slashed for malicious proposal
+/// Emit when stake is slashed for a rejected or cancelled proposal.
+///
+/// `reason` distinguishes the graduated slashing tiers (Issue #1360) so indexers
+/// can tell a rejection slash from a cancellation slash without replaying state.
 pub fn emit_stake_slashed(
     env: &Env,
     proposal_id: u64,
     proposer: &Address,
     slashed: i128,
     returned: i128,
+    reason: &Symbol,
 ) {
     let topics = (Symbol::new(env, "stake_slashed"), proposal_id);
-    env.events()
-        .publish(topics, (proposer.clone(), slashed, returned));
+    env.events().publish(
+        topics,
+        (proposer.clone(), slashed, returned, reason.clone()),
+    );
 }
 
 /// Emit when stake is refunded on successful execution
@@ -1855,5 +1861,79 @@ pub fn emit_keeper_hook_failed(
     env.events().publish(
         (Symbol::new(env, "keeper_hook_failed"), event_type_id),
         (keeper.clone(), callback_contract.clone(), payload),
+    );
+}
+
+// ============================================================================
+// Issue #1355: Insurance Claim Governance Voting with Quorum
+// ============================================================================
+
+/// Emit when an insurance claim's voting period is explicitly closed and tallied.
+///
+/// `status_code` mirrors `InsuranceClaimStatus` (1 = Approved, 2 = Rejected,
+/// 3 = Expired/quorum failure).
+pub fn emit_claim_voting_closed(
+    env: &Env,
+    claim_id: u64,
+    closer: &Address,
+    approve_weight: i128,
+    reject_weight: i128,
+    status_code: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_voting_closed"), claim_id),
+        (closer.clone(), approve_weight, reject_weight, status_code),
+    );
+}
+
+/// Emit when a claim fails to reach its participation quorum.
+pub fn emit_claim_quorum_failed(
+    env: &Env,
+    claim_id: u64,
+    voters: u32,
+    required_voters: u32,
+    eligible_voters: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_quorum_failed"), claim_id),
+        (voters, required_voters, eligible_voters),
+    );
+}
+
+// ============================================================================
+// Issue #1356: Proposal Amendment Limits
+// ============================================================================
+
+/// Emit when a proposal is nearing (or has hit) its amendment ceiling.
+///
+/// `remaining` is how many amendments are still permitted; 0 means the next
+/// attempt will be rejected with `AmendmentLimitExceeded`.
+pub fn emit_amendment_limit_warning(
+    env: &Env,
+    proposal_id: u64,
+    amendment_count: u32,
+    max_amendments: u32,
+    remaining: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "amendment_limit_warn"), proposal_id),
+        (amendment_count, max_amendments, remaining),
+    );
+}
+
+// ============================================================================
+// Issue #1363: Batch Dependency Validation
+// ============================================================================
+
+/// Emit when a batch's proposals had to be reordered to satisfy dependencies.
+pub fn emit_batch_reordered(
+    env: &Env,
+    batch_id: u64,
+    original_order: &Vec<u64>,
+    sorted_order: &Vec<u64>,
+) {
+    env.events().publish(
+        (Symbol::new(env, "batch_reordered"), batch_id),
+        (original_order.clone(), sorted_order.clone()),
     );
 }

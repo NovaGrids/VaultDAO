@@ -31,24 +31,13 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, Comment, Condition, ConditionLogic, Config,
-    ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig, CrossVaultProposal,
-    CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory, DexConfig, Dispute,
-    DisputeResolution, DisputeStatus, Escrow, EscrowStatus, ExecutionFeeEstimate, FundingMilestone,
-    FundingMilestoneStatus, FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig,
-    GasPriceOracleConfig, GasPriceSource, GovernanceProposal, HolidayBehavior, HolidayCalendar,
-    HookEventType, HookRegistration, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
-    InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
-    NotificationPrefs, OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority,
-    Proposal, ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus,
-    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
-    RecurringPayment, RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role,
-    RoleAssignment, ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig,
-    StreamRateWindow, StreamStatus, StreamingPayment, Subscription, SubscriptionStatus,
-    SubscriptionTier, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
-    TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics, VaultOracleConfig,
-    VaultPriceData, VelocityConfig, VestingSchedule, VoteChoice, VoteWeight, VotingStrategy,
-    WhitelistEntry,
+    BridgeConfig, CancellationRecord, Capability, CapabilityToken, Comment, Condition,
+    ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
+    CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
+    DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
+    ExecutionFeeEstimate, FundingMilestone, FundingMilestoneStatus, FundingRound,
+    FundingRoundConfig, FundingRoundStatus, GasConfig, GasPriceOracleConfig, GasPriceSource,
+    GovernanceProposal, HolidayBehavior, HolidayCalendar, HookEventType, HookRegistration,
     ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus, InsuranceConfig, ListMode,
     Milestone, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
     OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority, Proposal,
@@ -365,9 +354,17 @@ mod test_spending_refund_buckets;
 // pub mod mock_oracle { /* commented out with other broken test modules */ }
 mod test;
 #[cfg(test)]
+mod test_amendment_diff;
+#[cfg(test)]
+mod test_amendment_limits;
+#[cfg(test)]
 mod test_attachments;
 #[cfg(test)]
 mod test_audit;
+#[cfg(test)]
+mod test_batch_dependencies;
+#[cfg(test)]
+mod test_cache_invalidation;
 #[cfg(test)]
 mod test_cache_invalidation;
 #[cfg(test)]
@@ -388,11 +385,18 @@ mod test_escrow_milestone_partial_release;
 mod test_escrow_multisig;
 #[cfg(test)]
 mod test_escrow_multisig_arbitration;
+#[cfg(test)]
 mod test_escrow_timeout;
 #[cfg(test)]
 mod test_escrow_voting;
 #[cfg(test)]
+mod test_escrow_voting;
+#[cfg(test)]
 mod test_fan_out_streams;
+#[cfg(test)]
+mod test_fan_out_streams;
+#[cfg(test)]
+mod test_fee_cache;
 #[cfg(test)]
 mod test_fee_cache;
 #[cfg(test)]
@@ -401,6 +405,8 @@ mod test_fees;
 mod test_gas_price_oracle;
 #[cfg(test)]
 mod test_hooks;
+#[cfg(test)]
+mod test_insurance_claim_quorum;
 #[cfg(test)]
 mod test_merge;
 #[cfg(test)]
@@ -411,8 +417,11 @@ mod test_multitoken_limits;
 mod test_multitoken_swap;
 #[cfg(test)]
 mod test_notification_prefs;
+#[cfg(test)]
 mod test_proposal_expiration;
+#[cfg(test)]
 mod test_proposal_management;
+#[cfg(test)]
 mod test_rbac_consistency;
 #[cfg(test)]
 mod test_recurring;
@@ -431,9 +440,13 @@ mod test_retry;
 #[cfg(test)]
 mod test_staking;
 #[cfg(test)]
+mod test_staking_slashing;
+#[cfg(test)]
 mod test_stream_burst_config;
 #[cfg(test)]
 mod test_stream_clawback;
+#[cfg(test)]
+mod test_stream_pause_ttl;
 #[cfg(test)]
 mod test_stream_pause_ttl;
 #[cfg(test)]
@@ -443,6 +456,8 @@ mod test_subscription_downgrade_grace;
 #[cfg(test)]
 mod test_subscriptions;
 #[cfg(test)]
+mod test_supersession_chain;
+#[cfg(test)]
 mod test_tag_taxonomy;
 #[cfg(test)]
 mod test_tags;
@@ -451,27 +466,9 @@ mod test_threshold_reduction;
 #[cfg(test)]
 mod test_var_templates;
 #[cfg(test)]
-mod test_voting_deadline;
-#[cfg(test)]
-mod test_fee_cache;
-#[cfg(test)]
-mod test_fan_out_streams;
-#[cfg(test)]
-mod test_stream_pause_ttl;
-#[cfg(test)]
-mod test_escrow_voting;
-mod test_proposal_management;
-#[cfg(test)]
-mod test_cache_invalidation;
-#[cfg(test)]
-mod test_amendment_diff;
-#[cfg(test)]
-mod test_supersession_chain;
-#[cfg(test)]
 mod test_vault_template;
-
-
-
+#[cfg(test)]
+mod test_voting_deadline;
 
 #[cfg(test)]
 pub mod mock_oracle {
@@ -738,10 +735,7 @@ impl VaultDAO {
             threshold_ratio_percent,
             quorum_percentage: config.quorum_percentage,
             timelock_delay_ledgers: config.timelock_delay,
-            timelock_threshold_pct: ratio_percent(
-                config.timelock_threshold,
-                config.spending_limit,
-            ),
+            timelock_threshold_pct: ratio_percent(config.timelock_threshold, config.spending_limit),
             veto_window_ledgers: config.veto_window_ledgers,
             daily_limit_ratio_percent: ratio_percent(config.daily_limit, config.spending_limit),
             weekly_limit_ratio_percent: ratio_percent(config.weekly_limit, config.spending_limit),
@@ -803,12 +797,11 @@ impl VaultDAO {
             1
         };
 
-        let daily_limit =
-            (base_spending_limit * template.daily_limit_ratio_percent as i128 / 100)
-                .max(base_spending_limit);
-        let weekly_limit =
-            (base_spending_limit * template.weekly_limit_ratio_percent as i128 / 100)
-                .max(daily_limit);
+        let daily_limit = (base_spending_limit * template.daily_limit_ratio_percent as i128 / 100)
+            .max(base_spending_limit);
+        let weekly_limit = (base_spending_limit * template.weekly_limit_ratio_percent as i128
+            / 100)
+            .max(daily_limit);
         let timelock_threshold =
             base_spending_limit * template.timelock_threshold_pct as i128 / 100;
 
@@ -874,7 +867,6 @@ impl VaultDAO {
 
         Ok(())
     }
-
 
     // ========================================================================
     // Proposal Management
@@ -2575,6 +2567,60 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Group existing proposals into a batch for atomic execution.
+    ///
+    /// `batch_propose_transfers` only ever creates dependency-free proposals, so this
+    /// is the entry point for batching proposals created with
+    /// [`Self::propose_transfer_with_deps`] — the case Issue #1363 is about. The
+    /// dependency graph is validated at execution time by [`Self::execute_batch`],
+    /// which also decides the execution order.
+    ///
+    /// # Arguments
+    /// * `creator`      - Treasurer or Admin assembling the batch (must authorize).
+    /// * `proposal_ids` - Proposals to include, in any order.
+    ///
+    /// # Errors
+    /// * `InsufficientRole` - caller is below Treasurer.
+    /// * `BatchTooLarge`    - more than `MAX_BATCH_SIZE` proposals.
+    /// * `InvalidAmount`    - empty batch.
+    /// * `ProposalNotFound` - a listed proposal does not exist.
+    pub fn create_batch(
+        env: Env,
+        creator: Address,
+        proposal_ids: Vec<u64>,
+    ) -> Result<u64, VaultError> {
+        creator.require_auth();
+
+        if !Role::role_satisfies(Role::Treasurer, storage::get_role(&env, &creator)) {
+            return Err(VaultError::InsufficientRole);
+        }
+        if proposal_ids.is_empty() {
+            return Err(VaultError::InvalidAmount);
+        }
+        if proposal_ids.len() > MAX_BATCH_SIZE {
+            return Err(VaultError::BatchTooLarge);
+        }
+
+        for i in 0..proposal_ids.len() {
+            storage::get_proposal(&env, proposal_ids.get(i).unwrap())?;
+        }
+
+        let batch_id = storage::increment_batch_id(&env);
+        let batch = types::BatchTransaction {
+            id: batch_id,
+            proposal_ids,
+            creator,
+            status: types::BatchStatus::Pending,
+            created_at: env.ledger().sequence() as u64,
+            executed_count: 0,
+            failed_count: 0,
+        };
+        storage::set_batch(&env, &batch);
+        storage::extend_instance_ttl(&env);
+
+        Ok(batch_id)
+    }
+
     /// Execute a batch transaction atomically: every transfer is validated and
     /// simulated against current vault balances *before* any funds move, so a
     /// batch either commits in full or aborts with nothing executed.
@@ -2598,14 +2644,43 @@ impl VaultDAO {
         batch.status = BatchStatus::Executing;
         storage::set_batch(&env, &batch);
 
+        // Phase 0 (Issue #1363): validate the batch's dependency graph up front and
+        // resolve an execution order that respects it. A batch whose proposals are
+        // listed out of dependency order used to execute in list order and fail
+        // mid-flight; now it is either reordered or rejected before anything moves.
+        let execution_order = match Self::plan_batch_order(&env, &batch.proposal_ids) {
+            Ok(order) => order,
+            Err(e) => {
+                let failed_count = batch.proposal_ids.len();
+                batch.status = BatchStatus::RolledBack;
+                batch.executed_count = 0;
+                batch.failed_count = failed_count;
+                storage::set_batch(&env, &batch);
+                storage::set_batch_result(
+                    &env,
+                    batch.id,
+                    &BatchExecutionResult {
+                        executed_count: 0,
+                        failed_count,
+                    },
+                );
+                events::emit_batch_rolled_back(&env, &executor, 0, e as u32);
+                return Err(e);
+            }
+        };
+
+        if execution_order != batch.proposal_ids {
+            events::emit_batch_reordered(&env, batch.id, &batch.proposal_ids, &execution_order);
+        }
+
         let mut planned_transfers: Vec<(u64, Address, Address, i128)> = Vec::new(&env); // (proposal_id, token, recipient, amount)
         let mut abort_reason: Option<VaultError> = None;
 
-        // Phase 1: Validate every proposal and collect its planned transfer.
-        // Nothing is executed here - this only decides whether the batch is
-        // eligible to proceed to simulation.
-        for i in 0..batch.proposal_ids.len() {
-            let pid = batch.proposal_ids.get(i).unwrap();
+        // Phase 1: Validate every proposal and collect its planned transfer, in
+        // dependency order. Nothing is executed here - this only decides whether
+        // the batch is eligible to proceed to simulation.
+        for i in 0..execution_order.len() {
+            let pid = execution_order.get(i).unwrap();
             let proposal = match storage::get_proposal(&env, pid) {
                 Ok(p) => p,
                 Err(e) => {
@@ -2625,11 +2700,9 @@ impl VaultDAO {
                 break;
             }
 
-            // Ensure dependencies executed
-            if let Err(e) = Self::ensure_dependencies_executable(&env, &proposal) {
-                abort_reason = Some(e);
-                break;
-            }
+            // Dependencies were fully validated by plan_batch_order above, which
+            // also guarantees in-batch dependencies are executed earlier in this
+            // loop's order - so the plain executed-already check is not applied here.
 
             planned_transfers.push_back((
                 pid,
@@ -3334,30 +3407,11 @@ impl VaultDAO {
                 );
             }
 
-            // ?? Refund stake in full ?????????????????????????????????????????
-            if proposal.stake_amount > 0 {
-                if let Some(mut stake_record) = storage::get_stake_record(&env, proposal_id) {
-                    if !stake_record.refunded && !stake_record.slashed {
-                        token::transfer(
-                            &env,
-                            &proposal.token,
-                            &proposal.proposer,
-                            stake_record.amount,
-                        );
-
-                        stake_record.refunded = true;
-                        stake_record.released_at = env.ledger().sequence() as u64;
-                        storage::set_stake_record(&env, &stake_record);
-
-                        events::emit_stake_refunded(
-                            &env,
-                            proposal_id,
-                            &proposal.proposer,
-                            stake_record.amount,
-                        );
-                    }
-                }
-            }
+            // -- Slash stake at the cancellation rate (Issue #1360) ------------
+            // Cancelling used to refund the stake in full, which made spamming
+            // proposals free: propose, consume signer attention, withdraw. The
+            // remainder after the slash is returned to the proposer.
+            Self::slash_stake_on_cancellation(&env, &proposal);
 
             // Clear pending config if this was a config change proposal
             if proposal.memo == Symbol::new(&env, "config_change") {
@@ -3443,6 +3497,16 @@ impl VaultDAO {
 
         if new_amount <= 0 {
             return Err(VaultError::InvalidAmount);
+        }
+
+        // Issue #1356: cap amendments per proposal. Each amendment resets every
+        // approval, so an unbounded amend loop lets a proposer churn a proposal
+        // faster than signers can review it. Checked before any state is touched
+        // so a rejected amendment leaves nothing behind.
+        let max_amendments = storage::get_max_amendments(&env);
+        let amendment_count = storage::get_amendment_count(&env, proposal_id);
+        if amendment_count >= max_amendments {
+            return Err(VaultError::AmendmentLimitExceeded);
         }
 
         // Validate new recipient against whitelist/blacklist
@@ -3553,6 +3617,21 @@ impl VaultDAO {
         storage::set_proposal(&env, &proposal);
         storage::add_amendment_record(&env, &amendment);
 
+        // Issue #1356: bump the counter and warn signers as the ceiling approaches,
+        // so they can see churn coming instead of discovering it at the limit.
+        let new_count = amendment_count + 1;
+        storage::set_amendment_count(&env, proposal_id, new_count);
+        let remaining = max_amendments.saturating_sub(new_count);
+        if remaining <= 1 {
+            events::emit_amendment_limit_warning(
+                &env,
+                proposal_id,
+                new_count,
+                max_amendments,
+                remaining,
+            );
+        }
+
         // Create audit entry for the amendment
         storage::create_audit_entry(&env, AuditAction::AmendProposal, &proposer, proposal_id);
 
@@ -3561,6 +3640,44 @@ impl VaultDAO {
         events::emit_proposal_amended(&env, &amendment);
 
         Ok(())
+    }
+
+    /// Set the maximum number of times a single proposal may be amended (Admin only).
+    ///
+    /// Issue #1356. Defaults to 3. Applies to every proposal; proposals that have
+    /// already exceeded a newly lowered limit simply cannot be amended again.
+    ///
+    /// # Errors
+    /// * `Unauthorized`  - caller is not an Admin.
+    /// * `InvalidAmount` - `max_amendments` is 0.
+    pub fn set_max_amendments(
+        env: Env,
+        admin: Address,
+        max_amendments: u32,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        if max_amendments == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        storage::set_max_amendments(&env, max_amendments);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Current maximum number of amendments allowed per proposal (Issue #1356).
+    pub fn get_max_amendments(env: Env) -> u32 {
+        storage::get_max_amendments(&env)
+    }
+
+    /// Number of amendments already applied to a proposal (Issue #1356).
+    pub fn get_amendment_count(env: Env, proposal_id: u64) -> u32 {
+        storage::get_amendment_count(&env, proposal_id)
     }
 
     /// Get amendment history for a proposal.
@@ -4660,7 +4777,6 @@ impl VaultDAO {
         Ok(chain)
     }
 
-
     // ========================================================================
     // Issue #1425: Implement Proposal Approval Timeout Mechanism
     // ========================================================================
@@ -5310,20 +5426,27 @@ impl VaultDAO {
     /// Submit a new insurance claim against the pool.
     ///
     /// The claimant must lock a minimum bond (10% of claim amount, floor 100 stroops)
-    /// in the vault. Voting closes at `vote_deadline`. The deadline must be at least
-    /// 720 ledgers (~1 hour) in the future.
+    /// in the vault. Voting closes at `vote_deadline`, which must leave at least the
+    /// claim's minimum voting window (see [`Self::set_insurance_voting_config`]).
+    ///
+    /// Issue #1355: the voting rules that will govern this claim — approval threshold,
+    /// participation quorum and minimum window — are resolved from the current
+    /// [`InsuranceVotingConfig`] and **snapshotted onto the claim**. Claims at or above
+    /// `large_claim_threshold` are escalated to the stricter large-claim parameters, so
+    /// a large payout needs both broader participation and a longer deliberation period.
+    /// Snapshotting means a later config change cannot alter the bar for an in-flight claim.
     ///
     /// # Arguments
     /// * `claimant`       - Address submitting the claim (must authorize).
     /// * `token`          - Token the claim is denominated in.
     /// * `amount`         - Amount claimed from the insurance pool.
     /// * `evidence_hash`  - 32-byte SHA-256 hash of supporting evidence.
-    /// * `vote_deadline`  - Ledger sequence when voting closes (must be ? current + 720).
+    /// * `vote_deadline`  - Ledger sequence when voting closes.
     ///
     /// # Errors
-    /// * `ClaimVoteDeadlineTooShort` ? deadline is too soon.
-    /// * `ClaimBondInsufficient`     ? claimant's bond transfer fails.
-    /// * `InvalidAmount`             ? amount ? 0.
+    /// * `ClaimVoteDeadlineTooShort` - deadline leaves less than the required voting window.
+    /// * `ClaimBondInsufficient`     - claimant's bond transfer fails.
+    /// * `InvalidAmount`             - amount <= 0.
     pub fn submit_insurance_claim(
         env: Env,
         claimant: Address,
@@ -5340,11 +5463,43 @@ impl VaultDAO {
 
         let current_ledger = env.ledger().sequence() as u64;
 
-        // Minimum deliberation period: 720 ledgers (~1 hour)
-        const MIN_DELIBERATION: u64 = 720;
-        if vote_deadline < current_ledger + MIN_DELIBERATION {
+        // Resolve the voting rules for this claim size and freeze them onto the claim.
+        let voting_config = storage::get_insurance_voting_config(&env);
+        let is_large = voting_config.large_claim_threshold > 0
+            && amount >= voting_config.large_claim_threshold;
+        let (approval_threshold_bps, quorum_bps, voting_window) = if is_large {
+            (
+                voting_config.large_approval_threshold_bps,
+                voting_config.large_claim_quorum_bps,
+                voting_config.large_claim_voting_window,
+            )
+        } else {
+            (
+                voting_config.approval_threshold_bps,
+                voting_config.quorum_bps,
+                voting_config.voting_window,
+            )
+        };
+
+        if vote_deadline < current_ledger.saturating_add(voting_window) {
             return Err(VaultError::ClaimVoteDeadlineTooShort);
         }
+
+        // Signers eligible to vote, snapshotted so later membership changes cannot
+        // retroactively move the quorum for this claim. The claimant is excluded when
+        // they are themselves a signer — they may not vote on their own claim, so
+        // counting them would make a full-participation quorum unreachable.
+        let eligible_voters = match storage::get_config(&env) {
+            Ok(c) => {
+                let signers = c.signers.len();
+                if c.signers.contains(&claimant) {
+                    signers.saturating_sub(1)
+                } else {
+                    signers
+                }
+            }
+            Err(_) => 0,
+        };
 
         // Bond = 10% of claim, minimum 100 stroops
         let bond_amount = (amount / 10).max(100);
@@ -5367,6 +5522,12 @@ impl VaultDAO {
             bond_settled: false,
             status: InsuranceClaimStatus::Pending,
             created_at: current_ledger,
+            approval_threshold_bps,
+            quorum_bps,
+            voting_window,
+            eligible_voters,
+            voter_count: 0,
+            voting_closed: false,
         };
 
         storage::set_insurance_claim(&env, &claim);
@@ -5377,24 +5538,28 @@ impl VaultDAO {
 
     /// Cast a stake-weighted vote on an insurance claim.
     ///
-    /// Only stakers (accounts whose `StakeRecord` exists, with amount > 0) can vote.
-    /// Each voter's weight equals their locked stake amount. Claimants cannot vote
-    /// on their own claim.
+    /// Only signers can vote; each voter's weight is equal. Claimants cannot vote on
+    /// their own claim.
     ///
-    /// After the vote, if either side has clear majority (> 50% of total weight),
-    /// the claim is resolved immediately.
+    /// Issue #1355: a vote **never** resolves the claim. Tallying happens only in
+    /// [`Self::close_insurance_claim_voting`], so a payout cannot be triggered the
+    /// instant a bare majority is reached — every claim gets its full deliberation
+    /// window, and votes arriving after `vote_deadline` are rejected outright rather
+    /// than silently expiring the claim.
     ///
     /// # Arguments
-    /// * `voter`    - Staker address casting the vote (must authorize).
+    /// * `voter`    - Signer address casting the vote (must authorize).
     /// * `claim_id` - The claim to vote on.
     /// * `approve`  - `true` to approve the claim, `false` to reject.
     ///
     /// # Errors
-    /// * `ClaimNotFound`      ? claim ID does not exist.
-    /// * `ClaimNotPending`    ? claim is no longer open for voting.
-    /// * `ClaimSelfVote`      ? claimant attempting to vote on own claim.
-    /// * `ClaimAlreadyVoted`  ? voter has already cast a vote.
-    /// * `Unauthorized`       ? voter has no active stake record.
+    /// * `ClaimNotFound`           - claim ID does not exist.
+    /// * `ClaimNotPending`         - claim is no longer open for voting.
+    /// * `ClaimAlreadyClosed`      - voting has already been closed and tallied.
+    /// * `ClaimVotingWindowClosed` - the voting window has passed (late vote).
+    /// * `ClaimSelfVote`           - claimant attempting to vote on own claim.
+    /// * `ClaimAlreadyVoted`       - voter has already cast a vote.
+    /// * `Unauthorized`            - voter is not a signer.
     pub fn vote_on_insurance_claim(
         env: Env,
         voter: Address,
@@ -5409,23 +5574,15 @@ impl VaultDAO {
         if claim.status != InsuranceClaimStatus::Pending {
             return Err(VaultError::ClaimNotPending);
         }
+        if claim.voting_closed {
+            return Err(VaultError::ClaimAlreadyClosed);
+        }
 
-        // Check vote deadline
+        // Late-vote rejection: the window is a hard boundary, inclusive of the
+        // deadline ledger itself. Settlement is left to the explicit close call.
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger > claim.vote_deadline {
-            // Auto-expire: tie-breaks as rejected
-            claim.status = InsuranceClaimStatus::Expired;
-            // Slash 10% of bond, return rest
-            let slash = claim.bond_amount / 10;
-            let returned = claim.bond_amount - slash;
-            if returned > 0 {
-                token::transfer(&env, &claim.token, &claim.claimant, returned);
-            }
-            // Slashed portion stays in pool
-            storage::add_to_insurance_pool(&env, &claim.token, slash);
-            claim.bond_settled = true;
-            storage::set_insurance_claim(&env, &claim);
-            return Err(VaultError::ClaimNotPending);
+            return Err(VaultError::ClaimVotingWindowClosed);
         }
 
         // Claimant cannot vote on own claim
@@ -5438,29 +5595,15 @@ impl VaultDAO {
             return Err(VaultError::ClaimAlreadyVoted);
         }
 
-        // Voting weight = staker's locked stake amount
-        // We use the StakingConfig and look for any active stake record for this voter.
-        // For simplicity, weight = 1 stake unit per voter if staking is disabled;
-        // or actual stake amount when staking is enabled.
+        // Voting weight: signers vote with equal weight. The scale differs when
+        // staking is enabled so stake-weighted voting can be layered in later
+        // without changing the ratio arithmetic used for the threshold.
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&voter) {
+            return Err(VaultError::Unauthorized);
+        }
         let staking_config = storage::get_staking_config(&env);
-        let weight: i128 = if staking_config.enabled {
-            // Try to find a stake record for this voter (any proposal)
-            // As a simplified approach, weight = 1 for any signer
-            let config = storage::get_config(&env)?;
-            if config.signers.contains(&voter) {
-                1_000_000 // 1 XLM equivalent weight for each signer
-            } else {
-                return Err(VaultError::Unauthorized);
-            }
-        } else {
-            // No staking ? any signer gets equal weight
-            let config = storage::get_config(&env)?;
-            if config.signers.contains(&voter) {
-                1
-            } else {
-                return Err(VaultError::Unauthorized);
-            }
-        };
+        let weight: i128 = if staking_config.enabled { 1_000_000 } else { 1 };
 
         // Record vote
         storage::record_claim_vote(&env, claim_id, &voter);
@@ -5470,56 +5613,210 @@ impl VaultDAO {
         } else {
             claim.reject_weight += weight;
         }
+        claim.voter_count = claim.voter_count.saturating_add(1);
 
-        let total_weight = claim.approve_weight + claim.reject_weight;
-
-        // Resolve if one side has strict majority (> 50%)
-        let resolved = if total_weight > 0 {
-            if claim.approve_weight * 2 > total_weight {
-                // Majority approved ? release funds from pool
-                let pool_balance = storage::get_insurance_pool(&env, &claim.token);
-                let payout = claim.amount.min(pool_balance); // cap at pool balance
-                if payout > 0 {
-                    storage::subtract_from_insurance_pool(&env, &claim.token, payout);
-                    token::transfer(&env, &claim.token, &claim.claimant, payout);
-                }
-                // Return bond on approval
-                if !claim.bond_settled {
-                    token::transfer(&env, &claim.token, &claim.claimant, claim.bond_amount);
-                    claim.bond_settled = true;
-                }
-                claim.status = InsuranceClaimStatus::Approved;
-                true
-            } else if claim.reject_weight * 2 > total_weight {
-                // Majority rejected ? slash 10% of bond
-                if !claim.bond_settled {
-                    let slash = claim.bond_amount / 10;
-                    let returned = claim.bond_amount - slash;
-                    if returned > 0 {
-                        token::transfer(&env, &claim.token, &claim.claimant, returned);
-                    }
-                    storage::add_to_insurance_pool(&env, &claim.token, slash);
-                    claim.bond_settled = true;
-                }
-                claim.status = InsuranceClaimStatus::Rejected;
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        let _ = resolved;
         storage::set_insurance_claim(&env, &claim);
         storage::extend_instance_ttl(&env);
 
         Ok(())
     }
 
+    /// Close an insurance claim's voting period and settle it.
+    ///
+    /// Issue #1355: this is the only path that can approve a claim and release funds.
+    /// It may be called once the voting window has elapsed, or early if every eligible
+    /// signer has already voted (there is nothing left to deliberate).
+    ///
+    /// Settlement order:
+    /// 1. **Quorum** — at least `quorum_bps` of the snapshotted eligible signers must
+    ///    have voted. Short of that the claim is `Expired` and the bond is slashed 10%,
+    ///    regardless of how the cast votes leaned. This is the anti-collusion guard: a
+    ///    small clique cannot approve a large payout in an empty room.
+    /// 2. **Threshold** — approvals must reach `approval_threshold_bps` of the *cast*
+    ///    weight. Otherwise the claim is `Rejected` and the bond is slashed 10%.
+    /// 3. On approval the payout (capped at the pool balance) is released and the bond
+    ///    is returned in full.
+    ///
+    /// # Arguments
+    /// * `closer`   - Any signer (must authorize).
+    /// * `claim_id` - The claim whose voting period should be closed.
+    ///
+    /// # Errors
+    /// * `ClaimNotFound`       - claim ID does not exist.
+    /// * `ClaimNotPending`     - claim is no longer open.
+    /// * `ClaimAlreadyClosed`  - voting has already been closed and tallied.
+    /// * `ClaimVotingStillOpen`- window has not elapsed and not all signers have voted.
+    /// * `Unauthorized`        - closer is not a signer.
+    pub fn close_insurance_claim_voting(
+        env: Env,
+        closer: Address,
+        claim_id: u64,
+    ) -> Result<InsuranceClaimStatus, VaultError> {
+        closer.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&closer) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut claim = storage::get_insurance_claim(&env, claim_id)?;
+
+        if claim.status != InsuranceClaimStatus::Pending {
+            return Err(VaultError::ClaimNotPending);
+        }
+        if claim.voting_closed {
+            return Err(VaultError::ClaimAlreadyClosed);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let window_elapsed = current_ledger > claim.vote_deadline;
+        let everyone_voted =
+            claim.eligible_voters > 0 && claim.voter_count >= claim.eligible_voters;
+        if !window_elapsed && !everyone_voted {
+            return Err(VaultError::ClaimVotingStillOpen);
+        }
+
+        claim.voting_closed = true;
+
+        let required_voters = Self::claim_required_voters(&claim);
+        let quorum_met = claim.voter_count >= required_voters;
+
+        let status = if !quorum_met {
+            events::emit_claim_quorum_failed(
+                &env,
+                claim_id,
+                claim.voter_count,
+                required_voters,
+                claim.eligible_voters,
+            );
+            Self::settle_claim_bond_slash(&env, &mut claim);
+            InsuranceClaimStatus::Expired
+        } else {
+            let total_weight = claim.approve_weight + claim.reject_weight;
+            // approve / total > threshold_bps / 10000, kept in integer arithmetic.
+            // Strictly greater, so the default 5000 bps means a real majority and a
+            // dead tie rejects rather than paying out.
+            let approved = total_weight > 0
+                && claim.approve_weight.saturating_mul(10_000)
+                    > total_weight.saturating_mul(claim.approval_threshold_bps as i128);
+
+            if approved {
+                let pool_balance = storage::get_insurance_pool(&env, &claim.token);
+                let payout = claim.amount.min(pool_balance); // cap at pool balance
+                if payout > 0 {
+                    storage::subtract_from_insurance_pool(&env, &claim.token, payout);
+                    token::transfer(&env, &claim.token, &claim.claimant, payout);
+                }
+                if !claim.bond_settled {
+                    token::transfer(&env, &claim.token, &claim.claimant, claim.bond_amount);
+                    claim.bond_settled = true;
+                }
+                InsuranceClaimStatus::Approved
+            } else {
+                Self::settle_claim_bond_slash(&env, &mut claim);
+                InsuranceClaimStatus::Rejected
+            }
+        };
+
+        claim.status = status.clone();
+        storage::set_insurance_claim(&env, &claim);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_claim_voting_closed(
+            &env,
+            claim_id,
+            &closer,
+            claim.approve_weight,
+            claim.reject_weight,
+            status.clone() as u32,
+        );
+
+        Ok(status)
+    }
+
+    /// Minimum number of voters needed to satisfy this claim's quorum.
+    ///
+    /// Rounds up, so a 50% quorum over 3 signers requires 2 voters, not 1.
+    fn claim_required_voters(claim: &InsuranceClaim) -> u32 {
+        if claim.eligible_voters == 0 || claim.quorum_bps == 0 {
+            return 0;
+        }
+        let required = (claim.eligible_voters as u64 * claim.quorum_bps as u64).div_ceil(10_000);
+        (required.max(1) as u32).min(claim.eligible_voters)
+    }
+
+    /// Slash 10% of the claimant's bond into the pool and return the remainder.
+    fn settle_claim_bond_slash(env: &Env, claim: &mut InsuranceClaim) {
+        if claim.bond_settled {
+            return;
+        }
+        let slash = claim.bond_amount / 10;
+        let returned = claim.bond_amount - slash;
+        if returned > 0 {
+            token::transfer(env, &claim.token, &claim.claimant, returned);
+        }
+        if slash > 0 {
+            storage::add_to_insurance_pool(env, &claim.token, slash);
+        }
+        claim.bond_settled = true;
+    }
+
     /// Retrieve an insurance claim by ID.
     pub fn get_insurance_claim(env: Env, claim_id: u64) -> Result<InsuranceClaim, VaultError> {
         storage::get_insurance_claim(&env, claim_id)
+    }
+
+    /// Number of voters this claim needs for quorum, and how many have voted so far.
+    ///
+    /// Returns `(voters_so_far, required_voters, eligible_voters)`.
+    pub fn get_insurance_claim_quorum(
+        env: Env,
+        claim_id: u64,
+    ) -> Result<(u32, u32, u32), VaultError> {
+        let claim = storage::get_insurance_claim(&env, claim_id)?;
+        Ok((
+            claim.voter_count,
+            Self::claim_required_voters(&claim),
+            claim.eligible_voters,
+        ))
+    }
+
+    /// Read the insurance claim voting parameters.
+    pub fn get_insurance_voting_config(env: Env) -> types::InsuranceVotingConfig {
+        storage::get_insurance_voting_config(&env)
+    }
+
+    /// Update the insurance claim voting parameters (Admin only).
+    ///
+    /// Applies to claims submitted **after** this call; in-flight claims keep the
+    /// rules they were submitted under.
+    ///
+    /// # Errors
+    /// * `Unauthorized` - caller is not an Admin.
+    /// * `InvalidAmount` - a threshold or quorum exceeds 100% (10000 bps).
+    pub fn set_insurance_voting_config(
+        env: Env,
+        admin: Address,
+        config: types::InsuranceVotingConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if config.approval_threshold_bps > 10_000
+            || config.quorum_bps > 10_000
+            || config.large_approval_threshold_bps > 10_000
+            || config.large_claim_quorum_bps > 10_000
+        {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        storage::set_insurance_voting_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
     }
 
     // ========================================================================
@@ -9404,6 +9701,108 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Issue #1363: validate a batch's dependency graph and return its proposal IDs
+    /// in an order that satisfies every dependency.
+    ///
+    /// Two things are checked before a batch is allowed to run at all:
+    /// * every dependency is either **in the batch** or **already executed** — a
+    ///   dependency that is neither can never be satisfied, so the batch is rejected
+    ///   with `BatchDependencyMissing` rather than failing part-way through;
+    /// * the in-batch dependency edges form a DAG — a cycle yields `CircularDependency`.
+    ///
+    /// The returned order is a Kahn topological sort that breaks ties by the batch's
+    /// original position, so an already-valid batch comes back unchanged and callers
+    /// only see a reorder event when one was genuinely required.
+    fn plan_batch_order(env: &Env, proposal_ids: &Vec<u64>) -> Result<Vec<u64>, VaultError> {
+        let current_ledger = env.ledger().sequence() as u64;
+        let n = proposal_ids.len();
+
+        // Number of unsatisfied in-batch dependencies per proposal.
+        let mut indegree: Vec<u32> = Vec::new(env);
+        let mut emitted: Vec<bool> = Vec::new(env);
+
+        for i in 0..n {
+            let pid = proposal_ids.get(i).unwrap();
+            let proposal = storage::get_proposal(env, pid)?;
+            let mut deg: u32 = 0;
+
+            for d in 0..proposal.depends_on.len() {
+                let dep_id = proposal.depends_on.get(d).unwrap();
+
+                if dep_id == pid {
+                    return Err(VaultError::CircularDependency);
+                }
+
+                if Self::batch_contains(proposal_ids, dep_id) {
+                    // Satisfied by an earlier entry in the sorted order.
+                    deg += 1;
+                    continue;
+                }
+
+                // Outside the batch: it must already be executed, and in an earlier
+                // ledger, or ordering within this batch cannot make it safe.
+                let dep = storage::get_proposal(env, dep_id)
+                    .map_err(|_| VaultError::BatchDependencyMissing)?;
+                if dep.status != ProposalStatus::Executed {
+                    return Err(VaultError::BatchDependencyMissing);
+                }
+                if dep.execution_ledger == 0 || dep.execution_ledger >= current_ledger {
+                    return Err(VaultError::DependencyNotExecuted);
+                }
+            }
+
+            indegree.push_back(deg);
+            emitted.push_back(false);
+        }
+
+        // Kahn's algorithm. Batches are size-capped, so the O(n^2) scan is cheaper
+        // than materialising an adjacency list in contract storage types.
+        let mut sorted: Vec<u64> = Vec::new(env);
+
+        for _ in 0..n {
+            let mut chosen: Option<u32> = None;
+            for i in 0..n {
+                if !emitted.get(i).unwrap() && indegree.get(i).unwrap() == 0 {
+                    chosen = Some(i);
+                    break;
+                }
+            }
+
+            // No dependency-free proposal left while some remain: the in-batch
+            // edges contain a cycle.
+            let idx = chosen.ok_or(VaultError::CircularDependency)?;
+            emitted.set(idx, true);
+            let pid = proposal_ids.get(idx).unwrap();
+            sorted.push_back(pid);
+
+            // Release everything that was waiting on this proposal.
+            for j in 0..n {
+                if emitted.get(j).unwrap() {
+                    continue;
+                }
+                let other = storage::get_proposal(env, proposal_ids.get(j).unwrap())?;
+                for d in 0..other.depends_on.len() {
+                    if other.depends_on.get(d).unwrap() == pid {
+                        let remaining = indegree.get(j).unwrap();
+                        indegree.set(j, remaining.saturating_sub(1));
+                    }
+                }
+            }
+        }
+
+        Ok(sorted)
+    }
+
+    /// Whether `proposal_id` is one of the batch's entries.
+    fn batch_contains(proposal_ids: &Vec<u64>, proposal_id: u64) -> bool {
+        for i in 0..proposal_ids.len() {
+            if proposal_ids.get(i).unwrap() == proposal_id {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Ensure all dependencies are executed and no circular references exist.
     fn ensure_dependencies_executable(env: &Env, proposal: &Proposal) -> Result<(), VaultError> {
         let current_ledger = env.ledger().sequence() as u64;
@@ -9532,7 +9931,17 @@ impl VaultDAO {
         }
     }
 
-    fn slash_stake_on_rejection(env: &Env, proposal: &Proposal) {
+    /// Issue #1360: slash a proposer's stake at the rate configured for `reason`.
+    ///
+    /// Graduated so the penalty tracks how much signer attention the proposal wasted:
+    /// executed proposals are never slashed, rejections cost `slash_percentage`, and
+    /// proposer-initiated cancellations cost the higher `cancellation_slash_percentage`
+    /// — cancelling is otherwise a free way to spam the queue and withdraw before a vote.
+    ///
+    /// The slashed portion goes to the stake pool, or to the insurance pool when
+    /// `slash_to_insurance_pool` is set; the remainder returns to the proposer.
+    /// Slashing is a no-op when staking is disabled (the whole stake is returned).
+    fn slash_stake(env: &Env, proposal: &Proposal, slash_percentage: u32, reason: &Symbol) {
         if proposal.stake_amount == 0 {
             return;
         }
@@ -9542,7 +9951,7 @@ impl VaultDAO {
             }
             let staking_config = storage::get_staking_config(env);
             let slash_amount = if staking_config.enabled {
-                stake_record.amount * staking_config.slash_percentage as i128 / 100
+                stake_record.amount * (slash_percentage.min(100) as i128) / 100
             } else {
                 0
             };
@@ -9551,10 +9960,16 @@ impl VaultDAO {
                 token::transfer(env, &proposal.token, &proposal.proposer, remainder);
             }
             if slash_amount > 0 {
-                storage::add_to_stake_pool(env, &proposal.token, slash_amount);
+                if staking_config.slash_to_insurance_pool {
+                    storage::add_to_insurance_pool(env, &proposal.token, slash_amount);
+                } else {
+                    storage::add_to_stake_pool(env, &proposal.token, slash_amount);
+                }
             }
             stake_record.slashed = slash_amount > 0;
             stake_record.slashed_amount = slash_amount;
+            // Nothing is left locked either way, so the record is settled.
+            stake_record.refunded = slash_amount == 0;
             stake_record.released_at = env.ledger().sequence() as u64;
             storage::set_stake_record(env, &stake_record);
             events::emit_stake_slashed(
@@ -9563,8 +9978,21 @@ impl VaultDAO {
                 &proposal.proposer,
                 slash_amount,
                 remainder,
+                reason,
             );
         }
+    }
+
+    /// Slash the proposer's stake at the rejection rate (Issue #1360).
+    fn slash_stake_on_rejection(env: &Env, proposal: &Proposal) {
+        let percentage = storage::get_staking_config(env).slash_percentage;
+        Self::slash_stake(env, proposal, percentage, &Symbol::new(env, "rejected"));
+    }
+
+    /// Slash the proposer's stake at the (higher) cancellation rate (Issue #1360).
+    fn slash_stake_on_cancellation(env: &Env, proposal: &Proposal) {
+        let percentage = storage::get_staking_config(env).cancellation_slash_percentage;
+        Self::slash_stake(env, proposal, percentage, &Symbol::new(env, "cancelled"));
     }
 
     /// Calculate effective threshold based on the configured ThresholdStrategy.

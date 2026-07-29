@@ -28,9 +28,9 @@ use crate::types::{
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
     GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType, HookRegistration,
-    InsuranceClaim, InsuranceConfig, ListMode, MergeRecord, MultiPhaseProposal,
-    NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant, Proposal,
-    ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
+    InsuranceClaim, InsuranceConfig, InsuranceVotingConfig, ListMode, MergeRecord,
+    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant,
+    Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
     ReputationConfig, RetryState, Role, RoleAssignment, ScopedDelegation, SignerTier, StakeRecord,
     StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
     TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
@@ -102,6 +102,9 @@ pub enum DataKey {
     CancellationHistory,
     /// Amendment history for a proposal
     AmendmentHistory(u64),
+    // ---- Issue #1356: Amendment limits ----
+    /// Number of amendments applied to a proposal (proposal_id) -> u32
+    AmendmentCount(u64),
     /// Execution snapshot for rollback
     ExecutionSnapshot(u64),
     /// Execution fee estimate
@@ -279,6 +282,12 @@ pub enum FeatureKey {
     UserVolume(Address, Address),
     /// Staking configuration -> StakingConfig
     StakingConfig,
+    // ---- Issue #1355: Insurance claim voting governance ----
+    /// Insurance claim voting parameters -> InsuranceVotingConfig
+    InsuranceVotingConfig,
+    // ---- Issue #1356: Amendment limits ----
+    /// Maximum number of amendments allowed per proposal -> u32
+    MaxAmendments,
     /// Staking pool accumulated funds (Token Address) -> i128
     StakePool(Address),
     /// Stake record for a proposal -> StakeRecord
@@ -1496,9 +1505,11 @@ pub fn add_amendment_record(env: &Env, record: &ProposalAmendment) {
 pub fn set_supersession_link(env: &Env, old_id: u64, new_id: u64) {
     let supersedes_key = DataKey::Supersedes(new_id);
     env.storage().persistent().set(&supersedes_key, &old_id);
-    env.storage()
-        .persistent()
-        .extend_ttl(&supersedes_key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    env.storage().persistent().extend_ttl(
+        &supersedes_key,
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL,
+    );
 
     let superseded_by_key = DataKey::SupersededBy(old_id);
     env.storage().persistent().set(&superseded_by_key, &new_id);
@@ -2073,6 +2084,58 @@ pub fn set_staking_config(env: &Env, config: &StakingConfig) {
     env.storage()
         .instance()
         .set(&FeatureKey::StakingConfig, config);
+}
+
+// ----------------------------------------------------------------------------
+// Issue #1355: Insurance claim voting governance
+// ----------------------------------------------------------------------------
+
+pub fn get_insurance_voting_config(env: &Env) -> InsuranceVotingConfig {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::InsuranceVotingConfig)
+        .unwrap_or_else(InsuranceVotingConfig::default)
+}
+
+pub fn set_insurance_voting_config(env: &Env, config: &InsuranceVotingConfig) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::InsuranceVotingConfig, config);
+}
+
+// ----------------------------------------------------------------------------
+// Issue #1356: Proposal amendment limits
+// ----------------------------------------------------------------------------
+
+/// Default ceiling on how many times a single proposal may be amended.
+pub const DEFAULT_MAX_AMENDMENTS: u32 = 3;
+
+pub fn get_max_amendments(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::MaxAmendments)
+        .unwrap_or(DEFAULT_MAX_AMENDMENTS)
+}
+
+pub fn set_max_amendments(env: &Env, max: u32) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::MaxAmendments, &max);
+}
+
+pub fn get_amendment_count(env: &Env, proposal_id: u64) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AmendmentCount(proposal_id))
+        .unwrap_or(0)
+}
+
+pub fn set_amendment_count(env: &Env, proposal_id: u64, count: u32) {
+    let key = DataKey::AmendmentCount(proposal_id);
+    env.storage().persistent().set(&key, &count);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 pub fn get_stake_pool(env: &Env, token_addr: &Address) -> i128 {
