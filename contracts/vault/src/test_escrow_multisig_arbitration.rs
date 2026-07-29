@@ -141,7 +141,7 @@ fn test_create_escrow_with_arbitrator_panel() {
     );
 
     assert!(escrow_id > 0);
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Active);
 }
 
@@ -232,7 +232,7 @@ fn test_arbitrator_panel_voting_history_tracked() {
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "breach_of_contract"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
 
@@ -263,7 +263,7 @@ fn test_multisig_voting_requires_m_of_n_threshold() {
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "non_delivery"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
     // Resolution not yet possible without majority votes
 }
@@ -294,7 +294,7 @@ fn test_resolution_rejected_below_threshold() {
         .expect("dispute_escrow should succeed");
 
     // Only 1 vote (less than 2-of-3 threshold) — resolution should fail
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
 
@@ -357,7 +357,7 @@ fn test_refund_after_dispute_vote() {
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "quality_issue"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
 
@@ -391,7 +391,7 @@ fn test_odd_numbered_panel_prevents_ties() {
     );
 
     assert_eq!(panel.len(), 3);
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Active);
 }
 
@@ -419,7 +419,7 @@ fn test_arbitrator_vote_emits_event() {
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "non_delivery"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
     assert_eq!(escrow.dispute_reason, Symbol::new(&env, "non_delivery"));
 }
@@ -445,7 +445,7 @@ fn test_arbitration_timestamps_tracked() {
         &env, &client, &admin, &recipient, &token, 2000, panel, 10000,
     );
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.created_at, current_ledger);
 }
 

@@ -130,7 +130,7 @@ fn test_escrow_has_expiration_timestamp() {
 
     let escrow_id = create_escrow(&env, &client, &admin, &recipient, &token, 5000, duration);
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.created_at, current_ledger);
     assert_eq!(escrow.expires_at, current_ledger + duration);
 }
@@ -189,7 +189,7 @@ fn test_auto_refund_returns_funds_to_funder() {
         .expect("release_escrow should succeed (auto-refund)");
 
     assert_eq!(released, amount);
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
 }
 
@@ -214,7 +214,7 @@ fn test_auto_refund_emits_event() {
         .release_escrow(&caller, &escrow_id)
         .expect("auto-refund should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
     assert!(escrow.finalized_at > 0);
 }
@@ -240,7 +240,7 @@ fn test_refund_goes_to_funder_not_recipient() {
         .release_escrow(&recipient, &escrow_id)
         .expect("release_escrow should refund to funder");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(released, 2500);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
 }
@@ -381,7 +381,7 @@ fn test_partial_refund_accounting() {
 
     assert_eq!(released, 3000); // 60% of 5000
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.released_amount, 3000);
     assert_eq!(escrow.total_amount, total_amount);
 }
