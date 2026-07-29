@@ -22,6 +22,10 @@ import type {
   SnapshotStats,
   SnapshotFilter,
   GovernanceSnapshotData,
+  SnapshotConsistencyResult,
+  SnapshotConsistencyMismatch,
+  OnChainConfigProvider,
+  SnapshotVerificationEmitter,
 } from "./types.js";
 import { Role } from "./types.js";
 import { SnapshotNormalizer } from "./normalizer.js";
@@ -33,6 +37,7 @@ import {
 } from "./rebuild-lock.manager.js";
 
 import { createLogger } from "../../shared/logging/logger.js";
+import { randomUUID } from "node:crypto";
 
 const logger = createLogger("snapshot-service");
 
@@ -80,6 +85,46 @@ function validateSnapshot(snapshot: ContractSnapshot): boolean {
 }
 
 /**
+ * Compute the discrepancies between the on-chain signer set (the source of
+ * truth) and the snapshot's active signer set. Both inputs are expected to be
+ * sorted. Produces one mismatch entry per divergent address.
+ */
+function diffSignerSets(
+  onChainSigners: string[],
+  snapshotSigners: string[],
+): SnapshotConsistencyMismatch[] {
+  const mismatches: SnapshotConsistencyMismatch[] = [];
+  const onChainSet = new Set(onChainSigners);
+  const snapshotSet = new Set(snapshotSigners);
+
+  // On-chain signers the snapshot is missing (or has marked inactive).
+  for (const address of onChainSigners) {
+    if (!snapshotSet.has(address)) {
+      mismatches.push({
+        field: "signers",
+        onChain: address,
+        snapshot: null,
+        detail: `Signer ${address} is present on-chain but missing from (or inactive in) the snapshot.`,
+      });
+    }
+  }
+
+  // Signers the snapshot believes are active but the contract does not have.
+  for (const address of snapshotSigners) {
+    if (!onChainSet.has(address)) {
+      mismatches.push({
+        field: "signers",
+        onChain: null,
+        snapshot: address,
+        detail: `Signer ${address} is active in the snapshot but not present on-chain.`,
+      });
+    }
+  }
+
+  return mismatches;
+}
+
+/**
  * SnapshotService
  *
  * Aggregates signer and role state from normalized events.
@@ -88,12 +133,16 @@ function validateSnapshot(snapshot: ContractSnapshot): boolean {
  */
 export class SnapshotService {
   private readonly lockManager: SnapshotRebuildLockManager;
+  private readonly onChainProvider?: OnChainConfigProvider;
+  private readonly verificationEmitter?: SnapshotVerificationEmitter;
 
   constructor(
     private readonly adapter: SnapshotStorageAdapter,
     private readonly rpc?: SorobanRpcClient,
     options?: {
       lockManager?: SnapshotRebuildLockManager;
+      onChainProvider?: OnChainConfigProvider;
+      verificationEmitter?: SnapshotVerificationEmitter;
     },
   ) {
     // Use provided lock manager or create default
@@ -102,6 +151,9 @@ export class SnapshotService {
       new SnapshotRebuildLockManager({
         backend: new InMemoryLockBackend(),
       });
+
+    this.onChainProvider = options?.onChainProvider;
+    this.verificationEmitter = options?.verificationEmitter;
 
     // Register lock event handlers for logging
     this.lockManager.onLockAcquired((contractId) => {
@@ -731,6 +783,114 @@ export class SnapshotService {
       lastProcessedLedger: snapshot.lastProcessedLedger,
       computedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Verify that an event-built snapshot matches current on-chain state.
+   *
+   * Snapshots are reconstructed from indexed events, so a missed event, a bug,
+   * or a chain reorg can silently desync them from the contract. This performs
+   * a point-in-time reconciliation of the *active signer set* — the state both
+   * the snapshot and the contract's `get_config` expose — and reports any
+   * divergence with a detailed diff.
+   *
+   * Corresponds to the `verify_snapshot_consistency(env, snapshot_id)` task.
+   * An event describing the outcome (consistent or drifted) is emitted after
+   * every verification when an emitter is configured.
+   *
+   * @param contractId - Vault contract whose snapshot should be verified.
+   * @returns A structured result whose `consistent` flag is the headline bool.
+   * @throws If no on-chain provider is configured, or no snapshot exists yet.
+   */
+  async verifySnapshotConsistency(
+    contractId: string,
+  ): Promise<SnapshotConsistencyResult> {
+    if (!this.onChainProvider) {
+      throw new Error(
+        "verifySnapshotConsistency requires an on-chain config provider",
+      );
+    }
+
+    const snapshot = await this.getSnapshot(contractId);
+    if (!snapshot) {
+      throw new Error(`No snapshot found for contract ${contractId}`);
+    }
+
+    // Active signers as reconstructed from events.
+    const snapshotSigners = Array.from(snapshot.signers.values())
+      .filter((s) => s.isActive)
+      .map((s) => s.address)
+      .sort();
+
+    // Authoritative signer set from the contract.
+    const onChain = await this.onChainProvider.getVaultConfig(contractId);
+    const onChainSigners = [...onChain.signers].sort();
+
+    const mismatches = diffSignerSets(onChainSigners, snapshotSigners);
+    const consistent = mismatches.length === 0;
+
+    const result: SnapshotConsistencyResult = {
+      consistent,
+      contractId,
+      checkedAt: new Date().toISOString(),
+      snapshotLedger: snapshot.lastProcessedLedger,
+      onChainSigners,
+      snapshotSigners,
+      mismatches,
+    };
+
+    if (consistent) {
+      logger.info("snapshot consistency verified", {
+        contractId,
+        snapshotLedger: result.snapshotLedger,
+        signerCount: onChainSigners.length,
+      });
+    } else {
+      logger.warn("snapshot consistency mismatch detected", {
+        contractId,
+        snapshotLedger: result.snapshotLedger,
+        mismatchCount: mismatches.length,
+        mismatches,
+      });
+    }
+
+    await this.emitVerificationEvent(result);
+
+    return result;
+  }
+
+  /**
+   * Publish a verification outcome to the configured emitter, if any.
+   * Emission failures are logged but never propagated — a failed webhook must
+   * not mask the verification result itself.
+   */
+  private async emitVerificationEvent(
+    result: SnapshotConsistencyResult,
+  ): Promise<void> {
+    if (!this.verificationEmitter) return;
+    try {
+      await this.verificationEmitter.deliver({
+        id: randomUUID(),
+        topic: result.consistent
+          ? "snapshot:consistency-verified"
+          : "snapshot:consistency-drift",
+        source: "snapshot-service",
+        createdAt: result.checkedAt,
+        payload: {
+          contractId: result.contractId,
+          consistent: result.consistent,
+          snapshotLedger: result.snapshotLedger,
+          mismatches: result.mismatches,
+          onChainSigners: result.onChainSigners,
+          snapshotSigners: result.snapshotSigners,
+        },
+      });
+    } catch (err) {
+      logger.warn("failed to emit snapshot verification event", {
+        contractId: result.contractId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private computeRoleDistribution(

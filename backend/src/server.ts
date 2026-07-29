@@ -202,7 +202,27 @@ export async function startServer(
     env,
     new MemoryRecurringStorageAdapter(),
   );
-  const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
+  // Network passphrase lookup, shared by every service that reads on-chain state.
+  const serverNetworkPassphrases: Record<string, string> = {
+    testnet: "Test SDF Network ; September 2015",
+    mainnet: "Public Global Stellar Network ; October 2015",
+    futurenet: "Test SDF Future Network ; October 2022",
+    standalone: "Standalone Network ; Latitude 0",
+  };
+  const vaultService = new VaultService(
+    env.sorobanRpcUrl,
+    serverNetworkPassphrases[env.stellarNetwork?.toLowerCase() ?? "testnet"] ??
+      serverNetworkPassphrases["testnet"]!,
+  );
+
+  const snapshotService = new SnapshotService(
+    new MemorySnapshotAdapter(),
+    undefined,
+    {
+      onChainProvider: vaultService,
+      verificationEmitter: webhookDeliveryService,
+    },
+  );
   const snapshotDiffService = new SnapshotDiffService(
     new InMemorySnapshotDiffAdapter(),
   );
@@ -417,24 +437,13 @@ export async function startServer(
   runtime.vaultRegistry = vaultRegistry;
 
   // ── Contract State Validator (Issue #1171) ────────────────────────────────
-  const serverNetworkPassphrases: Record<string, string> = {
-    testnet: "Test SDF Network ; September 2015",
-    mainnet: "Public Global Stellar Network ; October 2015",
-    futurenet: "Test SDF Future Network ; October 2022",
-    standalone: "Standalone Network ; Latitude 0",
-  };
   const ContractRegistryClass = (
     await import("./modules/contracts/contract-registry.js")
   ).default;
   const contractRegistryForValidator = new ContractRegistryClass(env);
-  const vaultServiceForValidator = new VaultService(
-    env.sorobanRpcUrl,
-    serverNetworkPassphrases[env.stellarNetwork?.toLowerCase() ?? "testnet"] ??
-      serverNetworkPassphrases["testnet"]!,
-  );
   const contractStateValidator = new ContractStateValidator(
     contractRegistryForValidator,
-    vaultServiceForValidator,
+    vaultService,
     webhookDeliveryService,
   );
   contractStateValidator.start();
