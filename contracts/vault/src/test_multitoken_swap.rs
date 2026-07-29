@@ -87,7 +87,16 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
     }
 }
 
-fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address, Address) {
+fn setup(
+    env: &Env,
+) -> (
+    VaultDAOClient<'_>,
+    Address,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
     env.mock_all_auths();
 
     let vault_id = env.register(VaultDAO, ());
@@ -141,13 +150,7 @@ fn test_propose_token_swap_valid_params() {
     let amount_in = 1_000i128;
     let min_out = 900i128; // 90% of input
 
-    let proposal_id = client.propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &amount_in,
-        &min_out,
-    );
+    let proposal_id = client.propose_token_swap(&admin, &token_1, &token_2, &amount_in, &min_out);
 
     assert!(proposal_id > 0);
 
@@ -176,12 +179,7 @@ fn test_simulate_swap_does_not_modify_balances() {
     let min_out = 900i128;
 
     // Simulate swap
-    let sim_result = client.simulate_token_swap(
-        &token_1,
-        &token_2,
-        &amount_in,
-        &min_out,
-    );
+    let sim_result = client.simulate_token_swap(&token_1, &token_2, &amount_in, &min_out);
 
     assert!(sim_result.is_ok());
 
@@ -207,13 +205,7 @@ fn test_reject_swap_insufficient_min_out() {
     let amount_in = 1_000i128;
     let min_out = 2_000i128; // More than reasonable output
 
-    let result = client.try_propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &amount_in,
-        &min_out,
-    );
+    let result = client.try_propose_token_swap(&admin, &token_1, &token_2, &amount_in, &min_out);
 
     // Should fail because min_out is unrealistic
     assert!(result.is_err());
@@ -239,13 +231,7 @@ fn test_execute_swap_updates_balances() {
     let amount_in = 1_000i128;
     let min_out = 900i128;
 
-    let proposal_id = client.propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &amount_in,
-        &min_out,
-    );
+    let proposal_id = client.propose_token_swap(&admin, &token_1, &token_2, &amount_in, &min_out);
 
     // Execute swap
     client.execute_proposal(&admin, &proposal_id);
@@ -280,13 +266,7 @@ fn test_swap_event_includes_pre_post_balances() {
     let amount_in = 1_000i128;
     let min_out = 900i128;
 
-    let proposal_id = client.propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &amount_in,
-        &min_out,
-    );
+    let proposal_id = client.propose_token_swap(&admin, &token_1, &token_2, &amount_in, &min_out);
 
     env.events().start_recording();
 
@@ -321,11 +301,8 @@ fn test_swap_same_token_fails() {
     let min_out = 900i128;
 
     let result = client.try_propose_token_swap(
-        &admin,
-        &token_1,
-        &token_1, // Same token
-        &amount_in,
-        &min_out,
+        &admin, &token_1, &token_1, // Same token
+        &amount_in, &min_out,
     );
 
     assert!(result.is_err());
@@ -343,10 +320,7 @@ fn test_swap_zero_amount_fails() {
     client.set_dex_config(&admin, &dex);
 
     let result = client.try_propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &0i128, // Zero amount
+        &admin, &token_1, &token_2, &0i128, // Zero amount
         &0i128,
     );
 
@@ -366,13 +340,7 @@ fn test_swap_insufficient_balance_fails() {
 
     let amount_in = 100_000_000_000i128; // More than vault balance (10_000_000)
 
-    let result = client.try_propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &amount_in,
-        &amount_in,
-    );
+    let result = client.try_propose_token_swap(&admin, &token_1, &token_2, &amount_in, &amount_in);
 
     assert!(result.is_err());
 }
@@ -396,13 +364,8 @@ fn test_rebalance_portfolio_multiple_swaps() {
 
     // First swap: convert some token_1 to token_2
     let amount_in_1 = 1_000i128;
-    let proposal_id_1 = client.propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &amount_in_1,
-        &900i128,
-    );
+    let proposal_id_1 =
+        client.propose_token_swap(&admin, &token_1, &token_2, &amount_in_1, &900i128);
 
     client.execute_proposal(&admin, &proposal_id_1);
 
@@ -414,13 +377,8 @@ fn test_rebalance_portfolio_multiple_swaps() {
 
     // Second swap: convert some token_2 back to token_1
     let amount_in_2 = 500i128;
-    let proposal_id_2 = client.propose_token_swap(
-        &admin,
-        &token_2,
-        &token_1,
-        &amount_in_2,
-        &450i128,
-    );
+    let proposal_id_2 =
+        client.propose_token_swap(&admin, &token_2, &token_1, &amount_in_2, &450i128);
 
     client.execute_proposal(&admin, &proposal_id_2);
 
@@ -442,13 +400,7 @@ fn test_swap_without_dex_configured_fails() {
 
     // Don't configure DEX
 
-    let result = client.try_propose_token_swap(
-        &admin,
-        &token_1,
-        &token_2,
-        &1_000i128,
-        &900i128,
-    );
+    let result = client.try_propose_token_swap(&admin, &token_1, &token_2, &1_000i128, &900i128);
 
     assert!(result.is_err());
 }
@@ -466,12 +418,7 @@ fn test_simulate_swap_returns_projected_output() {
 
     let amount_in = 1_000i128;
 
-    let sim_result = client.simulate_token_swap(
-        &token_1,
-        &token_2,
-        &amount_in,
-        &900i128,
-    );
+    let sim_result = client.simulate_token_swap(&token_1, &token_2, &amount_in, &900i128);
 
     assert!(sim_result.is_ok());
 

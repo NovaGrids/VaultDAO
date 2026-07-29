@@ -119,8 +119,15 @@ fn test_escrow_auto_resolve_refunds_after_timeout() {
 
     // Verify escrow is refunded
     let escrow = client.get_escrow_info(&escrow_id).unwrap();
-    assert_eq!(escrow.status, EscrowStatus::Refunded, "Escrow should be refunded");
-    assert_eq!(escrow.released_amount, 5000i128, "All funds should be released");
+    assert_eq!(
+        escrow.status,
+        EscrowStatus::Refunded,
+        "Escrow should be refunded"
+    );
+    assert_eq!(
+        escrow.released_amount, 5000i128,
+        "All funds should be released"
+    );
 }
 
 #[test]
@@ -196,5 +203,8 @@ fn test_escrow_auto_resolve_only_refunds_disputed() {
 
     // Try to auto-resolve non-disputed escrow - should fail
     let result = client.auto_resolve_escrow(&escrow_id);
-    assert!(result.is_err(), "Auto-resolve should fail for non-disputed escrow");
+    assert!(
+        result.is_err(),
+        "Auto-resolve should fail for non-disputed escrow"
+    );
 }

@@ -37,6 +37,18 @@ use types::{
     DisputeResolution, DisputeStatus, Escrow, EscrowStatus, ExecutionFeeEstimate, FundingMilestone,
     FundingMilestoneStatus, FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig,
     GasPriceOracleConfig, GasPriceSource, GovernanceProposal, HolidayBehavior, HolidayCalendar,
+    HookEventType, HookRegistration, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
+    InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
+    NotificationPrefs, OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority,
+    Proposal, ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus,
+    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
+    RecurringPayment, RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role,
+    RoleAssignment, ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig,
+    StreamRateWindow, StreamStatus, StreamingPayment, Subscription, SubscriptionStatus,
+    SubscriptionTier, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
+    TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics, VaultOracleConfig,
+    VaultPriceData, VelocityConfig, VestingSchedule, VoteChoice, VoteWeight, VotingStrategy,
+    WhitelistEntry,
     ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus, InsuranceConfig, ListMode,
     Milestone, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
     OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority, Proposal,
@@ -357,6 +369,12 @@ mod test_attachments;
 #[cfg(test)]
 mod test_audit;
 #[cfg(test)]
+mod test_cache_invalidation;
+#[cfg(test)]
+mod test_circular_dependency;
+#[cfg(test)]
+mod test_cold_signature_replay;
+#[cfg(test)]
 mod test_cost_estimation;
 #[cfg(test)]
 mod test_cross_vault;
@@ -367,8 +385,16 @@ mod test_escrow_expiration;
 #[cfg(test)]
 mod test_escrow_milestone_partial_release;
 #[cfg(test)]
+mod test_escrow_multisig;
+#[cfg(test)]
 mod test_escrow_multisig_arbitration;
 mod test_escrow_timeout;
+#[cfg(test)]
+mod test_escrow_voting;
+#[cfg(test)]
+mod test_fan_out_streams;
+#[cfg(test)]
+mod test_fee_cache;
 #[cfg(test)]
 mod test_fees;
 #[cfg(test)]
@@ -376,34 +402,26 @@ mod test_gas_price_oracle;
 #[cfg(test)]
 mod test_hooks;
 #[cfg(test)]
-mod test_circular_dependency;
-#[cfg(test)]
-mod test_cold_signature_replay;
-#[cfg(test)]
 mod test_merge;
 #[cfg(test)]
-mod test_notification_prefs;
-#[cfg(test)]
-mod test_threshold_reduction;
-#[cfg(test)]
-mod test_recurring;
-#[cfg(test)]
-mod test_recurring_conditions;
-#[cfg(test)]
-mod test_recurring_alerts;
-#[cfg(test)]
-mod test_recurring_dryrun;
-#[cfg(test)]
-mod test_escrow_multisig;
+mod test_multitoken_insurance;
 #[cfg(test)]
 mod test_multitoken_limits;
 #[cfg(test)]
 mod test_multitoken_swap;
 #[cfg(test)]
-mod test_stream_clawback;
-#[cfg(test)]
-mod test_multitoken_insurance;
+mod test_notification_prefs;
+mod test_proposal_expiration;
+mod test_proposal_management;
 mod test_rbac_consistency;
+#[cfg(test)]
+mod test_recurring;
+#[cfg(test)]
+mod test_recurring_alerts;
+#[cfg(test)]
+mod test_recurring_conditions;
+#[cfg(test)]
+mod test_recurring_dryrun;
 #[cfg(test)]
 mod test_reentrancy;
 #[cfg(test)]
@@ -415,16 +433,21 @@ mod test_staking;
 #[cfg(test)]
 mod test_stream_burst_config;
 #[cfg(test)]
+mod test_stream_clawback;
+#[cfg(test)]
+mod test_stream_pause_ttl;
+#[cfg(test)]
 mod test_streaming;
 #[cfg(test)]
-mod test_subscriptions;
-#[cfg(test)]
 mod test_subscription_downgrade_grace;
-mod test_proposal_expiration;
+#[cfg(test)]
+mod test_subscriptions;
 #[cfg(test)]
 mod test_tag_taxonomy;
 #[cfg(test)]
 mod test_tags;
+#[cfg(test)]
+mod test_threshold_reduction;
 #[cfg(test)]
 mod test_var_templates;
 #[cfg(test)]
@@ -1594,7 +1617,7 @@ impl VaultDAO {
                 spend_day: storage::get_day_number(&env),
                 spend_week: storage::get_week_number(&env),
                 has_spend_buckets: true,
-            approved_at: 0,
+                approved_at: 0,
             };
 
             storage::set_proposal(&env, &proposal);
@@ -3721,7 +3744,6 @@ impl VaultDAO {
         Ok(())
     }
 
-
     // ========================================================================
     // Issue #1064: Streaming Rate Limiter
     // ========================================================================
@@ -3825,6 +3847,9 @@ impl VaultDAO {
 
         storage::set_streaming_payment(&env, &stream);
         storage::extend_instance_ttl(&env);
+
+        // Notify keeper network that a stream payment was triggered
+        Self::trigger_keeper_hooks(&env, &HookEventType::StreamDue, stream_id);
 
         Ok(())
     }
@@ -5900,6 +5925,9 @@ impl VaultDAO {
         payment.payment_count += total_payments as u32;
         storage::set_recurring_payment(&env, &payment);
         storage::extend_instance_ttl(&env);
+
+        // Notify keeper network that a recurring payment just completed
+        Self::trigger_keeper_hooks(&env, &HookEventType::RecurringDue, payment_id);
 
         Ok(())
     }
@@ -9664,6 +9692,12 @@ impl VaultDAO {
                 };
                 if previous_status != ProposalStatus::Approved {
                     events::emit_proposal_ready(env, proposal_id, proposal.unlock_ledger);
+                    // Notify keeper network that a proposal is ready to execute
+                    Self::trigger_keeper_hooks(
+                        env,
+                        &HookEventType::ProposalReadyToExecute,
+                        proposal_id,
+                    );
                 }
             }
         } else {
@@ -10884,6 +10918,174 @@ impl VaultDAO {
     pub fn has_hook_failure(_env: Env, _proposal_id: u64) -> bool {
         // Simplified implementation - just return false for now
         false
+    }
+
+    // ========================================================================
+    // Issue #1091: Keeper Network Lifecycle Hooks
+    // ========================================================================
+
+    /// Register a keeper-network callback hook for a specific lifecycle event.
+    ///
+    /// Any signer may register a hook. Up to 5 hooks are allowed per event type
+    /// and 20 hooks total per vault. Duplicate (keeper + event_type) pairs are
+    /// rejected with `HookAlreadyRegistered`.
+    ///
+    /// # Arguments
+    /// * `signer`            - Authorized signer (must be in the signer set).
+    /// * `keeper`            - Address that receives the fee on successful callback.
+    /// * `event_type`        - Lifecycle event to subscribe to.
+    /// * `callback_contract` - Contract to invoke when the event fires.
+    /// * `max_fee`           - Maximum stroops transferred to `keeper` per call (0 = no fee).
+    pub fn register_keeper_hook(
+        env: Env,
+        signer: Address,
+        keeper: Address,
+        event_type: HookEventType,
+        callback_contract: Address,
+        max_fee: i128,
+    ) -> Result<(), VaultError> {
+        signer.require_auth();
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&signer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        // Enforce per-event-type limit
+        let mut hooks = storage::get_keeper_hooks(&env, &event_type);
+        if hooks.len() >= storage::MAX_KEEPER_HOOKS_PER_EVENT {
+            return Err(VaultError::HookLimitExceeded);
+        }
+
+        // Enforce total vault limit
+        let total = storage::get_keeper_hook_count(&env);
+        if total >= storage::MAX_KEEPER_HOOKS_TOTAL {
+            return Err(VaultError::HookLimitExceeded);
+        }
+
+        // Reject duplicate (keeper + event_type) combination
+        for h in hooks.iter() {
+            if h.keeper == keeper && h.event_type == event_type {
+                return Err(VaultError::HookAlreadyRegistered);
+            }
+        }
+
+        let event_type_id = event_type.clone() as u32;
+        hooks.push_back(HookRegistration {
+            keeper: keeper.clone(),
+            event_type: event_type.clone(),
+            callback_contract: callback_contract.clone(),
+            max_fee,
+        });
+        storage::set_keeper_hooks(&env, &event_type, &hooks);
+        storage::set_keeper_hook_count(&env, total + 1);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_keeper_hook_registered(&env, &keeper, event_type_id, &callback_contract);
+        Ok(())
+    }
+
+    /// Deregister a keeper-network callback hook.
+    ///
+    /// The original registering signer (or any admin) may remove a hook.
+    ///
+    /// # Arguments
+    /// * `signer`     - Authorized signer performing the removal.
+    /// * `keeper`     - Keeper address that was registered.
+    /// * `event_type` - Event type the hook was registered for.
+    pub fn deregister_keeper_hook(
+        env: Env,
+        signer: Address,
+        keeper: Address,
+        event_type: HookEventType,
+    ) -> Result<(), VaultError> {
+        signer.require_auth();
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&signer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let mut hooks = storage::get_keeper_hooks(&env, &event_type);
+        let mut found_idx: Option<u32> = None;
+        for i in 0..hooks.len() {
+            let h = hooks.get(i).unwrap();
+            if h.keeper == keeper && h.event_type == event_type {
+                found_idx = Some(i);
+                break;
+            }
+        }
+
+        let idx = found_idx.ok_or(VaultError::HookNotFound)?;
+        hooks.remove(idx);
+        let event_type_id = event_type.clone() as u32;
+        storage::set_keeper_hooks(&env, &event_type, &hooks);
+        let total = storage::get_keeper_hook_count(&env);
+        storage::set_keeper_hook_count(&env, total.saturating_sub(1));
+        storage::extend_instance_ttl(&env);
+
+        events::emit_keeper_hook_removed(&env, &keeper, event_type_id);
+        Ok(())
+    }
+
+    /// Return all registered keeper hooks for the given event type.
+    pub fn get_keeper_hooks(env: Env, event_type: HookEventType) -> Vec<HookRegistration> {
+        storage::get_keeper_hooks(&env, &event_type)
+    }
+
+    /// Trigger all registered keeper hooks for an event type.
+    ///
+    /// * Invokes `keeper_callback(payload)` on each `callback_contract`.
+    /// * On success: transfers `max_fee` from vault to `keeper`.
+    /// * On failure: emits a failure event but does **not** revert vault state.
+    ///
+    /// This is an internal helper — callers must not propagate errors from here.
+    fn trigger_keeper_hooks(env: &Env, event_type: &HookEventType, payload: u64) {
+        let hooks = storage::get_keeper_hooks(env, event_type);
+        if hooks.is_empty() {
+            return;
+        }
+        let event_type_id = event_type.clone() as u32;
+
+        for hook in hooks.iter() {
+            let result = env.try_invoke_contract::<(), soroban_sdk::Error>(
+                &hook.callback_contract,
+                &Symbol::new(env, "keeper_callback"),
+                (payload,).into_val(env),
+            );
+
+            match result {
+                Ok(_) => {
+                    // Pay the keeper fee on success (best-effort; ignore transfer errors)
+                    if hook.max_fee > 0 {
+                        // Use the default config token for fee payment
+                        if let Ok(config) = storage::get_config(env) {
+                            let default_token = config.supported_tokens.get(0);
+                            if let Some(token) = default_token {
+                                let _ =
+                                    token::try_transfer(env, &token, &hook.keeper, hook.max_fee);
+                            }
+                        }
+                    }
+                    events::emit_keeper_hook_triggered(
+                        env,
+                        &hook.keeper,
+                        &hook.callback_contract,
+                        event_type_id,
+                        payload,
+                        hook.max_fee,
+                    );
+                }
+                Err(_) => {
+                    // Failed keeper callbacks are non-blocking — log and continue
+                    events::emit_keeper_hook_failed(
+                        env,
+                        &hook.keeper,
+                        &hook.callback_contract,
+                        event_type_id,
+                        payload,
+                    );
+                }
+            }
+        }
     }
 
     fn call_hook(env: &Env, hook: &Address, proposal_id: u64, is_pre: bool) {

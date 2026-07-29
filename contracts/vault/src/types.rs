@@ -2824,3 +2824,45 @@ pub struct GovernanceProposal {
     pub created_at: u64,
     pub expires_at: u64,
 }
+
+// ============================================================================
+// Issue #1091: Proposal Lifecycle Hooks for Keeper Network Integration
+// ============================================================================
+
+/// Events that keeper contracts can subscribe to via hook registration.
+///
+/// Each variant corresponds to a distinct lifecycle moment when a keeper bot
+/// should take action (e.g., execute a ready proposal, trigger a payment).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum HookEventType {
+    /// A proposal has gathered enough approvals and is ready to be executed.
+    ProposalReadyToExecute = 0,
+    /// A streaming payment window is due for the next withdrawal.
+    StreamDue = 1,
+    /// A recurring/scheduled payment interval has elapsed.
+    RecurringDue = 2,
+    /// An escrow agreement has reached its release condition.
+    EscrowReady = 3,
+}
+
+/// Registration record for a keeper-network callback hook.
+///
+/// Stored per-event-type. On the corresponding lifecycle event the vault will
+/// invoke `keeper_callback(payload: u64)` on `callback_contract` and, on
+/// success, transfer `max_fee` stroops to `keeper` from vault funds.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HookRegistration {
+    /// Address that receives the fee payment when the callback succeeds.
+    pub keeper: Address,
+    /// The lifecycle event this hook subscribes to.
+    pub event_type: HookEventType,
+    /// Contract to invoke when the event fires.
+    /// Must expose `fn keeper_callback(payload: u64)`.
+    pub callback_contract: Address,
+    /// Maximum fee in stroops the vault will pay the keeper per successful call.
+    /// Set to 0 to disable fee payment.
+    pub max_fee: i128,
+}

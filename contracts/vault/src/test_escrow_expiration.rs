@@ -16,9 +16,7 @@
 //! 10. Grace period for late completion before expiry
 
 use crate::errors::VaultError;
-use crate::types::{
-    Milestone, RetryConfig, ThresholdStrategy, VelocityConfig,
-};
+use crate::types::{Milestone, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -104,7 +102,15 @@ fn create_escrow(
 
     let arbitrator = Address::generate(env);
     client
-        .create_escrow(funder, recipient, token, &amount, &milestones, &duration, &arbitrator)
+        .create_escrow(
+            funder,
+            recipient,
+            token,
+            &amount,
+            &milestones,
+            &duration,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed")
 }
 
@@ -352,7 +358,15 @@ fn test_partial_refund_accounting() {
 
     let arbitrator = Address::generate(&env);
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &total_amount, &milestones, &1000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &total_amount,
+            &milestones,
+            &1000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete first milestone

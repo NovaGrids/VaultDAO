@@ -18,9 +18,7 @@
 //! 12. Emit event per milestone completion
 
 use crate::errors::VaultError;
-use crate::types::{
-    Milestone, RetryConfig, ThresholdStrategy, VelocityConfig,
-};
+use crate::types::{Milestone, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -228,7 +226,15 @@ fn test_verify_milestone_releases_proportional_amount() {
 
     let total = 1_000i128;
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &total, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &total,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete first milestone
@@ -281,7 +287,15 @@ fn test_verify_milestones_in_arbitrary_order() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &3_000i128, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &3_000i128,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete milestone 3 first (out of order)
@@ -316,7 +330,15 @@ fn test_cannot_complete_milestone_twice() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &1_000i128, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &1_000i128,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete milestone once
@@ -352,7 +374,15 @@ fn test_cannot_release_before_milestone_verified() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &1_000i128, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &1_000i128,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Try to release without completing milestone
@@ -391,7 +421,15 @@ fn test_release_proportional_to_completed() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &total, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &total,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete first milestone (40%)
@@ -444,7 +482,15 @@ fn test_cannot_release_more_than_total() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &total, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &total,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     client
@@ -496,7 +542,15 @@ fn test_multiple_verification_orders_work() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &10_000i128, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &10_000i128,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Verify in order: 2, 1, 3
@@ -513,7 +567,10 @@ fn test_multiple_verification_orders_work() {
         .expect("complete_milestone 3 should succeed");
 
     let escrow = client.get_escrow(&escrow_id);
-    assert_eq!(escrow.status, crate::types::EscrowStatus::MilestonesComplete);
+    assert_eq!(
+        escrow.status,
+        crate::types::EscrowStatus::MilestonesComplete
+    );
 }
 
 // ============================================================================
@@ -553,7 +610,15 @@ fn test_milestone_structure_supports_various_percentages() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &100_000i128, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &100_000i128,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     let escrow = client.get_escrow(&escrow_id);
@@ -605,7 +670,15 @@ fn test_accumulated_releases_match_total() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &total, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &total,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete all milestones
@@ -616,7 +689,10 @@ fn test_accumulated_releases_match_total() {
     }
 
     let escrow = client.get_escrow(&escrow_id);
-    assert_eq!(escrow.status, crate::types::EscrowStatus::MilestonesComplete);
+    assert_eq!(
+        escrow.status,
+        crate::types::EscrowStatus::MilestonesComplete
+    );
 }
 
 // ============================================================================
@@ -642,7 +718,15 @@ fn test_milestone_completion_emits_event() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &1_000i128, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &1_000i128,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete milestone (should emit event)
@@ -686,7 +770,15 @@ fn test_partial_release_prevents_double_counting() {
     });
 
     let escrow_id = client
-        .create_escrow(&admin, &recipient, &token, &total, &milestones, &10_000u64, &arbitrator)
+        .create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &total,
+            &milestones,
+            &10_000u64,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed");
 
     // Complete both milestones

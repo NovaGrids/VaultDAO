@@ -378,6 +378,14 @@ pub enum VaultError {
     BatchCommitFailed = 1120,
 
     // =========================================================
+    // Issue #1091: Keeper Network Lifecycle Hooks
+    // =========================================================
+    /// Maximum hooks per event type (5) or total hooks (20) exceeded
+    HookLimitExceeded = 1200,
+    /// Hook registration not found for the specified keeper/event pair
+    HookNotFound = 1201,
+    /// A hook for this keeper+event_type combination already exists
+    HookAlreadyRegistered = 1202,
     // Amendment diff viewer
     // =========================================================
     /// compare_amendments was called with an index outside the amendment history bounds
