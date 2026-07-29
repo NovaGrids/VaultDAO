@@ -2807,6 +2807,19 @@ pub struct PauseState {
 }
 
 // ============================================================================
+// Issue #1350: Pause Circuit Breaker Cooldown
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PauseCooldownConfig {
+    /// Cooldown period in ledgers (minimum 1 day = 17,280 ledgers at 5s/ledger)
+    pub cooldown_ledgers: u64,
+    /// Ledger when the last pause/unpause action occurred
+    pub last_action_ledger: u64,
+}
+
+// ============================================================================
 // Compliance Scoring (#1103)
 // ============================================================================
 
