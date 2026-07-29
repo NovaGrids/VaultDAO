@@ -376,6 +376,26 @@ pub enum VaultError {
     // =========================================================
     /// A transfer failed during batch commit despite passing pre-commit simulation
     BatchCommitFailed = 1120,
+
+    // =========================================================
+    // Amendment diff viewer
+    // =========================================================
+    /// compare_amendments was called with an index outside the amendment history bounds
+    AmendmentIndexOutOfBounds = 1121,
+
+    // =========================================================
+    // Issue #23: Proposal supersession chain traversal
+    // =========================================================
+    /// Supersession chain traversal detected a cycle (defensive; should not occur in normal operation)
+    SupersessionCycleDetected = 1122,
+    /// Supersession chain exceeds the maximum traversal depth
+    SupersessionChainTooLong = 1123,
+
+    // =========================================================
+    // Vault template export/clone
+    // =========================================================
+    /// VaultTemplate failed validation (e.g. invalid threshold ratio)
+    InvalidTemplate = 1124,
 }
 
 // Compatibility markers for CI source checks:

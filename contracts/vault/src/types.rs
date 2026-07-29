@@ -214,6 +214,34 @@ pub struct ProposalAmendment {
     pub new_amount: i128,
     pub old_memo: Symbol,
     pub new_memo: Symbol,
+    /// Free-form reason/comment explaining why the amendment was made (empty symbol if none given)
+    pub reason: Symbol,
+}
+
+/// Diff between two points in a proposal's amendment history, highlighting
+/// which fields changed and, for the amount, by how much.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AmendmentDiff {
+    pub proposal_id: u64,
+    /// Index into amendment history used as the "before" side of the diff
+    pub from_index: u32,
+    /// Index into amendment history used as the "after" side of the diff
+    pub to_index: u32,
+    pub recipient_changed: bool,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub amount_changed: bool,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    /// new_amount - old_amount (signed delta)
+    pub amount_delta: i128,
+    pub memo_changed: bool,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
+    pub reason_changed: bool,
+    pub old_reason: Symbol,
+    pub new_reason: Symbol,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -2147,6 +2175,71 @@ pub struct FeeStructure {
     /// Whether fee collection is enabled
     pub enabled: bool,
 }
+
+/// A single fee tier within a [`VaultTemplate`]. The volume threshold is
+/// expressed as a percentage of the per-proposal spending limit rather than
+/// an absolute amount, so the tier ladder scales with the target vault's size.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TemplateFeeTier {
+    /// Cumulative volume threshold, as a percentage of the per-proposal spending limit
+    pub volume_threshold_ratio_percent: u32,
+    /// Fee rate in basis points (e.g., 100 = 1%)
+    pub fee_bps: u32,
+}
+
+/// Sanitized, serializable snapshot of a vault's configuration shape, suitable
+/// for cloning into a freshly-deployed vault via `initialize_from_template`.
+///
+/// Signer/veto/hook/treasury addresses and absolute amounts are never
+/// included — only ratios (relative to the per-proposal spending limit or
+/// signer count), structural settings, and a feature-enablement bitmask.
+/// Private configuration (e.g. oracle keys, recovery guardians) is excluded.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VaultTemplate {
+    /// Template format version, for forward compatibility as the shape evolves
+    pub version: u32,
+    /// Required approvals as a percentage of signer count (1-100, ceil-rounded)
+    pub threshold_ratio_percent: u32,
+    /// Quorum requirement as a percentage of signer count (0 = disabled)
+    pub quorum_percentage: u32,
+    /// Delay in ledgers for timelocked proposals
+    pub timelock_delay_ledgers: u64,
+    /// Timelock trigger threshold, as a percentage of the per-proposal spending limit (0 = disabled)
+    pub timelock_threshold_pct: u32,
+    /// Veto window in ledgers after proposal creation (0 = veto disabled)
+    pub veto_window_ledgers: u64,
+    /// Daily spending limit, as a percentage of the per-proposal spending limit
+    pub daily_limit_ratio_percent: u32,
+    /// Weekly spending limit, as a percentage of the per-proposal spending limit
+    pub weekly_limit_ratio_percent: u32,
+    /// Dynamic fee tier ladder (volume thresholds are relative, not absolute)
+    pub fee_tiers: Vec<TemplateFeeTier>,
+    /// Base fee rate in basis points (used if no tier matches)
+    pub base_fee_bps: u32,
+    /// Bitmask of enabled optional features — see `VaultTemplate::FEATURE_*` constants
+    pub enabled_features: u32,
+    /// Grace period in ledgers after voting deadline before auto-expiry
+    pub grace_period_ledgers: u64,
+    /// Vote weight model
+    pub vote_weight: VoteWeight,
+    /// High impact score threshold (0-100)
+    pub high_impact_threshold: u32,
+    /// Minimum delay in ledgers before admin role can be rotated
+    pub admin_rotation_delay: u64,
+}
+
+impl VaultTemplate {
+    /// Template format version produced by the current contract build.
+    pub const CURRENT_VERSION: u32 = 1;
+
+    pub const FEATURE_WHITELIST_MODE: u32 = 1 << 0;
+    pub const FEATURE_RETRY: u32 = 1 << 1;
+    pub const FEATURE_STAKING: u32 = 1 << 2;
+    pub const FEATURE_FEE_COLLECTION: u32 = 1 << 3;
+}
+
 
 impl FeeStructure {
     pub fn default(env: &Env) -> Self {
