@@ -29,12 +29,13 @@ use crate::types::{
     ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
     GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType, HookRegistration,
     InsuranceClaim, InsuranceConfig, InsuranceVotingConfig, ListMode, MergeRecord,
-    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PauseState, PermissionGrant,
-    Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryProposal, Reputation,
-    ReputationConfig, RetryState, Role, RoleAssignment, ScopedDelegation, SignerTier, StakeRecord,
-    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
-    TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
-    VestingSchedule, VotingStrategy, WhitelistEntry,
+    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PauseCooldownConfig,
+    PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate,
+    RecoveryProposal, Reputation, ReputationConfig, RetryState, Role, RoleAssignment,
+    ScopedDelegation, SignerTier, StakeRecord, StakingConfig, StreamRateWindow, Subscription,
+    SwapProposal, SwapResult, Tag, TemplateVarRef, TimeWeightedConfig, TokenLock,
+    TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig, VestingSchedule,
+    VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 
@@ -378,6 +379,8 @@ pub enum FeatureKey {
     PauseState,
     /// Emergency signers list -> Vec<Address>
     EmergencySigners,
+    /// Pause cooldown configuration -> PauseCooldownConfig (Issue #1350)
+    PauseCooldownConfig,
     /// Circuit breaker outflow per hour window -> i128
     CircuitBreakerOutflow(u64),
     /// Proposal content fingerprint -> bool
@@ -4003,6 +4006,52 @@ pub fn get_pause_state(env: &Env) -> PauseState {
 
 pub fn set_pause_state(env: &Env, state: &PauseState) {
     env.storage().instance().set(&FeatureKey::PauseState, state);
+}
+
+// ============================================================================
+// Issue #1350: Pause Circuit Breaker Cooldown
+// ============================================================================
+
+pub fn get_pause_cooldown_config(env: &Env) -> Option<PauseCooldownConfig> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::PauseCooldownConfig)
+}
+
+pub fn set_pause_cooldown_config(env: &Env, config: &PauseCooldownConfig) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::PauseCooldownConfig, config);
+}
+
+pub fn is_pause_cooldown_active(env: &Env) -> bool {
+    if let Some(config) = get_pause_cooldown_config(env) {
+        let current_ledger = env.ledger().sequence() as u64;
+        current_ledger < config.last_action_ledger + config.cooldown_ledgers
+    } else {
+        false
+    }
+}
+
+pub fn get_pause_cooldown_remaining_ledgers(env: &Env) -> u64 {
+    if let Some(config) = get_pause_cooldown_config(env) {
+        let current_ledger = env.ledger().sequence() as u64;
+        let target_ledger = config.last_action_ledger + config.cooldown_ledgers;
+        if current_ledger < target_ledger {
+            target_ledger - current_ledger
+        } else {
+            0
+        }
+    } else {
+        0
+    }
+}
+
+pub fn update_pause_cooldown_ledger(env: &Env) {
+    if let Some(mut config) = get_pause_cooldown_config(env) {
+        config.last_action_ledger = env.ledger().sequence() as u64;
+        set_pause_cooldown_config(env, &config);
+    }
 }
 
 pub fn get_emergency_signers(env: &Env) -> soroban_sdk::Vec<Address> {

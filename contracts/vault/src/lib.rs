@@ -40,16 +40,16 @@ use types::{
     GovernanceProposal, HolidayBehavior, HolidayCalendar, HookEventType, HookRegistration,
     ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus, InsuranceConfig, ListMode,
     Milestone, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
-    OptionalProposalOperation, OptionalVaultOracleConfig, PauseState, Priority, Proposal,
-    ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus, ProposalStatus,
-    ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus, RecurringPayment,
-    RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
-    ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig, StreamRateWindow,
-    StreamStatus, StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier,
-    SwapProposal, SwapResult, TemplateFeeTier, TemplateOverrides, ThresholdStrategy,
-    TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics, VaultOracleConfig,
-    VaultPriceData, VaultTemplate, VelocityConfig, VestingSchedule, VoteChoice, VoteWeight,
-    VotingStrategy, WhitelistEntry,
+    OptionalProposalOperation, OptionalVaultOracleConfig, PauseCooldownConfig, PauseState,
+    Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase, ProposalPhaseStatus,
+    ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal, RecoveryStatus,
+    RecurringPayment, RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role,
+    RoleAssignment, ScheduledTransferConfig, ScopedDelegation, SignerTier, StakingConfig,
+    StreamRateWindow, StreamStatus, StreamingPayment, Subscription, SubscriptionStatus,
+    SubscriptionTier, SwapProposal, SwapResult, TemplateFeeTier, TemplateOverrides,
+    ThresholdStrategy, TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics,
+    VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig, VestingSchedule, VoteChoice,
+    VoteWeight, VotingStrategy, WhitelistEntry,
 };
 use types_balance_snapshot::BalanceSnapshot;
 
@@ -1678,6 +1678,11 @@ impl VaultDAO {
         // Verify identity - CRITICAL for security
         signer.require_auth();
 
+        // Check if vault is paused
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
         // Get config and validate signer
         let config = storage::get_config(&env)?;
         if !config.signers.contains(&signer) {
@@ -1707,9 +1712,21 @@ impl VaultDAO {
         // Get proposal
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
-        // Snapshot check: voter must have been a signer at proposal creation
+        // Issue #1351: Snapshot check - voter must be BOTH in snapshot AND current config
+        // This prevents removed signers from voting on old proposals
         if !proposal.snapshot_signers.contains(&signer) {
             return Err(VaultError::VoterNotInSnapshot);
+        }
+
+        // NEW: Check signer is still in current config (Issue #1351)
+        if !config.signers.contains(&signer) {
+            events::emit_vote_rejected_signer_removed(
+                &env,
+                proposal_id,
+                &signer,
+                Symbol::new(&env, "signer_removed"),
+            );
+            return Err(VaultError::NotASigner);
         }
 
         // Get all signers represented by this signer (including self)
@@ -1728,6 +1745,17 @@ impl VaultDAO {
         for voter in represented_voters.iter() {
             // Snapshot check: voter must have been a signer at proposal creation
             if !proposal.snapshot_signers.contains(&voter) {
+                continue;
+            }
+
+            // Issue #1351: Also check current config
+            if !config.signers.contains(&voter) {
+                events::emit_vote_rejected_signer_removed(
+                    &env,
+                    proposal_id,
+                    &voter,
+                    Symbol::new(&env, "signer_removed"),
+                );
                 continue;
             }
 
@@ -17106,5 +17134,217 @@ impl VaultDAO {
 
     pub fn get_governance_proposal(env: Env, id: u64) -> Option<GovernanceProposal> {
         storage::get_governance_proposal(&env, id)
+    }
+
+    // ========================================================================
+    // Issue #1350: Pause Circuit Breaker Cooldown
+    // ========================================================================
+
+    /// Configure pause cooldown period (Admin only)
+    pub fn set_pause_cooldown_config(
+        env: Env,
+        admin: Address,
+        cooldown_ledgers: u64,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // Minimum 1 day (17,280 ledgers at 5s/ledger)
+        const MIN_COOLDOWN_LEDGERS: u64 = 17_280;
+        if cooldown_ledgers < MIN_COOLDOWN_LEDGERS {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let new_config = PauseCooldownConfig {
+            cooldown_ledgers,
+            last_action_ledger: env.ledger().sequence() as u64,
+        };
+        storage::set_pause_cooldown_config(&env, &new_config);
+
+        events::emit_config_updated(&env, &admin);
+        Ok(())
+    }
+
+    /// Get current pause cooldown configuration
+    pub fn get_pause_cooldown_config(env: Env) -> Option<PauseCooldownConfig> {
+        storage::get_pause_cooldown_config(&env)
+    }
+
+    /// Get remaining cooldown ledgers before next pause/unpause action is allowed
+    pub fn get_pause_cooldown_remaining(env: Env) -> u64 {
+        storage::get_pause_cooldown_remaining_ledgers(&env)
+    }
+
+    /// Configure emergency signers (Admin only, Issue #1084)
+    pub fn configure_emergency(
+        env: Env,
+        admin: Address,
+        signers: Vec<Address>,
+        circuit_breaker_threshold: i128,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        if signers.len() < 2 {
+            return Err(VaultError::NoSigners);
+        }
+
+        storage::set_emergency_signers(&env, &signers);
+        storage::set_circuit_breaker_threshold(&env, circuit_breaker_threshold);
+
+        events::emit_config_updated(&env, &admin);
+        Ok(())
+    }
+
+    /// Pause the vault (emergency signers only)
+    pub fn pause_vault(env: Env, caller: Address, cause: Symbol) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let emergency_signers = storage::get_emergency_signers(&env);
+        if !emergency_signers.contains(&caller) {
+            return Err(VaultError::NotEmergencySigner);
+        }
+
+        // Check cooldown (Issue #1350)
+        if storage::is_pause_cooldown_active(&env) {
+            let remaining = storage::get_pause_cooldown_remaining_ledgers(&env);
+            events::emit_pause_cooldown_active(
+                &env,
+                &caller,
+                remaining,
+                Symbol::new(&env, "cooldown_active"),
+            );
+            return Err(VaultError::PauseCooldownActive);
+        }
+
+        let pause_state = types::PauseState {
+            is_paused: true,
+            paused_by: Some(caller.clone()),
+            paused_at_ledger: env.ledger().sequence() as u32,
+            cause: cause.clone(),
+        };
+        storage::set_pause_state(&env, &pause_state);
+
+        // Update cooldown ledger
+        storage::update_pause_cooldown_ledger(&env);
+
+        events::emit_vault_paused(&env, &caller, &cause);
+        Ok(())
+    }
+
+    /// Unpause the vault (emergency signers only)
+    pub fn unpause_vault(env: Env, caller: Address) -> Result<(), VaultError> {
+        caller.require_auth();
+
+        let emergency_signers = storage::get_emergency_signers(&env);
+        if !emergency_signers.contains(&caller) {
+            return Err(VaultError::NotEmergencySigner);
+        }
+
+        let pause_state = storage::get_pause_state(&env);
+        if !pause_state.is_paused {
+            return Err(VaultError::VaultNotPaused);
+        }
+
+        // Check cooldown (Issue #1350)
+        if storage::is_pause_cooldown_active(&env) {
+            let remaining = storage::get_pause_cooldown_remaining_ledgers(&env);
+            events::emit_pause_cooldown_active(
+                &env,
+                &caller,
+                remaining,
+                Symbol::new(&env, "cooldown_active"),
+            );
+            return Err(VaultError::PauseCooldownActive);
+        }
+
+        let duration = env.ledger().sequence() as u64 - (pause_state.paused_at_ledger as u64);
+
+        let new_pause_state = types::PauseState {
+            is_paused: false,
+            paused_by: None,
+            paused_at_ledger: 0,
+            cause: Symbol::new(&env, "none"),
+        };
+        storage::set_pause_state(&env, &new_pause_state);
+
+        // Update cooldown ledger
+        storage::update_pause_cooldown_ledger(&env);
+
+        events::emit_vault_unpaused(&env, &caller, duration);
+        Ok(())
+    }
+
+    /// Get current pause state
+    pub fn get_pause_state(env: Env) -> types::PauseState {
+        storage::get_pause_state(&env)
+    }
+
+    // ========================================================================
+    // Issue #1353: Spending Limit Recalculation on Config Update
+    // ========================================================================
+
+    /// Validate pending proposals for spending limit violations (Admin only)
+    pub fn validate_limits_pending(
+        env: Env,
+        admin: Address,
+        auto_cancel: bool,
+    ) -> Result<u32, VaultError> {
+        admin.require_auth();
+
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let config = storage::get_config(&env)?;
+        let mut cancelled_count: u32 = 0;
+
+        // Get the next proposal ID to know upper bound
+        let next_id = storage::get_next_proposal_id(&env);
+
+        // Iterate through all proposals (gas-intensive, but comprehensive)
+        // In production, consider maintaining a separate pending proposals list
+        for proposal_id in 0..next_id {
+            if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                if proposal.status == ProposalStatus::Pending {
+                    // Check if proposal exceeds current spending limit
+                    if proposal.amount > config.spending_limit {
+                        if auto_cancel {
+                            // Auto-cancel the proposal
+                            let mut p = proposal.clone();
+                            p.status = ProposalStatus::Cancelled;
+                            storage::set_proposal(&env, &p);
+                            cancelled_count += 1;
+
+                            events::emit_proposal_auto_cancelled_limit_exceeded(
+                                &env,
+                                proposal_id,
+                                Symbol::new(&env, "exceeds_new_limit"),
+                                &admin,
+                            );
+                        } else {
+                            // Emit warning
+                            events::emit_spending_limit_warning(
+                                &env,
+                                proposal_id,
+                                config.spending_limit,
+                                config.spending_limit,
+                                proposal.amount,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(cancelled_count)
     }
 }
