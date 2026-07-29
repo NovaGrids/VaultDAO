@@ -98,6 +98,15 @@ pub enum VaultError {
     ClaimSelfVote = 243,
     ClaimVoteDeadlineTooShort = 244,
     ClaimBondInsufficient = 245,
+    // Issue #1355: quorum + explicit voting window closure
+    /// Vote cast after the claim's voting window has passed
+    ClaimVotingWindowClosed = 246,
+    /// Voting cannot be closed yet: the window has not elapsed and not everyone has voted
+    ClaimVotingStillOpen = 247,
+    /// Participation fell short of the claim's quorum requirement
+    ClaimQuorumNotMet = 248,
+    /// Voting for this claim has already been closed and tallied
+    ClaimAlreadyClosed = 249,
     // Issue #1081: Multi-Token Vault
     TokenAlreadySupported = 250,
     TokenNotSupported = 251,
@@ -404,6 +413,18 @@ pub enum VaultError {
     // =========================================================
     /// VaultTemplate failed validation (e.g. invalid threshold ratio)
     InvalidTemplate = 1124,
+
+    // =========================================================
+    // Issue #1356: Proposal amendment limits
+    // =========================================================
+    /// The proposal has already been amended the maximum number of times
+    AmendmentLimitExceeded = 1125,
+
+    // =========================================================
+    // Issue #1363: Batch dependency validation
+    // =========================================================
+    /// A batched proposal depends on something that is neither in the batch nor already executed
+    BatchDependencyMissing = 1126,
 }
 
 // Compatibility markers for CI source checks:

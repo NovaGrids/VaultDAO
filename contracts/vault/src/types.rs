@@ -1031,7 +1031,16 @@ pub struct StakingConfig {
     pub max_stake_amount: i128,
     pub reputation_discount_threshold: u32,
     pub reputation_discount_percentage: u32,
+    /// Issue #1360: percentage of the stake slashed when a proposal is **rejected**.
+    /// Executed proposals are never slashed (0%); see `cancellation_slash_percentage`
+    /// for the proposer-initiated cancellation rate.
     pub slash_percentage: u32,
+    /// Issue #1360: percentage of the stake slashed when a proposer **cancels** their
+    /// own proposal. Higher than the rejection rate because cancellation is the
+    /// cheapest way to spam the queue: propose, occupy signer attention, withdraw.
+    pub cancellation_slash_percentage: u32,
+    /// Issue #1360: route slashed stake to the insurance pool instead of the stake pool.
+    pub slash_to_insurance_pool: bool,
     pub compound_lock_period: u64,
     pub compound_epoch: u64,
     pub reward_bps_per_execution: u32,
@@ -1046,7 +1055,9 @@ impl Default for StakingConfig {
             max_stake_amount: i128::MAX,
             reputation_discount_threshold: 900,
             reputation_discount_percentage: 0,
-            slash_percentage: 50,
+            slash_percentage: 10,
+            cancellation_slash_percentage: 50,
+            slash_to_insurance_pool: false,
             compound_lock_period: 17280, // ~1 day at 5s/ledger
             compound_epoch: 17280,       // ~1 day at 5s/ledger
             reward_bps_per_execution: 0,
@@ -2240,7 +2251,6 @@ impl VaultTemplate {
     pub const FEATURE_FEE_COLLECTION: u32 = 1 << 3;
 }
 
-
 impl FeeStructure {
     pub fn default(env: &Env) -> Self {
         // Use contract's own address as default treasury
@@ -2720,6 +2730,53 @@ pub struct InsuranceClaim {
     pub bond_settled: bool,
     pub status: InsuranceClaimStatus,
     pub created_at: u64,
+    /// Issue #1355: per-claim voting rules, snapshotted at submission so a later
+    /// config change cannot move the goalposts on an in-flight claim.
+    /// Share of *cast* weight that must approve, in basis points (5000 = >50%).
+    pub approval_threshold_bps: u32,
+    /// Share of eligible voters that must participate, in basis points.
+    pub quorum_bps: u32,
+    /// Minimum length of the voting window in ledgers.
+    pub voting_window: u64,
+    /// Number of signers eligible to vote, snapshotted at submission.
+    pub eligible_voters: u32,
+    /// Number of distinct voters that have cast a vote so far.
+    pub voter_count: u32,
+    /// Set once the voting period has been explicitly closed and tallied.
+    pub voting_closed: bool,
+}
+
+/// Issue #1355: governance parameters applied to insurance claim voting.
+///
+/// Claims at or above `large_claim_threshold` are escalated to the `large_claim_*`
+/// parameters: a higher approval threshold, a higher participation quorum, and a
+/// longer minimum voting window, so a small colluding subset cannot drain the pool.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsuranceVotingConfig {
+    pub approval_threshold_bps: u32,
+    pub quorum_bps: u32,
+    pub voting_window: u64,
+    /// Claim amount at or above which the escalated parameters apply. 0 disables escalation.
+    pub large_claim_threshold: i128,
+    pub large_approval_threshold_bps: u32,
+    pub large_claim_quorum_bps: u32,
+    pub large_claim_voting_window: u64,
+}
+
+impl Default for InsuranceVotingConfig {
+    fn default() -> Self {
+        Self {
+            // Simple majority of cast weight, half of the signers must show up.
+            approval_threshold_bps: 5_000,
+            quorum_bps: 5_000,
+            voting_window: 720, // ~1 hour at 5s/ledger
+            large_claim_threshold: 0,
+            large_approval_threshold_bps: 6_667, // ~2/3
+            large_claim_quorum_bps: 7_500,       // 75% of signers
+            large_claim_voting_window: 17_280,   // ~1 day at 5s/ledger
+        }
+    }
 }
 
 // ============================================================================
