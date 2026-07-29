@@ -294,6 +294,7 @@ fn test_amend_proposal_resets_approvals_and_tracks_history() {
         &recipient2,
         &150_i128,
         &Symbol::new(&env, "newmemo"),
+        &Symbol::new(&env, "correction"),
     );
 
     let amended = client.get_proposal(&proposal_id);
@@ -369,6 +370,7 @@ fn test_amend_proposal_only_proposer_can_amend() {
         &recipient,
         &120_i128,
         &Symbol::new(&env, "newmemo"),
+        &Symbol::new(&env, "reason"),
     );
     assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }
@@ -417,6 +419,7 @@ fn test_amend_proposal_rejects_non_pending_proposal() {
         &recipient,
         &90_i128,
         &Symbol::new(&env, "edited"),
+        &Symbol::new(&env, "reason"),
     );
     assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotPending)));
 }
@@ -464,6 +467,7 @@ fn test_amend_proposal_enforces_spending_limit() {
         &recipient,
         &1_001_i128,
         &Symbol::new(&env, "edited"),
+        &Symbol::new(&env, "reason"),
     );
     assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
 }

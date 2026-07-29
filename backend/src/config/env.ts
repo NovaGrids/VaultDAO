@@ -77,6 +77,14 @@ export interface BackendEnv {
    * Env var: `PROPOSAL_FINGERPRINT_WINDOW_LEDGERS`
    */
   readonly proposalFingerprintWindowLedgers: number;
+  /** Path to the SQLite database backing the persistent notification queue. */
+  readonly notificationsDbPath: string;
+  /** Enable the recurring notification queue cleanup job (default: true). */
+  readonly notificationsCleanupJobEnabled: boolean;
+  /** Interval in ms between notification queue cleanup runs (default: 86400000 = 24h). */
+  readonly notificationsCleanupJobIntervalMs: number;
+  /** Delivered notifications older than this many days are purged (default: 7). */
+  readonly notificationsRetentionDays: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -290,6 +298,10 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     proposalHotStorageDays: 7,
     normalizerCacheMaxSize: 10_000,
     proposalFingerprintWindowLedgers: 120_960,
+    notificationsDbPath: ":memory:",
+    notificationsCleanupJobEnabled: false,
+    notificationsCleanupJobIntervalMs: 86_400_000,
+    notificationsRetentionDays: 7,
     ...overrides,
   };
 }
@@ -412,6 +424,23 @@ export function loadEnv(): BackendEnv {
     issues,
   );
 
+  const notificationsDbPath = readString(
+    "NOTIFICATIONS_DB_PATH",
+    "./notifications.sqlite",
+  );
+  const notificationsCleanupJobEnabled =
+    readString("NOTIFICATIONS_CLEANUP_JOB_ENABLED", "true") === "true";
+  const notificationsCleanupJobIntervalMs = readPort(
+    "NOTIFICATIONS_CLEANUP_JOB_INTERVAL_MS",
+    86_400_000,
+    issues,
+  );
+  const notificationsRetentionDays = readPort(
+    "NOTIFICATIONS_RETENTION_DAYS",
+    7,
+    issues,
+  );
+
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
   validateAllowedValue(
@@ -503,5 +532,9 @@ export function loadEnv(): BackendEnv {
     proposalHotStorageDays,
     normalizerCacheMaxSize,
     proposalFingerprintWindowLedgers,
+    notificationsDbPath,
+    notificationsCleanupJobEnabled,
+    notificationsCleanupJobIntervalMs,
+    notificationsRetentionDays,
   };
 }
