@@ -125,7 +125,7 @@ fn test_create_escrow_with_multisig_approvers() {
         &2u32, // threshold: 2-of-3
     );
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.id, escrow_id);
 
     let multisig_info = client.get_escrow_multisig_info(&escrow_id);
@@ -169,7 +169,7 @@ fn test_single_approver_releases_immediately() {
     // Single approver votes yes
     client.vote_escrow_release(&approver, &escrow_id, &true);
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     // Should be released immediately (1 vote >= 1 threshold)
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }
@@ -212,14 +212,14 @@ fn test_multiple_approvers_voting_mechanism() {
     // First approver votes yes
     client.vote_escrow_release(&approver1, &escrow_id, &true);
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     // Should not be released yet (1 vote < 2 threshold)
     assert_eq!(escrow.status, crate::types::EscrowStatus::Active);
 
     // Second approver votes yes
     client.vote_escrow_release(&approver2, &escrow_id, &true);
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     // Should be released now (2 votes >= 2 threshold)
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }
@@ -314,17 +314,17 @@ fn test_release_only_when_threshold_reached() {
 
     // First vote
     client.vote_escrow_release(&approver1, &escrow_id, &true);
-    let e1 = client.get_escrow(&escrow_id);
+    let e1 = client.get_escrow_info(&escrow_id);
     assert_eq!(e1.status, crate::types::EscrowStatus::Active);
 
     // Second vote
     client.vote_escrow_release(&approver2, &escrow_id, &true);
-    let e2 = client.get_escrow(&escrow_id);
+    let e2 = client.get_escrow_info(&escrow_id);
     assert_eq!(e2.status, crate::types::EscrowStatus::Active);
 
     // Third vote - should release
     client.vote_escrow_release(&approver3, &escrow_id, &true);
-    let e3 = client.get_escrow(&escrow_id);
+    let e3 = client.get_escrow_info(&escrow_id);
     assert_eq!(e3.status, crate::types::EscrowStatus::Released);
 }
 
@@ -364,13 +364,13 @@ fn test_reject_vote_prevents_release() {
     // First approver votes yes
     client.vote_escrow_release(&approver1, &escrow_id, &true);
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Active);
 
     // Second approver votes no
     client.vote_escrow_release(&approver2, &escrow_id, &false);
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     // Should remain active (1 yes, 1 no; can't reach 2 threshold)
     assert_eq!(escrow.status, crate::types::EscrowStatus::Active);
 
@@ -603,6 +603,6 @@ fn test_escrow_without_multisig_backward_compatible() {
     let released = client.attempt_escrow_release(&escrow_id);
     assert_eq!(released, 1_000i128);
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }

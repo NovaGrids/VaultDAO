@@ -388,6 +388,7 @@ mod test_escrow_milestone_partial_release;
 mod test_escrow_multisig;
 #[cfg(test)]
 mod test_escrow_multisig_arbitration;
+#[cfg(test)]
 mod test_escrow_timeout;
 #[cfg(test)]
 mod test_escrow_voting;
@@ -411,8 +412,11 @@ mod test_multitoken_limits;
 mod test_multitoken_swap;
 #[cfg(test)]
 mod test_notification_prefs;
+#[cfg(test)]
 mod test_proposal_expiration;
+#[cfg(test)]
 mod test_proposal_management;
+#[cfg(test)]
 mod test_rbac_consistency;
 #[cfg(test)]
 mod test_recurring;

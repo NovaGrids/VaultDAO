@@ -125,7 +125,7 @@ fn test_create_escrow_with_multiple_milestones() {
         )
         .expect("create_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.milestones.len(), 2);
     assert_eq!(escrow.total_amount, 10_000);
 }
@@ -185,7 +185,7 @@ fn test_milestone_has_percentage() {
         )
         .expect("create_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.milestones.len(), 4);
 
     for (i, milestone) in escrow.milestones.iter().enumerate() {
@@ -303,7 +303,7 @@ fn test_verify_milestones_in_arbitrary_order() {
         .complete_milestone(&admin, &escrow_id, &3u64)
         .expect("complete_milestone should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert!(escrow.milestones.len() >= 3);
 }
 
@@ -566,7 +566,7 @@ fn test_multiple_verification_orders_work() {
         .complete_milestone(&admin, &escrow_id, &3u64)
         .expect("complete_milestone 3 should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(
         escrow.status,
         crate::types::EscrowStatus::MilestonesComplete
@@ -621,7 +621,7 @@ fn test_milestone_structure_supports_various_percentages() {
         )
         .expect("create_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.milestones.len(), 3);
 }
 
@@ -688,7 +688,7 @@ fn test_accumulated_releases_match_total() {
             .expect(&format!("complete_milestone {} should succeed", i));
     }
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(
         escrow.status,
         crate::types::EscrowStatus::MilestonesComplete
@@ -734,7 +734,7 @@ fn test_milestone_completion_emits_event() {
         .complete_milestone(&admin, &escrow_id, &1u64)
         .expect("complete_milestone should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     // Verify milestone was marked complete
     assert!(escrow.milestones.len() > 0);
 }
