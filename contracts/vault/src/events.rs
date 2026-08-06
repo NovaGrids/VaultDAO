@@ -1786,11 +1786,11 @@ pub fn emit_escrow_release_voted(
 /// # Arguments
 /// * `payment_id`           - ID of the recurring payment.
 /// * `nominal_next_ledger`  - What `next_payment_ledger` would be without jitter
-///                            (i.e. `prev_next_payment_ledger + n * interval`).
+///   (i.e. `prev_next_payment_ledger + n * interval`).
 /// * `jittered_next_ledger` - The actual stored `next_payment_ledger` after
-///                            adding `jitter_offset`.
+///   adding `jitter_offset`.
 /// * `jitter_offset`        - The ledger offset added (`jitter_offset` field on
-///                            the payment, in `[0, jitter_window)`).
+///   the payment, in `[0, jitter_window)`).
 pub fn emit_recurring_payment_jittered(
     env: &Env,
     payment_id: u64,

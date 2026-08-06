@@ -4037,11 +4037,7 @@ pub fn get_pause_cooldown_remaining_ledgers(env: &Env) -> u64 {
     if let Some(config) = get_pause_cooldown_config(env) {
         let current_ledger = env.ledger().sequence() as u64;
         let target_ledger = config.last_action_ledger + config.cooldown_ledgers;
-        if current_ledger < target_ledger {
-            target_ledger - current_ledger
-        } else {
-            0
-        }
+        target_ledger.saturating_sub(current_ledger)
     } else {
         0
     }

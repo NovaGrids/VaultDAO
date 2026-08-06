@@ -179,8 +179,5 @@ fn test_chain_traversal_detects_cycle() {
     });
 
     let res = client.try_get_supercession_chain(&b);
-    assert_eq!(
-        res.err(),
-        Some(Ok(VaultError::SupersessionCycleDetected))
-    );
+    assert_eq!(res.err(), Some(Ok(VaultError::SupersessionCycleDetected)));
 }
