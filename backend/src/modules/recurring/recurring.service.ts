@@ -830,6 +830,7 @@ export class RecurringIndexerService {
           retryCount: payment.retryCount,
           lastAttemptAt: payment.lastAttemptAt,
           nextRetryAt: payment.nextRetryAt,
+          totalMissedExecutions: payment.totalMissedExecutions,
         },
         nowSeconds,
       );

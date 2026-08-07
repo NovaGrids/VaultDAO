@@ -1001,7 +1001,9 @@ export class SnapshotService {
         reason: rollbackReason,
       };
     } catch (error) {
-      logger.error("[snapshot-service] Error rolling back snapshot:", error);
+      logger.error("[snapshot-service] Error rolling back snapshot:", {
+        error: String(error),
+      });
       return {
         success: false,
         signersUpdated: 0,
