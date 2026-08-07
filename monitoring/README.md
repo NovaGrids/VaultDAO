@@ -377,5 +377,5 @@ histogram_quantile(0.95, rate(vaultdao_http_request_duration_seconds_bucket{serv
 - [Grafana Documentation](https://grafana.com/docs/)
 - [Prometheus Documentation](https://prometheus.io/docs/)
 - [AlertManager Documentation](https://prometheus.io/docs/alerting/latest/alertmanager/)
-- [VaultDAO Production Runbook](../PRODUCTION_RUNBOOK.md)
+- [VaultDAO Production Runbook](../docs/reference/PRODUCTION_RUNBOOK.md)
 - [Terraform Monitoring Module](../terraform/modules/monitoring/)

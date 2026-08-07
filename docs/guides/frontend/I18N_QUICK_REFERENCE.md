@@ -181,7 +181,7 @@ const { t } = useTranslation();
 - **Translations**: `src/translations/*.json`
 - **Component**: `src/components/LanguageSwitcher.tsx`
 - **Utilities**: `src/utils/localeFormatter.ts`
-- **Guide**: `I18N_IMPLEMENTATION_GUIDE.md`
+- **Guide**: [I18N_IMPLEMENTATION_GUIDE.md](./I18N_IMPLEMENTATION_GUIDE.md)
 - **CSS**: See `html[dir="rtl"]` in `src/index.css`
 
 ## ⚡ Quick Build

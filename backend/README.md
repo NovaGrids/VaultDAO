@@ -184,13 +184,13 @@ The backend implements CORS protection to control which origins can access the A
 
 ## 🚀 Get Started
 
-See the [detailed roadmap](docs/ROADMAP.md) for prioritized tasks.
+See the [detailed roadmap](../docs/guides/backend/ROADMAP.md) for prioritized tasks.
 
 ```
 # Quickstart for new contributors
 pnpm install
 pnpm test
-# Pick a Foundation task from ROADMAP.md
+# Pick a Foundation task from docs/guides/backend/ROADMAP.md
 ```
 
 ## API Versioning
