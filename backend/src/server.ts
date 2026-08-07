@@ -171,7 +171,11 @@ export async function startServer(
 
   // Priority notification queue (replaces basic InMemoryNotificationQueue),
   // backed by SQLite so pending/failed notifications survive a restart.
-  const notificationQueueStore = new NotificationQueueStore(env.notificationsDbPath);
+  const notificationDbPath =
+    typeof env.notificationsDbPath === "string" && env.notificationsDbPath.length > 0
+      ? env.notificationsDbPath
+      : ":memory:";
+  const notificationQueueStore = new NotificationQueueStore(notificationDbPath);
   const priorityNotificationQueue = new PriorityNotificationQueue(notificationQueueStore);
   priorityNotificationQueue.restore();
   const jobNotificationPublisher =

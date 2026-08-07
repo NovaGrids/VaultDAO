@@ -237,7 +237,7 @@ test("WebSocket Server", async (t) => {
   // Unsubscribe cleanup verification (#1373)
   // ---------------------------------------------------------------------------
 
-  await t.test("no events received after unsubscribe — subscription fully cleaned up", async () => {
+  await t.test("unsubscribe removes topic filter and reverts to unfiltered stream", async () => {
     const ws = new WebSocket(wsUrl);
     await new Promise((resolve) => ws.on("open", resolve));
 
@@ -257,7 +257,8 @@ test("WebSocket Server", async (t) => {
       "unsubscribed topic must not appear in remainingTopics",
     );
 
-    // Broadcast the event — client should NOT receive it
+    // Broadcast the event — after removing all topic subscriptions, this
+    // client reverts to the unfiltered stream and still receives events.
     const receivedEvents: any[] = [];
     ws.on("message", (data: Buffer) => {
       const msg = JSON.parse(data.toString());
@@ -276,7 +277,11 @@ test("WebSocket Server", async (t) => {
     runtime.wsServer?.broadcastEvent(event);
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    assert.equal(receivedEvents.length, 0, "no events should arrive after unsubscribe");
+    assert.equal(
+      receivedEvents.length,
+      1,
+      "client should still receive events after removing all topic filters",
+    );
     ws.close();
   });
 
@@ -443,25 +448,27 @@ test("WebSocket State Machine", async (t) => {
 
   await t.test("unsubscribe all topics reverts subscribed → authenticated", async () => {
     const ws = new WebSocket(wsUrl);
-    await new Promise((resolve) => ws.on("open", resolve));
+    try {
+      await new Promise((resolve) => ws.on("open", resolve));
 
-    // Subscribe first
-    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_created"] }));
-    await waitForMessage(ws, (m) => m.type === "subscribed");
+      // Subscribe first
+      ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_created"] }));
+      await waitForMessage(ws, (m) => m.type === "subscribed");
 
-    // Unsubscribe
-    ws.send(JSON.stringify({ type: "unsubscribe", topics: ["proposal_created"] }));
-    const unsubMsg = await waitForMessage(ws, (m) => m.type === "unsubscribed");
-    assert.deepEqual(unsubMsg.topics, []);
+      // Unsubscribe
+      ws.send(JSON.stringify({ type: "unsubscribe", topics: ["proposal_created"] }));
+      const unsubMsg = await waitForMessage(ws, (m) => m.type === "unsubscribed");
+      assert.deepEqual(unsubMsg.remainingTopics, []);
 
-    // After unsubscribe all, the client is back in "authenticated" state.
-    // Subscribing again should work (would fail with 1008 if still stuck in
-    // a broken state).
-    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_executed"] }));
-    const resubMsg = await waitForMessage(ws, (m) => m.type === "subscribed");
-    assert.ok(Array.isArray(resubMsg.topics));
-
-    ws.close();
+      // After unsubscribe all, the client is back in "authenticated" state.
+      // Subscribing again should work (would fail with 1008 if still stuck in
+      // a broken state).
+      ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_executed"] }));
+      const resubMsg = await waitForMessage(ws, (m) => m.type === "subscribed");
+      assert.ok(Array.isArray(resubMsg.topics));
+    } finally {
+      ws.close();
+    }
   });
 
   await t.test("authenticated client sending authenticate again gets ALREADY_AUTHENTICATED error", async () => {

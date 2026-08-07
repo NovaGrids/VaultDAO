@@ -86,7 +86,8 @@ describe("ProposalActivityAggregator - Deduplication Window (#1374)", () => {
 
     // Duplicate outside window (ledger 115, window is 10 ledgers)
     aggregator.addRecord(record, 115);
-    assert.equal(aggregator.getProposalCount(), 2, "should allow re-add after window expiry");
+    assert.equal(aggregator.getProposalCount(), 1, "same proposal should still be grouped");
+    assert.equal(aggregator.getTotalRecordCount(), 2, "should allow re-add after window expiry");
   });
 
   test("should track dedup window size", () => {

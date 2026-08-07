@@ -6,6 +6,7 @@
  */
 
 import { createLogger } from "../../shared/logging/logger.js";
+import { createHash } from "node:crypto";
 import {
   ProposalActivityRecord,
   ProposalActivitySummary,
@@ -203,8 +204,7 @@ export class ProposalActivityAggregator {
    */
   private computeEventHash(record: ProposalActivityRecord): string {
     const key = `${record.proposalId}:${record.type}:${record.timestamp}:${record.metadata.transactionHash}:${record.metadata.eventIndex}`;
-    // Simple hash: use first 12 chars of base64-encoded key
-    return Buffer.from(key).toString("base64").substring(0, 32);
+    return createHash("sha256").update(key).digest("hex");
   }
 
   /**

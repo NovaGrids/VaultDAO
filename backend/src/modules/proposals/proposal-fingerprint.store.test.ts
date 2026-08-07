@@ -232,10 +232,10 @@ test("ProposalFingerprintStore - pruneExpired", async (t) => {
     store.checkAndRecord(CONTRACT_ID, "p-2", makeCreatedData({ amount: "2" }), 950);
     store.checkAndRecord(CONTRACT_ID, "p-3", makeCreatedData({ amount: "3" }), 1050);
 
-    // At ledger 1100: cutoff = 1000; entries < 1000 are pruned → 900 is pruned
+    // At ledger 1100: cutoff = 1000; entries < 1000 are pruned → 900 and 950 are pruned
     const pruned = store.pruneExpired(1100);
-    assert.equal(pruned, 1);
-    assert.equal(store.size, 2);
+    assert.equal(pruned, 2);
+    assert.equal(store.size, 1);
   });
 
   await t.test("returns 0 when nothing to prune", () => {
