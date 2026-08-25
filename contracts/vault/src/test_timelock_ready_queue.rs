@@ -63,11 +63,6 @@ fn make_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
         vote_weight: crate::types::VoteWeight::Flat,
         high_impact_threshold: 100, // disable extended timelock in these tests
         admin_rotation_delay: 1440,
-        approval_timeout_ledgers: 0,
-        arbitration_timeout_ledgers: 0,
-        exec_window_ledgers: 0,
-        auto_topup_amount: 0,
-        tier_usage_tracking: false,
     }
 }
 
@@ -102,8 +97,8 @@ fn setup(
     client.initialize(&admin, &make_config(env, signers, 2));
 
     // Both signers are treasurers
-    client.set_role(&admin, &admin, &crate::types::Role::Treasurer);
     client.set_role(&admin, &signer2, &Role::Treasurer);
+    client.set_role(&admin, &admin, &crate::types::Role::Treasurer);
 
     (client, admin, signer2, token, recipient, contract_id)
 }
@@ -328,8 +323,8 @@ fn test_pagination() {
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
     let mut ids = soroban_sdk::Vec::new(&env);
-    for _ in 0..5u32 {
-        let pid = propose(&env, &client, &admin, &recipient, &token, 1_000);
+    for i in 0..5u32 {
+        let pid = propose(&env, &client, &admin, &recipient, &token, 1_000 + i as i128);
         client.approve_proposal(&admin, &pid);
         client.approve_proposal(&signer2, &pid);
         ids.push_back(pid);
@@ -366,8 +361,8 @@ fn test_limit_cap_at_50() {
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
     // Create 3 timelocked proposals
-    for _ in 0..3u32 {
-        let pid = propose(&env, &client, &admin, &recipient, &token, 1_000);
+    for i in 0..3u32 {
+        let pid = propose(&env, &client, &admin, &recipient, &token, 1_000 + i as i128);
         client.approve_proposal(&admin, &pid);
         client.approve_proposal(&signer2, &pid);
     }
