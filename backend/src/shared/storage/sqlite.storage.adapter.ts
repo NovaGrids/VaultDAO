@@ -1,10 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { StorageAdapter } from "./storage.adapter.js";
-import {
-  getSqlitePool,
-  type SqliteConnectionPool,
-  type SqlitePoolStats,
-} from "./sqlite-pool.js";
+import { configureWalMode } from "./sqlite-wal.js";
 
 /**
  * SQLite-backed storage adapter using Node.js built-in `node:sqlite`.
@@ -55,10 +51,11 @@ export class SqliteStorageAdapter<T extends { id: string }>
     return this.pool.borrowSync(fn);
   }
 
-  private all(sql: string, ...params: unknown[]): { id: string; data: string }[] {
-    return this.withConnectionSync(
-      (db) =>
-        db.prepare(sql).all(...(params as [])) as { id: string; data: string }[],
+  constructor(dbPath: string, table: string) {
+    this.db = new DatabaseSync(dbPath);
+    configureWalMode(this.db);
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS "${table}" (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
     );
   }
 

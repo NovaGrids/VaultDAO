@@ -203,6 +203,9 @@ pub enum DataKey {
     Supersedes(u64),
     /// Proposal ID -> ID of the proposal that superseded it (its direct child), if any
     SupersededBy(u64),
+    // ---- Issue #1640: Timelock Ready Index ----
+    /// Index of proposal IDs that are Approved and waiting inside a timelock window -> Vec<u64>
+    TimelockReady,
 }
 
 #[contracttype(export = false)]
@@ -703,6 +706,15 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
             .persistent()
             .extend_ttl(&idx_key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
     }
+    // Maintain TimelockReady index (Issue #1640)
+    // A proposal belongs in the index only while it is Approved AND still inside
+    // its timelock window (unlock_ledger > 0).  Any terminal/non-timelocked
+    // transition removes it from the index.
+    if proposal.status == ProposalStatus::Approved && proposal.unlock_ledger > 0 {
+        add_to_timelock_ready_index(env, proposal.id);
+    } else {
+        remove_from_timelock_ready_index(env, proposal.id);
+    }
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -764,6 +776,122 @@ pub fn get_proposal_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64
         }
     }
     ids
+}
+
+// ============================================================================
+// TimelockReady Index  (Issue #1640)
+// ============================================================================
+
+/// Add `proposal_id` to the timelock-ready index.
+///
+/// Called when a proposal transitions to `Approved` with a non-zero `unlock_ledger`
+/// (i.e., it must wait inside its timelock window before execution).
+pub fn add_to_timelock_ready_index(env: &Env, proposal_id: u64) {
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TimelockReady)
+        .unwrap_or_else(|| Vec::new(env));
+    if !ids.contains(proposal_id) {
+        ids.push_back(proposal_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TimelockReady, &ids);
+        env.storage().persistent().extend_ttl(
+            &DataKey::TimelockReady,
+            PROPOSAL_TTL / 2,
+            PROPOSAL_TTL,
+        );
+    }
+}
+
+/// Remove `proposal_id` from the timelock-ready index.
+///
+/// Called when a proposal leaves the timelock window (executed, cancelled, rejected, expired)
+/// or when it is found to have become executable (unlock_ledger passed) during a query.
+pub fn remove_from_timelock_ready_index(env: &Env, proposal_id: u64) {
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TimelockReady)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut new_ids: Vec<u64> = Vec::new(env);
+    for id in ids.iter() {
+        if id != proposal_id {
+            new_ids.push_back(id);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::TimelockReady, &new_ids);
+    if !new_ids.is_empty() {
+        env.storage().persistent().extend_ttl(
+            &DataKey::TimelockReady,
+            PROPOSAL_TTL / 2,
+            PROPOSAL_TTL,
+        );
+    }
+}
+
+/// Return a paginated slice of proposal IDs that are `Approved` and are still
+/// inside their timelock window (`unlock_ledger > current_ledger`).
+///
+/// Entries that no longer satisfy these conditions (proposal gone, status changed,
+/// or timelock already expired) are skipped but **not** pruned here to keep this
+/// function read-only and gas-predictable.  Index compaction is handled lazily by
+/// `remove_from_timelock_ready_index` at execution/cancellation time.
+///
+/// # Arguments
+/// * `offset` – Number of qualifying entries to skip (0-based).
+/// * `limit`  – Maximum entries to return (capped at 50).
+///
+/// # Returns
+/// `Vec<u64>` of proposal IDs in index insertion order.
+pub fn get_pending_timelocked_proposals(env: &Env, offset: u64, limit: u32) -> Vec<u64> {
+    let cap: u32 = if limit > 50 { 50 } else { limit };
+    let current_ledger = env.ledger().sequence() as u64;
+
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TimelockReady)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut result: Vec<u64> = Vec::new(env);
+    let mut skipped: u64 = 0;
+
+    for i in 0..ids.len() {
+        if result.len() as u32 >= cap {
+            break;
+        }
+        let id = match ids.get(i) {
+            Some(v) => v,
+            None => continue,
+        };
+        // Skip proposals that no longer exist in storage
+        let proposal: Proposal = match env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposal(id))
+        {
+            Some(p) => p,
+            None => continue,
+        };
+        // Must still be Approved with a pending (non-zero, not-yet-passed) timelock
+        if proposal.status != ProposalStatus::Approved {
+            continue;
+        }
+        if proposal.unlock_ledger == 0 || current_ledger >= proposal.unlock_ledger {
+            continue;
+        }
+        // Entry qualifies — apply offset/limit
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        result.push_back(id);
+    }
+    result
 }
 
 // ============================================================================

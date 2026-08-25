@@ -52,6 +52,7 @@ import { VaultRegistry } from "./modules/vault/vault-registry.service.js";
 import { ContractStateValidator } from "./modules/contracts/contract-state-validator.js";
 import { VaultService } from "./modules/vault/vault.service.js";
 import { DatabaseSync } from "node:sqlite";
+import { configureWalMode } from "./shared/storage/sqlite-wal.js";
 
 export interface BackendRuntime {
   readonly startedAt: string;
@@ -417,6 +418,7 @@ export async function startServer(
 
   // ── Governance Snapshot Job (Issue #1173) ─────────────────────────────────
   const governanceDb = new DatabaseSync(env.databasePath ?? ":memory:");
+  configureWalMode(governanceDb);
   const governanceSnapshotJob = new GovernanceSnapshotJob(governanceDb, {
     rpcUrl: env.sorobanRpcUrl,
   });

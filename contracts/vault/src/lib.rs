@@ -454,6 +454,8 @@ mod test_tags;
 // #[cfg(test)]
 // mod test_threshold_reduction;
 #[cfg(test)]
+mod test_timelock_ready_queue;
+#[cfg(test)]
 mod test_var_templates;
 #[cfg(test)]
 mod test_vault_template;
@@ -7156,6 +7158,29 @@ impl VaultDAO {
     pub fn get_vault_namespace(env: Env) -> Result<u64, VaultError> {
         let config = storage::get_config(&env)?;
         Ok(config.proposal_id_prefix)
+    }
+
+    /// Return proposal IDs that are `Approved` and currently inside their timelock
+    /// window — i.e., `unlock_ledger > current_ledger`.
+    ///
+    /// These are proposals that have cleared M-of-N signing but cannot yet be
+    /// executed because the mandatory 24-hour waiting period has not elapsed.
+    /// The executor dashboard uses this list to surface the "Ready to Execute"
+    /// queue without scanning every proposal.
+    ///
+    /// Results are sourced from the `TimelockReady` persistent index, which is
+    /// maintained automatically on every `set_proposal` call.  Entries that no
+    /// longer qualify (e.g. the proposal was cancelled externally) are skipped
+    /// silently so the query is always safe to call.
+    ///
+    /// # Arguments
+    /// * `offset` – Number of qualifying entries to skip (0-based pagination).
+    /// * `limit`  – Maximum entries to return (capped at 50 internally).
+    ///
+    /// # Returns
+    /// `Vec<u64>` of proposal IDs in index-insertion order.
+    pub fn get_pending_timelocked_proposals(env: Env, offset: u64, limit: u32) -> Vec<u64> {
+        storage::get_pending_timelocked_proposals(&env, offset, limit)
     }
 
     /// Validate if a recipient is allowed based on current list mode
