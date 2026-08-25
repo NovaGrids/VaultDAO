@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+import { getSqlitePool } from "../../shared/storage/sqlite-pool.js";
 
 import type { BackendEnv } from "../../config/env.js";
 import type { BackendRuntime } from "../../server.js";
@@ -352,11 +352,16 @@ export async function checkDatabase(
       return resultData;
     }
 
-    // Fallback: try to get database path from env and create a test connection
+    // Fallback: probe the database through the shared pool. Health checks run
+    // on a timer and used to open (and immediately discard) their own handle
+    // on every call; borrowing from the pool keeps the probe honest about the
+    // connections real traffic uses without adding one of its own.
     if (env.databasePath) {
-      const db = new DatabaseSync(env.databasePath);
-      db.prepare("SELECT 1").get();
-      db.close();
+      await getSqlitePool(env.databasePath, {
+        size: env.sqlitePoolSize,
+      }).withConnection((db) => {
+        db.prepare("SELECT 1").get();
+      });
       const latencyMs = Date.now() - start;
       const resultData: DatabaseCheckResult = {
         status: "healthy",
