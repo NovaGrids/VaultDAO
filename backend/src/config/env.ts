@@ -1,3 +1,5 @@
+import { DEFAULT_SQLITE_POOL_SIZE } from "../shared/storage/sqlite-pool.js";
+
 export interface BackendEnv {
   readonly port: number;
   readonly host: string;
@@ -41,6 +43,19 @@ export interface BackendEnv {
   readonly hmacSecret?: string;
   readonly cursorStorageType: "file" | "database";
   readonly databasePath: string;
+  /**
+   * Maximum number of pooled SQLite connections per database file.
+   *
+   * The backend shares one bounded, WAL-mode connection pool per database
+   * path instead of opening a handle per request. Raising this caps file
+   * handle usage higher; lowering it queues callers sooner.
+   *
+   * In-memory databases ignore this and are pinned to a single connection,
+   * since every handle to `:memory:` would otherwise be a separate database.
+   *
+   * Default: 4. Env var: `SQLITE_POOL_SIZE`.
+   */
+  readonly sqlitePoolSize: number;
   readonly rateLimitEnabled: boolean;
   readonly rateLimitRedisUrl?: string;
   readonly redisTls: boolean;
@@ -285,6 +300,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     webhooksRequestBodyLimit: "32kb",
     cursorStorageType: "file",
     databasePath: ":memory:",
+    sqlitePoolSize: 4,
     rateLimitEnabled: false,
     redisTls: false,
     rateLimitProposalsPerMin: 100,
@@ -371,6 +387,11 @@ export function loadEnv(): BackendEnv {
     | "file"
     | "database";
   const databasePath = readString("DATABASE_PATH", "./vaultdao.sqlite");
+  const sqlitePoolSize = readPort(
+    "SQLITE_POOL_SIZE",
+    DEFAULT_SQLITE_POOL_SIZE,
+    issues,
+  );
   const rateLimitEnabled = readString("RATE_LIMIT_ENABLED", "true") === "true";
   const rateLimitRedisUrl = readValue("RATE_LIMIT_REDIS_URL");
   const redisTls = readString("REDIS_TLS", "false") === "true";
@@ -518,6 +539,7 @@ export function loadEnv(): BackendEnv {
     hmacSecret,
     cursorStorageType,
     databasePath,
+    sqlitePoolSize,
     rateLimitEnabled,
     rateLimitRedisUrl,
     redisTls,

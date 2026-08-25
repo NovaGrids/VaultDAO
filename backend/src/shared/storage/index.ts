@@ -8,3 +8,4 @@
 
 export * from "./storage.adapter.js";
 export * from "./sqlite.storage.adapter.js";
+export * from "./sqlite-pool.js";

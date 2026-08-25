@@ -19,7 +19,8 @@ This document covers production hardening, monitoring, backup strategy, and inci
    - [Emergency Signer Rotation](#2-emergency-signer-rotation)
    - [Empty Signer Snapshot Recovery](#3-empty-signer-snapshot-recovery-issue-1424)
    - [Event Cursor Reset](#4-event-cursor-reset)
-   - [Communication Template](#5-communication-template)
+   - [API Key Rotation](#5-api-key-rotation-no-restart-required)
+   - [Communication Template](#6-communication-template)
 10. [Rollback Procedure for Contract Upgrades](#rollback-procedure-for-contract-upgrades)
 
 ---
@@ -674,7 +675,52 @@ docker compose start backend
 docker compose logs -f backend | grep "proposal-consumer"
 ```
 
-### 5. Communication Template
+### 5. API Key Rotation (no restart required)
+
+The backend accepts two API keys at once so clients can migrate without
+downtime: `VAULT_API_KEY` (the current key) and `VAULT_API_KEY_NEXT` (the
+staged replacement). `POST /api/v1/admin/rotate-api-key` promotes the staged
+key and invalidates the one it replaces, in-process — no config change and no
+restart.
+
+```bash
+# 1. Stage the replacement key and restart once to pick it up.
+#    Both keys are accepted from this point on.
+VAULT_API_KEY_NEXT=<new-key>
+
+# 2. Confirm the backend sees a pending rotation.
+#    (Authorised by the CURRENT key.)
+curl -s https://api.vaultdao.org/api/v1/admin/key-status \
+  -H "Authorization: Bearer $VAULT_API_KEY" | jq
+# => { "rotationPending": true, "oldKeyActive": true, ... }
+
+# 3. Migrate every client to the new key. Requests authenticated with the old
+#    key log an "[auth] request authenticated with old API key" warning —
+#    wait until those stop before cutting over.
+docker compose logs backend | grep "old API key"
+
+# 4. Cut over. This must be authorised by the OLD key: whoever retires a key
+#    has to already hold it. The promotion is atomic.
+curl -s -X POST https://api.vaultdao.org/api/v1/admin/rotate-api-key \
+  -H "Authorization: Bearer $VAULT_API_KEY" | jq
+# => { "rotationPending": false, "oldKeyActive": false, "rotatedAt": "..." }
+
+# 5. The old key is now rejected (401 on public routes, 403 on admin routes).
+#    Persist the new key as VAULT_API_KEY and clear VAULT_API_KEY_NEXT in the
+#    secrets manager, so the next restart comes up in the rotated state.
+```
+
+Notes:
+
+- Rotating with nothing staged returns `409` rather than locking clients out.
+- A second rotation requires staging a new `VAULT_API_KEY_NEXT` first.
+- The rotation is in-process state. If the backend restarts before step 5 is
+  persisted, it comes back up with whatever the secrets manager holds — so do
+  not skip step 5.
+- No endpoint ever returns key material; keys move through the secrets manager
+  only.
+
+### 6. Communication Template
 
 ```
 INCIDENT: [Brief description]

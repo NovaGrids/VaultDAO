@@ -7,7 +7,10 @@ import {
   DatabaseCursorAdapter,
   migrateFileCursorToDatabase,
 } from "./modules/events/index.js";
-import { MetricsRegistry } from "./modules/health/metrics.registry.js";
+import {
+  MetricsRegistry,
+  registerProposalThroughputMetrics,
+} from "./modules/health/metrics.registry.js";
 import {
   RecurringIndexerService,
   MemoryRecurringStorageAdapter,
@@ -167,6 +170,7 @@ export async function startServer(
     "Total rate-limit rejections (429) by exhausted dimension",
     "counter",
   );
+  registerProposalThroughputMetrics(metricsRegistry);
 
   const jobManager = new JobManager(metricsRegistry);
 

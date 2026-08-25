@@ -88,6 +88,20 @@ The VaultDAO Operations Dashboard (`grafana-dashboard.json`) includes the follow
 - **Purpose:** Display currently firing alerts
 - **Columns:** Alert name, Severity, Instance, Timestamp
 
+### 11. Proposal Throughput (created/executed per hour)
+- **Type:** Time series
+- **Metrics:** `proposals_created_total`, `proposals_executed_total`
+- **Queries:** `sum(rate(proposals_created_total[5m])) * 3600` and the same for
+  `proposals_executed_total`
+- **Purpose:** Capacity planning. Shows how many proposals the DAO creates and
+  executes per hour over time, which is what sizing decisions are based on.
+- **Reading it:** A persistent gap between the created and executed series means
+  proposals are arriving faster than they clear — a governance backlog building
+  up. The two series tracking together means throughput is keeping pace.
+
+Both counters are incremented by the proposal indexer after deduplication, so
+replayed or duplicated chain events do not inflate the rates.
+
 ## Prometheus Alerting Rules
 
 ### Alert Groups

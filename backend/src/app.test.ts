@@ -488,3 +488,99 @@ test("API key rotation flow", async (t) => {
     assert.equal(newKeyRes.status, 200);
   });
 });
+
+test("POST /api/v1/admin/rotate-api-key", async (t) => {
+  let server: Server;
+  let baseUrl: string;
+
+  const OLD_KEY = "rotate-endpoint-old-key";
+  const NEW_KEY = "rotate-endpoint-new-key";
+
+  t.before(async () => {
+    const app = await createApp(
+      { ...mockEnv, apiKey: OLD_KEY, apiKeyNext: NEW_KEY } as any,
+      mockRuntime as any,
+    );
+    server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (typeof address === "object" && address !== null) {
+      baseUrl = `http://127.0.0.1:${address.port}`;
+    }
+  });
+
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        if (typeof (server as any).closeAllConnections === "function") {
+          (server as any).closeAllConnections();
+        }
+        server.close(() => resolve());
+      }),
+  );
+
+  const rotate = (key?: string) =>
+    fetch(`${baseUrl}/api/v1/admin/rotate-api-key`, {
+      method: "POST",
+      headers: key ? { Authorization: `Bearer ${key}` } : {},
+    });
+
+  await t.test("rejects an unauthenticated rotation with 401", async () => {
+    const res = await rotate();
+    assert.equal(res.status, 401);
+  });
+
+  await t.test("rejects rotation authorised by the staged next key", async () => {
+    // The rotation must be authorised by the key it retires, never by the
+    // key it promotes — otherwise possession of the new key alone is enough
+    // to cut every existing client off.
+    const res = await rotate(NEW_KEY);
+    assert.equal(res.status, 403);
+  });
+
+  await t.test("promotes the next key when authorised by the old key", async () => {
+    const res = await rotate(OLD_KEY);
+    assert.equal(res.status, 200);
+
+    const body = (await res.json()) as any;
+    assert.equal(body.success, true);
+    assert.equal(body.data.rotationPending, false);
+    assert.equal(body.data.oldKeyActive, false);
+    assert.ok(
+      !Number.isNaN(Date.parse(body.data.rotatedAt)),
+      "response carries an ISO rotatedAt timestamp",
+    );
+  });
+
+  await t.test("never returns key material in the response", async () => {
+    const res = await fetch(`${baseUrl}/api/v1/admin/key-status`, {
+      headers: { Authorization: `Bearer ${NEW_KEY}` },
+    });
+    const raw = await res.text();
+    assert.ok(!raw.includes(OLD_KEY), "old key is not echoed back");
+    assert.ok(!raw.includes(NEW_KEY), "new key is not echoed back");
+  });
+
+  await t.test("invalidates the old key for authenticated routes", async () => {
+    const res = await fetch(`${baseUrl}/api/v1/proposals/stats`, {
+      headers: { Authorization: `Bearer ${OLD_KEY}` },
+    });
+    assert.equal(res.status, 401);
+  });
+
+  await t.test("accepts the promoted key on authenticated routes", async () => {
+    const res = await fetch(`${baseUrl}/api/v1/proposals/stats`, {
+      headers: { Authorization: `Bearer ${NEW_KEY}` },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  await t.test("returns 409 when no rotation is staged", async () => {
+    const res = await rotate(NEW_KEY);
+    assert.equal(res.status, 409);
+
+    const body = (await res.json()) as any;
+    assert.equal(body.success, false);
+    assert.match(body.error.message, /No pending API key rotation/);
+  });
+});
