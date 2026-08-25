@@ -103,6 +103,28 @@ The backend uses environment variables for configuration. You can find a complet
 | `CURSOR_STORAGE_TYPE` | Storage adapter for event cursors | `file` | `file` or `database` | No |
 | `DATABASE_PATH` | Path to SQLite DB if using `database` | `./vaultdao.sqlite`| Valid file path | No |
 
+### SQLite WAL Mode
+
+All SQLite connections are initialized with **Write-Ahead Logging (WAL)** mode and `PRAGMA synchronous=NORMAL` via the shared `configureWalMode()` helper (`src/shared/storage/sqlite-wal.ts`).
+
+**Why WAL?** The backend runs an event indexer that continuously writes to SQLite while the API serves read queries concurrently. Under the default `DELETE` journal mode, readers block while a write transaction is open, causing `SQLITE_BUSY` errors under load. WAL mode solves this by allowing concurrent readers alongside a writer — readers never block on writes and never acquire a write lock.
+
+**Why `synchronous=NORMAL`?** In WAL mode, `NORMAL` provides crash safety without the full fsync overhead of `FULL`. A power failure at most loses the last committed transaction, which is acceptable for an indexer that can re-sync from the chain.
+
+**Affected surfaces:**
+
+| Component | DB Type | Path |
+|---|---|---|
+| `SqliteStorageAdapter` | `node:sqlite` `DatabaseSync` | `shared/storage/sqlite.storage.adapter.ts` |
+| `NotificationQueueStore` | `node:sqlite` `DatabaseSync` | `modules/notifications/notification-queue.store.ts` |
+| `GovernanceSnapshotJob` | `node:sqlite` `DatabaseSync` | `server.ts` |
+| `SqliteProposalActivityAdapter` | `better-sqlite3` | `modules/proposals/adapters/sqlite-adapter.ts` |
+
+**References:**
+
+- [SQLite WAL Documentation](https://www.sqlite.org/wal.html)
+- Load test: `src/shared/storage/sqlite-wal.load.test.ts`
+
 ## Startup Summary
 
 On boot, the backend logs a short safe config summary so contributors can confirm what the process is using.

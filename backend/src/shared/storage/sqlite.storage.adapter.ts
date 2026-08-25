@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import type { StorageAdapter } from "./storage.adapter.js";
+import { configureWalMode } from "./sqlite-wal.js";
 
 /**
  * SQLite-backed storage adapter using Node.js built-in `node:sqlite`.
@@ -15,6 +16,7 @@ export class SqliteStorageAdapter<T extends { id: string }>
 
   constructor(dbPath: string, table: string) {
     this.db = new DatabaseSync(dbPath);
+    configureWalMode(this.db);
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS "${table}" (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
     );
