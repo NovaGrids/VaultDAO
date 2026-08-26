@@ -101,3 +101,22 @@ jobs:
 
       - name: Test backend
         run: npm run backend:test
+
+  sdk-checks:
+    name: SDK Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install SDK dependencies
+        run: npm --prefix sdk ci
+
+      - name: Typecheck SDK
+        run: npm run sdk:typecheck

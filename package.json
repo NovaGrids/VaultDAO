@@ -6,6 +6,7 @@
     "backend:typecheck": "npm --prefix backend run typecheck",
     "backend:test": "npm --prefix backend run test",
     "backend:lint": "npm --prefix backend run lint",
+    "sdk:typecheck": "npm --prefix sdk run typecheck",
     "typecheck": "npm --prefix frontend run typecheck",
     "build:frontend": "npm --prefix frontend run build"
   },
