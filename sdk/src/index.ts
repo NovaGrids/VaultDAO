@@ -48,6 +48,7 @@ export {
   buildOptions,
   connectWallet,
   buildTransaction,
+  estimateFee,
   signAndSubmit,
   extractStateDiff,
   simulateWithStateDiff,
