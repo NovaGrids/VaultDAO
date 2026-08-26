@@ -63,6 +63,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8787/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     # For local development hot reloading, we override the production CMD
     command: npm run dev
 
@@ -81,6 +86,9 @@ services:
       - /app/node_modules                                             # Prevent local node_modules from overwriting container dependencies
     networks:
       - vaultdao-net
+    depends_on:
+      backend:
+        condition: service_healthy
     # Vite dev server requires --host to bind and accept host network connections (port 5173)
     command: npm run dev -- --host
 
