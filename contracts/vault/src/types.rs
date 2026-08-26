@@ -2807,6 +2807,19 @@ pub struct PauseState {
 }
 
 // ============================================================================
+// Issue #1350: Pause Circuit Breaker Cooldown
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PauseCooldownConfig {
+    /// Cooldown period in ledgers (minimum 1 day = 17,280 ledgers at 5s/ledger)
+    pub cooldown_ledgers: u64,
+    /// Ledger when the last pause/unpause action occurred
+    pub last_action_ledger: u64,
+}
+
+// ============================================================================
 // Compliance Scoring (#1103)
 // ============================================================================
 
@@ -2867,6 +2880,11 @@ pub enum ConfigParam {
     WeeklyLimit = 3,
     TimelockDelay = 4,
     Quorum = 5,
+    /// Full-quorum threshold — amounts at or above this value require every
+    /// signer to approve. Must be routed through the governance proposal
+    /// workflow; direct admin updates via `set_full_quorum_threshold` are
+    /// rejected (issue #1634).
+    FullQuorumThreshold = 6,
 }
 
 #[contracttype]

@@ -71,7 +71,7 @@ fn test_invalidate_cache_admin_success() {
 
     let (client, admin, _member) = setup(&env);
 
-    let tag = Symbol::new(&env, "contract-snapshots");
+    let tag = Symbol::new(&env, "contract_snapshots");
     client.invalidate_cache(&admin, &tag);
 }
 
@@ -82,7 +82,7 @@ fn test_invalidate_cache_unauthorized_fails() {
 
     let (client, _admin, member) = setup(&env);
 
-    let tag = Symbol::new(&env, "proposal-101");
+    let tag = Symbol::new(&env, "proposal_101");
     let result = client.try_invalidate_cache(&member, &tag);
 
     assert_eq!(result, Err(Ok(VaultError::Unauthorized)));

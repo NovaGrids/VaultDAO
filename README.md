@@ -159,7 +159,7 @@ npm run backend:typecheck
 npm run backend:test
 ```
 
-Read the full guide: [docs/TESTING.md](docs/TESTING.md)
+Read the full guide: [docs/reference/TESTING.md](docs/reference/TESTING.md)
 
 ## 🤝 Backend Contributor Setup
 
@@ -201,7 +201,7 @@ We welcome bug reports, feature ideas, and pull requests. See [CONTRIBUTING.md](
 ## 🛡️ Security & Conduct
 
 - **Security**: Please read our [SECURITY.md](docs/reference/SECURITY.md) for our vulnerability disclosure policy.
-- **Conduct**: We follow the [Contributor Covenant](docs/CODE_OF_CONDUCT.md).
+- **Conduct**: We follow the [Contributor Covenant](CODE_OF_CONDUCT.md).
 
 ## 📄 License
 

@@ -313,6 +313,7 @@ pub enum VaultError {
     // Emergency pause / circuit breaker (#1084)
     // =========================================================
     VaultPaused = 1020,
+    VaultNotPaused = 1021,
 
     // =========================================================
     // Dependency graph depth (#1066)
@@ -425,6 +426,14 @@ pub enum VaultError {
     // =========================================================
     /// A batched proposal depends on something that is neither in the batch nor already executed
     BatchDependencyMissing = 1126,
+
+    // =========================================================
+    // Issue #1350: Pause Circuit Breaker Cooldown
+    // =========================================================
+    /// Pause/unpause action is in cooldown period
+    PauseCooldownActive = 1127,
+    /// Caller is not an emergency signer
+    NotEmergencySigner = 1128,
 }
 
 // Compatibility markers for CI source checks:

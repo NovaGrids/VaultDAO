@@ -1,4 +1,9 @@
-import express, { Request, Response, NextFunction } from "express";
+import express, {
+  Request,
+  Response,
+  NextFunction,
+  RequestHandler,
+} from "express";
 import type { BackendEnv } from "./config/env.js";
 import type { BackendRuntime } from "./server.js";
 import {
@@ -13,6 +18,9 @@ import { createContractsRouter } from "./modules/contracts/contracts.controller.
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { getCorsOriginsController, addCorsOriginController, removeCorsOriginController } from "./modules/admin/cors.controller.js";
 import { triggerCursorMigrationController, rollbackCursorMigrationController } from "./modules/admin/cursor.controller.js";
+import { AdminAuditLogStore } from "./modules/admin-audit/admin-audit.store.js";
+import { createAdminAuditLogMiddleware } from "./modules/admin-audit/admin-audit.middleware.js";
+import { getAdminAuditLogController } from "./modules/admin-audit/admin-audit.controller.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
@@ -30,6 +38,10 @@ import { error, success } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createRateLimitMetricsMiddleware } from "./shared/http/token-bucket-metrics.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
+import {
+  ApiKeyRotationState,
+  NoPendingRotationError,
+} from "./shared/http/api-key-rotation.js";
 import { createJsonWithRawBody, createHmacSigningMiddleware } from "./shared/http/hmac.js";
 import { ErrorCode } from "./shared/http/errorCodes.js";
 import {
@@ -47,10 +59,7 @@ import { createDrainMiddleware } from "./shared/http/drain.js";
 
 export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
-  const authKeyState = {
-    primary: env.apiKey,
-    next: env.apiKeyNext,
-  };
+  const authKeyState = new ApiKeyRotationState(env.apiKey, env.apiKeyNext);
   const corsAllowlist = new CorsAllowlist(env.nodeEnv, env.corsOrigin);
 
   // Initialize feature flags from env
@@ -175,7 +184,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   app.use(createRequestLogger());
 
   const authMiddleware = createAuthMiddleware(
-    () => ({ primaryKey: authKeyState.primary, nextKey: authKeyState.next }),
+    () => authKeyState.snapshot(),
     undefined,
     () => {
       // Never log key material; only emit rotation-stage usage warning.
@@ -184,7 +193,9 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       );
     },
   );
-  const adminAuthMiddleware = requireApiKey(() => authKeyState.primary);
+  // Admin routes accept only the current primary key, never the staged next
+  // key — so a rotation is always authorised by the key it retires.
+  const adminAuthMiddleware = requireApiKey(() => authKeyState.getPrimaryKey());
 
   // Monitoring-friendly queue stats endpoint — intentionally registered before
   // the /api/v1/notifications auth mount below so it requires no auth.
@@ -236,38 +247,77 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     () => env.hmacSecret,
   );
 
+  // ── Admin Audit Log ──────────────────────────────────────────────────────────
+  // Records every call under /admin — including rejected auth attempts — so a
+  // compromised Admin key leaves a trail of what was accessed or changed.
+  const adminAuditLogStore = new AdminAuditLogStore(env.databasePath ?? ":memory:");
+  v1Router.use("/admin", createAdminAuditLogMiddleware(adminAuditLogStore));
+
+  v1Router.get(
+    "/admin/audit-log",
+    adminAuthMiddleware,
+    hmacMiddleware,
+    getAdminAuditLogController(adminAuditLogStore),
+  );
+
   v1Router.get("/admin/key-status", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
-    const rotationPending = Boolean(authKeyState.next);
     res.status(200).json({
       success: true,
       data: {
-        rotationPending,
-        oldKeyActive: rotationPending && Boolean(authKeyState.primary),
+        rotationPending: authKeyState.isRotationPending(),
+        oldKeyActive: authKeyState.isOldKeyActive(),
+        lastRotatedAt: authKeyState.getLastRotatedAt() ?? null,
       },
     });
   });
 
-  v1Router.post("/admin/rotate-key", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
-    if (!authKeyState.next) {
-      error(res, {
-        message: "No pending API key rotation",
-        status: 409,
-        code: ErrorCode.BAD_REQUEST,
-      });
-      return;
+  /**
+   * Promotes the staged `apiKeyNext` to `apiKey` and invalidates the key it
+   * replaces, without a config change or restart.
+   *
+   * Authorisation is deliberately the *old* key: `adminAuthMiddleware` accepts
+   * only the current primary, so whoever triggers the rotation must already
+   * hold the key being retired. The promotion itself is atomic — see
+   * `ApiKeyRotationState.rotate()`.
+   */
+  const rotateApiKeyHandler: RequestHandler = (_req, res) => {
+    try {
+      const result = authKeyState.rotate();
+
+      // Never log key material — only the fact and time of the rotation.
+      console.warn(
+        `[auth] API key rotated at ${result.rotatedAt}; previous key invalidated`,
+      );
+
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      if (err instanceof NoPendingRotationError) {
+        error(res, {
+          message:
+            "No pending API key rotation. Stage a replacement via VAULT_API_KEY_NEXT before rotating.",
+          status: 409,
+          code: ErrorCode.BAD_REQUEST,
+        });
+        return;
+      }
+      throw err;
     }
+  };
 
-    authKeyState.primary = authKeyState.next;
-    authKeyState.next = undefined;
+  v1Router.post(
+    "/admin/rotate-api-key",
+    adminAuthMiddleware,
+    hmacMiddleware,
+    rotateApiKeyHandler,
+  );
 
-    res.status(200).json({
-      success: true,
-      data: {
-        rotationPending: false,
-        oldKeyActive: false,
-      },
-    });
-  });
+  // Retained alias for callers written against the pre-existing path.
+  v1Router.post(
+    "/admin/rotate-key",
+    adminAuthMiddleware,
+    hmacMiddleware,
+    rotateApiKeyHandler,
+  );
 
   v1Router.get("/admin/cors/origins", adminAuthMiddleware, hmacMiddleware, getCorsOriginsController(corsAllowlist));
   v1Router.post("/admin/cors/origins", adminAuthMiddleware, hmacMiddleware, addCorsOriginController(corsAllowlist));

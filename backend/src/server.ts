@@ -7,7 +7,10 @@ import {
   DatabaseCursorAdapter,
   migrateFileCursorToDatabase,
 } from "./modules/events/index.js";
-import { MetricsRegistry } from "./modules/health/metrics.registry.js";
+import {
+  MetricsRegistry,
+  registerProposalThroughputMetrics,
+} from "./modules/health/metrics.registry.js";
 import {
   RecurringIndexerService,
   MemoryRecurringStorageAdapter,
@@ -49,6 +52,7 @@ import { VaultRegistry } from "./modules/vault/vault-registry.service.js";
 import { ContractStateValidator } from "./modules/contracts/contract-state-validator.js";
 import { VaultService } from "./modules/vault/vault.service.js";
 import { DatabaseSync } from "node:sqlite";
+import { configureWalMode } from "./shared/storage/sqlite-wal.js";
 
 export interface BackendRuntime {
   readonly startedAt: string;
@@ -166,12 +170,17 @@ export async function startServer(
     "Total rate-limit rejections (429) by exhausted dimension",
     "counter",
   );
+  registerProposalThroughputMetrics(metricsRegistry);
 
   const jobManager = new JobManager(metricsRegistry);
 
   // Priority notification queue (replaces basic InMemoryNotificationQueue),
   // backed by SQLite so pending/failed notifications survive a restart.
-  const notificationQueueStore = new NotificationQueueStore(env.notificationsDbPath);
+  const notificationDbPath =
+    typeof env.notificationsDbPath === "string" && env.notificationsDbPath.length > 0
+      ? env.notificationsDbPath
+      : ":memory:";
+  const notificationQueueStore = new NotificationQueueStore(notificationDbPath);
   const priorityNotificationQueue = new PriorityNotificationQueue(notificationQueueStore);
   priorityNotificationQueue.restore();
   const jobNotificationPublisher =
@@ -409,6 +418,7 @@ export async function startServer(
 
   // ── Governance Snapshot Job (Issue #1173) ─────────────────────────────────
   const governanceDb = new DatabaseSync(env.databasePath ?? ":memory:");
+  configureWalMode(governanceDb);
   const governanceSnapshotJob = new GovernanceSnapshotJob(governanceDb, {
     rpcUrl: env.sorobanRpcUrl,
   });

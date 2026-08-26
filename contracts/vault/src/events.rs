@@ -1786,11 +1786,11 @@ pub fn emit_escrow_release_voted(
 /// # Arguments
 /// * `payment_id`           - ID of the recurring payment.
 /// * `nominal_next_ledger`  - What `next_payment_ledger` would be without jitter
-///                            (i.e. `prev_next_payment_ledger + n * interval`).
+///   (i.e. `prev_next_payment_ledger + n * interval`).
 /// * `jittered_next_ledger` - The actual stored `next_payment_ledger` after
-///                            adding `jitter_offset`.
+///   adding `jitter_offset`.
 /// * `jitter_offset`        - The ledger offset added (`jitter_offset` field on
-///                            the payment, in `[0, jitter_window)`).
+///   the payment, in `[0, jitter_window)`).
 pub fn emit_recurring_payment_jittered(
     env: &Env,
     payment_id: u64,
@@ -1935,5 +1935,83 @@ pub fn emit_batch_reordered(
     env.events().publish(
         (Symbol::new(env, "batch_reordered"), batch_id),
         (original_order.clone(), sorted_order.clone()),
+    );
+}
+// ============================================================================
+// Issue #1350: Pause Circuit Breaker Cooldown
+// ============================================================================
+
+/// Emit when vault pause is rejected due to active cooldown
+pub fn emit_pause_cooldown_active(
+    env: &Env,
+    requester: &Address,
+    remaining_ledgers: u64,
+    reason: Symbol,
+) {
+    env.events().publish(
+        (Symbol::new(env, "pause_cooldown_active"),),
+        (requester.clone(), remaining_ledgers, reason),
+    );
+}
+
+/// Emit when vault is unpaused
+pub fn emit_vault_unpaused(env: &Env, unpauser: &Address, pause_duration_ledgers: u64) {
+    env.events().publish(
+        (Symbol::new(env, "vault_unpaused"),),
+        (unpauser.clone(), pause_duration_ledgers),
+    );
+}
+
+// ============================================================================
+// Issue #1351: Fix Voting Snapshot Stale Signer Issue
+// ============================================================================
+
+/// Emit when a vote is rejected because signer was removed after proposal creation
+pub fn emit_vote_rejected_signer_removed(
+    env: &Env,
+    proposal_id: u64,
+    signer: &Address,
+    reason: Symbol,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "vote_rejected_signer_removed"),
+            proposal_id,
+        ),
+        (signer.clone(), reason),
+    );
+}
+
+// ============================================================================
+// Issue #1353: Spending Limit Recalculation on Config Update
+// ============================================================================
+
+/// Emit when a spending limit update causes a warning for pending proposals
+pub fn emit_spending_limit_warning(
+    env: &Env,
+    proposal_id: u64,
+    old_limit: i128,
+    new_limit: i128,
+    proposal_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "spending_limit_warning"), proposal_id),
+        (old_limit, new_limit, proposal_amount),
+    );
+}
+
+/// Emit when a pending proposal is auto-cancelled due to new spending limits
+pub fn emit_proposal_auto_cancelled_limit_exceeded(
+    env: &Env,
+    proposal_id: u64,
+    reason: Symbol,
+    admin: &Address,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "proposal_auto_cancelled_limit"),
+            proposal_id,
+        ),
+        (reason, admin.clone()),
     );
 }

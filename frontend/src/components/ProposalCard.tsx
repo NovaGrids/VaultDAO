@@ -120,4 +120,8 @@ const ProposalCard: React.FC<ProposalCardProps> = ({
   );
 };
 
-export default ProposalCard;
+/**
+ * Memoized: in a virtualized list the same cards are re-rendered whenever the
+ * scroll window shifts, and only the cards entering the window have new props.
+ */
+export default React.memo(ProposalCard);

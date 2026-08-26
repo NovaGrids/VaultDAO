@@ -84,9 +84,15 @@ fn test_export_vault_template_from_configured_vault() {
     assert_eq!(template.grace_period_ledgers, 150);
     assert_eq!(template.high_impact_threshold, 70);
 
-    assert_ne!(template.enabled_features & VaultTemplate::FEATURE_WHITELIST_MODE, 0);
+    assert_ne!(
+        template.enabled_features & VaultTemplate::FEATURE_WHITELIST_MODE,
+        0
+    );
     assert_ne!(template.enabled_features & VaultTemplate::FEATURE_RETRY, 0);
-    assert_ne!(template.enabled_features & VaultTemplate::FEATURE_STAKING, 0);
+    assert_ne!(
+        template.enabled_features & VaultTemplate::FEATURE_STAKING,
+        0
+    );
 }
 
 /// A new vault can be bootstrapped from an exported template, and the
@@ -142,12 +148,8 @@ fn test_initialize_from_template() {
     assert!(new_config.staking_config.enabled);
 
     // A second call to either init path must fail (first-time init guard).
-    let res = new_client.try_initialize_from_template(
-        &new_admin,
-        &template,
-        &new_signers,
-        &10_000i128,
-    );
+    let res =
+        new_client.try_initialize_from_template(&new_admin, &template, &new_signers, &10_000i128);
     assert_eq!(res.err(), Some(Ok(VaultError::AlreadyInitialized)));
 }
 
@@ -165,8 +167,7 @@ fn test_initialize_from_template_rejects_invalid_threshold_ratio() {
 
     let mut template = valid_template(&env);
     template.threshold_ratio_percent = 0;
-    let res =
-        client.try_initialize_from_template(&admin, &template, &signers, &1_000i128);
+    let res = client.try_initialize_from_template(&admin, &template, &signers, &1_000i128);
     assert_eq!(res.err(), Some(Ok(VaultError::InvalidTemplate)));
 
     let mut template_over = valid_template(&env);

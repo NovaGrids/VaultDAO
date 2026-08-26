@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createLogger } from "../../shared/logging/logger.js";
 import { NotificationPriority } from "./notification.types.js";
+import { configureWalMode } from "../../shared/storage/sqlite-wal.js";
 
 const logger = createLogger("notification-queue-store");
 
@@ -40,6 +41,7 @@ export class NotificationQueueStore {
 
   constructor(dbPath: string) {
     this.db = new DatabaseSync(dbPath);
+    configureWalMode(this.db);
     this.ensureSchema();
   }
 

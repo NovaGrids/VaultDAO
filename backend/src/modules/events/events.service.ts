@@ -10,6 +10,7 @@ import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 import { TimeoutError } from "../../shared/http/fetchWithTimeout.js";
 import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
 import type { MetricsRegistry } from "../health/metrics.registry.js";
+import DeadLetterService from "./deadletter.service.js";
 import { CircuitBreaker } from "../../shared/http/circuit-breaker.js";
 import type { CacheManager } from "../../shared/cache/cache-manager.js";
 
@@ -70,6 +71,7 @@ export class EventPollingService {
     private readonly metrics?: MetricsRegistry,
     circuitBreaker?: CircuitBreaker,
     private readonly cacheManager?: CacheManager,
+    private readonly deadLetterService?: DeadLetterService,
   ) {
     this.rpcClient =
       rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
@@ -396,6 +398,27 @@ export class EventPollingService {
       // Proposal events → proposalConsumer
       if (this.proposalConsumer && PROPOSAL_TOPICS.has(topic)) {
         await this.proposalConsumer.process(normalized);
+        return;
+      }
+
+      // Dead-letter entries emitted by the contract — persist to backend DLQ
+      if (topic === "dead_letter_added" && this.deadLetterService) {
+        try {
+          const recordIdRaw = event.topic[1] ?? (normalized as any).recordId ?? 0;
+          const recordId = Number(recordIdRaw);
+          const retryCount = (normalized as any).retryCount ?? 0;
+          const dlEntry = {
+            id: String(recordId),
+            contractId: event.contractId,
+            recordId,
+            retryCount,
+            addedAt: Date.now(),
+            processed: false,
+          };
+          this.deadLetterService.add(dlEntry as any);
+        } catch (err) {
+          this.logger.error("failed to persist dead-letter entry", { error: err instanceof Error ? err.message : String(err) });
+        }
         return;
       }
 

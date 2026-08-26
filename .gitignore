@@ -49,6 +49,8 @@ backend/*.log
 backend/logs/
 backend/.tsbuildinfo
 
+sdk/dist/
+
 # Contribution-wave scratch files (keep out of the repo)
 
 PR_BODY.md
@@ -57,3 +59,7 @@ ATOMIC_BATCH_IMPLEMENTATION_SUMMARY.md
 ATOMIC_BATCHING_COMMIT.md
 REPUTATION_SYSTEM_COMMIT.md
 CI_CHECKS_SUMMARY.md
+# SQLite runtime artifacts (including the WAL sidecar files)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

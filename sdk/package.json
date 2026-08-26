@@ -11,6 +11,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "bindings": "stellar contract bindings typescript --wasm ../contracts/vault/target/wasm32-unknown-unknown/release/vault_dao.wasm --id <CONTRACT_ID> --network testnet --output-dir src/bindings",
     "prepublishOnly": "npm run build"
   },
@@ -42,6 +44,7 @@
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "@stellar/freighter-api": "1.7.1"
+    "@stellar/freighter-api": "1.7.1",
+    "vitest": "^4.1.1"
   }
 }

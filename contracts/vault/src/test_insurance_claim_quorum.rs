@@ -248,8 +248,10 @@ fn test_set_voting_config_rejects_out_of_range_bps() {
     let env = Env::default();
     let (client, admin, _signers, _claimant, _token) = setup(&env, 3);
 
-    let mut cfg = InsuranceVotingConfig::default();
-    cfg.quorum_bps = 10_001;
+    let cfg = InsuranceVotingConfig {
+        quorum_bps: 10_001,
+        ..InsuranceVotingConfig::default()
+    };
     let res = client.try_set_insurance_voting_config(&admin, &cfg);
     assert_eq!(res.err(), Some(Ok(VaultError::InvalidAmount)));
 }
