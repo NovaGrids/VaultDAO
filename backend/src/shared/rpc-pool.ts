@@ -1,4 +1,6 @@
 import { createLogger } from "./logging/logger.js";
+import { getRequestId } from "./http/requestContext.js";
+import { REQUEST_ID_HEADER } from "./http/requestId.js";
 
 const UNHEALTHY_THRESHOLD = 3;
 const RETRY_AFTER_MS = 30_000;
@@ -90,6 +92,12 @@ export class RpcConnectionPool {
         if (method === "getLatestLedger") {
           this.cachedLedger = { sequence: (result as any).sequence, cachedAt: Date.now() };
         }
+        this.logger.info("RPC call succeeded", {
+          url: ep.url,
+          method,
+          latencyMs: ep.lastLatencyMs,
+          requestId: getRequestId(),
+        });
         return { data: result, degraded: false };
       } catch (err) {
         ep.consecutiveFailures++;
@@ -100,12 +108,14 @@ export class RpcConnectionPool {
           this.logger.warn("endpoint marked unhealthy", {
             url: ep.url,
             failures: ep.consecutiveFailures,
+            requestId: getRequestId(),
           });
         }
         lastError = err;
         this.logger.warn("RPC endpoint failed, trying next", {
           url: ep.url,
           error: err instanceof Error ? err.message : String(err),
+          requestId: getRequestId(),
         });
       }
     }
@@ -127,9 +137,15 @@ export class RpcConnectionPool {
       ...(params !== undefined ? { params } : {}),
     };
 
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const requestId = getRequestId();
+    if (requestId) {
+      headers[REQUEST_ID_HEADER] = requestId;
+    }
+
     const response = await this.fetchFn(ep.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     });
