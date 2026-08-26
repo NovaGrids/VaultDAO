@@ -20,7 +20,10 @@ mod errors;
 mod events;
 mod storage;
 mod token;
-mod types;
+// `pub` so that external crates (the fuzz targets in fuzz/, which drive the
+// real contract instead of a reimplemented copy of its logic) can name and
+// construct these types.
+pub mod types;
 mod types_balance_snapshot;
 
 // #[cfg(test)]

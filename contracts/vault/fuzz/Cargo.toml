@@ -21,3 +21,7 @@ path = "fuzz_targets/fuzz_vote_threshold.rs"
 [[bin]]
 name = "fuzz_arithmetic"
 path = "fuzz_targets/fuzz_arithmetic.rs"
+
+[[bin]]
+name = "fuzz_execute_proposal"
+path = "fuzz_targets/fuzz_execute_proposal.rs"
