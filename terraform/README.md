@@ -18,6 +18,7 @@ The infrastructure includes:
 ```
 terraform/
 ├── main.tf                      # Main Terraform configuration
+├── backend.tf                   # Remote backend configuration (S3 + DynamoDB)
 ├── variables.tf                 # Variable definitions
 ├── terraform.tfvars.example     # Example variable values
 ├── README.md                    # This file
@@ -26,7 +27,7 @@ terraform/
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   ├── backend/                 # Kubernetes deployment for backend
+│   ├── backend/                 # Backend state bootstrap module
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
@@ -46,6 +47,10 @@ terraform/
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
+└── backend-bootstrap/           # One-time backend bootstrap config
+    ├── main.tf
+    ├── variables.tf
+    └── terraform.tfvars.example
 ```
 
 ## Prerequisites
@@ -73,28 +78,45 @@ brew install helm  # macOS
 
 ## Initial Setup
 
-### 1. Create S3 Backend for Terraform State
+### 1. Bootstrap Terraform Remote State Backend
+
+The remote backend requires an S3 bucket and DynamoDB table for state locking. Use the `backend-bootstrap/` config to create these resources once.
 
 ```bash
-# Create S3 bucket for Terraform state
-aws s3api create-bucket \
-  --bucket vaultdao-terraform-state \
-  --region us-east-1
+cd terraform/backend-bootstrap
 
-# Enable versioning
-aws s3api put-bucket-versioning \
-  --bucket vaultdao-terraform-state \
-  --versioning-configuration Status=Enabled
+# Copy example variables
+cp terraform.tfvars.example terraform.tfvars
 
-# Create DynamoDB table for state locking
-aws dynamodb create-table \
-  --table-name terraform-lock \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+# Edit with your values
+nano terraform.tfvars
+
+# Initialize Terraform
+terraform init
+
+# Apply to create backend resources
+terraform apply
 ```
 
-### 2. Prepare Variables
+This creates:
+- **S3 bucket** (`terraform_state_bucket`) with versioning and encryption enabled
+- **DynamoDB table** (`terraform_lock_table`) for state locking
+
+### 2. Configure Remote Backend
+
+```bash
+cd terraform
+
+# Initialize with remote backend
+terraform init \
+  -backend-config="bucket=vaultdao-terraform-state" \
+  -backend-config="key=production/terraform.tfstate" \
+  -backend-config="region=us-east-1" \
+  -backend-config="encrypt=true" \
+  -backend-config="dynamodb_table=terraform-lock"
+```
+
+### 3. Prepare Variables
 
 ```bash
 # Copy example variables
@@ -274,7 +296,30 @@ terraform apply -var="kubernetes_version=1.29"
 
 ## Terraform State Management
 
-The state is stored remotely in S3 with DynamoDB locking:
+State is stored remotely in S3 with DynamoDB locking to prevent concurrent modifications.
+
+### Backend Configuration
+
+The backend is configured in `backend.tf` with values supplied during `terraform init`:
+
+```hcl
+terraform {
+  backend "s3" {}
+}
+```
+
+Initialize with backend config:
+
+```bash
+terraform init \
+  -backend-config="bucket=vaultdao-terraform-state" \
+  -backend-config="key=production/terraform.tfstate" \
+  -backend-config="region=us-east-1" \
+  -backend-config="encrypt=true" \
+  -backend-config="dynamodb_table=terraform-lock"
+```
+
+### State Operations
 
 ```bash
 # View current state
@@ -288,6 +333,30 @@ terraform state show module.database.aws_db_instance.main
 
 # Remove resource from state (use with caution)
 terraform state rm module.backend.kubernetes_deployment.backend
+```
+
+### Handling Lock Timeouts
+
+If Terraform is stuck waiting for a lock:
+
+```bash
+# List locks
+aws dynamodb scan --table-name terraform-lock
+
+# Remove stale lock (use with caution)
+aws dynamodb delete-item \
+  --table-name terraform-lock \
+  --key '{"LockID": {"S": "vaultdao-terraform-state/production/terraform.tfstate"}}'
+```
+
+### Migrating Local State to Remote
+
+If you have existing local state:
+
+```bash
+# First, bootstrap the backend (see Initial Setup)
+# Then migrate:
+terraform init -migrate-state
 ```
 
 ## Monitoring & Alerts
@@ -333,10 +402,13 @@ kubectl exec -it <pod-name> -n vaultdao -- \
 
 ### Terraform Lock Timeout
 
-If Terraform is stuck:
+If Terraform is stuck waiting for a lock:
 
 ```bash
-# Remove lock
+# List locks
+aws dynamodb scan --table-name terraform-lock
+
+# Remove stale lock (use with caution)
 aws dynamodb delete-item \
   --table-name terraform-lock \
   --key '{"LockID": {"S": "vaultdao-terraform-state/production/terraform.tfstate"}}'
