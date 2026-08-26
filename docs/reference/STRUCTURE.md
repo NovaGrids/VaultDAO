@@ -1,56 +1,77 @@
 # Project Structure
 
-VaultDAO is organized as a monorepo containing the smart contract, the frontend dashboard, and supporting documentation.
+VaultDAO is organized as a monorepo containing the smart contract, frontend dashboard, backend service, SDK, and documentation.
 
 ## Directory Overview
 
 ```text
 .
-├── contracts/          # Soroban Smart Contracts (Rust)
+├── contracts/          # Soroban smart contracts (Rust)
 │   └── vault/
-│       ├── src/        # Contract source code
-│       └── Cargo.toml  # Rust dependencies
-├── frontend/           # Dashboard Web App (React)
-│   ├── src/            # Application source (TypeScript)
-│   ├── public/         # Static assets
-│   └── package.json    # Javascript dependencies
-├── docs/               # Technical documentation & guides
+├── frontend/           # Dashboard web app (React)
+├── backend/            # Indexing, jobs, notifications, WebSocket API
 ├── sdk/                # TypeScript SDK for contract integration
+├── docs/               # Technical documentation
+│   ├── guides/         # How-to guides (features, contribution, ops)
+│   │   ├── backend/    # Backend deployment & roadmap
+│   │   └── frontend/   # Frontend feature guides (i18n, voice, etc.)
+│   └── reference/      # Architecture, API, security, testing, runbooks
 ├── scripts/            # Deployment and utility scripts
-├── README.md           # Main project entry point
-└── CONTRIBUTING.md     # Contributor guidelines
+├── terraform/          # Infrastructure as code
+├── monitoring/         # Prometheus / Grafana assets
+├── load-tests/         # Load testing scripts
+├── README.md           # Project entry point
+├── CONTRIBUTING.md     # Contributor guidelines
+├── CODE_OF_CONDUCT.md  # Community standards
+└── LICENSE             # AGPL-3.0
 ```
 
-## Detailed Component Breakdown
+## Documentation Layout
 
-### 🛡️ Smart Contract (`/contracts/vault`)
+### Guides (`docs/guides/`)
 
-- **`src/lib.rs`**: Contains the protocol logic and main contract implementation.
-- **`src/types.rs`**: Logic for data structures, roles, and enums used across the contract.
-- **`src/storage.rs`**: Abstracted storage access patterns for Instance, Persistent, and Temporary storage.
-- **`src/errors.rs`**: Definition of all contract-specific error codes returned to callers.
-- **`src/test.rs`**: Automated test suite for validating multi-sig, timelocks, and limits.
+Hands-on docs for building and operating features:
 
-### 💻 Frontend (`/frontend`)
+- Contribution: `FIRST_CONTRIBUTION.md`, `FRONTEND_CONTRIBUTION.md`, `BACKEND_MODULES.md`
+- Product features: recurring payments, delegation, expiration, widgets, etc.
+- Ops: `LOCAL_STACK.md`, `TESTNET_DEPLOYMENT.md`, `SIGNING_GUIDE.md`
+- `backend/`: backend deployment and roadmap
+- `frontend/`: i18n, notifications, voice navigation
 
-- **`src/components/`**: UI building blocks (Modals, Cards, Buttons, Status Badges).
-- **`src/hooks/`**: Custom React hooks for interacting with the blockchain.
-  - `useVaultContract.ts`: Logic for invoking contract methods like `propose_transfer` or `approve_proposal`.
-- **`src/app/`**: Primary application views (Dashboard, Proposals, Settings).
-- **`src/utils/`**: Helper functions for formatting addresses, dates, and amounts.
+### Reference (`docs/reference/`)
 
-### 📚 Documentation (`/docs`)
+Canonical technical docs:
 
-- **`reference/TESTING.md`**: Guide on running and writing contract tests.
-- **`reference/DEPLOYMENT.md`**: Instructions for deploying to Testnet and Mainnet.
-- **`reference/API.md`**: Technical reference for contract functions and data types.
-- **`reference/ARCHITECTURE.md`**: High-level system design and data flow diagrams.
-- **`reference/SECURITY.md`**: Vulnerability disclosure and security practices.
-- **`guides/`**: Feature-specific guides (delegation, expiration, widgets, etc.).
+- `ARCHITECTURE.md`, `API.md`, `EVENTS.md`, `STORAGE.md`
+- `TESTING.md`, `DEPLOYMENT.md`, `SECURITY.md`, `AUDIT_SCOPE.md`
+- `PRODUCTION_RUNBOOK.md`, `INTEGRATION_CHECKLIST.md`, `STRUCTURE.md`
 
-### 📜 Root Files
+## Component Breakdown
 
-- **`README.md`**: Project entry point and quick start.
-- **`CONTRIBUTING.md`**: Contributor guidelines and PR workflow.
-- **`LICENSE`**: AGPL-3.0 License details.
+### Smart Contract (`contracts/vault`)
 
+- `src/lib.rs` — protocol logic and contract implementation
+- `src/types.rs` — shared data structures and enums
+- `src/storage.rs` — Instance / Persistent / Temporary storage helpers
+- `src/errors.rs` — contract error codes
+- `src/test*.rs` — unit and feature tests
+
+### Frontend (`frontend`)
+
+- `src/components/` — UI building blocks
+- `src/hooks/` — contract and app hooks
+- `src/app/` — primary views (dashboard, proposals, settings)
+- `src/utils/` — formatting and helpers
+
+### Backend (`backend`)
+
+- `src/modules/` — events, proposals, recurring, notifications, websocket, jobs
+- `src/shared/` — logging, cache, HTTP helpers
+- See [backend roadmap](../guides/backend/ROADMAP.md) for planned work
+
+### Root Files
+
+- `README.md` — quick start
+- `CONTRIBUTING.md` — PR workflow and setup
+- `CODE_OF_CONDUCT.md` — community expectations
+- `LICENSE` — AGPL-3.0

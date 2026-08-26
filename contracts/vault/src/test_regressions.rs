@@ -18,6 +18,8 @@ fn init_config(
 ) -> InitConfig {
     InitConfig {
         veto_window_ledgers: 0,
+        approval_timeout_ledgers: 0,
+        arbitration_timeout_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
         vote_weight: crate::types::VoteWeight::Flat,
@@ -542,10 +544,11 @@ fn test_execute_before_timelock_expires_fails() {
     let result = client.try_execute_proposal(&signer, &proposal_id);
     assert_eq!(result, Err(Ok(VaultError::TimelockNotExpired)));
 }
-/// Test atomic multi-token batch execution with rollback functionality.
-/// Verifies all-or-nothing semantics and proper rollback state persistence.
+/// Test atomic multi-token batch execution success path.
+/// Verifies all proposals in a batch execute together when every transfer
+/// simulates successfully.
 #[test]
-fn test_atomic_batch_execution_with_rollback() {
+fn test_atomic_batch_execution_success() {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_sequence_number(100);
@@ -623,7 +626,6 @@ fn test_atomic_batch_execution_with_rollback() {
     assert_eq!(batch.status, BatchStatus::Pending);
     assert_eq!(batch.proposal_ids.len(), 3);
 
-    // Test Case 1: Successful atomic execution
     // Record initial balances
     let initial_vault_balance1 =
         soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
@@ -680,101 +682,236 @@ fn test_atomic_batch_execution_with_rollback() {
     let result = batch_result.unwrap();
     assert_eq!(result.executed_count, 3);
     assert_eq!(result.failed_count, 0);
+}
 
-    // Test Case 2: Batch execution with rollback
-    // Create another batch where one proposal will fail due to insufficient balance
-    // We'll create a third token with very little balance to force a failure
-    let token3 = env
+/// Issue #1361: A batch where one proposal would fail (insufficient vault
+/// balance for its token) must abort entirely *before* any transfer commits -
+/// no partial execution, and therefore nothing to roll back.
+///
+/// This is the exact scenario the bug report described: previously, the
+/// transfer(s) preceding the failing one were executed for real and only a
+/// best-effort (and unreliable) reverse-transfer was attempted afterwards.
+/// With pre-commit simulation, the vault balance shortfall is detected up
+/// front and no funds ever move.
+#[test]
+fn test_batch_simulation_failure_aborts_without_execution() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+
+    let token1 = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    StellarAssetClient::new(&env, &token3).mint(&contract_id, &100); // Only 100 tokens
+    let token2 = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
-    let mut transfers2 = Vec::new(&env);
-    transfers2.push_back(TransferDetails {
+    StellarAssetClient::new(&env, &token1).mint(&contract_id, &100_000);
+    StellarAssetClient::new(&env, &token2).mint(&contract_id, &100); // Only 100 tokens - insufficient
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = init_config(&env, signers, 1, ThresholdStrategy::Fixed);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let mut transfers = Vec::new(&env);
+    transfers.push_back(TransferDetails {
         recipient: recipient1.clone(),
         token: token1.clone(),
-        amount: 500, // This should succeed
+        amount: 500, // Vault can easily cover this alone
     });
-    transfers2.push_back(TransferDetails {
+    transfers.push_back(TransferDetails {
         recipient: recipient2.clone(),
-        token: token3.clone(),
-        amount: 1000, // This will fail - token3 only has 100 tokens
+        token: token2.clone(),
+        amount: 1000, // Vault only holds 100 of token2 - must fail simulation
     });
 
-    let proposal_ids2 = client.batch_propose_transfers(
+    let proposal_ids = client.batch_propose_transfers(
         &treasurer,
-        &transfers2,
+        &transfers,
         &Priority::Normal,
         &Vec::new(&env),
         &ConditionLogic::And,
         &0i128,
     );
+    assert_eq!(proposal_ids.len(), 2);
 
-    // Approve all proposals
-    for i in 0..proposal_ids2.len() {
-        let pid = proposal_ids2.get(i).unwrap();
+    for i in 0..proposal_ids.len() {
+        let pid = proposal_ids.get(i).unwrap();
         client.approve_proposal(&admin, &pid);
     }
 
-    let batch_id2 = 2u64;
-    let batch2 = client.get_batch(&batch_id2);
-    assert_eq!(batch2.status, BatchStatus::Pending);
+    let batch_id = 1u64;
 
-    // Record balances before failed batch execution
-    let pre_fail_vault_balance1 =
+    let pre_vault_balance1 = soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
+    let pre_vault_balance2 = soroban_sdk::token::Client::new(&env, &token2).balance(&contract_id);
+    let pre_recipient1_balance =
+        soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1);
+
+    // The batch must abort entirely - simulation catches the shortfall before
+    // any transfer is committed.
+    let result = client.try_execute_batch(&admin, &batch_id);
+    assert_eq!(result, Err(Ok(VaultError::InsufficientBalance)));
+
+    let batch_after = client.get_batch(&batch_id);
+    assert_eq!(batch_after.status, BatchStatus::RolledBack);
+    assert_eq!(batch_after.executed_count, 0);
+    assert_eq!(batch_after.failed_count, 2);
+
+    // Nothing was ever committed, so there is no rollback state to persist.
+    let rollback_state = client.get_rollback_state(&batch_id);
+    assert_eq!(rollback_state.len(), 0);
+
+    // Neither proposal executed - the first proposal's transfer never moved,
+    // unlike the old best-effort-rollback design.
+    let proposal1 = client.get_proposal(&proposal_ids.get(0).unwrap());
+    let proposal2 = client.get_proposal(&proposal_ids.get(1).unwrap());
+    assert_eq!(proposal1.status, ProposalStatus::Approved);
+    assert_eq!(proposal2.status, ProposalStatus::Approved);
+
+    // Balances are completely untouched.
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id),
+        pre_vault_balance1
+    );
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &token2).balance(&contract_id),
+        pre_vault_balance2
+    );
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1),
+        pre_recipient1_balance
+    );
+
+    let batch_result = client.get_batch_result(&batch_id);
+    assert!(batch_result.is_some());
+    let result = batch_result.unwrap();
+    assert_eq!(result.executed_count, 0);
+    assert_eq!(result.failed_count, 2);
+}
+
+/// Issue #1361: A transfer can still fail during the commit phase despite
+/// passing simulation (e.g. a recipient is deauthorized by the token
+/// contract between simulation and commit). This exercises the fallback
+/// best-effort reverse-transfer rollback path for whatever this run already
+/// committed. The reverse-transfer itself requires the recipient's
+/// authorization (recipient1 never authorized anything as part of this
+/// call's root invocation), so it is expected to fail here - the rollback
+/// state is still persisted for off-chain reconciliation.
+#[test]
+fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+
+    let token1 = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    StellarAssetClient::new(&env, &token1).mint(&contract_id, &100_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = init_config(&env, signers, 1, ThresholdStrategy::Fixed);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    let mut transfers = Vec::new(&env);
+    transfers.push_back(TransferDetails {
+        recipient: recipient1.clone(),
+        token: token1.clone(),
+        amount: 500,
+    });
+    transfers.push_back(TransferDetails {
+        recipient: recipient2.clone(),
+        token: token1.clone(),
+        amount: 700,
+    });
+
+    let proposal_ids = client.batch_propose_transfers(
+        &treasurer,
+        &transfers,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(proposal_ids.len(), 2);
+
+    for i in 0..proposal_ids.len() {
+        let pid = proposal_ids.get(i).unwrap();
+        client.approve_proposal(&admin, &pid);
+    }
+
+    let batch_id = 1u64;
+
+    // Vault comfortably holds enough token1 for both transfers, so
+    // simulation passes. Deauthorize recipient2 so the SECOND transfer
+    // fails only once the batch actually tries to commit it.
+    StellarAssetClient::new(&env, &token1).set_authorized(&recipient2, &false);
+
+    let pre_fail_vault_balance =
         soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
-    let pre_fail_vault_balance3 =
-        soroban_sdk::token::Client::new(&env, &token3).balance(&contract_id);
     let pre_fail_recipient1_balance =
         soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1);
-    let pre_fail_recipient2_balance =
-        soroban_sdk::token::Client::new(&env, &token3).balance(&recipient2);
 
-    // Execute batch - should fail and rollback
-    client.execute_batch(&admin, &batch_id2);
+    // Commit-phase failures return Ok(()) - the rollback state is what
+    // reports the outcome, not the call result.
+    client.execute_batch(&admin, &batch_id);
 
-    // Verify batch status shows rollback
-    let batch2_after = client.get_batch(&batch_id2);
-    assert_eq!(batch2_after.status, BatchStatus::RolledBack);
-    assert_eq!(batch2_after.executed_count, 1); // First transfer succeeded before rollback
-    assert_eq!(batch2_after.failed_count, 1);
+    let batch_after = client.get_batch(&batch_id);
+    assert_eq!(batch_after.status, BatchStatus::RolledBack);
+    assert_eq!(batch_after.executed_count, 1); // First transfer committed before the failure
+    assert_eq!(batch_after.failed_count, 1);
 
-    // Verify rollback state is persisted and queryable
-    let rollback_state = client.get_rollback_state(&batch_id2);
-    assert_eq!(rollback_state.len(), 1); // One transfer was rolled back
+    // Rollback state is persisted for the transfer that did commit.
+    let rollback_state = client.get_rollback_state(&batch_id);
+    assert_eq!(rollback_state.len(), 1);
     let (rolled_back_recipient, rolled_back_amount) = rollback_state.get(0).unwrap();
     assert_eq!(rolled_back_recipient, recipient1);
     assert_eq!(rolled_back_amount, 500);
 
-    // Verify balances - rollback may not succeed in practice if recipients don't authorize
-    // The vault balance should reflect that the first transfer succeeded but wasn't rolled back
+    // The reverse-transfer requires recipient1's own authorization, which
+    // was never granted here, so the best-effort rollback does not actually
+    // restore funds - recipient1 keeps the 500 tokens.
     assert_eq!(
         soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id),
-        pre_fail_vault_balance1 - 500 // First transfer succeeded but rollback failed
-    );
-    assert_eq!(
-        soroban_sdk::token::Client::new(&env, &token3).balance(&contract_id),
-        pre_fail_vault_balance3 // Second transfer never happened
+        pre_fail_vault_balance - 500
     );
     assert_eq!(
         soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1),
-        pre_fail_recipient1_balance + 500 // Recipient kept the tokens from first transfer
-    );
-    assert_eq!(
-        soroban_sdk::token::Client::new(&env, &token3).balance(&recipient2),
-        pre_fail_recipient2_balance // No change for second recipient
+        pre_fail_recipient1_balance + 500
     );
 
-    // Verify proposals that were executed remain in Executed status since rollback failed
-    let proposal1 = client.get_proposal(&proposal_ids2.get(0).unwrap());
-    assert_eq!(proposal1.status, ProposalStatus::Executed); // Rollback failed, so status remains Executed
+    let proposal1 = client.get_proposal(&proposal_ids.get(0).unwrap());
+    assert_eq!(proposal1.status, ProposalStatus::Executed); // Rollback failed, status remains Executed
 
-    // Verify batch execution result for failed batch
-    let batch_result2 = client.get_batch_result(&batch_id2);
-    assert!(batch_result2.is_some());
-    let result2 = batch_result2.unwrap();
-    assert_eq!(result2.executed_count, 1);
-    assert_eq!(result2.failed_count, 1);
+    let batch_result = client.get_batch_result(&batch_id);
+    assert!(batch_result.is_some());
+    let result = batch_result.unwrap();
+    assert_eq!(result.executed_count, 1);
+    assert_eq!(result.failed_count, 1);
 }
 
 /// Test that batch size is enforced at creation time

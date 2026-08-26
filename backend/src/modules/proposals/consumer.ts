@@ -18,7 +18,11 @@ import {
   ProposalAmendedActivityData,
   ProposalExecutedActivityData,
 } from "./types.js";
-import type { MetricsRegistry } from "../health/metrics.registry.js";
+import {
+  PROPOSALS_CREATED_COUNTER,
+  PROPOSALS_EXECUTED_COUNTER,
+  type MetricsRegistry,
+} from "../health/metrics.registry.js";
 import type { NotificationPublisher } from "../notifications/notification.types.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -114,6 +118,10 @@ export class ProposalActivityConsumer {
   private isDuplicate(event: NormalizedEvent): boolean {
     const key = this.deriveEventKey(event);
     if (this.processedEventIds.has(key)) {
+      // Emit dedup metric
+      this.metrics?.incrementCounter("vaultdao_proposals_consumer_duplicates_total", {
+        reason: "event_id",
+      });
       return true;
     }
     if (this.processedEventIds.size >= this.maxDedupeSize) {
@@ -338,6 +346,15 @@ export class ProposalActivityConsumer {
       this.metrics.incrementCounter("vaultdao_proposals_indexed_total", {
         status: statusLabel,
       });
+
+      // Throughput counters — incremented only for the two lifecycle points
+      // capacity planning cares about, and only after every dedup check
+      // above has passed so a dropped duplicate never inflates the rate.
+      if (activityType === ProposalActivityType.CREATED) {
+        this.metrics.incrementCounter(PROPOSALS_CREATED_COUNTER);
+      } else if (activityType === ProposalActivityType.EXECUTED) {
+        this.metrics.incrementCounter(PROPOSALS_EXECUTED_COUNTER);
+      }
     }
 
     return {

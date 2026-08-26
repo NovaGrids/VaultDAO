@@ -1,0 +1,13 @@
+# Transitive advisories from soroban-sdk / stellar-xdr that we cannot patch directly.
+# Revisit when upgrading soroban-sdk.
+[advisories]
+ignore = [
+    "RUSTSEC-2024-0388", # derivative (unmaintained) via ark-* / soroban-env-host
+    "RUSTSEC-2024-0436", # paste (unmaintained) via soroban-wasmi / ark-ff
+    "RUSTSEC-2026-0012", # keccak (unsound) via soroban-env-host/sha3
+    "RUSTSEC-2026-0097", # rand (unsound) via soroban-sdk testutils
+]
+informational_warnings = []
+
+[yanked]
+enabled = false

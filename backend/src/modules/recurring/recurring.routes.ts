@@ -10,6 +10,7 @@ import {
   triggerSyncController,
   checkConflictController,
   createRecurringController,
+  predictRecurringDuesController,
 } from "./recurring.controller.js";
 
 /**
@@ -40,6 +41,13 @@ export function createRecurringRouter(
    * Triggers a manual sync cycle immediately.
    */
   router.post("/sync", triggerSyncController(service));
+
+  /**
+   * GET /api/v1/recurring/predict?windowLedgers=<n>[&currentLedger=<n>]
+   * Projects the next due dates for active/due payments within windowLedgers.
+   * Emits a RECURRING_PREDICTION_QUERIED audit event at query time.
+   */
+  router.get("/predict", predictRecurringDuesController(service));
 
   /**
    * POST /api/v1/recurring/check-conflict

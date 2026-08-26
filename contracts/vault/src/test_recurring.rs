@@ -984,7 +984,12 @@ fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
         .skip(events_before_first_exec.len())
         .filter(|e| {
             e.0.get(0)
-                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+                .map(|t| {
+                    t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(
+                        &env,
+                        "recurring_pay_jittered",
+                    ))
+                })
                 .unwrap_or(false)
         })
         .collect();
@@ -1009,7 +1014,12 @@ fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
         .skip(events_before_second_exec.len())
         .filter(|e| {
             e.0.get(0)
-                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+                .map(|t| {
+                    t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(
+                        &env,
+                        "recurring_pay_jittered",
+                    ))
+                })
                 .unwrap_or(false)
         })
         .collect();
@@ -1033,8 +1043,14 @@ fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
     let jittered_val = u64::try_from(data_vec.get(1).unwrap()).expect("jittered should be u64");
     let offset_val = u32::try_from(data_vec.get(2).unwrap()).expect("offset should be u32");
 
-    assert_eq!(nominal_val, expected_nominal, "event nominal_next_ledger mismatch");
-    assert_eq!(jittered_val, expected_jittered, "event jittered_next_ledger mismatch");
+    assert_eq!(
+        nominal_val, expected_nominal,
+        "event nominal_next_ledger mismatch"
+    );
+    assert_eq!(
+        jittered_val, expected_jittered,
+        "event jittered_next_ledger mismatch"
+    );
     assert_eq!(offset_val, fixed_offset, "event jitter_offset mismatch");
 }
 
@@ -1076,7 +1092,12 @@ fn test_jitter_event_not_emitted_when_window_is_zero() {
         .skip(events_before.len())
         .filter(|e| {
             e.0.get(0)
-                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+                .map(|t| {
+                    t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(
+                        &env,
+                        "recurring_pay_jittered",
+                    ))
+                })
                 .unwrap_or(false)
         })
         .collect();

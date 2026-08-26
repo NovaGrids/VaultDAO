@@ -12,7 +12,7 @@ This template provides a minimal setup to get React working in Vite with HMR and
 - 📱 **Mobile Responsive** - Full voice support on mobile devices
 - ♿ **Accessibility** - Enhanced accessibility with voice controls
 
-See [VOICE_COMMANDS.md](./VOICE_COMMANDS.md) for detailed voice feature documentation.
+See [docs/guides/frontend/VOICE_COMMANDS.md](../docs/guides/frontend/VOICE_COMMANDS.md) for detailed voice feature documentation.
 
 ## Table of Contents
 - [Features](#features)
@@ -387,8 +387,8 @@ Form inputs support voice-to-text. Click the microphone icon in any input field 
 
 ### Documentation
 
-- [VOICE_COMMANDS.md](./VOICE_COMMANDS.md) - Complete voice features documentation
-- [VOICE_EXAMPLES.md](./VOICE_EXAMPLES.md) - Usage examples and code snippets
+- [VOICE_COMMANDS.md](../docs/guides/frontend/VOICE_COMMANDS.md) - Complete voice features documentation
+- [VOICE_EXAMPLES.md](../docs/guides/frontend/VOICE_EXAMPLES.md) - Usage examples and code snippets
 
 ## Contributing
 

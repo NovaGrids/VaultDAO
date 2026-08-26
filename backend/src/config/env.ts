@@ -1,3 +1,5 @@
+import { DEFAULT_SQLITE_POOL_SIZE } from "../shared/storage/sqlite-pool.js";
+
 export interface BackendEnv {
   readonly port: number;
   readonly host: string;
@@ -41,6 +43,19 @@ export interface BackendEnv {
   readonly hmacSecret?: string;
   readonly cursorStorageType: "file" | "database";
   readonly databasePath: string;
+  /**
+   * Maximum number of pooled SQLite connections per database file.
+   *
+   * The backend shares one bounded, WAL-mode connection pool per database
+   * path instead of opening a handle per request. Raising this caps file
+   * handle usage higher; lowering it queues callers sooner.
+   *
+   * In-memory databases ignore this and are pinned to a single connection,
+   * since every handle to `:memory:` would otherwise be a separate database.
+   *
+   * Default: 4. Env var: `SQLITE_POOL_SIZE`.
+   */
+  readonly sqlitePoolSize: number;
   readonly rateLimitEnabled: boolean;
   readonly rateLimitRedisUrl?: string;
   readonly redisTls: boolean;
@@ -77,6 +92,14 @@ export interface BackendEnv {
    * Env var: `PROPOSAL_FINGERPRINT_WINDOW_LEDGERS`
    */
   readonly proposalFingerprintWindowLedgers: number;
+  /** Path to the SQLite database backing the persistent notification queue. */
+  readonly notificationsDbPath: string;
+  /** Enable the recurring notification queue cleanup job (default: true). */
+  readonly notificationsCleanupJobEnabled: boolean;
+  /** Interval in ms between notification queue cleanup runs (default: 86400000 = 24h). */
+  readonly notificationsCleanupJobIntervalMs: number;
+  /** Delivered notifications older than this many days are purged (default: 7). */
+  readonly notificationsRetentionDays: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -277,6 +300,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     webhooksRequestBodyLimit: "32kb",
     cursorStorageType: "file",
     databasePath: ":memory:",
+    sqlitePoolSize: 4,
     rateLimitEnabled: false,
     redisTls: false,
     rateLimitProposalsPerMin: 100,
@@ -290,6 +314,10 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     proposalHotStorageDays: 7,
     normalizerCacheMaxSize: 10_000,
     proposalFingerprintWindowLedgers: 120_960,
+    notificationsDbPath: ":memory:",
+    notificationsCleanupJobEnabled: false,
+    notificationsCleanupJobIntervalMs: 86_400_000,
+    notificationsRetentionDays: 7,
     ...overrides,
   };
 }
@@ -359,6 +387,11 @@ export function loadEnv(): BackendEnv {
     | "file"
     | "database";
   const databasePath = readString("DATABASE_PATH", "./vaultdao.sqlite");
+  const sqlitePoolSize = readPort(
+    "SQLITE_POOL_SIZE",
+    DEFAULT_SQLITE_POOL_SIZE,
+    issues,
+  );
   const rateLimitEnabled = readString("RATE_LIMIT_ENABLED", "true") === "true";
   const rateLimitRedisUrl = readValue("RATE_LIMIT_REDIS_URL");
   const redisTls = readString("REDIS_TLS", "false") === "true";
@@ -408,6 +441,23 @@ export function loadEnv(): BackendEnv {
   );
   const proposalHotStorageDays = readPort(
     "PROPOSAL_HOT_STORAGE_DAYS",
+    7,
+    issues,
+  );
+
+  const notificationsDbPath = readString(
+    "NOTIFICATIONS_DB_PATH",
+    "./notifications.sqlite",
+  );
+  const notificationsCleanupJobEnabled =
+    readString("NOTIFICATIONS_CLEANUP_JOB_ENABLED", "true") === "true";
+  const notificationsCleanupJobIntervalMs = readPort(
+    "NOTIFICATIONS_CLEANUP_JOB_INTERVAL_MS",
+    86_400_000,
+    issues,
+  );
+  const notificationsRetentionDays = readPort(
+    "NOTIFICATIONS_RETENTION_DAYS",
     7,
     issues,
   );
@@ -489,6 +539,7 @@ export function loadEnv(): BackendEnv {
     hmacSecret,
     cursorStorageType,
     databasePath,
+    sqlitePoolSize,
     rateLimitEnabled,
     rateLimitRedisUrl,
     redisTls,
@@ -503,5 +554,9 @@ export function loadEnv(): BackendEnv {
     proposalHotStorageDays,
     normalizerCacheMaxSize,
     proposalFingerprintWindowLedgers,
+    notificationsDbPath,
+    notificationsCleanupJobEnabled,
+    notificationsCleanupJobIntervalMs,
+    notificationsRetentionDays,
   };
 }

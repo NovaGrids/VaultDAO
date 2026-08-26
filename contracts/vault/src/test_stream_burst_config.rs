@@ -48,7 +48,6 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
             quorum_percentage: 0,
-            arbitration_timeout_ledgers: 0,
         },
     );
 
@@ -126,7 +125,10 @@ fn test_set_stream_burst_factor_admin_only() {
     client.set_role(&admin, &non_admin, &Role::Treasurer);
 
     let result = client.try_set_stream_burst_factor(&non_admin, &200u32);
-    assert!(result.is_err(), "Non-admin should not be able to set burst factor");
+    assert!(
+        result.is_err(),
+        "Non-admin should not be able to set burst factor"
+    );
 }
 
 #[test]
@@ -139,9 +141,17 @@ fn test_set_stream_burst_factor_various_values() {
 
     for factor in test_factors {
         let result = client.set_stream_burst_factor(&admin, &factor);
-        assert!(result.is_ok(), "Setting burst factor to {} should succeed", factor);
+        assert!(
+            result.is_ok(),
+            "Setting burst factor to {} should succeed",
+            factor
+        );
 
         let config = client.get_config();
-        assert_eq!(config.burst_factor, factor, "Burst factor should be {}", factor);
+        assert_eq!(
+            config.burst_factor, factor,
+            "Burst factor should be {}",
+            factor
+        );
     }
 }

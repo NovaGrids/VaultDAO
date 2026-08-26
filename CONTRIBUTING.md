@@ -281,6 +281,33 @@ Before submitting your PR, ensure:
 4. **Approval**: Once approved, your PR will be merged
 5. **Recognition**: Contributors are acknowledged in releases!
 
+## 🔒 Dependency Security Audits
+
+The `backend-checks` CI job runs `npm audit --audit-level=high --production` against `backend/`, failing the build on any high or critical severity vulnerability in a **production** dependency (dev-only dependencies are excluded via `--production`, since they never ship to runtime).
+
+### Adding an audit exception
+
+Sometimes a flagged vulnerability has no available fix (no patched version yet, or the vulnerable code path isn't reachable from VaultDAO's usage). In that case:
+
+1. Confirm the vulnerability doesn't affect us — read the advisory and check whether the vulnerable function/flow is actually exercised.
+2. Try `npm audit fix` first; only proceed with an exception if that doesn't resolve it.
+3. Open an issue documenting: the advisory ID (e.g. `GHSA-...`), why it doesn't apply or can't yet be fixed, and a link to the upstream issue/PR tracking a real fix.
+4. Add the advisory ID to `backend/.audit-exceptions.json` (create the file if it doesn't exist) with a short reason and the tracking issue link:
+
+   ```json
+   {
+     "GHSA-xxxx-xxxx-xxxx": {
+       "reason": "Vulnerable code path is not reachable — see explanation in the issue.",
+       "issue": "https://github.com/rdj-savyy/VaultDAO/issues/<number>"
+     }
+   }
+   ```
+
+5. Update the CI step to pass `--omit-dev` findings covered by that file through `npm audit --audit-level=high --production --json | jq` filtering, or use [`better-npm-audit`](https://www.npmjs.com/package/better-npm-audit) with `--exclude <advisory-id>` if the exceptions list grows.
+6. Re-review exceptions periodically — an exception is a temporary waiver, not a permanent suppression. Remove it as soon as a patched version is available.
+
+Never silence an audit failure by lowering `--audit-level` or dropping `--production` — that hides real production-facing vulnerabilities, not just the one you're trying to except.
+
 ## 🐛 Reporting Bugs
 
 Found a bug? Please [open an issue](https://github.com/NovaGrids/VaultDAO/issues/new?template=bug_report.md) with:

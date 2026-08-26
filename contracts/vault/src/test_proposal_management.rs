@@ -187,7 +187,10 @@ fn test_supersede_proposal_basic() {
 
     // Verify proposal 1 is now Cancelled with supersession reason
     let proposal_1_cancelled = client.get_proposal(&proposal_id_1);
-    assert_eq!(proposal_1_cancelled.status, crate::types::ProposalStatus::Cancelled);
+    assert_eq!(
+        proposal_1_cancelled.status,
+        crate::types::ProposalStatus::Cancelled
+    );
 
     // Verify metadata contains supersession link
     let metadata_str = proposal_1_cancelled
@@ -239,7 +242,10 @@ fn test_supersede_proposal_authorization_check() {
         )
     }));
 
-    assert!(result.is_err(), "Non-proposer should not be able to supersede");
+    assert!(
+        result.is_err(),
+        "Non-proposer should not be able to supersede"
+    );
 }
 
 /// Issue #1423: Test supersession chains
@@ -364,7 +370,10 @@ fn test_auto_expire_proposals_basic() {
 
     // Verify the proposal status changed
     let expired_proposal = client.get_proposal(&proposal_id);
-    assert_eq!(expired_proposal.status, crate::types::ProposalStatus::Expired);
+    assert_eq!(
+        expired_proposal.status,
+        crate::types::ProposalStatus::Expired
+    );
 }
 
 /// Issue #1425: Test timeout rejection at proposal creation
@@ -418,7 +427,14 @@ fn test_auto_expire_proposals_respects_max_count() {
     let mut proposal_ids = Vec::new(&env);
     for i in 0..5 {
         let recipient_i = Address::generate(&env);
-        let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient_i, 100 + (i as i128) * 10);
+        let proposal_id = make_proposal(
+            &env,
+            &client,
+            &admin,
+            &token,
+            &recipient_i,
+            100 + (i as i128) * 10,
+        );
         proposal_ids.push_back(proposal_id);
     }
 

@@ -103,10 +103,6 @@ pub struct InitConfig {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
-    /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
-    pub arbitration_timeout_ledgers: u64,
-    /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
-    pub approval_timeout_ledgers: u64,
 }
 
 /// Vault configuration
@@ -190,6 +186,8 @@ pub struct Config {
     pub arbitration_timeout_ledgers: u64,
     /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
     pub approval_timeout_ledgers: u64,
+    /// Execution window in ledgers after approval before the proposal auto-expires (0 = no window).
+    pub exec_window_ledgers: u64,
 }
 
 /// Audit record for a cancelled proposal
@@ -216,6 +214,34 @@ pub struct ProposalAmendment {
     pub new_amount: i128,
     pub old_memo: Symbol,
     pub new_memo: Symbol,
+    /// Free-form reason/comment explaining why the amendment was made (empty symbol if none given)
+    pub reason: Symbol,
+}
+
+/// Diff between two points in a proposal's amendment history, highlighting
+/// which fields changed and, for the amount, by how much.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AmendmentDiff {
+    pub proposal_id: u64,
+    /// Index into amendment history used as the "before" side of the diff
+    pub from_index: u32,
+    /// Index into amendment history used as the "after" side of the diff
+    pub to_index: u32,
+    pub recipient_changed: bool,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub amount_changed: bool,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    /// new_amount - old_amount (signed delta)
+    pub amount_delta: i128,
+    pub memo_changed: bool,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
+    pub reason_changed: bool,
+    pub old_reason: Symbol,
+    pub new_reason: Symbol,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -331,6 +357,11 @@ impl Role {
             (Role::Treasurer, Role::DisputeArbitrator) => false,
             (Role::Member, Role::DisputeArbitrator) => false,
             (Role::Observer, Role::DisputeArbitrator) => false,
+            // Same-role and remaining DisputeArbitrator cross-checks
+            (Role::Admin, Role::Admin) => true,
+            (Role::DisputeArbitrator, Role::Observer) => false,
+            (Role::DisputeArbitrator, Role::Member) => false,
+            (Role::DisputeArbitrator, Role::Treasurer) => false,
         }
     }
 }
@@ -608,6 +639,16 @@ pub struct Proposal {
     pub fee_estimate_cache: Option<i128>,
     /// Ledger timestamp when fee cache was last computed (Issue #1428)
     pub fee_cache_timestamp: u64,
+    /// Day-number bucket where spending was reserved at creation (Issue #1345)
+    pub spend_day: u64,
+    /// Week-number bucket where spending was reserved at creation (Issue #1345)
+    pub spend_week: u64,
+    /// True once spend_day/spend_week were recorded at reservation time (Issue #1345).
+    /// False on legacy proposals that predate these fields (Soroban default).
+    pub has_spend_buckets: bool,
+    /// Ledger when the proposal was approved (0 = not yet approved).
+    /// Used to enforce the execution window (Issue #1349).
+    pub approved_at: u64,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
@@ -990,7 +1031,16 @@ pub struct StakingConfig {
     pub max_stake_amount: i128,
     pub reputation_discount_threshold: u32,
     pub reputation_discount_percentage: u32,
+    /// Issue #1360: percentage of the stake slashed when a proposal is **rejected**.
+    /// Executed proposals are never slashed (0%); see `cancellation_slash_percentage`
+    /// for the proposer-initiated cancellation rate.
     pub slash_percentage: u32,
+    /// Issue #1360: percentage of the stake slashed when a proposer **cancels** their
+    /// own proposal. Higher than the rejection rate because cancellation is the
+    /// cheapest way to spam the queue: propose, occupy signer attention, withdraw.
+    pub cancellation_slash_percentage: u32,
+    /// Issue #1360: route slashed stake to the insurance pool instead of the stake pool.
+    pub slash_to_insurance_pool: bool,
     pub compound_lock_period: u64,
     pub compound_epoch: u64,
     pub reward_bps_per_execution: u32,
@@ -1005,7 +1055,9 @@ impl Default for StakingConfig {
             max_stake_amount: i128::MAX,
             reputation_discount_threshold: 900,
             reputation_discount_percentage: 0,
-            slash_percentage: 50,
+            slash_percentage: 10,
+            cancellation_slash_percentage: 50,
+            slash_to_insurance_pool: false,
             compound_lock_period: 17280, // ~1 day at 5s/ledger
             compound_epoch: 17280,       // ~1 day at 5s/ledger
             reward_bps_per_execution: 0,
@@ -1701,6 +1753,19 @@ pub enum EscrowStatus {
 /// Milestone tracking unit for progressive fund release
 #[contracttype]
 #[derive(Clone, Debug)]
+pub struct Milestone {
+    /// Unique milestone ID
+    pub id: u64,
+    /// Percentage of total escrow amount (0-100)
+    pub percentage: u32,
+    /// Ledger when this milestone can be marked complete
+    pub release_ledger: u64,
+    /// Whether this milestone has been verified as complete
+    pub is_completed: bool,
+    /// Ledger when milestone was completed (0 if not completed)
+    pub completion_ledger: u64,
+}
+
 /// Pause history record for streaming payments - Issue #1429
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -1733,21 +1798,6 @@ pub struct FanOutRecipient {
     pub address: Address,
     /// Percentage of stream (0-100)
     pub percentage: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct Milestone {
-    /// Unique milestone ID
-    pub id: u64,
-    /// Percentage of total escrow amount (0-100)
-    pub percentage: u32,
-    /// Ledger when this milestone can be marked complete
-    pub release_ledger: u64,
-    /// Whether this milestone has been verified as complete
-    pub is_completed: bool,
-    /// Ledger when milestone was completed (0 if not completed)
-    pub completion_ledger: u64,
 }
 
 /// Escrow agreement holding funds with milestone-based releases
@@ -2135,6 +2185,70 @@ pub struct FeeStructure {
     pub treasury: Address,
     /// Whether fee collection is enabled
     pub enabled: bool,
+}
+
+/// A single fee tier within a [`VaultTemplate`]. The volume threshold is
+/// expressed as a percentage of the per-proposal spending limit rather than
+/// an absolute amount, so the tier ladder scales with the target vault's size.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TemplateFeeTier {
+    /// Cumulative volume threshold, as a percentage of the per-proposal spending limit
+    pub volume_threshold_ratio_percent: u32,
+    /// Fee rate in basis points (e.g., 100 = 1%)
+    pub fee_bps: u32,
+}
+
+/// Sanitized, serializable snapshot of a vault's configuration shape, suitable
+/// for cloning into a freshly-deployed vault via `initialize_from_template`.
+///
+/// Signer/veto/hook/treasury addresses and absolute amounts are never
+/// included — only ratios (relative to the per-proposal spending limit or
+/// signer count), structural settings, and a feature-enablement bitmask.
+/// Private configuration (e.g. oracle keys, recovery guardians) is excluded.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VaultTemplate {
+    /// Template format version, for forward compatibility as the shape evolves
+    pub version: u32,
+    /// Required approvals as a percentage of signer count (1-100, ceil-rounded)
+    pub threshold_ratio_percent: u32,
+    /// Quorum requirement as a percentage of signer count (0 = disabled)
+    pub quorum_percentage: u32,
+    /// Delay in ledgers for timelocked proposals
+    pub timelock_delay_ledgers: u64,
+    /// Timelock trigger threshold, as a percentage of the per-proposal spending limit (0 = disabled)
+    pub timelock_threshold_pct: u32,
+    /// Veto window in ledgers after proposal creation (0 = veto disabled)
+    pub veto_window_ledgers: u64,
+    /// Daily spending limit, as a percentage of the per-proposal spending limit
+    pub daily_limit_ratio_percent: u32,
+    /// Weekly spending limit, as a percentage of the per-proposal spending limit
+    pub weekly_limit_ratio_percent: u32,
+    /// Dynamic fee tier ladder (volume thresholds are relative, not absolute)
+    pub fee_tiers: Vec<TemplateFeeTier>,
+    /// Base fee rate in basis points (used if no tier matches)
+    pub base_fee_bps: u32,
+    /// Bitmask of enabled optional features — see `VaultTemplate::FEATURE_*` constants
+    pub enabled_features: u32,
+    /// Grace period in ledgers after voting deadline before auto-expiry
+    pub grace_period_ledgers: u64,
+    /// Vote weight model
+    pub vote_weight: VoteWeight,
+    /// High impact score threshold (0-100)
+    pub high_impact_threshold: u32,
+    /// Minimum delay in ledgers before admin role can be rotated
+    pub admin_rotation_delay: u64,
+}
+
+impl VaultTemplate {
+    /// Template format version produced by the current contract build.
+    pub const CURRENT_VERSION: u32 = 1;
+
+    pub const FEATURE_WHITELIST_MODE: u32 = 1 << 0;
+    pub const FEATURE_RETRY: u32 = 1 << 1;
+    pub const FEATURE_STAKING: u32 = 1 << 2;
+    pub const FEATURE_FEE_COLLECTION: u32 = 1 << 3;
 }
 
 impl FeeStructure {
@@ -2616,6 +2730,53 @@ pub struct InsuranceClaim {
     pub bond_settled: bool,
     pub status: InsuranceClaimStatus,
     pub created_at: u64,
+    /// Issue #1355: per-claim voting rules, snapshotted at submission so a later
+    /// config change cannot move the goalposts on an in-flight claim.
+    /// Share of *cast* weight that must approve, in basis points (5000 = >50%).
+    pub approval_threshold_bps: u32,
+    /// Share of eligible voters that must participate, in basis points.
+    pub quorum_bps: u32,
+    /// Minimum length of the voting window in ledgers.
+    pub voting_window: u64,
+    /// Number of signers eligible to vote, snapshotted at submission.
+    pub eligible_voters: u32,
+    /// Number of distinct voters that have cast a vote so far.
+    pub voter_count: u32,
+    /// Set once the voting period has been explicitly closed and tallied.
+    pub voting_closed: bool,
+}
+
+/// Issue #1355: governance parameters applied to insurance claim voting.
+///
+/// Claims at or above `large_claim_threshold` are escalated to the `large_claim_*`
+/// parameters: a higher approval threshold, a higher participation quorum, and a
+/// longer minimum voting window, so a small colluding subset cannot drain the pool.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsuranceVotingConfig {
+    pub approval_threshold_bps: u32,
+    pub quorum_bps: u32,
+    pub voting_window: u64,
+    /// Claim amount at or above which the escalated parameters apply. 0 disables escalation.
+    pub large_claim_threshold: i128,
+    pub large_approval_threshold_bps: u32,
+    pub large_claim_quorum_bps: u32,
+    pub large_claim_voting_window: u64,
+}
+
+impl Default for InsuranceVotingConfig {
+    fn default() -> Self {
+        Self {
+            // Simple majority of cast weight, half of the signers must show up.
+            approval_threshold_bps: 5_000,
+            quorum_bps: 5_000,
+            voting_window: 720, // ~1 hour at 5s/ledger
+            large_claim_threshold: 0,
+            large_approval_threshold_bps: 6_667, // ~2/3
+            large_claim_quorum_bps: 7_500,       // 75% of signers
+            large_claim_voting_window: 17_280,   // ~1 day at 5s/ledger
+        }
+    }
 }
 
 // ============================================================================
@@ -2643,6 +2804,19 @@ pub struct PauseState {
     pub paused_by: Option<soroban_sdk::Address>,
     pub paused_at_ledger: u32,
     pub cause: soroban_sdk::Symbol,
+}
+
+// ============================================================================
+// Issue #1350: Pause Circuit Breaker Cooldown
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PauseCooldownConfig {
+    /// Cooldown period in ledgers (minimum 1 day = 17,280 ledgers at 5s/ledger)
+    pub cooldown_ledgers: u64,
+    /// Ledger when the last pause/unpause action occurred
+    pub last_action_ledger: u64,
 }
 
 // ============================================================================
@@ -2706,6 +2880,11 @@ pub enum ConfigParam {
     WeeklyLimit = 3,
     TimelockDelay = 4,
     Quorum = 5,
+    /// Full-quorum threshold — amounts at or above this value require every
+    /// signer to approve. Must be routed through the governance proposal
+    /// workflow; direct admin updates via `set_full_quorum_threshold` are
+    /// rejected (issue #1634).
+    FullQuorumThreshold = 6,
 }
 
 #[contracttype]
@@ -2719,4 +2898,46 @@ pub struct GovernanceProposal {
     pub status: ProposalStatus,
     pub created_at: u64,
     pub expires_at: u64,
+}
+
+// ============================================================================
+// Issue #1091: Proposal Lifecycle Hooks for Keeper Network Integration
+// ============================================================================
+
+/// Events that keeper contracts can subscribe to via hook registration.
+///
+/// Each variant corresponds to a distinct lifecycle moment when a keeper bot
+/// should take action (e.g., execute a ready proposal, trigger a payment).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum HookEventType {
+    /// A proposal has gathered enough approvals and is ready to be executed.
+    ProposalReadyToExecute = 0,
+    /// A streaming payment window is due for the next withdrawal.
+    StreamDue = 1,
+    /// A recurring/scheduled payment interval has elapsed.
+    RecurringDue = 2,
+    /// An escrow agreement has reached its release condition.
+    EscrowReady = 3,
+}
+
+/// Registration record for a keeper-network callback hook.
+///
+/// Stored per-event-type. On the corresponding lifecycle event the vault will
+/// invoke `keeper_callback(payload: u64)` on `callback_contract` and, on
+/// success, transfer `max_fee` stroops to `keeper` from vault funds.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HookRegistration {
+    /// Address that receives the fee payment when the callback succeeds.
+    pub keeper: Address,
+    /// The lifecycle event this hook subscribes to.
+    pub event_type: HookEventType,
+    /// Contract to invoke when the event fires.
+    /// Must expose `fn keeper_callback(payload: u64)`.
+    pub callback_contract: Address,
+    /// Maximum fee in stroops the vault will pay the keeper per successful call.
+    /// Set to 0 to disable fee payment.
+    pub max_fee: i128,
 }

@@ -40,7 +40,7 @@ function makePayment(id: string, contractId = "C1") {
     },
     contractId,
     100,
-  );
+  ).payment;
 }
 
 function createServiceWithPayments(

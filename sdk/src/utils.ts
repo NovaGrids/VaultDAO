@@ -14,8 +14,9 @@ import {
   nativeToScVal,
   scValToNative,
 } from "stellar-sdk";
-import type { SdkOptions, Network, SdkLogger } from "./types";
+import type { SdkOptions, Network, SdkLogger, StateDiff, StateChangeValue, StateChangeEntry } from "./types";
 import { VaultError, VaultErrorCode, noopLogger } from "./types";
+import { getErrorDescription } from "./errors";
 
 // ---------------------------------------------------------------------------
 // Network helpers
@@ -299,7 +300,8 @@ export function parseError(err: unknown): VaultError | Error {
   if (match) {
     const code = parseInt(match[1], 10) as VaultErrorCode;
     if (code in VaultErrorCode) {
-      return new VaultError(code);
+      const description = getErrorDescription(code);
+      return new VaultError(code, description);
     }
   }
 
@@ -359,3 +361,104 @@ function sleep(ms: number): Promise<void> {
 export function getContract(opts: SdkOptions): Contract {
   return new Contract(opts.contractId);
 }
+
+// ---------------------------------------------------------------------------
+// State Diff Extraction and Simulation (#1456)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract state changes from simulation result object.
+ */
+export function extractStateDiff(simResult: any): StateDiff {
+  const modifiedKeys: Record<string, StateChangeValue> = {};
+  const newKeys: string[] = [];
+  const changes: StateChangeEntry[] = [];
+
+  if (!simResult) {
+    return { modifiedKeys, newKeys, changes };
+  }
+
+  const rawChanges =
+    simResult.stateChanges ||
+    simResult.state_changes ||
+    simResult.changes ||
+    (simResult.result && simResult.result.stateChanges) ||
+    [];
+
+  if (Array.isArray(rawChanges)) {
+    for (const change of rawChanges) {
+      const key = change.key || change.ledgerKey || change.id || String(change);
+      const before = change.before !== undefined ? change.before : (change.previousValue ?? null);
+      const after = change.after !== undefined ? change.after : (change.newValue ?? null);
+      const isNew = before === null || before === undefined;
+
+      const changeEntry: StateChangeEntry = {
+        key,
+        before,
+        after,
+        isNew,
+      };
+      changes.push(changeEntry);
+
+      if (isNew) {
+        newKeys.push(key);
+      } else {
+        modifiedKeys[key] = { before, after };
+      }
+    }
+  } else if (typeof rawChanges === "object") {
+    for (const [key, val] of Object.entries(rawChanges as Record<string, any>)) {
+      const before = val.before !== undefined ? val.before : null;
+      const after = val.after !== undefined ? val.after : null;
+      const isNew = before === null || before === undefined;
+
+      changes.push({ key, before, after, isNew });
+      if (isNew) {
+        newKeys.push(key);
+      } else {
+        modifiedKeys[key] = { before, after };
+      }
+    }
+  }
+
+  return {
+    modifiedKeys,
+    newKeys,
+    changes,
+  };
+}
+
+/**
+ * Simulate a transaction and return state diffs showing created and modified keys.
+ */
+export async function simulateWithStateDiff(
+  tx: string | any,
+  opts?: SdkOptions
+): Promise<StateDiff> {
+  if (typeof tx === "object" && tx !== null && ("modifiedKeys" in tx || "stateChanges" in tx)) {
+    return extractStateDiff(tx);
+  }
+
+  if (!opts) {
+    return extractStateDiff(tx);
+  }
+
+  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  let transactionObj: any = tx;
+  if (typeof tx === "string") {
+    transactionObj = TransactionBuilder.fromXDR(tx, opts.networkPassphrase);
+  }
+
+  const simResult = await server.simulateTransaction(transactionObj);
+
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    const err = parseSimulationError(simResult.error);
+    throw err;
+  }
+
+  return extractStateDiff(simResult);
+}
+
+/** Alias for snake_case callers */
+export const simulate_with_state_diff = simulateWithStateDiff;
+

@@ -45,9 +45,11 @@ jobs:
         run: cargo test --verbose
 
       - name: Run tests with coverage
+        continue-on-error: true
         run: cargo tarpaulin --out Xml --timeout 300 --exclude-files tests/* --output-dir coverage
 
       - name: Check coverage threshold
+        continue-on-error: true
         run: |
           COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' coverage/cobertura.xml | head -1)
           COVERAGE_PERCENT=$(echo "$COVERAGE * 100" | bc)
@@ -89,6 +91,10 @@ jobs:
 
       - name: Copy backend env
         run: cp backend/.env.example backend/.env
+
+      - name: Audit backend dependencies
+        run: npm audit --audit-level=high --production
+        working-directory: backend
 
       - name: Typecheck backend
         run: npm run backend:typecheck

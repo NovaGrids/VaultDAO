@@ -21,6 +21,9 @@ const baseRaw = {
   next_payment_ledger: "10",
   payment_count: "0",
   is_active: true,
+  retry_strategy: "1",
+  retry_count: "0",
+  retry_next_ledger: "0",
 };
 
 test("transformRawRecurringPayment sets ACTIVE + CREATED for new active items", () => {
@@ -225,6 +228,8 @@ test("MemoryRecurringStorageAdapter filter by status/proposer/recipient/token/le
     memo: "freq",
     intervalLedgers: 1000,
     nextPaymentLedger: 50,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 0,
     status: RecurringStatus.DUE,
     events: [RecurringEvent.CREATED],
@@ -306,6 +311,8 @@ test("getPayments supports combined filters and returns pagination metadata", as
     memo: "m1",
     intervalLedgers: 10,
     nextPaymentLedger: 50,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 0,
     status: RecurringStatus.DUE,
     events: [RecurringEvent.CREATED],
@@ -335,6 +342,8 @@ test("getPayments supports combined filters and returns pagination metadata", as
     memo: "m2",
     intervalLedgers: 10,
     nextPaymentLedger: 51,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 0,
     status: RecurringStatus.ACTIVE,
     events: [RecurringEvent.CREATED],
@@ -364,6 +373,8 @@ test("getPayments supports combined filters and returns pagination metadata", as
     memo: "m3",
     intervalLedgers: 10,
     nextPaymentLedger: 52,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 0,
     status: RecurringStatus.DUE,
     events: [RecurringEvent.CREATED],
@@ -415,6 +426,8 @@ test("getDuePaymentsAtLedger returns only payments ready for execution", async (
     memo: "m1",
     intervalLedgers: 10,
     nextPaymentLedger: 10,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 1,
     status: RecurringStatus.ACTIVE,
     events: [RecurringEvent.CREATED],
@@ -444,6 +457,8 @@ test("getDuePaymentsAtLedger returns only payments ready for execution", async (
     memo: "m2",
     intervalLedgers: 10,
     nextPaymentLedger: 11,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 1,
     status: RecurringStatus.DUE,
     events: [RecurringEvent.CREATED, RecurringEvent.BECAME_DUE],
@@ -473,6 +488,8 @@ test("getDuePaymentsAtLedger returns only payments ready for execution", async (
     memo: "m3",
     intervalLedgers: 10,
     nextPaymentLedger: 30,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 1,
     status: RecurringStatus.ACTIVE,
     events: [RecurringEvent.CREATED],
@@ -502,6 +519,8 @@ test("getDuePaymentsAtLedger returns only payments ready for execution", async (
     memo: "m4",
     intervalLedgers: 10,
     nextPaymentLedger: 5,
+    retryStrategy: "EXPONENTIAL" as const,
+    retryNextLedger: 0,
     paymentCount: 1,
     status: RecurringStatus.CANCELLED,
     events: [RecurringEvent.CREATED, RecurringEvent.CANCELLED],
@@ -558,6 +577,11 @@ test("getDuePaymentsAtLedger ignores payments waiting for retry backoff", async 
     computedStatus: "active",
     ledgersUntilDue: 0,
     missedPayments: 0,
+    lastAttemptAt: 0,
+    nextRetryAt: 0,
+    totalMissedExecutions: 0,
+    jitterWindow: 0,
+    jitterOffset: 0,
   });
 
   const dueBeforeRetry = await service.getDuePaymentsAtLedger(15);
@@ -566,6 +590,8 @@ test("getDuePaymentsAtLedger ignores payments waiting for retry backoff", async 
   const dueAtRetry = await service.getDuePaymentsAtLedger(20);
   assert.equal(dueAtRetry.length, 1);
   assert.equal(dueAtRetry[0]?.paymentId, "retry-wait");
+});
+
 // ============================================================================
 // Issue #1364: Recurring Payment Jitter — Backend Service Tests
 //
@@ -579,7 +605,7 @@ test("getDuePaymentsAtLedger ignores payments waiting for retry backoff", async 
 
 test("jitter disabled: transformRawRecurringPayment sets jitterWindow=0 and jitterOffset=0", () => {
   const raw = { ...baseRaw, jitter_window: "0", jitter_offset: "0" };
-  const normalized = transformRawRecurringPayment(raw, "C1", 5);
+  const { payment: normalized } = transformRawRecurringPayment(raw, "C1", 5);
 
   assert.equal(normalized.jitterWindow, 0, "jitterWindow must be 0 when disabled");
   assert.equal(normalized.jitterOffset, 0, "jitterOffset must be 0 when disabled");
@@ -587,7 +613,7 @@ test("jitter disabled: transformRawRecurringPayment sets jitterWindow=0 and jitt
 
 test("jitter disabled: omitted jitter fields default to 0 (backward compat)", () => {
   // Legacy raw payments (before jitter support) have no jitter_window/jitter_offset
-  const normalized = transformRawRecurringPayment(baseRaw, "C1", 5);
+  const { payment: normalized } = transformRawRecurringPayment(baseRaw, "C1", 5);
 
   assert.equal(normalized.jitterWindow, 0, "missing jitter_window defaults to 0");
   assert.equal(normalized.jitterOffset, 0, "missing jitter_offset defaults to 0");
@@ -601,7 +627,7 @@ test("jitter enabled: transformRawRecurringPayment propagates exact jitterWindow
     jitter_window: "100",   // window set to 100 ledgers
     jitter_offset: "42",    // deterministic offset from sha256 — 42 < 100 ✓
   };
-  const normalized = transformRawRecurringPayment(raw, "C1", 5);
+  const { payment: normalized } = transformRawRecurringPayment(raw, "C1", 5);
 
   assert.equal(normalized.jitterWindow, 100, "jitterWindow must match raw value");
   assert.equal(normalized.jitterOffset, 42, "jitterOffset must match raw value exactly");
@@ -609,11 +635,11 @@ test("jitter enabled: transformRawRecurringPayment propagates exact jitterWindow
 
 test("jitter enabled: existing payment preserves jitterOffset across re-transforms", () => {
   const raw = { ...baseRaw, jitter_window: "50", jitter_offset: "17" };
-  const first = transformRawRecurringPayment(raw, "C1", 3);
+  const { payment: first } = transformRawRecurringPayment(raw, "C1", 3);
 
   // Re-transform (simulates a sync cycle receiving updated data)
   const updated_raw = { ...raw, next_payment_ledger: "20", payment_count: "1" };
-  const second = transformRawRecurringPayment(updated_raw, "C1", 5, first);
+  const { payment: second } = transformRawRecurringPayment(updated_raw, "C1", 5, first);
 
   assert.equal(second.jitterWindow, 50, "jitterWindow must be stable across re-transforms");
   assert.equal(second.jitterOffset, 17, "jitterOffset must be stable across re-transforms");
@@ -633,7 +659,7 @@ test("jitter enabled: offset is always within [0, jitterWindow) — range check"
 
   for (const tc of testCases) {
     const raw = { ...baseRaw, id: tc.id, jitter_window: String(window), jitter_offset: tc.jitter_offset };
-    const normalized = transformRawRecurringPayment(raw, "C1", 5);
+    const { payment: normalized } = transformRawRecurringPayment(raw, "C1", 5);
 
     assert.ok(
       normalized.jitterOffset >= 0 && normalized.jitterOffset < window,
@@ -646,11 +672,11 @@ test("jitter enabled: offset is always within [0, jitterWindow) — range check"
 
 test("jitter enabled: JITTERED event added when payment_count > 1 and jitter_window > 0", () => {
   const firstRaw = { ...baseRaw, jitter_window: "100", jitter_offset: "30" };
-  const existing = transformRawRecurringPayment(firstRaw, "C1", 5);
+  const { payment: existing } = transformRawRecurringPayment(firstRaw, "C1", 5);
 
   // Simulate second execution: payment_count increases from 0 to 2
   const updatedRaw = { ...firstRaw, payment_count: "2", next_payment_ledger: "2030" };
-  const updated = transformRawRecurringPayment(updatedRaw, "C1", 10, existing);
+  const { payment: updated } = transformRawRecurringPayment(updatedRaw, "C1", 10, existing);
 
   assert.ok(
     updated.events.includes(RecurringEvent.EXECUTED),
@@ -664,10 +690,10 @@ test("jitter enabled: JITTERED event added when payment_count > 1 and jitter_win
 
 test("jitter enabled: JITTERED event NOT added when jitter_window == 0", () => {
   const firstRaw = { ...baseRaw, jitter_window: "0", jitter_offset: "0" };
-  const existing = transformRawRecurringPayment(firstRaw, "C1", 5);
+  const { payment: existing } = transformRawRecurringPayment(firstRaw, "C1", 5);
 
   const updatedRaw = { ...firstRaw, payment_count: "2", next_payment_ledger: "2000" };
-  const updated = transformRawRecurringPayment(updatedRaw, "C1", 10, existing);
+  const { payment: updated } = transformRawRecurringPayment(updatedRaw, "C1", 10, existing);
 
   assert.ok(
     updated.events.includes(RecurringEvent.EXECUTED),
@@ -682,10 +708,10 @@ test("jitter enabled: JITTERED event NOT added when jitter_window == 0", () => {
 test("jitter enabled: JITTERED event NOT added on first cycle (payment_count == 1)", () => {
   // First execution: payment_count goes from 0 to 1 — jitter not applied to first cycle
   const firstRaw = { ...baseRaw, jitter_window: "100", jitter_offset: "30" };
-  const existing = transformRawRecurringPayment(firstRaw, "C1", 5);
+  const { payment: existing } = transformRawRecurringPayment(firstRaw, "C1", 5);
 
   const updatedRaw = { ...firstRaw, payment_count: "1", next_payment_ledger: "1030" };
-  const updated = transformRawRecurringPayment(updatedRaw, "C1", 10, existing);
+  const { payment: updated } = transformRawRecurringPayment(updatedRaw, "C1", 10, existing);
 
   assert.ok(
     !updated.events.includes(RecurringEvent.JITTERED),
@@ -699,8 +725,8 @@ test("jitter edge case: jitter_window=0 and jitter_window absent produce identic
   const withExplicitZero = { ...baseRaw, jitter_window: "0", jitter_offset: "0" };
   const withoutFields = { ...baseRaw };
 
-  const n1 = transformRawRecurringPayment(withExplicitZero, "C1", 5);
-  const n2 = transformRawRecurringPayment(withoutFields, "C1", 5);
+  const { payment: n1 } = transformRawRecurringPayment(withExplicitZero, "C1", 5);
+  const { payment: n2 } = transformRawRecurringPayment(withoutFields, "C1", 5);
 
   assert.equal(n1.jitterWindow, n2.jitterWindow, "jitterWindow must be 0 in both cases");
   assert.equal(n1.jitterOffset, n2.jitterOffset, "jitterOffset must be 0 in both cases");

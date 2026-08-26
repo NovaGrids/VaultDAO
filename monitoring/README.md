@@ -88,12 +88,26 @@ The VaultDAO Operations Dashboard (`grafana-dashboard.json`) includes the follow
 - **Purpose:** Display currently firing alerts
 - **Columns:** Alert name, Severity, Instance, Timestamp
 
+### 11. Proposal Throughput (created/executed per hour)
+- **Type:** Time series
+- **Metrics:** `proposals_created_total`, `proposals_executed_total`
+- **Queries:** `sum(rate(proposals_created_total[5m])) * 3600` and the same for
+  `proposals_executed_total`
+- **Purpose:** Capacity planning. Shows how many proposals the DAO creates and
+  executes per hour over time, which is what sizing decisions are based on.
+- **Reading it:** A persistent gap between the created and executed series means
+  proposals are arriving faster than they clear — a governance backlog building
+  up. The two series tracking together means throughput is keeping pace.
+
+Both counters are incremented by the proposal indexer after deduplication, so
+replayed or duplicated chain events do not inflate the rates.
+
 ## Prometheus Alerting Rules
 
 ### Alert Groups
 
 #### API Performance Alerts
-- **HighErrorRate:** Error rate >5% for 5 minutes
+- **HighErrorRate:** 5xx responses on an endpoint exceed 0.05 req/s, sustained for 5 minutes. Severity `critical`; see [runbook](../docs/reference/PRODUCTION_RUNBOOK.md#7-high-error-rate-response).
 - **HighLatency:** P99 latency >2 seconds for 10 minutes
 
 #### RPC Provider Alerts
@@ -130,6 +144,17 @@ The VaultDAO Operations Dashboard (`grafana-dashboard.json`) includes the follow
 - **KubernetesPodCrashLooping:** Pod restarting >0.1 times/min
 - **KubernetesNodeNotReady:** Node not ready for 5 minutes
 - **KubernetesPersistentvolumeclaim:** PVC usage >80%
+
+### Testing Alert Rules
+
+`prometheus-rules.test.yaml` contains [promtool unit tests](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/) that feed synthetic sample metrics through the alert expressions and assert whether each alert fires. Run it with:
+
+```bash
+promtool check rules monitoring/prometheus-rules.yaml       # validates syntax
+promtool test rules monitoring/prometheus-rules.test.yaml   # evaluates against sample metrics
+```
+
+Add a new `tests` entry (with `input_series` and `alert_rule_test`) whenever you add or change an alert expression.
 
 ## Setting Up Monitoring
 
@@ -377,5 +402,5 @@ histogram_quantile(0.95, rate(vaultdao_http_request_duration_seconds_bucket{serv
 - [Grafana Documentation](https://grafana.com/docs/)
 - [Prometheus Documentation](https://prometheus.io/docs/)
 - [AlertManager Documentation](https://prometheus.io/docs/alerting/latest/alertmanager/)
-- [VaultDAO Production Runbook](../PRODUCTION_RUNBOOK.md)
+- [VaultDAO Production Runbook](../docs/reference/PRODUCTION_RUNBOOK.md)
 - [Terraform Monitoring Module](../terraform/modules/monitoring/)

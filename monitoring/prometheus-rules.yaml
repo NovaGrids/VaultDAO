@@ -3,13 +3,16 @@ groups:
     interval: 30s
     rules:
       # API Performance Alerts
+      #
+      # Fires directly off the per-second rate of 5xx responses rather than a
+      # increase()/increase() ratio: the prior ratio form divided two vectors
+      # that both carry the `status` label, so — with no `ignoring(status)` —
+      # each 5xx series only ever matched itself and evaluated to a constant
+      # 1.0, firing on *any* 5xx traffic regardless of how small a share of
+      # total requests it represented. A plain rate() threshold has no
+      # matching to get wrong.
       - alert: HighErrorRate
-        expr: |
-          (
-            increase(vaultdao_http_requests_total{status=~"5.."}[5m])
-            /
-            increase(vaultdao_http_requests_total[5m])
-          ) > 0.05
+        expr: rate(vaultdao_http_requests_total{status=~"5.."}[5m]) > 0.05
         for: 5m
         labels:
           severity: critical
@@ -18,8 +21,9 @@ groups:
           summary: "High error rate detected"
           runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#higherrorrate"
           description: |
-            Error rate is {{ $value | humanizePercentage }} for service {{ $labels.service }}
+            5xx responses for {{ $labels.service }} are arriving at {{ $value | humanize }}/s
             Affected endpoint: {{ $labels.endpoint }}
+          runbook_url: "https://github.com/rdj-savyy/VaultDAO/blob/main/docs/reference/PRODUCTION_RUNBOOK.md#7-high-error-rate-response"
 
       - alert: HighLatency
         expr: |
@@ -132,7 +136,6 @@ groups:
           runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#storageusagecritical"
           description: |
             {{ $labels.device }} is {{ $value | humanizePercentage }} full
-            Available space: {{ | humanize1024 }}
 
       - alert: StorageUsageWarning
         expr: |

@@ -120,14 +120,7 @@ fn test_clawback_requires_signer_vote() {
     let env = Env::default();
     let (client, admin, token, recipient) = setup(&env);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
     let clawback_id = client.request_stream_clawback(
         &admin,
@@ -137,14 +130,20 @@ fn test_clawback_requires_signer_vote() {
     );
 
     let clawback_before = client.get_clawback_request(&clawback_id);
-    assert_eq!(clawback_before.status, crate::types::ClawbackStatus::Pending);
+    assert_eq!(
+        clawback_before.status,
+        crate::types::ClawbackStatus::Pending
+    );
 
     // Vote to approve clawback
     client.vote_clawback(&admin, &clawback_id, &true);
 
     let clawback_after = client.get_clawback_request(&clawback_id);
     // Should be approved if threshold met
-    assert_eq!(clawback_after.status, crate::types::ClawbackStatus::Approved);
+    assert_eq!(
+        clawback_after.status,
+        crate::types::ClawbackStatus::Approved
+    );
 }
 
 // ============================================================================
@@ -156,14 +155,7 @@ fn test_reject_clawback_vote_prevents_approval() {
     let env = Env::default();
     let (client, admin, token, recipient) = setup(&env);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
     let clawback_id = client.request_stream_clawback(
         &admin,
@@ -194,14 +186,7 @@ fn test_execute_clawback_transfers_to_vault() {
 
     let token_client = soroban_sdk::token::Client::new(&env, &token);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
     let clawback_id = client.request_stream_clawback(
         &admin,
@@ -223,7 +208,10 @@ fn test_execute_clawback_transfers_to_vault() {
     let recipient_balance_after = token_client.balance(&recipient);
 
     // Recipient balance should decrease
-    assert_eq!(recipient_balance_after, recipient_balance_before - 1_000i128);
+    assert_eq!(
+        recipient_balance_after,
+        recipient_balance_before - 1_000i128
+    );
 
     let clawback = client.get_clawback_request(&clawback_id);
     assert_eq!(clawback.status, crate::types::ClawbackStatus::Executed);
@@ -238,21 +226,10 @@ fn test_clawback_event_includes_reason_and_amount() {
     let env = Env::default();
     let (client, admin, token, recipient) = setup(&env);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
-    let clawback_id = client.request_stream_clawback(
-        &admin,
-        &stream_id,
-        &1_000i128,
-        &Symbol::new(&env, "fraud"),
-    );
+    let clawback_id =
+        client.request_stream_clawback(&admin, &stream_id, &1_000i128, &Symbol::new(&env, "fraud"));
 
     client.vote_clawback(&admin, &clawback_id, &true);
 
@@ -285,14 +262,8 @@ fn test_cannot_clawback_more_than_streamed() {
 
     let stream_total = 10_000i128;
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &stream_total,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id =
+        client.create_stream(&admin, &recipient, &token, &stream_total, &1_000u64, &0u64);
 
     // Try to clawback more than total
     let result = client.try_request_stream_clawback(
@@ -327,7 +298,8 @@ fn test_clawback_of_partially_vested_stream() {
     );
 
     // Advance half the vesting period
-    env.ledger().with_mut(|l| l.sequence_number += (vesting_period / 2) as u32);
+    env.ledger()
+        .with_mut(|l| l.sequence_number += (vesting_period / 2) as u32);
 
     // At this point, half should be vested (5000)
     let stream = client.get_stream(&stream_id);
@@ -361,14 +333,7 @@ fn test_cannot_double_clawback() {
     let env = Env::default();
     let (client, admin, token, recipient) = setup(&env);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
     let clawback_id = client.request_stream_clawback(
         &admin,
@@ -420,14 +385,7 @@ fn test_multiple_clawback_requests_same_stream() {
     let env = Env::default();
     let (client, admin, token, recipient) = setup(&env);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
     // First clawback
     let clawback_id_1 = client.request_stream_clawback(
@@ -467,23 +425,11 @@ fn test_clawback_reason_is_recorded() {
     let env = Env::default();
     let (client, admin, token, recipient) = setup(&env);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
     let reason = Symbol::new(&env, "policy_violation");
 
-    let clawback_id = client.request_stream_clawback(
-        &admin,
-        &stream_id,
-        &1_000i128,
-        &reason,
-    );
+    let clawback_id = client.request_stream_clawback(&admin, &stream_id, &1_000i128, &reason);
 
     let clawback = client.get_clawback_request(&clawback_id);
     assert_eq!(clawback.reason, reason);
@@ -500,14 +446,7 @@ fn test_only_admin_can_request_clawback() {
 
     let non_admin = Address::generate(&env);
 
-    let stream_id = client.create_stream(
-        &admin,
-        &recipient,
-        &token,
-        &10_000i128,
-        &1_000u64,
-        &0u64,
-    );
+    let stream_id = client.create_stream(&admin, &recipient, &token, &10_000i128, &1_000u64, &0u64);
 
     let result = client.try_request_stream_clawback(
         &non_admin,
@@ -587,12 +526,8 @@ mod tests {
 
         // Create a stream
         let stream_id = client.create_stream(
-            &sender,
-            &recipient,
-            &token,
-            100, // 100 stroops/sec
-            10000,
-            3600, // 1 hour stream
+            &sender, &recipient, &token, 100, // 100 stroops/sec
+            10000, 3600, // 1 hour stream
         );
 
         // Request clawback (with reason)
@@ -627,14 +562,7 @@ mod tests {
         client.add_supported_token(&admin, &token, 10000, 50000);
 
         // Create stream
-        let stream_id = client.create_stream(
-            &sender,
-            &recipient,
-            &token,
-            100,
-            10000,
-            3600,
-        );
+        let stream_id = client.create_stream(&sender, &recipient, &token, 100, 10000, 3600);
 
         // Request clawback
         // Verify that approval voting is required with M-of-N signer threshold
@@ -664,14 +592,7 @@ mod tests {
         client.add_supported_token(&admin, &token, 10000, 50000);
 
         // Create stream
-        let stream_id = client.create_stream(
-            &sender,
-            &recipient,
-            &token,
-            100,
-            10000,
-            3600,
-        );
+        let stream_id = client.create_stream(&sender, &recipient, &token, 100, 10000, 3600);
 
         // Request and approve clawback
         // Verify that clawed-back amount is returned to vault
@@ -701,14 +622,7 @@ mod tests {
         client.add_supported_token(&admin, &token, 10000, 50000);
 
         // Create stream and clawback
-        let stream_id = client.create_stream(
-            &sender,
-            &recipient,
-            &token,
-            100,
-            10000,
-            3600,
-        );
+        let stream_id = client.create_stream(&sender, &recipient, &token, 100, 10000, 3600);
 
         // Clawback and verify event includes reason
     }
