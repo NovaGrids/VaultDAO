@@ -37,6 +37,21 @@ import {
   decodeScVal,
   parseError,
 } from "./utils";
+import {
+  validateNonEmptyString,
+  validatePositiveBigInt,
+  validateNonNegativeBigInt,
+  validatePositiveNumber,
+  validateNonNegativeNumber,
+  validateThreshold,
+  validateMinInterval,
+  validateMemo,
+  validateRole,
+  validateId,
+  validateStreamLedgers,
+  validateInitConfig,
+  SdkValidationError,
+} from "./validation";
 
 // ---------------------------------------------------------------------------
 // Internal helper — simulate a read-only call and decode the return value
@@ -140,6 +155,9 @@ export async function initialize(
   config: InitConfig,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateInitConfig(config);
+
   const contract = getContract(opts);
 
   const signersScVal = xdr.ScVal.scvVec(
@@ -209,6 +227,12 @@ export async function proposeTransfer(
   memo: string,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  validateNonEmptyString("recipient", recipient);
+  validateNonEmptyString("tokenAddress", tokenAddress);
+  validatePositiveBigInt("amount", amount);
+  validateMemo("memo", memo);
+
   const contract = getContract(opts);
   const op = contract.call(
     "propose_transfer",
@@ -233,6 +257,9 @@ export async function approveProposal(
   proposalId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("signerPublicKey", signerPublicKey);
+  validateId("proposalId", proposalId);
+
   const contract = getContract(opts);
   const op = contract.call(
     "approve_proposal",
@@ -254,6 +281,9 @@ export async function executeProposal(
   proposalId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("executorPublicKey", executorPublicKey);
+  validateId("proposalId", proposalId);
+
   const contract = getContract(opts);
   const op = contract.call(
     "execute_proposal",
@@ -277,6 +307,9 @@ export async function rejectProposal(
   proposalId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("rejectorPublicKey", rejectorPublicKey);
+  validateId("proposalId", proposalId);
+
   const contract = getContract(opts);
   const op = contract.call(
     "reject_proposal",
@@ -306,6 +339,10 @@ export async function setRole(
   role: Role,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("targetAddress", targetAddress);
+  validateRole("role", role);
+
   const contract = getContract(opts);
   const op = contract.call(
     "set_role",
@@ -328,6 +365,9 @@ export async function addSigner(
   newSignerAddress: string,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("newSignerAddress", newSignerAddress);
+
   const contract = getContract(opts);
   const op = contract.call(
     "add_signer",
@@ -351,6 +391,9 @@ export async function removeSigner(
   signerAddress: string,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("signerAddress", signerAddress);
+
   const contract = getContract(opts);
   const op = contract.call(
     "remove_signer",
@@ -374,6 +417,10 @@ export async function updateLimits(
   dailyLimit: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonNegativeBigInt("spendingLimit", spendingLimit);
+  validateNonNegativeBigInt("dailyLimit", dailyLimit);
+
   const contract = getContract(opts);
   const op = contract.call(
     "update_limits",
@@ -396,6 +443,9 @@ export async function updateThreshold(
   threshold: number,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateThreshold("threshold", threshold);
+
   const contract = getContract(opts);
   const op = contract.call(
     "update_threshold",
@@ -429,6 +479,13 @@ export async function schedulePayment(
   intervalLedgers: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  validateNonEmptyString("recipient", recipient);
+  validateNonEmptyString("tokenAddress", tokenAddress);
+  validatePositiveBigInt("amount", amount);
+  validateMemo("memo", memo);
+  validateMinInterval("intervalLedgers", intervalLedgers);
+
   const contract = getContract(opts);
   const op = contract.call(
     "schedule_payment",
@@ -456,6 +513,9 @@ export async function executeRecurringPayment(
   paymentId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+  validateId("paymentId", paymentId);
+
   const contract = getContract(opts);
   const op = contract.call(
     "execute_recurring_payment",
@@ -481,6 +541,13 @@ export async function createStream(
   endLedger: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("senderPublicKey", senderPublicKey);
+  validateNonEmptyString("recipient", recipient);
+  validateNonEmptyString("token", token);
+  validatePositiveBigInt("totalAmount", totalAmount);
+  validatePositiveBigInt("flowRate", flowRate);
+  validateStreamLedgers("startLedger", startLedger, "endLedger", endLedger);
+
   const contract = getContract(opts);
   const op = contract.call(
     "create_stream",
@@ -503,6 +570,9 @@ export async function claimStream(
   streamId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("recipientPublicKey", recipientPublicKey);
+  validateId("streamId", streamId);
+
   const contract = getContract(opts);
   const op = contract.call("claim_stream", u64ToScVal(streamId));
   return buildTransaction(recipientPublicKey, op, opts);
@@ -516,6 +586,9 @@ export async function pauseStream(
   streamId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("senderPublicKey", senderPublicKey);
+  validateId("streamId", streamId);
+
   const contract = getContract(opts);
   const op = contract.call("pause_stream", u64ToScVal(streamId));
   return buildTransaction(senderPublicKey, op, opts);
@@ -529,6 +602,9 @@ export async function cancelStream(
   streamId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("senderPublicKey", senderPublicKey);
+  validateId("streamId", streamId);
+
   const contract = getContract(opts);
   const op = contract.call("cancel_stream", u64ToScVal(streamId));
   return buildTransaction(senderPublicKey, op, opts);
@@ -550,6 +626,13 @@ export async function createSubscription(
   intervalLedgers: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("subscriberPublicKey", subscriberPublicKey);
+  validateNonEmptyString("serviceProvider", serviceProvider);
+  validateNonNegativeNumber("tier", tier);
+  validateNonEmptyString("token", token);
+  validatePositiveBigInt("amountPerPeriod", amountPerPeriod);
+  validateMinInterval("intervalLedgers", intervalLedgers);
+
   const contract = getContract(opts);
   const op = contract.call(
     "create_subscription",
@@ -571,6 +654,9 @@ export async function renewSubscription(
   subscriptionId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("subscriberPublicKey", subscriberPublicKey);
+  validateId("subscriptionId", subscriptionId);
+
   const contract = getContract(opts);
   const op = contract.call("renew_subscription", u64ToScVal(subscriptionId));
   return buildTransaction(subscriberPublicKey, op, opts);
@@ -584,6 +670,9 @@ export async function cancelSubscription(
   subscriptionId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("subscriberPublicKey", subscriberPublicKey);
+  validateId("subscriptionId", subscriptionId);
+
   const contract = getContract(opts);
   const op = contract.call("cancel_subscription", u64ToScVal(subscriptionId));
   return buildTransaction(subscriberPublicKey, op, opts);
@@ -605,6 +694,13 @@ export async function createEscrow(
   durationLedgers: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("funderPublicKey", funderPublicKey);
+  validateNonEmptyString("recipient", recipient);
+  validateNonEmptyString("token", token);
+  validatePositiveBigInt("amount", amount);
+  validateNonEmptyString("arbitrator", arbitrator);
+  validateNonNegativeBigInt("durationLedgers", durationLedgers);
+
   const contract = getContract(opts);
   const op = contract.call(
     "create_escrow",
@@ -626,6 +722,9 @@ export async function completeMilestone(
   escrowId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("recipientPublicKey", recipientPublicKey);
+  validateId("escrowId", escrowId);
+
   const contract = getContract(opts);
   const op = contract.call("complete_milestone", u64ToScVal(escrowId));
   return buildTransaction(recipientPublicKey, op, opts);
@@ -639,6 +738,9 @@ export async function releaseEscrow(
   escrowId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("arbitratorPublicKey", arbitratorPublicKey);
+  validateId("escrowId", escrowId);
+
   const contract = getContract(opts);
   const op = contract.call("release_escrow", u64ToScVal(escrowId));
   return buildTransaction(arbitratorPublicKey, op, opts);
@@ -652,6 +754,9 @@ export async function disputeEscrow(
   escrowId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("partyPublicKey", partyPublicKey);
+  validateId("escrowId", escrowId);
+
   const contract = getContract(opts);
   const op = contract.call("dispute_escrow", u64ToScVal(escrowId));
   return buildTransaction(partyPublicKey, op, opts);
@@ -673,6 +778,13 @@ export async function createTemplate(
   amountTemplate: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("creatorPublicKey", creatorPublicKey);
+  validateNonEmptyString("name", name);
+  validateNonEmptyString("description", description);
+  validateNonEmptyString("recipientTemplate", recipientTemplate);
+  validateNonEmptyString("tokenTemplate", tokenTemplate);
+  validateNonNegativeBigInt("amountTemplate", amountTemplate);
+
   const contract = getContract(opts);
   const op = contract.call(
     "create_template",
@@ -696,6 +808,11 @@ export async function proposeFromTemplate(
   amount: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  validateId("templateId", templateId);
+  validateNonEmptyString("recipient", recipient);
+  validatePositiveBigInt("amount", amount);
+
   const contract = getContract(opts);
   const op = contract.call(
     "propose_from_template",
@@ -714,6 +831,9 @@ export async function deactivateTemplate(
   templateId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("creatorPublicKey", creatorPublicKey);
+  validateId("templateId", templateId);
+
   const contract = getContract(opts);
   const op = contract.call("deactivate_template", u64ToScVal(templateId));
   return buildTransaction(creatorPublicKey, op, opts);
@@ -732,6 +852,10 @@ export async function addComment(
   content: string,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("authorPublicKey", authorPublicKey);
+  validateId("proposalId", proposalId);
+  validateNonEmptyString("content", content);
+
   const contract = getContract(opts);
   const op = contract.call(
     "add_comment",
@@ -750,6 +874,10 @@ export async function editComment(
   newContent: string,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("authorPublicKey", authorPublicKey);
+  validateId("commentId", commentId);
+  validateNonEmptyString("newContent", newContent);
+
   const contract = getContract(opts);
   const op = contract.call(
     "edit_comment",
@@ -767,6 +895,9 @@ export async function getComments(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<Comment[]> {
+  validateId("proposalId", proposalId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_comments", u64ToScVal(proposalId));
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
@@ -796,6 +927,9 @@ export async function proposeRecovery(
   recoveryType: string,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  validateNonEmptyString("recoveryType", recoveryType);
+
   const contract = getContract(opts);
   const op = contract.call(
     "propose_recovery",
@@ -812,6 +946,9 @@ export async function approveRecovery(
   recoveryId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("approverPublicKey", approverPublicKey);
+  validateId("recoveryId", recoveryId);
+
   const contract = getContract(opts);
   const op = contract.call("approve_recovery", u64ToScVal(recoveryId));
   return buildTransaction(approverPublicKey, op, opts);
@@ -825,6 +962,9 @@ export async function executeRecovery(
   recoveryId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("executorPublicKey", executorPublicKey);
+  validateId("recoveryId", recoveryId);
+
   const contract = getContract(opts);
   const op = contract.call("execute_recovery", u64ToScVal(recoveryId));
   return buildTransaction(executorPublicKey, op, opts);
@@ -841,6 +981,8 @@ export async function getVaultMetrics(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<VaultMetrics> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_vault_metrics");
   const raw = await simulateReadOnly<Record<string, unknown>>(
@@ -865,6 +1007,9 @@ export async function getReputation(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<Reputation> {
+  validateNonEmptyString("address", address);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_reputation", addressToScVal(address));
   const raw = await simulateReadOnly<Record<string, unknown>>(
@@ -889,6 +1034,8 @@ export async function getAuditTrail(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<AuditEntry[]> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_audit_trail");
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
@@ -914,6 +1061,9 @@ export async function getDelegationChain(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<string[]> {
+  validateNonEmptyString("address", address);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_delegation_chain", addressToScVal(address));
   return simulateReadOnly<string[]>(op, opts, callerPublicKey, "getDelegationChain");
@@ -935,6 +1085,9 @@ export async function getProposal(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<Proposal> {
+  validateId("proposalId", proposalId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_proposal", u64ToScVal(proposalId));
   const raw = await simulateReadOnly<Record<string, unknown>>(
@@ -958,6 +1111,9 @@ export async function getRole(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<Role> {
+  validateNonEmptyString("address", address);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_role", addressToScVal(address));
   const raw = await simulateReadOnly<number>(op, opts, callerPublicKey, "getRole");
@@ -974,6 +1130,8 @@ export async function getTodaySpent(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<bigint> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("get_today_spent");
   return simulateReadOnly<bigint>(op, opts, callerPublicKey, "getTodaySpent");
@@ -991,6 +1149,9 @@ export async function isSigner(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<boolean> {
+  validateNonEmptyString("address", address);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
   const contract = getContract(opts);
   const op = contract.call("is_signer", addressToScVal(address));
   return simulateReadOnly<boolean>(op, opts, callerPublicKey, "isSigner");
