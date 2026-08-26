@@ -36,6 +36,7 @@ import {
   symbolToScVal,
   decodeScVal,
   parseError,
+  retryOnRateLimit,
 } from "./utils";
 
 // ---------------------------------------------------------------------------
@@ -50,21 +51,27 @@ async function simulateReadOnly<T>(
 ): Promise<T> {
   const log: SdkLogger = opts.logger ?? noopLogger;
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
-  const { Account, TransactionBuilder, BASE_FEE } = await import("stellar-sdk");
-  const account = await server.getAccount(sourceKey);
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: opts.networkPassphrase,
-  })
-    .addOperation(operation)
-    .setTimeout(15)
-    .build();
-
+  const { TransactionBuilder, BASE_FEE } = await import("stellar-sdk");
   const ctx = { contractId: opts.contractId, method };
   const simStart = Date.now();
   log.debug("Simulating read-only call", ctx);
 
-  const sim = await server.simulateTransaction(tx);
+  const sim = await retryOnRateLimit(
+    async () => {
+      const account = await server.getAccount(sourceKey);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: opts.networkPassphrase,
+      })
+        .addOperation(operation)
+        .setTimeout(15)
+        .build();
+      return server.simulateTransaction(tx);
+    },
+    opts,
+    log,
+    "read-only simulation"
+  );
 
   if (SorobanRpc.Api.isSimulationError(sim)) {
     const durationMs = Date.now() - simStart;
