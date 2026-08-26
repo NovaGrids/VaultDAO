@@ -24,6 +24,9 @@ jobs:
       - name: Install tarpaulin for coverage
         run: cargo install cargo-tarpaulin --version ^0.27
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
       - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
@@ -40,6 +43,9 @@ jobs:
 
       - name: Lint (clippy)
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Security audit
+        run: cargo audit --config .cargo/audit.toml
 
       - name: Run tests
         run: cargo test --verbose
