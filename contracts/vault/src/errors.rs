@@ -128,6 +128,8 @@ pub enum VaultError {
     UpgradeUnauthorized = 920,
     /// Contract upgrade timelock is still active
     UpgradeTimelockActive = 921,
+    /// Upgrade timelock duration is below the minimum allowed (MIN_UPGRADE_TIMELOCK)
+    UpgradeTimelockTooShort = 922,
     /// Veto window has closed
     VetoWindowClosed = 930,
     /// Proposal status transition is not valid

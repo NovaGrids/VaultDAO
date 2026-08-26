@@ -103,6 +103,8 @@ pub struct InitConfig {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
+    /// Minimum delay in ledgers for the upgrade timelock (≥ 17_280 ≈ 24 h at 5 s/ledger)
+    pub upgrade_timelock_delay: u64,
 }
 
 /// Vault configuration
@@ -188,6 +190,9 @@ pub struct Config {
     pub approval_timeout_ledgers: u64,
     /// Execution window in ledgers after approval before the proposal auto-expires (0 = no window).
     pub exec_window_ledgers: u64,
+    /// Minimum delay in ledgers for the upgrade timelock (≥ 17_280 ≈ 24 h at 5 s/ledger).
+    /// Enforced at initialization and must satisfy MIN_UPGRADE_TIMELOCK.
+    pub upgrade_timelock_delay: u64,
 }
 
 /// Audit record for a cancelled proposal
