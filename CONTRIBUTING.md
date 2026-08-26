@@ -228,6 +228,10 @@ For the full testing guide — including how to run tests, write new ones, set u
 
 For frontend-specific design system + widget development conventions, see **[docs/guides/FRONTEND_CONTRIBUTION.md](docs/guides/FRONTEND_CONTRIBUTION.md)**.
 
+## 🎯 SDK contribution guide
+
+For SDK-specific setup, running tests, adding a new contract binding, versioning, and publishing, see **[sdk/CONTRIBUTING.md](sdk/CONTRIBUTING.md)**.
+
 ## 🎯 First contribution walkthrough
 
 New contributors should start with the hands-on guide: **[docs/guides/FIRST_CONTRIBUTION.md](docs/guides/FIRST_CONTRIBUTION.md)**.

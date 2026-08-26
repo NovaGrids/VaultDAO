@@ -49,6 +49,8 @@ backend/*.log
 backend/logs/
 backend/.tsbuildinfo
 
+sdk/dist/
+
 # Contribution-wave scratch files (keep out of the repo)
 
 PR_BODY.md
