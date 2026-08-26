@@ -16,6 +16,7 @@ groups:
           component: backend
         annotations:
           summary: "High error rate detected"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#higherrorrate"
           description: |
             Error rate is {{ $value | humanizePercentage }} for service {{ $labels.service }}
             Affected endpoint: {{ $labels.endpoint }}
@@ -29,6 +30,7 @@ groups:
           component: backend
         annotations:
           summary: "API latency is high"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#highlatency"
           description: |
             P99 latency is {{ $value }}ms
             Endpoint: {{ $labels.endpoint }}
@@ -42,6 +44,7 @@ groups:
           component: rpc
         annotations:
           summary: "RPC provider {{ $labels.provider }} is down"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#rpcproviderdown"
           description: |
             RPC provider {{ $labels.provider }} has been unreachable for 1 minute
             Last error: {{ $labels.error }}
@@ -55,6 +58,7 @@ groups:
           component: rpc
         annotations:
           summary: "RPC provider {{ $labels.provider }} is slow"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#rpcproviderslow"
           description: |
             P95 response time from {{ $labels.provider }} is {{ $value }}s
             Current rate limit: {{ $labels.rate_limit }}%
@@ -68,6 +72,7 @@ groups:
           component: rpc
         annotations:
           summary: "All RPC providers are failing"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#allrpcprovidersfailing"
           description: |
             All configured RPC providers are currently unavailable
             Immediate action required
@@ -81,6 +86,7 @@ groups:
           component: events
         annotations:
           summary: "Event processing lag is high"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#eventprocessinglaghigh"
           description: |
             Event processing lag is {{ $value | humanizeDuration }}
             Last processed block: {{ $labels.last_block }}
@@ -93,6 +99,7 @@ groups:
           component: events
         annotations:
           summary: "Event processing lag is critical"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#eventprocessinglagcritical"
           description: |
             Event processing lag is {{ $value | humanizeDuration }}
             Queue depth: {{ $labels.queue_depth }} events
@@ -105,6 +112,7 @@ groups:
           component: events
         annotations:
           summary: "Event queue is nearly full"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#eventqueuefull"
           description: |
             Event queue depth is {{ $value }} / 10000
             Processing rate: {{ $labels.processing_rate }} events/sec
@@ -121,6 +129,7 @@ groups:
           component: storage
         annotations:
           summary: "Storage usage is critical"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#storageusagecritical"
           description: |
             {{ $labels.device }} is {{ $value | humanizePercentage }} full
             Available space: {{ | humanize1024 }}
@@ -136,6 +145,7 @@ groups:
           component: storage
         annotations:
           summary: "Storage usage is high"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#storageusagewarning"
           description: |
             {{ $labels.device }} is {{ $value | humanizePercentage }} full
 
@@ -148,6 +158,7 @@ groups:
           component: database
         annotations:
           summary: "Database connection pool is nearly exhausted"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#databaseconnectionpoolexhausted"
           description: |
             {{ $value | humanizePercentage }} of connection pool is in use
             Active connections: {{ $labels.active }} / {{ $labels.max }}
@@ -160,6 +171,7 @@ groups:
           component: database
         annotations:
           summary: "High rate of slow database queries"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#databaseslowqueries"
           description: |
             {{ $value | humanize }} slow queries per second
             Threshold: > 100ms
@@ -172,6 +184,7 @@ groups:
           component: database
         annotations:
           summary: "Database replication lag is high"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#databasereplicationlag"
           description: |
             Replication lag is {{ $value | humanizeDuration }}
             This may affect failover capabilities
@@ -186,6 +199,7 @@ groups:
           component: redis
         annotations:
           summary: "Redis memory usage is high"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#redismemoryusagehigh"
           description: |
             Redis is using {{ $value | humanizePercentage }} of available memory
             Current: {{ $labels.used }} / {{ $labels.max }}
@@ -198,6 +212,7 @@ groups:
           component: redis
         annotations:
           summary: "Redis is evicting keys"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#redisevictions"
           description: |
             Redis is evicting keys at rate {{ $value }} keys/sec
             This indicates insufficient memory
@@ -211,6 +226,7 @@ groups:
           component: contracts
         annotations:
           summary: "Contract {{ $labels.contract }} health is degraded"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#contracthealthdegraded"
           description: |
             Health score: {{ $value | humanizePercentage }}
             Last update: {{ $labels.last_update }}
@@ -224,6 +240,7 @@ groups:
           component: node
         annotations:
           summary: "Node {{ $labels.instance }} has high CPU usage"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#nodehighcpuusage"
           description: "CPU usage is {{ $value | humanize }}%"
 
       - alert: NodeHighMemoryUsage
@@ -234,6 +251,7 @@ groups:
           component: node
         annotations:
           summary: "Node {{ $labels.instance }} has high memory usage"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#nodehighmemoryusage"
           description: "Memory usage is {{ $value | humanize }}%"
 
       # Kubernetes Alerts
@@ -245,6 +263,7 @@ groups:
           component: kubernetes
         annotations:
           summary: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is crash looping"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#kubernetespodcrashlooping"
           description: |
             Container restarts in last 15 minutes: {{ $value }}
 
@@ -256,6 +275,7 @@ groups:
           component: kubernetes
         annotations:
           summary: "Kubernetes node {{ $labels.node }} is not ready"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#kubernetesnodenotready"
           description: "Node has been in NotReady state for 5 minutes"
 
       - alert: KubernetesPersistentvolumeclaim
@@ -266,6 +286,7 @@ groups:
           component: kubernetes
         annotations:
           summary: "Kubernetes PersistentVolumeClaim {{ $labels.persistentvolumeclaim }} usage is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#kubernetespersistentvolumeclaim"
 
   # Recording Rules for optimization
   - name: vaultdao.recording
