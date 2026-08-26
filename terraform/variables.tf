@@ -13,6 +13,30 @@ variable "environment" {
   }
 }
 
+variable "terraform_state_bucket" {
+  description = "S3 bucket name for Terraform remote state"
+  type        = string
+  default     = "vaultdao-terraform-state"
+}
+
+variable "terraform_state_key" {
+  description = "S3 key for Terraform state file"
+  type        = string
+  default     = "production/terraform.tfstate"
+}
+
+variable "terraform_state_region" {
+  description = "AWS region for Terraform state bucket"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "terraform_lock_table" {
+  description = "DynamoDB table name for Terraform state locking"
+  type        = string
+  default     = "terraform-lock"
+}
+
 variable "vpc_cidr" {
   description = "VPC CIDR block"
   type        = string

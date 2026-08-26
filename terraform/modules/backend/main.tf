@@ -1,148 +1,74 @@
-resource "kubernetes_namespace" "vaultdao" {
-  metadata {
-    name = "vaultdao"
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
   }
 }
 
-resource "kubernetes_secret" "backend_env" {
-  metadata {
-    name      = "backend-env"
-    namespace = kubernetes_namespace.vaultdao.metadata[0].name
-  }
-
-  data = {
-    DATABASE_URL          = var.database_url
-    REDIS_URL             = var.redis_url
-    RPC_ENDPOINT          = var.rpc_endpoint
-    RPC_BACKUP_ENDPOINTS  = join(",", var.rpc_backup_endpoints)
-    LOG_LEVEL             = var.log_level
-    NODE_ENV              = var.environment
-  }
-
-  type = "Opaque"
+provider "aws" {
+  region = var.aws_region
 }
 
-resource "kubernetes_deployment" "backend" {
-  metadata {
-    name      = "backend"
-    namespace = kubernetes_namespace.vaultdao.metadata[0].name
-    labels = {
-      app       = "backend"
-      version   = "1.0"
-      component = "api"
-    }
+resource "aws_s3_bucket" "terraform_state" {
+  bucket = var.bucket_name
+
+  lifecycle {
+    prevent_destroy = true
   }
 
-  spec {
-    replicas = var.replica_count
-
-    selector {
-      match_labels = {
-        app = "backend"
-      }
-    }
-
-    template {
-      metadata {
-        labels = {
-          app = "backend"
-        }
-      }
-
-      spec {
-        container {
-          image = var.container_image
-          name  = "backend"
-
-          port {
-            container_port = var.container_port
-            name           = "http"
-          }
-
-          env_from {
-            secret_ref {
-              name = kubernetes_secret.backend_env.metadata[0].name
-            }
-          }
-
-          resources {
-            requests = {
-              cpu    = var.cpu_requests
-              memory = var.memory_requests
-            }
-            limits = {
-              cpu    = var.cpu_limits
-              memory = var.memory_limits
-            }
-          }
-
-          liveness_probe {
-            http_get {
-              path   = "/health"
-              port   = var.container_port
-            }
-            initial_delay_seconds = 30
-            period_seconds        = 10
-          }
-
-          readiness_probe {
-            http_get {
-              path   = "/ready"
-              port   = var.container_port
-            }
-            initial_delay_seconds = 5
-            period_seconds        = 5
-          }
-        }
-
-        restart_policy = "Always"
-      }
-    }
+  tags = {
+    Name        = "${var.bucket_name}-bucket"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+    Purpose     = "Terraform remote state storage"
   }
-
-  depends_on = [kubernetes_secret.backend_env]
 }
 
-resource "kubernetes_service" "backend" {
-  metadata {
-    name      = "backend"
-    namespace = kubernetes_namespace.vaultdao.metadata[0].name
+resource "aws_s3_bucket_versioning" "terraform_state" {
+  bucket = aws_s3_bucket.terraform_state.id
+
+  versioning_configuration {
+    status = "Enabled"
   }
-
-  spec {
-    selector = {
-      app = "backend"
-    }
-
-    port {
-      port        = 80
-      target_port = var.container_port
-    }
-
-    type = "LoadBalancer"
-  }
-
-  depends_on = [kubernetes_deployment.backend]
 }
 
-resource "kubernetes_horizontal_pod_autoscaler" "backend" {
-  metadata {
-    name      = "backend-hpa"
-    namespace = kubernetes_namespace.vaultdao.metadata[0].name
-  }
+resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
+  bucket = aws_s3_bucket.terraform_state.id
 
-  spec {
-    scale_target_ref {
-      api_version = "apps/v1"
-      kind        = "Deployment"
-      name        = "backend"
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "AES256"
+      bucket_key_enabled = true
     }
+    bucket_key_enabled = true
+  }
+}
 
-    min_replicas = 2
-    max_replicas = 10
+resource "aws_s3_bucket_public_access_block" "terraform_state" {
+  bucket = aws_s3_bucket.terraform_state.id
 
-    target_cpu_utilization_percentage = 70
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_dynamodb_table" "terraform_locks" {
+  name         = var.dynamodb_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "LockID"
+
+  attribute {
+    name = "LockID"
+    type = "S"
   }
 
-  depends_on = [kubernetes_deployment.backend]
+  tags = {
+    Name        = var.dynamodb_table_name
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+    Purpose     = "Terraform state locking"
+  }
 }

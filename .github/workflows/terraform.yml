@@ -1,0 +1,81 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init \
+          -backend-config="bucket=vaultdao-terraform-state" \
+          -backend-config="key=production/terraform.tfstate" \
+          -backend-config="region=us-east-1" \
+          -backend-config="encrypt=true" \
+          -backend-config="dynamodb_table=terraform-lock"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Format
+        run: terraform fmt -check -diff
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false -out=tfplan
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+          retention-days: 7
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/tfplan', 'base64');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## Terraform Plan Complete\n\nTerraform plan has been generated successfully. The plan artifact is available for download.\n\n**Note:** This is an automated plan check. Review the plan carefully before merging.'
+            });

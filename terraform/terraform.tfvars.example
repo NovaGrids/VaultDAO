@@ -1,8 +1,15 @@
 # VaultDAO Terraform Configuration Example
 # Copy this to terraform.tfvars and fill in with actual values
 
+# AWS Configuration
 aws_region = "us-east-1"
 environment = "production"
+
+# Terraform Remote State Backend
+terraform_state_bucket = "vaultdao-terraform-state"
+terraform_state_key    = "production/terraform.tfstate"
+terraform_state_region = "us-east-1"
+terraform_lock_table   = "terraform-lock"
 
 # VPC Configuration
 vpc_cidr = "10.0.0.0/16"

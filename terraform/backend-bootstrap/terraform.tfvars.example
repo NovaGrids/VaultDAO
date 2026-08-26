@@ -1,0 +1,4 @@
+aws_region          = "us-east-1"
+environment         = "production"
+bucket_name         = "vaultdao-terraform-state"
+dynamodb_table_name = "terraform-lock"
