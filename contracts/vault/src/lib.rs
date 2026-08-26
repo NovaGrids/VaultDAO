@@ -16449,22 +16449,27 @@ impl VaultDAO {
         storage::get_signer_tier(&env, &signer)
     }
 
+    /// Update the full-quorum threshold.
+    ///
+    /// **Deprecated direct path — blocked (issue #1634).**
+    ///
+    /// The full-quorum threshold controls the amount above which every signer
+    /// must approve a proposal.  Changing it unilaterally via an admin call
+    /// defeats the purpose of that protection, so direct updates are no longer
+    /// permitted.
+    ///
+    /// Use [`Self::propose_config_change`] with [`ConfigParam::FullQuorumThreshold`]
+    /// instead — the change will go through the normal governance proposal
+    /// workflow and require supermajority approval.
     pub fn set_full_quorum_threshold(
         env: Env,
         admin: Address,
-        threshold: i128,
+        _threshold: i128,
     ) -> Result<(), VaultError> {
         admin.require_auth();
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-        if threshold < 0 {
-            return Err(VaultError::InvalidAmount);
-        }
-        storage::set_full_quorum_threshold(&env, threshold);
-        env.events()
-            .publish((Symbol::new(&env, "full_quorum_threshold"),), threshold);
-        Ok(())
+        // Always reject: the caller must use propose_config_change /
+        // execute_config_change with ConfigParam::FullQuorumThreshold.
+        Err(VaultError::InsufficientRole)
     }
 
     pub fn get_full_quorum_threshold(env: Env) -> i128 {
@@ -17037,6 +17042,12 @@ impl VaultDAO {
                     return Err(VaultError::InvalidAmount);
                 }
             }
+            // Issue #1634: full_quorum_threshold must be ≥ 0 (0 = disabled).
+            ConfigParam::FullQuorumThreshold => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
         }
 
         let current_ledger = env.ledger().sequence() as u64;
@@ -17131,6 +17142,10 @@ impl VaultDAO {
             }
             ConfigParam::Quorum => {
                 config.quorum = gp.new_value as u32;
+            }
+            // Issue #1634: apply full_quorum_threshold via governance, not direct admin call.
+            ConfigParam::FullQuorumThreshold => {
+                config.full_quorum_threshold = gp.new_value;
             }
         }
 

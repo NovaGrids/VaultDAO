@@ -2880,6 +2880,11 @@ pub enum ConfigParam {
     WeeklyLimit = 3,
     TimelockDelay = 4,
     Quorum = 5,
+    /// Full-quorum threshold — amounts at or above this value require every
+    /// signer to approve. Must be routed through the governance proposal
+    /// workflow; direct admin updates via `set_full_quorum_threshold` are
+    /// rejected (issue #1634).
+    FullQuorumThreshold = 6,
 }
 
 #[contracttype]
