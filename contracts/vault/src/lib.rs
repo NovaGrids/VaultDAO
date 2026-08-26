@@ -3,7 +3,9 @@
 //! A Soroban smart contract implementing M-of-N multisig with RBAC,
 //! proposal workflows, spending limits, reputation, insurance, and batch execution.
 
-#![no_std]
+// `no_std` only for the real (wasm) build: `cargo test` needs `std` for the
+// `proptest` dev-dependency used by `test_spending_limit_invariants_proptest`.
+#![cfg_attr(not(test), no_std)]
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::empty_line_after_outer_attr)]
@@ -324,6 +326,8 @@ fn calculate_impact_score(
 // mod test_fee_cache;
 #[cfg(test)]
 mod test_spending_refund_buckets;
+#[cfg(test)]
+mod test_spending_limit_invariants_proptest;
 // #[cfg(test)]
 // mod test_fan_out_streams;
 // #[cfg(test)]
