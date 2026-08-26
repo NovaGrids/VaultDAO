@@ -34,7 +34,20 @@ Tests arithmetic operations (insurance, stake, fees) for overflow/underflow.
 cargo fuzz run fuzz_arithmetic -- -max_len=4096 -timeout=10
 ```
 
-### 4. Execute Proposal Fuzz Target
+### 4. Create Proposal Fuzz Target
+Also drives the real contract. `contracts/vault/fuzz/fuzz_targets/` had no
+target for `create_proposal` (`propose_transfer_with_deps`), the most
+complex and security-critical entry point for getting funds moving out of
+the vault. Fuzzes amount, recipient, token, memo, conditions, and
+dependencies — including dependencies that reference nonexistent proposal
+IDs — against a pre-seeded vault. The contract must resolve every invalid
+combination to a typed `VaultError`; a panic is a bug in
+`propose_transfer_internal` itself.
+```bash
+cargo fuzz run fuzz_create_proposal -- -max_len=4096 -timeout=10
+```
+
+### 5. Execute Proposal Fuzz Target
 Unlike the targets above, this one drives the **real contract** through
 `VaultDAOClient` (not a reimplemented copy of its logic). It pre-seeds
 several proposals, randomly walks each toward Pending/Approved/Vetoed/
@@ -56,12 +69,15 @@ Run all fuzz targets for 1 hour:
 cargo fuzz run fuzz_spending_limit -- -max_total_time=3600 -timeout=30
 cargo fuzz run fuzz_vote_threshold -- -max_total_time=3600 -timeout=30
 cargo fuzz run fuzz_arithmetic -- -max_total_time=3600 -timeout=30
+cargo fuzz run fuzz_create_proposal -- -max_total_time=3600 -timeout=30
 cargo fuzz run fuzz_execute_proposal -- -max_total_time=3600 -timeout=30
 ```
 
-For issue-tracking purposes, a single 30-minute run of a new target is the
-minimum bar before merging changes to the function it covers:
+For issue-tracking purposes, a single 30-minute run of each new target is
+the minimum bar before merging changes to `propose_transfer_internal` or
+`execute_proposal`:
 ```bash
+cargo fuzz run fuzz_create_proposal -- -max_total_time=1800 -timeout=30
 cargo fuzz run fuzz_execute_proposal -- -max_total_time=1800 -timeout=30
 ```
 
@@ -79,10 +95,11 @@ Findings will be stored in `artifacts/` directory with detailed crash data.
 
 ### Previous Findings
 - `fuzz_spending_limit`, `fuzz_vote_threshold`, `fuzz_arithmetic`: None yet (baseline run completed successfully)
-- `fuzz_execute_proposal`: **Not yet run.** This target was added and reviewed for correctness, but no
-  Rust/cargo-fuzz toolchain was available in the environment that authored it, so the required 30-minute run
-  has not been executed. Before relying on this coverage, run:
+- `fuzz_create_proposal`, `fuzz_execute_proposal`: **Not yet run.** These targets were added and reviewed for
+  correctness, but no Rust/cargo-fuzz toolchain was available in the environment that authored them, so the
+  required 30-minute run has not been executed. Before relying on this coverage, run:
   ```bash
+  cargo fuzz run fuzz_create_proposal -- -max_total_time=1800 -timeout=30
   cargo fuzz run fuzz_execute_proposal -- -max_total_time=1800 -timeout=30
   ```
   and record the outcome (clean run, or crash details + fix) in this section.
