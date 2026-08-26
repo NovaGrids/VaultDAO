@@ -25,6 +25,9 @@ FROM node:20-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 
+# curl is needed for the docker-compose healthcheck; not present on alpine by default
+RUN apk add --no-cache curl
+
 # Configure permissions for the non-root node user
 RUN chown -R node:node /app
 

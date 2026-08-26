@@ -107,7 +107,7 @@ replayed or duplicated chain events do not inflate the rates.
 ### Alert Groups
 
 #### API Performance Alerts
-- **HighErrorRate:** Error rate >5% for 5 minutes
+- **HighErrorRate:** 5xx responses on an endpoint exceed 0.05 req/s, sustained for 5 minutes. Severity `critical`; see [runbook](../docs/reference/PRODUCTION_RUNBOOK.md#7-high-error-rate-response).
 - **HighLatency:** P99 latency >2 seconds for 10 minutes
 
 #### RPC Provider Alerts
@@ -144,6 +144,17 @@ replayed or duplicated chain events do not inflate the rates.
 - **KubernetesPodCrashLooping:** Pod restarting >0.1 times/min
 - **KubernetesNodeNotReady:** Node not ready for 5 minutes
 - **KubernetesPersistentvolumeclaim:** PVC usage >80%
+
+### Testing Alert Rules
+
+`prometheus-rules.test.yaml` contains [promtool unit tests](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/) that feed synthetic sample metrics through the alert expressions and assert whether each alert fires. Run it with:
+
+```bash
+promtool check rules monitoring/prometheus-rules.yaml       # validates syntax
+promtool test rules monitoring/prometheus-rules.test.yaml   # evaluates against sample metrics
+```
+
+Add a new `tests` entry (with `input_series` and `alert_rule_test`) whenever you add or change an alert expression.
 
 ## Setting Up Monitoring
 

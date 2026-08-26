@@ -21,6 +21,7 @@ This document covers production hardening, monitoring, backup strategy, and inci
    - [Event Cursor Reset](#4-event-cursor-reset)
    - [API Key Rotation](#5-api-key-rotation-no-restart-required)
    - [Communication Template](#6-communication-template)
+   - [High Error Rate Response](#7-high-error-rate-response)
 10. [Rollback Procedure for Contract Upgrades](#rollback-procedure-for-contract-upgrades)
 
 ---
@@ -741,6 +742,46 @@ NEXT STEPS:
 
 CONTACT: [Incident commander name and channel]
 ```
+
+### 7. High Error Rate Response
+
+Triggered by the `HighErrorRate` alert (`monitoring/prometheus-rules.yaml`): 5xx responses on `{{ $labels.endpoint }}` have exceeded 0.05 req/s, sustained for 5 minutes.
+
+**Symptoms:**
+- Alert fires with `severity: critical`, `component: backend`
+- Users report failed requests or 500 errors in the UI
+- `/metrics` shows a rising `vaultdao_http_requests_total{status=~"5.."}` count for the affected endpoint
+
+**Triage Steps:**
+
+```bash
+# 1. Confirm the alert and identify the affected endpoint/service from its labels
+curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.labels.alertname=="HighErrorRate")'
+
+# 2. Tail backend logs for the failing endpoint — createRequestLogger logs
+#    every 5xx response with method, path, status, and requestId
+docker compose logs -f backend | grep '"status":5'
+
+# 3. Check recent deploys — a bad release is the most common cause
+git -C /opt/vaultdao log --oneline -5
+
+# 4. Check RPC/dependency health — an upstream Soroban RPC outage often
+#    surfaces here first
+curl -s http://localhost:8787/api/v1/rpc/pool/status \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq .
+
+# 5. If a bad deploy is the cause, roll back (see Rollback Procedure below
+#    for contract upgrades, or redeploy the previous backend image tag)
+```
+
+**Mitigation:**
+- If caused by a bad deploy: roll back to the previous image tag.
+- If caused by an upstream RPC provider outage: the RPC pool should fail over automatically — verify via `/api/v1/rpc/pool/status`; add a healthy endpoint to `STELLAR_RPC_URLS` if all configured providers are down.
+- If caused by a dependency (Redis, SQLite disk pressure): check `docker compose ps` and disk usage; restart the affected dependency if it's unresponsive.
+
+**Prevention:**
+- Keep canary/staged rollouts for backend deploys so a bad release affects a small fraction of traffic first.
+- Ensure `STELLAR_RPC_URLS` lists more than one provider so a single RPC outage doesn't take down the whole pool.
 
 ---
 

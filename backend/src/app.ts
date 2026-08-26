@@ -18,6 +18,9 @@ import { createContractsRouter } from "./modules/contracts/contracts.controller.
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { getCorsOriginsController, addCorsOriginController, removeCorsOriginController } from "./modules/admin/cors.controller.js";
 import { triggerCursorMigrationController, rollbackCursorMigrationController } from "./modules/admin/cursor.controller.js";
+import { AdminAuditLogStore } from "./modules/admin-audit/admin-audit.store.js";
+import { createAdminAuditLogMiddleware } from "./modules/admin-audit/admin-audit.middleware.js";
+import { getAdminAuditLogController } from "./modules/admin-audit/admin-audit.controller.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
@@ -242,6 +245,19 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   // (passthrough), matching the existing API-key passthrough behaviour in dev.
   const hmacMiddleware = createHmacSigningMiddleware(
     () => env.hmacSecret,
+  );
+
+  // ── Admin Audit Log ──────────────────────────────────────────────────────────
+  // Records every call under /admin — including rejected auth attempts — so a
+  // compromised Admin key leaves a trail of what was accessed or changed.
+  const adminAuditLogStore = new AdminAuditLogStore(env.databasePath ?? ":memory:");
+  v1Router.use("/admin", createAdminAuditLogMiddleware(adminAuditLogStore));
+
+  v1Router.get(
+    "/admin/audit-log",
+    adminAuthMiddleware,
+    hmacMiddleware,
+    getAdminAuditLogController(adminAuditLogStore),
   );
 
   v1Router.get("/admin/key-status", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
