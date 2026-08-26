@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { RpcConnectionPool } from "./rpc-pool.js";
+import { requestIdStorage, REQUEST_ID_HEADER } from "./http/requestId.js";
 
 type FetchFn = typeof fetch;
 
@@ -73,4 +74,57 @@ test("RpcConnectionPool: all-down degraded mode returns cached last-known ledger
   const result = await pool.call("getLatestLedger");
   assert.strictEqual(result.degraded, true);
   assert.strictEqual((result.data as any).sequence, 999);
+});
+
+test("RpcConnectionPool: forwards X-Request-ID header to outbound RPC calls", async () => {
+  let capturedHeaders: Record<string, string> | null = null;
+
+  const fetchFn: FetchFn = async (_input, init?) => {
+    capturedHeaders = Object.fromEntries(
+      Object.entries((init?.headers ?? {}) as Record<string, string>),
+    );
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ jsonrpc: "2.0", id: 1, result: { sequence: 100 } }),
+    } as unknown as Response;
+  };
+
+  const pool = new RpcConnectionPool(["http://rpc1"], fetchFn);
+  const testRequestId = "test-request-id-abc123";
+
+  await requestIdStorage.run(testRequestId, () => pool.call("getLatestLedger"));
+
+  assert.ok(capturedHeaders !== null, "fetch should have been called");
+  assert.strictEqual(
+    capturedHeaders![REQUEST_ID_HEADER],
+    testRequestId,
+    `expected ${REQUEST_ID_HEADER} header to equal the ambient request ID`,
+  );
+});
+
+test("RpcConnectionPool: omits X-Request-ID header when no request context is active", async () => {
+  let capturedHeaders: Record<string, string> | null = null;
+
+  const fetchFn: FetchFn = async (_input, init?) => {
+    capturedHeaders = Object.fromEntries(
+      Object.entries((init?.headers ?? {}) as Record<string, string>),
+    );
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ jsonrpc: "2.0", id: 1, result: { sequence: 55 } }),
+    } as unknown as Response;
+  };
+
+  const pool = new RpcConnectionPool(["http://rpc1"], fetchFn);
+  // Call without any AsyncLocalStorage context active
+  await pool.call("getLatestLedger");
+
+  assert.ok(capturedHeaders !== null, "fetch should have been called");
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(capturedHeaders, REQUEST_ID_HEADER),
+    false,
+    `${REQUEST_ID_HEADER} header should not be present when no context is active`,
+  );
 });
