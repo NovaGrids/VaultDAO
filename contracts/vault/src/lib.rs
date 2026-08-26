@@ -89,6 +89,11 @@ const MAX_ATTACHMENTS: u32 = 10;
 /// Enforced at both vault initialization and `set_admin_rotation_delay`.
 const MIN_ADMIN_ROTATION_DELAY: u64 = 1_440;
 
+/// Minimum upgrade timelock duration: 17_280 ledgers ≈ 24 hours at 5 s/ledger.
+/// Enforced at vault initialization. A vault initialized with a shorter delay would
+/// allow near-instant contract replacement, defeating the timelock security guarantee.
+const MIN_UPGRADE_TIMELOCK: u64 = 17_280;
+
 /// Minimum length for an attachment CID (CIDv0 = 46 chars, CIDv1 base32 = 59+ chars)
 const MIN_ATTACHMENT_LEN: u32 = 46;
 
@@ -456,6 +461,8 @@ mod test_tags;
 #[cfg(test)]
 mod test_timelock_ready_queue;
 #[cfg(test)]
+mod test_upgrade_timelock_min;
+#[cfg(test)]
 mod test_var_templates;
 #[cfg(test)]
 mod test_vault_template;
@@ -576,6 +583,10 @@ impl VaultDAO {
         if config.admin_rotation_delay < MIN_ADMIN_ROTATION_DELAY {
             return Err(VaultError::InvalidAmount);
         }
+        // Enforce minimum upgrade timelock duration (≥ 24 h worth of ledgers, issue #1616)
+        if config.upgrade_timelock_delay < MIN_UPGRADE_TIMELOCK {
+            return Err(VaultError::UpgradeTimelockTooShort);
+        }
 
         // Validate threshold strategy
         if let ThresholdStrategy::TimeBased(tb) = &config.threshold_strategy {
@@ -645,6 +656,7 @@ impl VaultDAO {
             arbitration_timeout_ledgers: 17_280 * 30, // 30 days
             approval_timeout_ledgers: 0,
             exec_window_ledgers: 0, // Set via set_exec_window_ledgers post-init (Issue #1349)
+            upgrade_timelock_delay: config.upgrade_timelock_delay,
         };
 
         // Apply staking config from InitConfig
@@ -834,6 +846,8 @@ impl VaultDAO {
             admin_rotation_delay: template.admin_rotation_delay,
             pre_execution_hooks: Vec::new(&env),
             post_execution_hooks: Vec::new(&env),
+            // Templates do not encode an upgrade timelock; use the minimum safe value.
+            upgrade_timelock_delay: MIN_UPGRADE_TIMELOCK,
         };
 
         Self::initialize(env.clone(), admin, init_config)?;
@@ -4089,6 +4103,7 @@ impl VaultDAO {
                 arbitration_timeout_ledgers: 17_280 * 30,
                 approval_timeout_ledgers: 0,
                 exec_window_ledgers: 0,
+                upgrade_timelock_delay: MIN_UPGRADE_TIMELOCK,
             }
         });
         (config.quorum, config.quorum_percentage)
