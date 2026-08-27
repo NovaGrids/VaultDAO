@@ -79,6 +79,20 @@ jobs:
           name: contract-coverage
           fail_ci_if_error: false
 
+      - name: Check WASM size against Soroban limit
+        run: |
+          LIMIT=262144
+          WASM_PATH="target/wasm32-unknown-unknown/release/vault_dao.wasm"
+          SIZE=$(stat -c%s "$WASM_PATH")
+          SIZE_KB=$((SIZE / 1024))
+          echo "WASM size: $SIZE bytes (${SIZE_KB} KB)"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::error::WASM size $SIZE bytes exceeds Soroban limit of $LIMIT bytes (256 KB)"
+            exit 1
+          else
+            echo "WASM size OK: $SIZE / $LIMIT bytes"
+          fi
+
   backend-checks:
     name: Backend Checks
     runs-on: ubuntu-latest
