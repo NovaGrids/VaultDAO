@@ -188,6 +188,17 @@ pub struct Config {
     pub approval_timeout_ledgers: u64,
     /// Execution window in ledgers after approval before the proposal auto-expires (0 = no window).
     pub exec_window_ledgers: u64,
+
+    // ---- Issue #1093: Signer Participation Scoring ----
+    /// Minimum acceptable participation rate (0-100). Below this for
+    /// `low_participation_streak_n` in a row triggers an alert.
+    pub min_participation_rate: u32,
+    /// Number of consecutive below-threshold proposals before a
+    /// `LowParticipationAlert` event is emitted.
+    pub low_participation_streak_n: u32,
+    /// Window size (in proposals, max 100) used when evaluating whether a
+    /// signer is currently below `min_participation_rate`.
+    pub participation_rate_window: u32,
 }
 
 /// Audit record for a cancelled proposal
@@ -372,6 +383,50 @@ impl Role {
 pub struct RoleAssignment {
     pub addr: Address,
     pub role: Role,
+}
+
+// =========================================================
+// Issue #1093: Proposal Analytics Aggregator / Signer Participation Scoring
+// =========================================================
+
+/// Per-signer voting participation record. Scores are advisory only —
+/// they never block voting or proposal execution.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SignerParticipationScore {
+    pub signer: Address,
+    /// Total proposals this signer has explicitly approved or abstained on.
+    pub proposals_voted: u32,
+    /// Total proposals that expired while this signer was eligible but did not vote.
+    pub proposals_missed: u32,
+    /// Ledger sequence of this signer's most recent vote (0 = never voted).
+    pub last_active_ledger: u32,
+    /// Circular buffer of the last up-to-100 outcomes (true = voted, false = missed),
+    /// in insertion order, oldest-overwritten-first once full.
+    pub history: Vec<bool>,
+    /// Next write index into `history` once it reaches its 100-entry cap.
+    pub history_cursor: u32,
+    /// Number of consecutive proposals for which the rate over
+    /// `Config.participation_rate_window` has been below `Config.min_participation_rate`.
+    pub consecutive_low_periods: u32,
+    /// Ledger sequence when participation first dropped below the threshold in the
+    /// current low-participation streak (cleared once participation recovers).
+    /// Used to gate force-rotation eligibility (30-day sustained threshold).
+    pub low_participation_since_ledger: Option<u32>,
+}
+
+/// A pending force-rotation mini-proposal for an underperforming signer,
+/// requiring `Config.threshold` distinct signer approvals before it executes
+/// (Issue #1093: "Force-rotation requires separate governance vote").
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ForceRotationRequest {
+    pub id: u64,
+    pub target: Address,
+    pub replacement: Address,
+    pub approvals: Vec<Address>,
+    pub created_at: u32,
+    pub executed: bool,
 }
 
 /// Granular permissions for fine-grained access control

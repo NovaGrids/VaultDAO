@@ -2032,3 +2032,33 @@ pub fn emit_proposal_auto_cancelled_limit_exceeded(
         (reason, admin.clone()),
     );
 }
+
+/// Emit when a signer's rolling participation rate has stayed below
+/// `Config.min_participation_rate` for `Config.low_participation_consecutive_proposals`
+/// proposals in a row (Issue #1093).
+pub fn emit_low_participation_alert(
+    env: &Env,
+    signer: &Address,
+    participation_rate: u32,
+    threshold: u32,
+    consecutive_low_periods: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "low_participation_alert"), signer.clone()),
+        (participation_rate, threshold, consecutive_low_periods),
+    );
+}
+
+/// Emit when an underperforming signer is force-rotated out via a completed
+/// force-rotation governance vote (Issue #1093).
+pub fn emit_signer_force_rotated(
+    env: &Env,
+    target: &Address,
+    replacement: &Address,
+    request_id: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "signer_force_rotated"), request_id),
+        (target.clone(), replacement.clone()),
+    );
+}
