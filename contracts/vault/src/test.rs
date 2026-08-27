@@ -6910,31 +6910,31 @@ fn test_recurring_payment_grace_period() {
 
     // 2. Stop/cancel it. It should transition to Stopping instead of Stopped because grace_executions > 0.
     client.stop_recurring_payment(&admin, &payment_id);
-    let payment = client.get_recurring_payment(&payment_id).unwrap();
+    let payment = client.get_recurring_payment(&payment_id);
     assert_eq!(payment.status, crate::types::RecurringStatus::Stopping);
     assert_eq!(payment.grace_executions, 2);
 
     // 3. Execution 1: should succeed, and decrement grace_executions to 1.
     env.ledger().with_mut(|li| {
-        li.sequence = 1001; // due at 1000
+        li.sequence_number = 1001; // due at 1000
     });
     client.execute_recurring_payment(&payment_id);
-    let payment = client.get_recurring_payment(&payment_id).unwrap();
+    let payment = client.get_recurring_payment(&payment_id);
     assert_eq!(payment.status, crate::types::RecurringStatus::Stopping);
     assert_eq!(payment.grace_executions, 1);
 
     // 4. Execution 2: should succeed, and transition to Stopped.
     env.ledger().with_mut(|li| {
-        li.sequence = 2002; // due at 2001
+        li.sequence_number = 2002; // due at 2001
     });
     client.execute_recurring_payment(&payment_id);
-    let payment = client.get_recurring_payment(&payment_id).unwrap();
+    let payment = client.get_recurring_payment(&payment_id);
     assert_eq!(payment.status, crate::types::RecurringStatus::Stopped);
     assert_eq!(payment.grace_executions, 0);
 
     // 5. Execution 3: should fail now that it is Stopped.
     env.ledger().with_mut(|li| {
-        li.sequence = 3003;
+        li.sequence_number = 3003;
     });
     let result = client.try_execute_recurring_payment(&payment_id);
     assert!(result.is_err());

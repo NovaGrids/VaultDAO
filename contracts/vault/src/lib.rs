@@ -16797,7 +16797,7 @@ impl VaultDAO {
     /// instead — the change will go through the normal governance proposal
     /// workflow and require supermajority approval.
     pub fn set_full_quorum_threshold(
-        env: Env,
+        _env: Env,
         admin: Address,
         _threshold: i128,
     ) -> Result<(), VaultError> {
@@ -17026,8 +17026,7 @@ impl VaultDAO {
         memo: Symbol,
         interval: u64,
         max_missed_payments: u32,
-        skip_holidays: bool,
-        holiday_behavior: HolidayBehavior,
+        holiday_behavior: Option<HolidayBehavior>,
         jitter_window: u32,
         grace_executions: u32,
     ) -> Result<u64, VaultError> {
@@ -17044,8 +17043,8 @@ impl VaultDAO {
             grace_executions,
         )?;
         let mut payment = storage::get_recurring_payment(&env, id)?;
-        payment.skip_holidays = skip_holidays;
-        payment.holiday_behavior = holiday_behavior;
+        payment.skip_holidays = holiday_behavior.is_some();
+        payment.holiday_behavior = holiday_behavior.unwrap_or(HolidayBehavior::PayLate);
         storage::set_recurring_payment(&env, &payment);
         Ok(id)
     }

@@ -1987,8 +1987,8 @@ pub struct TimeWeightedConfig {
     pub early_unlock_penalty_bps: u32,
 }
 
-impl TimeWeightedConfig {
-    pub fn default() -> Self {
+impl Default for TimeWeightedConfig {
+    fn default() -> Self {
         const DAY_LEDGERS: u64 = 17_280;
         TimeWeightedConfig {
             enabled: false,

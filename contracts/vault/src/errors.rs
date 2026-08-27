@@ -459,7 +459,7 @@ pub enum VaultError {
     // Issue #1527: Veto config validation
     // =========================================================
     /// veto_addresses is non-empty but veto_window_ledgers is 0 (veto would be silently disabled)
-    InvalidVetoConfig = 1129,
+    InvalidVetoConfig = 1136,
 }
 
 // Compatibility markers for CI source checks:
