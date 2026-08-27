@@ -434,6 +434,12 @@ pub enum VaultError {
     PauseCooldownActive = 1127,
     /// Caller is not an emergency signer
     NotEmergencySigner = 1128,
+
+    // =========================================================
+    // Issue #1527: Veto config validation
+    // =========================================================
+    /// veto_addresses is non-empty but veto_window_ledgers is 0 (veto would be silently disabled)
+    InvalidVetoConfig = 1129,
 }
 
 // Compatibility markers for CI source checks:

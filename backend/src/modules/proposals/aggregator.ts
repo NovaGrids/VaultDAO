@@ -582,7 +582,7 @@ export class ProposalActivityAggregator {
   public clear(): void {
     this.proposalCache.clear();
     this.proposalLatestActivity.clear();
-    console.debug("[proposal-aggregator] cleared");
+    this.logger.debug("cleared");
   }
 
   /**
@@ -634,10 +634,11 @@ export class ProposalActivityAggregator {
     }
 
     if (evicted.length > 0) {
-      console.warn(
-        `[proposal-aggregator] evicted ${evicted.length} oldest proposals to enforce maxProposals=${this.maxProposals}`,
-        { evictedProposalIds: evicted },
-      );
+      this.logger.warn("evicted oldest proposals to enforce maxProposals", {
+        evictedCount: evicted.length,
+        maxProposals: this.maxProposals,
+        evictedProposalIds: evicted,
+      });
     }
   }
 

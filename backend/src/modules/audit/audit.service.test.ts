@@ -4,6 +4,51 @@ import { createHash } from "node:crypto";
 import { AuditService, AuditRpcError, verifyAuditChain, streamAuditCsv } from "./audit.service.js";
 import { AuditAction, AUDIT_ACTION_DISCRIMINANT } from "./audit.types.js";
 import type { AuditEntry } from "./audit.types.js";
+import { encodeCursor, decodeCursor } from "../../shared/pagination.js";
+
+/**
+ * A fake RPC backend that behaves like a real offset/limit paginated audit
+ * log: it decodes the `{ offset, limit }` embedded in the (stubbed)
+ * transaction payload built by `buildInvocationXdr` and slices a mutable,
+ * in-memory `entries` array accordingly. Lets tests exercise the service's
+ * real forward/backward windowing logic (not just a single canned response),
+ * and lets a test mutate `entries` between two calls to prove cursor
+ * stability under concurrent inserts.
+ */
+function makeFakeAuditRpc(entries: AuditEntry[]) {
+  const fetchFn: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as {
+      params: { transaction: string };
+    };
+    const decoded = JSON.parse(
+      Buffer.from(body.params.transaction, "base64").toString("utf8"),
+    ) as { offset: number; limit: number };
+    const page = entries.slice(decoded.offset, decoded.offset + decoded.limit);
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { entries: page, total: entries.length },
+      }),
+    } as Response;
+  };
+  return fetchFn;
+}
+
+function makeSimpleEntry(id: number): AuditEntry {
+  return {
+    id: String(id),
+    action: AuditAction.SignerAdded,
+    actor: "GABC",
+    target: "GDEF",
+    timestamp: `2026-01-0${(id % 9) + 1}T00:00:00.000Z`,
+    prev_hash: "0",
+    hash: "0",
+  };
+}
 
 function mockFetch(responseBody: unknown, status = 200): typeof fetch {
   return async (_url: RequestInfo | URL, _init?: RequestInit) => {

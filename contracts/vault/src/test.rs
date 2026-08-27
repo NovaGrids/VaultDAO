@@ -154,6 +154,244 @@ fn test_multisig_approval() {
     assert_eq!(proposal.unlock_ledger, 0); // No timelock
 }
 
+// ============================================================================
+// Issue #1527: veto_addresses set but veto_window_ledgers == 0 must be rejected
+// ============================================================================
+
+#[test]
+fn test_initialize_rejects_veto_addresses_with_zero_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let veto_signer = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let mut config = default_init_config(&env, signers, 1);
+    let mut veto_addresses = Vec::new(&env);
+    veto_addresses.push_back(veto_signer.clone());
+    config.veto_addresses = veto_addresses;
+    config.veto_window_ledgers = 0;
+
+    let result = client.try_initialize(&admin, &config);
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidVetoConfig)));
+}
+
+#[test]
+fn test_initialize_allows_veto_addresses_with_nonzero_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let veto_signer = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let mut config = default_init_config(&env, signers, 1);
+    let mut veto_addresses = Vec::new(&env);
+    veto_addresses.push_back(veto_signer.clone());
+    config.veto_addresses = veto_addresses;
+    config.veto_window_ledgers = 100;
+
+    let result = client.try_initialize(&admin, &config);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_initialize_allows_disabled_veto_default() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    // Default/disabled case: empty veto_addresses and veto_window_ledgers == 0 must
+    // continue to succeed (this is the configuration used by virtually every other
+    // test in this file via `default_init_config`).
+    let config = default_init_config(&env, signers, 1);
+    assert!(config.veto_addresses.is_empty());
+    assert_eq!(config.veto_window_ledgers, 0);
+
+    let result = client.try_initialize(&admin, &config);
+    assert!(result.is_ok());
+}
+
+// ============================================================================
+// Issue #1522: explicit reject_proposal function
+// ============================================================================
+
+#[test]
+fn test_reject_proposal_transitions_to_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let metrics_before = client.get_metrics();
+
+    client.reject_proposal(&signer2, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
+
+    let metrics_after = client.get_metrics();
+    assert_eq!(metrics_after.rejected_count, metrics_before.rejected_count + 1);
+}
+
+#[test]
+fn test_reject_proposal_non_signer_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let not_a_signer = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let result = client.try_reject_proposal(&not_a_signer, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::NotASigner)));
+}
+
+#[test]
+fn test_reject_proposal_non_pending_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Case 1: already Approved
+    let proposal_id_1 = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test1"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id_1);
+    client.approve_proposal(&signer2, &proposal_id_1);
+    let proposal = client.get_proposal(&proposal_id_1);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+
+    let result = client.try_reject_proposal(&signer2, &proposal_id_1);
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotPending)));
+
+    // Case 2: already Rejected
+    // Use a different amount so this doesn't collide with proposal_id_1's dedup
+    // fingerprint (amount + recipient + token).
+    let proposal_id_2 = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &101,
+        &Symbol::new(&env, "test2"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.reject_proposal(&signer2, &proposal_id_2);
+    let proposal = client.get_proposal(&proposal_id_2);
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
+
+    let result = client.try_reject_proposal(&signer2, &proposal_id_2);
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotPending)));
+}
+
 #[test]
 fn test_timelock_violation() {
     let env = Env::default();

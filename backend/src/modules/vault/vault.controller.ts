@@ -3,6 +3,9 @@ import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 import type { VaultService } from "./vault.service.js";
 import type { CacheManager } from "../../shared/cache/cache-manager.js";
+import { createLogger } from "../../shared/logging/logger.js";
+
+const logger = createLogger("vault-controller");
 
 const STELLAR_ID_RE = /^C[A-Z0-9]{55}$/;
 const CACHE_TTL_MS = 60_000; // 60 seconds caching
@@ -60,11 +63,10 @@ export function createVaultConfigController(
 
       success(response, config);
     } catch (err) {
-      const reqId = request.headers["x-request-id"] ?? (request as any).requestId;
-      console.error(
-        `[vault-controller] Failed to fetch vault config for ${contractId} (reqId=${reqId}):`,
-        err,
-      );
+      logger.error("Failed to fetch vault config", {
+        contractId,
+        error: err instanceof Error ? err.message : String(err),
+      });
 
       error(response, {
         message: err instanceof Error ? err.message : "Failed to simulate transaction on RPC",

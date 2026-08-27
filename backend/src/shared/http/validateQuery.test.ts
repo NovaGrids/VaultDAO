@@ -429,8 +429,19 @@ test("parseCursorPagination parses a valid cursor param", () => {
   }
 });
 
-test("parseCursorPagination treats invalid cursor as null (graceful fallback)", () => {
+test("parseCursorPagination rejects a cursor that was supplied but can't be decoded", () => {
+  // A missing cursor (see next test) degrades gracefully to page one; a
+  // cursor that IS supplied but is malformed is an error, not a silent
+  // fallback — the client asked to resume a specific position.
   const r = parseCursorPagination({ cursor: "this-is-garbage" });
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.match(r.message, /cursor/i);
+  }
+});
+
+test("parseCursorPagination treats an absent cursor as page one (no error)", () => {
+  const r = parseCursorPagination({});
   assert.equal(r.ok, true);
   if (r.ok) {
     assert.equal(r.value.cursor, null);
@@ -464,6 +475,18 @@ test("validateCursorPagination sends 400 on invalid limit", () => {
   const body = getBody() as { success: boolean; error: { message: string; code: string } };
   assert.equal(body.success, false);
   assert.match(body.error.message, /limit/i);
+  assert.equal(body.error.code, ErrorCode.BAD_REQUEST);
+});
+
+test("validateCursorPagination sends 400 on a malformed cursor that was explicitly supplied", () => {
+  const { res, getStatus, getBody } = mockResponse();
+  const req = { query: { cursor: "garbage-not-a-cursor" } } as unknown as Request;
+  const out = validateCursorPagination(req, res);
+  assert.equal(out, null);
+  assert.equal(getStatus(), 400);
+  const body = getBody() as { success: boolean; error: { message: string; code: string } };
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /cursor/i);
   assert.equal(body.error.code, ErrorCode.BAD_REQUEST);
 });
 

@@ -4,9 +4,13 @@ import { ErrorCode } from "../../shared/http/errorCodes.js";
 import {
   validatePagination,
   validateRequiredString,
-  validateCursorPagination,
-  encodeCursor,
 } from "../../shared/http/validateQuery.js";
+import {
+  validateCursorPagination,
+  resolveIndexCursorWindow,
+  buildCursorWindow,
+} from "../../shared/pagination.js";
+import { createLogger } from "../../shared/logging/logger.js";
 import type { ProposalActivityAggregator } from "./aggregator.js";
 import type { ProposalActivityPersistence } from "./types.js";
 import type { ProposalActivityRecord } from "./types.js";
@@ -15,6 +19,26 @@ import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 /** TTL for proposal list cache: 30 seconds */
 const PROPOSALS_CACHE_TTL_MS = 30_000;
 
+const logger = createLogger("proposals-controller");
+
+/**
+ * Warns when a request uses the legacy `offset`/`page` pagination params so
+ * clients can be nudged toward cursor-based pagination (`?cursor=`), which is
+ * stable across concurrent inserts/deletes. The legacy request is still
+ * served — this is a deprecation notice, not a breaking change.
+ */
+function warnIfLegacyPaginationUsed(req: { query: Record<string, unknown> }): void {
+  const legacyPageUsed = req.query.page !== undefined;
+  const legacyOffsetUsed = req.query.offset !== undefined;
+  if (legacyPageUsed || legacyOffsetUsed) {
+    logger.warn(
+      `Deprecated pagination parameter "${legacyPageUsed ? "page" : "offset"}" used. ` +
+        `Offset-based pagination can skip/duplicate items when the underlying list changes ` +
+        `between requests — migrate to cursor-based pagination via the "cursor" query parameter.`,
+    );
+  }
+}
+
 export function getAllProposalsController(
   persistence: ProposalActivityPersistence,
   cache?: CacheAdapter<unknown>,
@@ -22,6 +46,8 @@ export function getAllProposalsController(
   return async (req, res) => {
     const contractId = validateRequiredString(req, res, "contractId");
     if (!contractId) return;
+
+    warnIfLegacyPaginationUsed(req as unknown as { query: Record<string, unknown> });
 
     // Support cursor-based pagination when `cursor` param is present (or `limit`
     // alone is provided without `offset`), and fall back to offset pagination.
@@ -46,33 +72,30 @@ export function getAllProposalsController(
         const all = await persistence.getByContractId(contractId);
         const total = all.length;
 
-        let startIndex = 0;
-        if (cursorQuery.cursor) {
-          const { lastId, offset: fallbackOffset } = cursorQuery.cursor;
-          // Seek by lastId first; fall back to offset if not found
-          const foundIdx = all.findIndex(
-            (r: ProposalActivityRecord) => r.activityId === lastId,
-          );
-          startIndex = foundIdx !== -1 ? foundIdx + 1 : fallbackOffset;
-        }
-
-        const endIndex = Math.min(startIndex + cursorQuery.limit, total);
+        const { startIndex, endIndex, direction } = resolveIndexCursorWindow({
+          items: all,
+          cursor: cursorQuery.cursor,
+          limit: cursorQuery.limit,
+          getId: (r: ProposalActivityRecord) => r.activityId,
+        });
         const data = all.slice(startIndex, endIndex);
 
-        // Build next_cursor if there are more items after this page
-        let nextCursor: string | null = null;
-        if (endIndex < total) {
-          const lastItem = data[data.length - 1];
-          if (lastItem) {
-            nextCursor = encodeCursor({ lastId: lastItem.activityId, offset: endIndex });
-          }
-        }
+        const { nextCursor, prevCursor, hasMore } = buildCursorWindow({
+          startIndex,
+          endIndex,
+          total,
+          direction,
+          firstId: data[0]?.activityId,
+          lastId: data[data.length - 1]?.activityId,
+        });
 
         const payload = {
           data,
           total,
           limit: cursorQuery.limit,
           nextCursor,
+          prevCursor,
+          hasMore,
         };
 
         if (cache) {
