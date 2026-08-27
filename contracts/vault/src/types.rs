@@ -712,6 +712,8 @@ pub enum RecurringStatus {
     Paused = 1,
     /// Payment has been permanently stopped and cannot be resumed
     Stopped = 2,
+    /// Payment is in the process of stopping (within its grace period)
+    Stopping = 3,
 }
 
 /// How a recurring payment due on a non-business ledger is adjusted.
@@ -757,6 +759,8 @@ pub struct RecurringPayment {
     pub status: RecurringStatus,
     /// Maximum missed payments to catch up (0 = unlimited)
     pub max_missed_payments: u32,
+    /// Number of grace period executions allowed before Stopped
+    pub grace_executions: u32,
     /// Ledger at which the payment was paused (0 = not paused)
     pub paused_at_ledger: u64,
     /// Whether holiday/weekend adjustment is enabled.

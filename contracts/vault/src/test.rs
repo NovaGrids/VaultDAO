@@ -6468,6 +6468,80 @@ fn test_list_proposals_empty() {
     assert_eq!(proposals.len(), 0);
 }
 
+/// get_proposals returns empty vec when no proposals exist.
+#[test]
+fn test_get_proposals_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let proposals = client.get_proposals(&0u64, &10u32);
+    assert_eq!(proposals.len(), 0);
+}
+
+/// get_proposals returns paginated proposals and respects the 50 cap.
+#[test]
+fn test_get_proposals_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let user = Address::generate(&env);
+
+    // Create 3 proposals
+    let mut proposal_ids = soroban_sdk::Vec::new(&env);
+    for _ in 0..3 {
+        let p_id = client.propose_transfer(
+            &admin,
+            &user,
+            &token,
+            &100,
+            &Symbol::new(&env, "test"),
+            &Priority::Normal,
+            &soroban_sdk::Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        proposal_ids.push_back(p_id);
+    }
+
+    // Retrieve all 3
+    let all = client.get_proposals(&0u64, &10u32);
+    assert_eq!(all.len(), 3);
+
+    // Test offset (skip the first 1, get next 2)
+    let page = client.get_proposals(&1u64, &2u32);
+    assert_eq!(page.len(), 2);
+    assert_eq!(page.get(0).unwrap().id, proposal_ids.get(1).unwrap());
+    assert_eq!(page.get(1).unwrap().id, proposal_ids.get(2).unwrap());
+
+    // Test cap (limit > 50 should be capped at 50, but we only have 3)
+    let capped = client.get_proposals(&0u64, &100u32);
+    assert_eq!(capped.len(), 3);
+}
+
 // ============================================================================
 // Issue #1634: full_quorum_threshold must go through proposal workflow
 // ============================================================================
@@ -6559,4 +6633,71 @@ fn test_propose_config_change_rejects_negative_full_quorum_threshold() {
         &(-1i128),
     );
     assert!(result.is_err(), "Negative full_quorum_threshold should be rejected");
+}
+
+#[test]
+fn test_recurring_payment_grace_period() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &100_000);
+
+    let recipient = Address::generate(&env);
+
+    // 1. Schedule a recurring payment with 2 grace executions
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "payroll"),
+        &1000u64, // interval
+        &0u32,    // max_missed_payments
+        &0u32,    // jitter_window
+        &2u32,    // grace_executions
+    );
+
+    // 2. Stop/cancel it. It should transition to Stopping instead of Stopped because grace_executions > 0.
+    client.stop_recurring_payment(&admin, &payment_id);
+    let payment = client.get_recurring_payment(&payment_id).unwrap();
+    assert_eq!(payment.status, crate::types::RecurringStatus::Stopping);
+    assert_eq!(payment.grace_executions, 2);
+
+    // 3. Execution 1: should succeed, and decrement grace_executions to 1.
+    env.ledger().with_mut(|li| {
+        li.sequence = 1001; // due at 1000
+    });
+    client.execute_recurring_payment(&payment_id);
+    let payment = client.get_recurring_payment(&payment_id).unwrap();
+    assert_eq!(payment.status, crate::types::RecurringStatus::Stopping);
+    assert_eq!(payment.grace_executions, 1);
+
+    // 4. Execution 2: should succeed, and transition to Stopped.
+    env.ledger().with_mut(|li| {
+        li.sequence = 2002; // due at 2001
+    });
+    client.execute_recurring_payment(&payment_id);
+    let payment = client.get_recurring_payment(&payment_id).unwrap();
+    assert_eq!(payment.status, crate::types::RecurringStatus::Stopped);
+    assert_eq!(payment.grace_executions, 0);
+
+    // 5. Execution 3: should fail now that it is Stopped.
+    env.ledger().with_mut(|li| {
+        li.sequence = 3003;
+    });
+    let result = client.try_execute_recurring_payment(&payment_id);
+    assert!(result.is_err());
 }

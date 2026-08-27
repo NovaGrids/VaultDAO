@@ -4484,6 +4484,13 @@ impl VaultDAO {
         proposals
     }
 
+    /// Get full proposal objects in ascending creation order (paginated).
+    ///
+    /// Identical to `list_proposals` but accepts `limit` as a `u32` and caps it at 50.
+    pub fn get_proposals(env: Env, offset: u64, limit: u32) -> Vec<Proposal> {
+        Self::list_proposals(env, offset, limit as u64)
+    }
+
     /// Get current pooled slash insurance balance
     pub fn get_insurance_pool(env: Env, token_addr: Address) -> i128 {
         storage::get_insurance_pool(&env, &token_addr)
@@ -5370,6 +5377,7 @@ impl VaultDAO {
         interval: u64,
         max_missed_payments: u32,
         jitter_window: u32,
+        grace_executions: u32,
     ) -> Result<u64, VaultError> {
         proposer.require_auth();
 
@@ -5430,6 +5438,7 @@ impl VaultDAO {
             payment_count: 0,
             status: crate::types::RecurringStatus::Active,
             max_missed_payments,
+            grace_executions,
             paused_at_ledger: 0,
             skip_holidays: false,
             holiday_behavior: HolidayBehavior::PayLate,
@@ -6129,6 +6138,11 @@ impl VaultDAO {
         if payment.status == crate::types::RecurringStatus::Stopped {
             return Err(VaultError::ProposalNotFound);
         }
+        if payment.status == crate::types::RecurringStatus::Stopping && payment.grace_executions == 0 {
+            payment.status = crate::types::RecurringStatus::Stopped;
+            storage::set_recurring_payment(&env, &payment);
+            return Err(VaultError::ProposalNotFound);
+        }
         if payment.status == crate::types::RecurringStatus::Paused {
             return Err(VaultError::RecurringPaymentPaused);
         }
@@ -6245,6 +6259,14 @@ impl VaultDAO {
                 payment.jitter_offset,
             );
         }
+        if payment.status == crate::types::RecurringStatus::Stopping {
+            if payment.grace_executions > 0 {
+                payment.grace_executions = payment.grace_executions.saturating_sub(1);
+            }
+            if payment.grace_executions == 0 {
+                payment.status = crate::types::RecurringStatus::Stopped;
+            }
+        }
         payment.payment_count += total_payments as u32;
         storage::set_recurring_payment(&env, &payment);
         storage::extend_instance_ttl(&env);
@@ -6359,7 +6381,11 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        payment.status = crate::types::RecurringStatus::Stopped;
+        if payment.grace_executions > 0 {
+            payment.status = crate::types::RecurringStatus::Stopping;
+        } else {
+            payment.status = crate::types::RecurringStatus::Stopped;
+        }
         storage::set_recurring_payment(&env, &payment);
         storage::extend_instance_ttl(&env);
 
@@ -16701,6 +16727,7 @@ impl VaultDAO {
         skip_holidays: bool,
         holiday_behavior: HolidayBehavior,
         jitter_window: u32,
+        grace_executions: u32,
     ) -> Result<u64, VaultError> {
         let id = Self::schedule_payment(
             env.clone(),
@@ -16712,6 +16739,7 @@ impl VaultDAO {
             interval,
             max_missed_payments,
             jitter_window,
+            grace_executions,
         )?;
         let mut payment = storage::get_recurring_payment(&env, id)?;
         payment.skip_holidays = skip_holidays;

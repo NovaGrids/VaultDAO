@@ -204,6 +204,7 @@ fn test_remove_token_with_active_payment_blocked() {
     client.schedule_payment(
         &admin, &recipient, &token_b, &100i128,
         &Symbol::new(&env, "salary"), &1000u64,
+        &0u32, &0u32, &0u32,
     );
 
     // Attempt to remove token_b — should fail
