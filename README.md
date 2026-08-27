@@ -5,6 +5,7 @@
   <img src="https://img.shields.io/badge/Security-Rust-orange" alt="Rust" />
   <img src="https://img.shields.io/badge/Status-Testnet-green" alt="Status" />
   <img src="https://github.com/NovaGrids/VaultDAO/actions/workflows/test.yml/badge.svg?branch=main" alt="CI Status" />
+  <img src="https://github.com/NovaGrids/VaultDAO/actions/workflows/bundle-size.yml/badge.svg?branch=main" alt="Bundle Size" />
 </div>
 
 **VaultDAO** is a Soroban-native treasury management dApp for high-value Stellar organizations. It brings the robust security of multi-signature wallets to the speed and efficiency of the Soroban smart contract platform.

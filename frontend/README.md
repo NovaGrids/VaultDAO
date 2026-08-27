@@ -149,6 +149,18 @@ To preview the production build locally:
 npm run preview
 ```
 
+### Bundle Size Budget
+
+CI fails a PR if the production bundle grows past budget. Check locally after building:
+```bash
+npm run build
+npm run size
+```
+Budgets are defined in the `size-limit` field of `package.json` and enforced with the
+`size-limit` CLI (see `.github/workflows/bundle-size.yml`):
+- `main.js` (Vite's hashed entry chunk, `dist/assets/index-*.js`) — gzipped, < 500 KB
+- `vendor.js` (combined `manualChunks` vendor-*.js chunks from `vite.config.ts`) — gzipped, < 1 MB
+
 ## Stellar Testnet Setup
 
 To interact with the Stellar testnet, you'll need a funded account and basic understanding of the network.

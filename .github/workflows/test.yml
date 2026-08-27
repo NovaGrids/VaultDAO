@@ -50,6 +50,9 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Run property tests (proptest spending-limit invariants)
+        run: cargo test --verbose spending_limit_invariants_proptest
+
       - name: Run tests with coverage
         continue-on-error: true
         run: cargo tarpaulin --out Xml --timeout 300 --exclude-files tests/* --output-dir coverage
