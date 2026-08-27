@@ -42,4 +42,5 @@ export const env = {
     'VITE_PRICE_FEED_URL',
     'https://api.coingecko.com/api/v3/simple/price',
   ),
+  walletIdleTimeoutMs: parseInt(optionalEnv('VITE_WALLET_IDLE_TIMEOUT_MS', '900000'), 10),
 } as const;
