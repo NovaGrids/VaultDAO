@@ -244,10 +244,10 @@ export class SnapshotService {
           break;
         } catch (saveError) {
           if (attempt < MAX_RETRIES && isTransientError(saveError)) {
-            console.warn(
-              `[snapshot-service] saveSnapshot attempt ${attempt} failed, retrying...`,
-              saveError,
-            );
+            logger.warn("saveSnapshot attempt failed, retrying", {
+              attempt,
+              error: String(saveError),
+            });
             await sleep(100 * attempt);
           } else {
             throw saveError;
@@ -263,7 +263,7 @@ export class SnapshotService {
         lastProcessedLedger: event.metadata.ledger,
       };
     } catch (error) {
-      console.error("[snapshot-service] Error processing event:", error);
+      logger.error("Error processing event", { error: String(error) });
       return {
         success: false,
         signersUpdated: 0,
@@ -308,9 +308,10 @@ export class SnapshotService {
 
         if (consecutiveErrors >= maxConsecutiveErrors) {
           const skipped = events.length - (i + 1);
-          console.warn(
-            `[snapshot-service] max consecutive errors (${maxConsecutiveErrors}) reached — skipping remaining ${skipped} events in batch`,
-          );
+          logger.warn("max consecutive errors reached — skipping remaining events in batch", {
+            maxConsecutiveErrors,
+            skipped,
+          });
           return {
             success: false,
             signersUpdated: totalSignersUpdated,
@@ -393,7 +394,7 @@ export class SnapshotService {
       // Process all events
       return await this.processEvents(filteredEvents);
     } catch (error) {
-      console.error("[snapshot-service] Error rebuilding snapshot:", error);
+      logger.error("Error rebuilding snapshot", { error: String(error) });
       return {
         success: false,
         signersUpdated: 0,
@@ -420,9 +421,7 @@ export class SnapshotService {
     endLedger: number,
   ): Promise<SnapshotUpdateResult> {
     if (!this.rpc) {
-      console.warn(
-        "[snapshot-service] rebuildFromRpc called but no RPC client is configured — skipping",
-      );
+      logger.warn("rebuildFromRpc called but no RPC client is configured — skipping");
       return {
         success: true,
         signersUpdated: 0,
@@ -478,9 +477,11 @@ export class SnapshotService {
           const inRange = rawEvents.filter((e) => e.ledger <= batchEnd);
           const normalized = inRange.map((e) => EventNormalizer.normalize(e));
 
-          console.log(
-            `[snapshot-service] rebuildFromRpc batch ledgers ${currentLedger}-${batchEnd}: ${normalized.length} events`,
-          );
+          logger.info("rebuildFromRpc batch processed", {
+            startLedger: currentLedger,
+            endLedger: batchEnd,
+            eventCount: normalized.length,
+          });
 
           if (normalized.length > 0) {
             const result = await this.processEvents(normalized);
@@ -497,10 +498,10 @@ export class SnapshotService {
           }
         } catch (error) {
           const msg = String(error);
-          console.error(
-            `[snapshot-service] rebuildFromRpc error at ledger ${currentLedger}:`,
-            error,
-          );
+          logger.error("rebuildFromRpc error", {
+            ledger: currentLedger,
+            error: msg,
+          });
           errors.push(msg);
         }
 

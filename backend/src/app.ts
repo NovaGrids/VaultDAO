@@ -56,6 +56,9 @@ import { CorsAllowlist } from "./shared/http/corsAllowlist.js";
 import { initFeatureFlags, getFeatureFlags } from "./shared/feature-flags.js";
 import { initRpcPool } from "./shared/rpc-pool.js";
 import { createDrainMiddleware } from "./shared/http/drain.js";
+import { createLogger } from "./shared/logging/logger.js";
+
+const logger = createLogger("app");
 
 export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
@@ -188,9 +191,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     undefined,
     () => {
       // Never log key material; only emit rotation-stage usage warning.
-      console.warn(
-        "[auth] request authenticated with old API key while rotation is pending",
-      );
+      logger.warn("request authenticated with old API key while rotation is pending");
     },
   );
   // Admin routes accept only the current primary key, never the staged next
@@ -285,9 +286,9 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       const result = authKeyState.rotate();
 
       // Never log key material — only the fact and time of the rotation.
-      console.warn(
-        `[auth] API key rotated at ${result.rotatedAt}; previous key invalidated`,
-      );
+      logger.warn("API key rotated; previous key invalidated", {
+        rotatedAt: result.rotatedAt,
+      });
 
       res.status(200).json({ success: true, data: result });
     } catch (err) {

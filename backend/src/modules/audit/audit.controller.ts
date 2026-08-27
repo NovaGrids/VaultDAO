@@ -1,12 +1,31 @@
 import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
-import {
-  validatePagination,
-  validateCursorPagination,
-} from "../../shared/http/validateQuery.js";
+import { validatePagination } from "../../shared/http/validateQuery.js";
+import { validateCursorPagination } from "../../shared/pagination.js";
+import { createLogger } from "../../shared/logging/logger.js";
 import type { AuditService } from "./audit.service.js";
 import { AuditRpcError, verifyAuditChain, streamAuditCsv } from "./audit.service.js";
+
+const logger = createLogger("audit-controller");
+
+/**
+ * Warns when a request uses the legacy `offset`/`page` pagination params so
+ * clients can be nudged toward cursor-based pagination (`?cursor=`), which is
+ * stable across concurrent inserts/deletes. The legacy request is still
+ * served — this is a deprecation notice, not a breaking change.
+ */
+function warnIfLegacyPaginationUsed(query: Record<string, unknown>): void {
+  const legacyPageUsed = query.page !== undefined;
+  const legacyOffsetUsed = query.offset !== undefined;
+  if (legacyPageUsed || legacyOffsetUsed) {
+    logger.warn(
+      `Deprecated pagination parameter "${legacyPageUsed ? "page" : "offset"}" used. ` +
+        `Offset-based pagination can skip/duplicate items when the underlying list changes ` +
+        `between requests — migrate to cursor-based pagination via the "cursor" query parameter.`,
+    );
+  }
+}
 
 function getSingleQueryString(
   query: Record<string, unknown>,
@@ -39,6 +58,8 @@ export function getAuditController(service: AuditService): RequestHandler {
 
     const verify =
       getSingleQueryString(request.query as Record<string, unknown>, "verify") === "true";
+
+    warnIfLegacyPaginationUsed(request.query as Record<string, unknown>);
 
     // Use cursor pagination when `cursor` param is present or `offset` is absent
     const isCursorMode =

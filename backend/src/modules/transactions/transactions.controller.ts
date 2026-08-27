@@ -7,11 +7,33 @@ import {
   validateOptionalDate,
   validateOptionalNumber,
 } from "../../shared/http/validateQuery.js";
+import { validateCursorPagination, type CursorPayload } from "../../shared/pagination.js";
+import { createLogger } from "../../shared/logging/logger.js";
 import type { TransactionsService } from "./transactions.service.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 
 /** TTL for paginated transaction cache: 30 seconds */
 const TRANSACTIONS_CACHE_TTL_MS = 30_000;
+
+const logger = createLogger("transactions-controller");
+
+/**
+ * Warns when a request uses the legacy `offset`/`page` pagination params so
+ * clients can be nudged toward cursor-based pagination (`?cursor=`), which is
+ * stable across concurrent inserts/deletes. The legacy request is still
+ * served — this is a deprecation notice, not a breaking change.
+ */
+function warnIfLegacyPaginationUsed(query: Record<string, unknown>): void {
+  const legacyPageUsed = query.page !== undefined;
+  const legacyOffsetUsed = query.offset !== undefined;
+  if (legacyPageUsed || legacyOffsetUsed) {
+    logger.warn(
+      `Deprecated pagination parameter "${legacyPageUsed ? "page" : "offset"}" used. ` +
+        `Offset-based pagination can skip/duplicate items when the underlying list changes ` +
+        `between requests — migrate to cursor-based pagination via the "cursor" query parameter.`,
+    );
+  }
+}
 
 /**
  * GET /api/v1/transactions
@@ -22,12 +44,40 @@ export function getTransactionsController(
   cache?: CacheAdapter<unknown>,
 ): RequestHandler {
   return async (request, response) => {
-    const pagination = validatePagination(request, response);
-    if (!pagination) return;
+    warnIfLegacyPaginationUsed(request.query as Record<string, unknown>);
+
+    // Cursor mode when `cursor` param is present (or `offset` is absent),
+    // mirroring the proposals/audit controllers. The service's underlying
+    // cursoring mechanism keys off `transactionHash` (its natural keyset id)
+    // rather than a raw array index, so we decode the opaque client-facing
+    // cursor into a `CursorPayload` and let the service resolve it against
+    // its own index — see transactions.service.ts#getTransactions.
+    const isCursorMode =
+      typeof request.query.cursor === "string" || request.query.offset === undefined;
+
+    let limit: number;
+    let cursorPayload: CursorPayload | null = null;
+
+    if (isCursorMode) {
+      const cursorQuery = validateCursorPagination(request, response);
+      if (!cursorQuery) return;
+      limit = cursorQuery.limit;
+      cursorPayload = cursorQuery.cursor;
+    } else {
+      const pagination = validatePagination(request, response);
+      if (!pagination) return;
+      limit = pagination.limit;
+      // Legacy offset requests have no `lastId` to seek by; encode the
+      // offset alone so the service's fallback-by-offset path (shared with
+      // cursor mode) serves the same page contents an offset-based client
+      // expects, without a bespoke offset code path in the service.
+      if (pagination.offset > 0) {
+        cursorPayload = { lastId: "", offset: pagination.offset, direction: "next" };
+      }
+    }
 
     const token = validateOptionalString(request, "token");
     const recipient = validateOptionalString(request, "recipient");
-    const cursor = validateOptionalString(request, "cursor");
     const from = validateOptionalDate(request, response, "from");
     if (from === null) return;
     const to = validateOptionalDate(request, response, "to");
@@ -44,7 +94,9 @@ export function getTransactionsController(
           ? request.query.contractId.trim()
           : defaultContractId;
 
-      const cacheKey = `txns:${contractId}:${token ?? ""}:${recipient ?? ""}:${cursor ?? ""}:${from ?? ""}:${to ?? ""}:${minAmount ?? ""}:${maxAmount ?? ""}:${pagination.limit}`;
+      const cursorCacheKey =
+        typeof request.query.cursor === "string" ? request.query.cursor : "";
+      const cacheKey = `txns:${contractId}:${token ?? ""}:${recipient ?? ""}:${cursorCacheKey}:${from ?? ""}:${to ?? ""}:${minAmount ?? ""}:${maxAmount ?? ""}:${limit}`;
 
       if (cache) {
         const cached = cache.get(cacheKey) as any;
@@ -67,14 +119,14 @@ export function getTransactionsController(
 
       const result = await service.getTransactions({
         contractId,
-        cursor,
+        cursor: cursorPayload,
         token,
         recipient,
         from,
         to,
         minAmount,
         maxAmount,
-        limit: pagination.limit,
+        limit,
       });
 
       if (cache) {

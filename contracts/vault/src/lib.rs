@@ -603,6 +603,12 @@ impl VaultDAO {
             return Err(VaultError::InvalidProposalIdPrefix);
         }
 
+        // Issue #1527: veto_addresses set but veto_window_ledgers == 0 would silently
+        // disable veto while leaving addresses populated — reject this combination.
+        if !config.veto_addresses.is_empty() && config.veto_window_ledgers == 0 {
+            return Err(VaultError::InvalidVetoConfig);
+        }
+
         // Admin must authorize initialization
         admin.require_auth();
 
@@ -1998,6 +2004,50 @@ impl VaultDAO {
             &signer,
             proposal.abstentions.len(),
             proposal.approvals.len() + proposal.abstentions.len(),
+        );
+
+        Ok(())
+    }
+
+    /// Explicitly reject a pending proposal.
+    ///
+    /// Any current signer may call this to immediately reject a `Pending` proposal
+    /// (Issue #1522). This mirrors the rejection semantics used when an Admin cancels
+    /// another proposer's proposal via `cancel_proposal`: the reserved spending limits
+    /// are NOT refunded, insurance/stake slashing on rejection is applied, and an audit
+    /// entry plus a `proposal_rejected` event are recorded.
+    ///
+    /// # Arguments
+    /// * `signer` - Address of the signer rejecting the proposal (must authorize).
+    /// * `proposal_id` - ID of the proposal to reject.
+    pub fn reject_proposal(env: Env, signer: Address, proposal_id: u64) -> Result<(), VaultError> {
+        signer.require_auth();
+
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&signer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        proposal.status = ProposalStatus::Rejected;
+        storage::set_proposal(&env, &proposal);
+
+        storage::metrics_on_rejection(&env);
+        Self::slash_insurance_on_rejection(&env, &proposal);
+        Self::slash_stake_on_rejection(&env, &proposal);
+
+        storage::create_audit_entry(&env, AuditAction::RejectProposal, &signer, proposal_id);
+
+        let metrics = storage::get_metrics(&env);
+        events::emit_proposal_explicit_rejection(
+            &env,
+            proposal_id,
+            &signer,
+            metrics.rejected_count,
         );
 
         Ok(())
