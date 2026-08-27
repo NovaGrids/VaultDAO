@@ -416,6 +416,8 @@ export interface SdkOptions {
    * ```
    */
   logger?: SdkLogger;
+  /** Polling interval for `watchProposal`, in milliseconds. */
+  proposalWatchIntervalMs?: number;
 }
 
 // ---------------------------------------------------------------------------

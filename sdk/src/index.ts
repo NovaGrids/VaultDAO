@@ -142,6 +142,16 @@ export {
   getGlobalCache,
   destroyGlobalCache,
 } from "./cache";
+
+// Real-time proposal subscriptions
+export {
+  watchProposal,
+} from "./watch-proposal";
+export type {
+  ProposalChange,
+  ProposalChangeHandler,
+  ProposalEventType,
+} from "./watch-proposal";
 export type {
   CacheEntry,
   CacheStats,
