@@ -8,8 +8,7 @@
  * - Full orchestration flow works
  */
 
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
+import { test, describe, expect } from "vitest";
 import {
   createBatchOrchestrator,
   BatchProposalOrchestrator,
@@ -43,9 +42,9 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
       });
 
     const transfers = orchestrator.getTransfers();
-    assert.equal(transfers.length, 2, "should have 2 transfers");
-    assert.equal(transfers[0]?.amount, 1000n);
-    assert.equal(transfers[1]?.amount, 2000n);
+    expect(transfers.length).toBe(2);
+    expect(transfers[0]?.amount).toBe(1000n);
+    expect(transfers[1]?.amount).toBe(2000n);
   });
 
   test("should track state across operations", () => {
@@ -61,15 +60,11 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
     orchestrator.addCreatedProposalId("proposal-1");
     orchestrator.addCreatedProposalId("proposal-2");
 
-    assert.equal(
-      orchestrator.getCreatedProposalIds().length,
-      2,
-      "should track created proposals"
-    );
+    expect(orchestrator.getCreatedProposalIds().length).toBe(2);
 
     const state = orchestrator.getState();
-    assert.equal(state.transfers.length, 1);
-    assert.equal(state.createdProposalIds.length, 2);
+    expect(state.transfers.length).toBe(1);
+    expect(state.createdProposalIds.length).toBe(2);
   });
 
   test("should prevent duplicate proposal IDs", () => {
@@ -78,11 +73,7 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
     orchestrator.addCreatedProposalId("proposal-1");
     orchestrator.addCreatedProposalId("proposal-1");
 
-    assert.equal(
-      orchestrator.getCreatedProposalIds().length,
-      1,
-      "should not add duplicate proposal IDs"
-    );
+    expect(orchestrator.getCreatedProposalIds().length).toBe(1);
   });
 
   test("should support batch adding of proposal IDs", () => {
@@ -94,11 +85,7 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
       "proposal-3",
     ]);
 
-    assert.equal(
-      orchestrator.getCreatedProposalIds().length,
-      3,
-      "should add all proposal IDs"
-    );
+    expect(orchestrator.getCreatedProposalIds().length).toBe(3);
   });
 
   test("should track orchestration errors", async () => {
@@ -126,10 +113,7 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
     }
 
     const errors = orchestrator.getErrors();
-    assert.ok(
-      errors.some((e) => e.step === "approve-proposal"),
-      "should record approval error"
-    );
+    expect(errors.some((e) => e.step === "approve-proposal")).toBeTruthy();
   });
 
   test("should reset orchestration state", () => {
@@ -143,22 +127,14 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
 
     orchestrator.addCreatedProposalId("proposal-1");
 
-    assert.equal(orchestrator.getTransfers().length, 1);
-    assert.equal(orchestrator.getCreatedProposalIds().length, 1);
+    expect(orchestrator.getTransfers().length).toBe(1);
+    expect(orchestrator.getCreatedProposalIds().length).toBe(1);
 
     orchestrator.reset();
 
-    assert.equal(
-      orchestrator.getTransfers().length,
-      0,
-      "transfers should be cleared"
-    );
-    assert.equal(
-      orchestrator.getCreatedProposalIds().length,
-      0,
-      "proposals should be cleared"
-    );
-    assert.equal(orchestrator.getErrors().length, 0, "errors should be cleared");
+    expect(orchestrator.getTransfers().length).toBe(0);
+    expect(orchestrator.getCreatedProposalIds().length).toBe(0);
+    expect(orchestrator.getErrors().length).toBe(0);
   });
 
   test("should support retry configuration", () => {
@@ -169,7 +145,7 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
     });
 
     const state = orchestrator.getState();
-    assert.ok(state, "orchestrator should be created with custom retry config");
+    expect(state).toBeTruthy();
   });
 
   test("should allow flexible proposal ID types", () => {
@@ -183,11 +159,11 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
 
     // Both string and bigint should work in approve/execute
     const proposals = orchestrator.getCreatedProposalIds();
-    assert.equal(proposals.length, 3);
+    expect(proposals.length).toBe(3);
 
     // Verify they're stored as strings internally
     for (const pid of proposals) {
-      assert.equal(typeof pid, "string", "proposal IDs stored as strings");
+      expect(typeof pid).toBe("string");
     }
   });
 
@@ -218,9 +194,9 @@ describe("BatchProposalOrchestrator - Batch Transaction Orchestration (#1457)", 
       "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASC4"
     );
 
-    assert.ok(result.created >= 0);
-    assert.ok(result.approved >= 0);
-    assert.ok(result.executed >= 0);
-    assert.ok(Array.isArray(result.errors));
+    expect(result.created >= 0).toBeTruthy();
+    expect(result.approved >= 0).toBeTruthy();
+    expect(result.executed >= 0).toBeTruthy();
+    expect(Array.isArray(result.errors)).toBeTruthy();
   });
 });

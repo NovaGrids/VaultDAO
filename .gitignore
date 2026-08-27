@@ -50,6 +50,8 @@ backend/logs/
 backend/.tsbuildinfo
 
 sdk/dist/
+sdk/coverage/
+frontend/coverage/
 
 # Contribution-wave scratch files (keep out of the repo)
 

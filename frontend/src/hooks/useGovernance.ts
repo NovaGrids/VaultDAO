@@ -20,7 +20,7 @@ import type {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-function roleFromNumber(n: number): SignerRole {
+export function roleFromNumber(n: number): SignerRole {
   if (n === 2) return 'Admin';
   if (n === 1) return 'Treasurer';
   return 'Member';
