@@ -1698,9 +1698,6 @@ pub enum EscrowStatus {
     Disputed = 5,
 }
 
-/// Milestone tracking unit for progressive fund release
-#[contracttype]
-#[derive(Clone, Debug)]
 /// Pause history record for streaming payments - Issue #1429
 #[contracttype]
 #[derive(Clone, Debug)]

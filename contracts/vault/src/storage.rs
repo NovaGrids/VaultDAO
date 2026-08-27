@@ -1412,6 +1412,13 @@ pub fn check_and_update_velocity(
         .temporary()
         .extend_ttl(&global_key, DAY_IN_LEDGERS, DAY_IN_LEDGERS);
 
+    // Warn the signer when this write leaves exactly one transfer of
+    // remaining capacity before the sliding-window cap is hit.
+    let remaining_capacity = config.limit.saturating_sub(updated_global.len());
+    if remaining_capacity == 1 {
+        crate::events::emit_velocity_warning(env, addr, remaining_capacity);
+    }
+
     true
 }
 
@@ -4380,6 +4387,9 @@ pub fn increment_subscription_usage(env: &Env, subscription_id: u64, metric: &Sy
     let current = usage.get(metric.clone()).unwrap_or(0);
     usage.set(metric.clone(), current + amount);
     set_subscription_usage(env, subscription_id, &usage);
+}
+
+// ============================================================================
 // Issue #1414: Reentrancy Guard for Proposal Execution
 // ============================================================================
 

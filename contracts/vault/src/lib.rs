@@ -314,6 +314,8 @@ mod test_var_templates;
 #[cfg(test)]
 mod test_voting_deadline;
 #[cfg(test)]
+mod test_velocity_warning;
+#[cfg(test)]
 mod test_fee_cache;
 #[cfg(test)]
 mod test_fan_out_streams;
@@ -506,6 +508,8 @@ impl VaultDAO {
                 17_280 * 30 // default: 30 days
             },
             approval_timeout_ledgers: config.approval_timeout_ledgers,
+            auto_topup_amount: 0,
+            tier_usage_tracking: false,
         };
 
         // Apply staking config from InitConfig
@@ -911,6 +915,8 @@ impl VaultDAO {
                 auto_compound: false,
                 reinvestment_lock_until: 0,
                 last_compounded: 0,
+                staking_tier: 0,
+                accumulated_rewards: 0,
             };
             storage::set_stake_record(&env, &stake_record);
         }
@@ -961,6 +967,8 @@ impl VaultDAO {
             },
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -1257,6 +1265,8 @@ impl VaultDAO {
                 },
                 execution_ledger: 0,
                 signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+                fee_estimate_cache: None,
+                fee_cache_timestamp: 0,
             };
 
             storage::set_proposal(&env, &proposal);
@@ -3367,6 +3377,9 @@ impl VaultDAO {
                 high_impact_threshold: 70,
                 admin_rotation_delay: MIN_ADMIN_ROTATION_DELAY,
                 approval_timeout_ledgers: 0,
+                arbitration_timeout_ledgers: 0,
+                auto_topup_amount: 0,
+                tier_usage_tracking: false,
             }
         });
         (config.quorum, config.quorum_percentage)
@@ -3835,6 +3848,8 @@ impl VaultDAO {
             },
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -8094,6 +8109,8 @@ impl VaultDAO {
             voting_deadline: 0,
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -9666,6 +9683,8 @@ impl VaultDAO {
             },
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -10884,6 +10903,8 @@ impl VaultDAO {
             voting_deadline: 0,
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -13201,6 +13222,8 @@ impl VaultDAO {
             },
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -14159,6 +14182,8 @@ impl VaultDAO {
             },
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -14421,6 +14446,8 @@ impl VaultDAO {
             voting_deadline: 0,
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -14645,6 +14672,8 @@ impl VaultDAO {
             },
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
 
         storage::set_proposal(&env, &new_proposal);
@@ -14808,6 +14837,8 @@ impl VaultDAO {
             voting_deadline: 0,
             execution_ledger: 0,
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
+            fee_estimate_cache: None,
+            fee_cache_timestamp: 0,
         };
         storage::set_proposal(&env, &new_proposal);
 

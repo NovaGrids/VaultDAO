@@ -1758,3 +1758,19 @@ pub fn emit_recurring_payment_jittered(
         (nominal_next_ledger, jittered_next_ledger, jitter_offset),
     );
 }
+
+/// Emit when a signer is one transfer away from hitting their velocity limit.
+///
+/// Fired from `storage::check_and_update_velocity` right after a velocity
+/// write leaves the signer with exactly one remaining transfer before the
+/// sliding-window cap (`VelocityConfig::limit`) would reject further
+/// transfers.
+///
+/// Topics: `("velocity_warning", signer)`
+/// Data:   `remaining_capacity`
+pub fn emit_velocity_warning(env: &Env, signer: &Address, remaining_capacity: u32) {
+    env.events().publish(
+        (Symbol::new(env, "velocity_warning"), signer.clone()),
+        remaining_capacity,
+    );
+}
