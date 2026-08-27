@@ -69,7 +69,10 @@ export class ContractCache {
    * Generate a cache key from contract context and parameters
    */
   private getKey(contractId: string, functionName: string, params: unknown): string {
-    return hashParams(contractId, functionName, params);
+    // Keep the contractId:functionName prefix in clear text (not just hashed
+    // in) so clearFunction()/clearContract() can find matching keys via
+    // startsWith() below.
+    return contractId + ':' + functionName + ':' + hashParams(contractId, functionName, params);
   }
 
   /**

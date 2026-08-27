@@ -126,3 +126,13 @@ jobs:
 
       - name: Typecheck SDK
         run: npm run sdk:typecheck
+
+      - name: Test SDK with coverage
+        run: npm run sdk:test:coverage
+
+      - name: Upload SDK coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-coverage
+          path: sdk/coverage/
+          retention-days: 14
