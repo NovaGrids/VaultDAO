@@ -15,7 +15,7 @@
 
 use crate::errors::VaultError;
 use crate::types::{
-    Milestone, RetryConfig, ThresholdStrategy, VelocityConfig, VaultError as VaultErrorType,
+    Milestone, RetryConfig, ThresholdStrategy, VaultError as VaultErrorType, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -102,9 +102,19 @@ fn create_escrow_with_panel(
     });
 
     // Use first arbitrator as primary; panel will be tested separately
-    let arbitrator = panel.get(0).expect("panel must have at least one arbitrator");
+    let arbitrator = panel
+        .get(0)
+        .expect("panel must have at least one arbitrator");
     client
-        .create_escrow(funder, recipient, token, &amount, &milestones, &duration, &arbitrator)
+        .create_escrow(
+            funder,
+            recipient,
+            token,
+            &amount,
+            &milestones,
+            &duration,
+            &arbitrator,
+        )
         .expect("create_escrow should succeed")
 }
 
@@ -126,10 +136,12 @@ fn test_create_escrow_with_arbitrator_panel() {
     panel.push_back(arbitrator1);
     panel.push_back(arbitrator2);
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 1000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 1000, panel, 10000,
+    );
 
     assert!(escrow_id > 0);
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Active);
 }
 
@@ -151,7 +163,16 @@ fn test_arbitrator_panel_with_multiple_members() {
         panel.push_back(Address::generate(&env));
     }
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 5000, panel.clone(), 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env,
+        &client,
+        &admin,
+        &recipient,
+        &token,
+        5000,
+        panel.clone(),
+        10000,
+    );
 
     assert!(escrow_id > 0);
     assert_eq!(panel.len(), 5);
@@ -172,10 +193,16 @@ fn test_dispute_requires_authorization() {
     let mut panel = Vec::new(&env);
     panel.push_back(Address::generate(&env));
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 1000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 1000, panel, 10000,
+    );
 
     // Try to dispute as unauthorized address
-    let result = client.try_dispute_escrow(&unauthorized, &escrow_id, &Symbol::new(&env, "quality_issue"));
+    let result = client.try_dispute_escrow(
+        &unauthorized,
+        &escrow_id,
+        &Symbol::new(&env, "quality_issue"),
+    );
 
     // Should fail (unauthorized)
     assert!(result.is_err());
@@ -196,14 +223,16 @@ fn test_arbitrator_panel_voting_history_tracked() {
     panel.push_back(Address::generate(&env));
     panel.push_back(Address::generate(&env));
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 2000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 2000, panel, 10000,
+    );
 
     // File dispute
     client
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "breach_of_contract"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
 
@@ -225,14 +254,16 @@ fn test_multisig_voting_requires_m_of_n_threshold() {
         panel.push_back(Address::generate(&env));
     }
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 3000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 3000, panel, 10000,
+    );
 
     // File dispute
     client
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "non_delivery"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
     // Resolution not yet possible without majority votes
 }
@@ -253,7 +284,9 @@ fn test_resolution_rejected_below_threshold() {
     panel.push_back(Address::generate(&env));
     panel.push_back(Address::generate(&env));
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 3000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 3000, panel, 10000,
+    );
 
     // File dispute
     client
@@ -261,7 +294,7 @@ fn test_resolution_rejected_below_threshold() {
         .expect("dispute_escrow should succeed");
 
     // Only 1 vote (less than 2-of-3 threshold) — resolution should fail
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
 
@@ -282,7 +315,9 @@ fn test_release_after_majority_vote() {
     panel.push_back(Address::generate(&env));
     panel.push_back(Address::generate(&env));
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 2000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 2000, panel, 10000,
+    );
 
     // Complete milestone
     client
@@ -313,14 +348,16 @@ fn test_refund_after_dispute_vote() {
     panel.push_back(Address::generate(&env));
     panel.push_back(Address::generate(&env));
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 1000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 1000, panel, 10000,
+    );
 
     // File dispute
     client
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "quality_issue"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
 
@@ -342,10 +379,19 @@ fn test_odd_numbered_panel_prevents_ties() {
         panel.push_back(Address::generate(&env));
     }
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 3000, panel.clone(), 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env,
+        &client,
+        &admin,
+        &recipient,
+        &token,
+        3000,
+        panel.clone(),
+        10000,
+    );
 
     assert_eq!(panel.len(), 3);
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Active);
 }
 
@@ -364,14 +410,16 @@ fn test_arbitrator_vote_emits_event() {
     let mut panel = Vec::new(&env);
     panel.push_back(arbitrator.clone());
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 1000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 1000, panel, 10000,
+    );
 
     // File dispute to trigger voting
     client
         .dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "non_delivery"))
         .expect("dispute_escrow should succeed");
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
     assert_eq!(escrow.dispute_reason, Symbol::new(&env, "non_delivery"));
 }
@@ -393,9 +441,11 @@ fn test_arbitration_timestamps_tracked() {
     panel.push_back(Address::generate(&env));
     panel.push_back(Address::generate(&env));
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 2000, panel, 10000);
+    let escrow_id = create_escrow_with_panel(
+        &env, &client, &admin, &recipient, &token, 2000, panel, 10000,
+    );
 
-    let escrow = client.get_escrow(&escrow_id);
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.created_at, current_ledger);
 }
 
@@ -415,7 +465,8 @@ fn test_dispute_with_single_arbitrator_works() {
     let mut panel = Vec::new(&env);
     panel.push_back(single_arbitrator);
 
-    let escrow_id = create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 500, panel, 5000);
+    let escrow_id =
+        create_escrow_with_panel(&env, &client, &admin, &recipient, &token, 500, panel, 5000);
 
     // File dispute
     let result = client.try_dispute_escrow(&admin, &escrow_id, &Symbol::new(&env, "disagreement"));

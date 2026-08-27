@@ -44,4 +44,33 @@ export const albedoAdapter: WalletAdapter = {
     if (!res?.signed_envelope_xdr) throw new Error('Signing failed');
     return res.signed_envelope_xdr;
   },
+
+  /**
+   * Return available Albedo accounts.
+   *
+   * Albedo is a web-based wallet that exposes one keypair at a time per
+   * session — there is no multi-account enumeration API.  If we already have
+   * a cached public key from a previous `connect()` call we return it
+   * immediately.  Otherwise we trigger a new `publicKey` intent so the user
+   * can confirm which account to expose, and cache the result.
+   *
+   * The WalletContext falls back to `[address]` when this method is absent,
+   * so returning a single-element array is the correct and consistent
+   * behaviour for single-account wallets.
+   */
+  async getAccounts(): Promise<string[]> {
+    if (cachedPubkey) {
+      return [cachedPubkey];
+    }
+    try {
+      const res = await albedo.publicKey({ token: crypto.randomUUID() });
+      if (res?.pubkey) {
+        cachedPubkey = res.pubkey;
+        return [res.pubkey];
+      }
+    } catch {
+      // User dismissed the Albedo popup or an error occurred — return empty.
+    }
+    return [];
+  },
 };

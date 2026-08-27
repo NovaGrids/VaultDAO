@@ -40,7 +40,7 @@ function makePayment(id: string, contractId = "C1") {
     },
     contractId,
     100,
-  );
+  ).payment;
 }
 
 function createServiceWithPayments(
@@ -157,7 +157,12 @@ test("getAllRecurringController cursor mode: last page returns nextCursor = null
   assert.equal(body.data.nextCursor, null);
 });
 
-test("getAllRecurringController cursor mode: invalid cursor falls back to offset 0", async () => {
+test("getAllRecurringController cursor mode: invalid cursor returns 400", async () => {
+  // A cursor that was explicitly supplied but can't be decoded is rejected
+  // with 400 rather than silently restarting at page one — see
+  // shared/pagination.ts#parseCursorPagination for the rationale (a client
+  // that sent a cursor asked to resume a specific position; silently
+  // restarting can look like a duplicate/skip bug).
   const service = createServiceWithPayments(["p1", "p2", "p3"]);
   const handler = getAllRecurringController(service);
   const { res, state } = createMockResponse();
@@ -169,9 +174,9 @@ test("getAllRecurringController cursor mode: invalid cursor falls back to offset
   );
 
   const body = state.body as any;
-  assert.equal(state.statusCode, 200);
-  // Should have returned items starting from index 0
-  assert.equal(body.data.data.length, 2);
+  assert.equal(state.statusCode, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /cursor/i);
 });
 
 test("getAllRecurringController offset mode: backward-compatible with offset+limit", async () => {

@@ -17,7 +17,14 @@ mod tests {
         initial_threshold: u32,
         reduced_threshold: u32,
         reduction_delay: u64,
-    ) -> (VaultDAOClient<'static>, Address, Address, Address, Address, Address) {
+    ) -> (
+        VaultDAOClient<'static>,
+        Address,
+        Address,
+        Address,
+        Address,
+        Address,
+    ) {
         let contract_id = env.register(VaultDAO, ());
         let client = VaultDAOClient::new(env, &contract_id);
         let admin = Address::generate(env);
@@ -329,7 +336,10 @@ mod tests {
         client.execute_proposal(&signer1, &proposal_id);
 
         let proposal_executed = client.get_proposal(&proposal_id);
-        assert_eq!(proposal_executed.status, crate::types::ProposalStatus::Executed);
+        assert_eq!(
+            proposal_executed.status,
+            crate::types::ProposalStatus::Executed
+        );
     }
 
     #[test]

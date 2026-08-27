@@ -40,6 +40,36 @@
     <meta property="twitter:description" content="Secure, transparent, and efficient treasury management on Stellar blockchain" />
     <meta property="twitter:image" content="/og-image.png" />
     
+    <!--
+      Content Security Policy
+      - script-src: 'self' + 'unsafe-inline' required for the no-flash theme init script below.
+      - connect-src: Stellar RPC, Horizon, and the y-websocket collab server (wss:).
+      - img-src: 'self', data URIs (QR codes / charts), and blob: (html2canvas exports).
+      - worker-src: blob: required for PDF/canvas worker threads.
+      - object-src / base-uri: locked down to prevent common injection vectors.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline';
+        font-src 'self';
+        img-src 'self' data: blob:;
+        connect-src
+          'self'
+          https://soroban-testnet.stellar.org
+          https://horizon-testnet.stellar.org
+          https://stellar.expert
+          wss:;
+        worker-src blob:;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+        frame-ancestors 'none';
+      "
+    />
+
     <!-- Preconnect to external domains -->
     <link rel="preconnect" href="https://soroban-testnet.stellar.org" />
     <link rel="dns-prefetch" href="https://soroban-testnet.stellar.org" />

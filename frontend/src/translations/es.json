@@ -22,7 +22,17 @@
     "previous": "Anterior",
     "retry": "Reintentar",
     "notFound": "No Encontrado",
-    "loadingEllipsis": "Cargando..."
+    "loadingEllipsis": "Cargando...",
+    "detected": "Detectado",
+    "installRequired": "Instalación requerida",
+    "hide": "Ocultar",
+    "refresh": "Actualizar",
+    "confirmDeleteTemplate": "¿Seguro que quieres eliminar esta plantilla?",
+    "templateImportedSuccess": "¡Plantilla importada correctamente!",
+    "invalidTemplateFormat": "Formato de plantilla no válido",
+    "failedToImportTemplate": "No se pudo importar la plantilla",
+    "formSubmittedPreview": "Formulario enviado correctamente (Modo Vista Previa)",
+    "confirmClearErrorHistory": "¿Borrar todo el historial de errores?"
   },
   "navigation": {
     "dashboard": "Panel de Control",
@@ -66,7 +76,8 @@
     "tokenContractAddress": "Dirección del Contrato de Token",
     "adding": "Agregando...",
     "failedToLoadBalance": "Error al cargar el saldo",
-    "refreshBalance": "Actualizar equilibrio"
+    "refreshBalance": "Actualizar equilibrio",
+    "signers": "Firmantes"
   },
   "proposals": {
     "title": "Propuestas",
@@ -78,7 +89,8 @@
     "reject": "Rechazar",
     "pending": "Pendiente",
     "approved": "Aprobado",
-    "rejected": "Rechazado"
+    "rejected": "Rechazado",
+    "submittedSuccess": "¡Propuesta enviada correctamente!"
   },
   "transactions": {
     "title": "Transacciones",
@@ -107,7 +119,8 @@
     "amount": "Por favor, introduce una cantidad válida",
     "selectOption": "Por favor, selecciona una opción",
     "submit": "Enviar",
-    "reset": "Restablecer"
+    "reset": "Restablecer",
+    "circularDependencies": "¡Dependencias circulares en la lógica!"
   },
   "language": {
     "selectLanguage": "Seleccionar Idioma",
@@ -145,5 +158,108 @@
     "approve": "Aprobar",
     "reject": "Rechazar",
     "create_payment": "Crear Pago"
+  },
+  "nav": {
+    "overview": "Resumen",
+    "proposals": "Propuestas",
+    "recurringPayments": "Pagos Recurrentes",
+    "escrow": "Depósito en garantía",
+    "governance": "Gobernanza",
+    "activity": "Actividad",
+    "templates": "Plantillas",
+    "analytics": "Análisis",
+    "errorAnalytics": "Análisis de Errores",
+    "settings": "Configuración"
+  },
+  "onboarding": {
+    "tourDesc": "Haz un recorrido rápido para conocer todas las funciones."
+  },
+  "portfolio": {
+    "title": "Resumen de Cartera",
+    "totalValue": "Valor Total",
+    "allocation": "Asignación de Tokens",
+    "lowBalance": "Saldo Bajo",
+    "estimate": "estimado"
+  },
+  "voice": {
+    "start": "Iniciar Escucha",
+    "stop": "Detener Escucha",
+    "permissionRequired": "Se requiere permiso del micrófono",
+    "timedOut": "La escucha expiró",
+    "timedOutHint": "Intenta de nuevo o di la palabra de activación",
+    "settings": "Configuración de Voz",
+    "wakeWord": "Palabra de activación",
+    "availableCommands": "Comandos disponibles",
+    "notSupported": "La entrada de voz no es compatible con este navegador"
+  },
+  "settings": {
+    "title": "Configuración",
+    "vaultConfig": "Configuración de la Bóveda",
+    "vaultConfigDesc": "Firmantes, umbrales y límites de gasto de esta bóveda",
+    "yourRole": "Tu Rol",
+    "signerSetNote": "Eres firmante de esta bóveda",
+    "notSignerSetNote": "No eres firmante de esta bóveda",
+    "threshold": "Umbral de Aprobación",
+    "approvalsNeeded": "Número de aprobaciones de firmantes necesarias para ejecutar una propuesta",
+    "timelock": "Bloqueo Temporal",
+    "timelockTrigger": "Se activa por encima de",
+    "timelockDelay": "Retraso",
+    "signers": "Firmantes",
+    "currentWallet": "Tu billetera",
+    "signerListUnavailable": "La lista de firmantes no está disponible",
+    "spendingLimits": "Límites de Gasto",
+    "perProposal": "Por propuesta",
+    "daily": "Diario",
+    "weekly": "Semanal",
+    "supportedWallets": "Billeteras Compatibles",
+    "supportedWalletsDesc": "Billeteras que puedes usar para conectarte a VaultDAO",
+    "roleManagement": "Gestión de Roles",
+    "exportHistory": "Historial de Exportaciones",
+    "exportHistoryDesc": "Archivos de auditoría y firmas exportados anteriormente",
+    "reExport": "Reexportar",
+    "clearHistory": "Borrar Historial",
+    "noExportHistory": "Sin historial de exportaciones",
+    "noExportHistoryDesc": "Los archivos exportados aparecerán aquí",
+    "recipientLists": "Listas de Destinatarios",
+    "manageLists": "Administrar Listas",
+    "recipientListsDesc": "Direcciones de destinatarios en listas blancas y negras",
+    "onboarding": "Incorporación",
+    "restartTour": "Reiniciar Recorrido",
+    "onboardingDesc": "Repetir el recorrido guiado del producto",
+    "wrongNetwork": "Red incorrecta",
+    "viewOnExplorer": "Ver en el Explorador",
+    "loadingVaultConfig": "Cargando configuración de la bóveda...",
+    "updateThreshold": "Actualizar Umbral",
+    "readOnly": "Solo lectura",
+    "removeSignerTitle": "Eliminar firmante",
+    "addSigner": "Agregar Firmante",
+    "stellarAddressPlaceholder": "Dirección de Stellar G...",
+    "downloadAgain": "Descargar de nuevo",
+    "reDownloadUnavailable": "No se puede volver a descargar (sin contenido almacenado)",
+    "reExportAria": "Reexportar {{filename}}",
+    "reExportUnavailable": "Reexportación no disponible",
+    "clearExportHistoryAria": "Borrar historial de exportaciones",
+    "removeSignerModalTitle": "Eliminar Firmante",
+    "removeSignerModalMessage": "¿Eliminar a {{address}} de los firmantes de la bóveda? Esto no se puede deshacer sin volver a agregarlo.",
+    "removing": "Eliminando…",
+    "remove": "Eliminar",
+    "language": "Idioma",
+    "languageDesc": "Elige el idioma de visualización de VaultDAO"
+  },
+  "performance": {
+    "title": "Rendimiento",
+    "subtitle": "Core Web Vitals y métricas de recursos",
+    "thresholds": "Umbrales",
+    "good": "Bueno",
+    "warning": "Necesita mejorar",
+    "largestResources": "Recursos Más Grandes",
+    "allGood": "Todas las métricas se ven bien",
+    "lcp": "Mayor Renderizado de Contenido",
+    "fid": "Retraso en la Primera Entrada",
+    "cls": "Cambio Acumulativo de Diseño",
+    "ttfb": "Tiempo al Primer Byte",
+    "fcp": "Primer Renderizado de Contenido",
+    "memoryUsage": "Uso de Memoria",
+    "heapUsage": "Uso del Heap"
   }
 }

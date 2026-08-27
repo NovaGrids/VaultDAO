@@ -1,13 +1,76 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::types::{ConditionLogic, InitConfig, Priority, Role, ThresholdStrategy, VelocityConfig, VoteWeight, ProposalStatus};
+    use crate::types::{
+        ConditionLogic, InitConfig, Priority, ProposalStatus, Role, ThresholdStrategy,
+        VelocityConfig, VoteWeight,
+    };
     use crate::{VaultDAO, VaultDAOClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::StellarAssetClient,
         Address, Env, Symbol, Vec,
     };
+
+    // Helper with threshold=2 so proposals reach Approved state (not immediately executed)
+    fn setup_vault_threshold_2() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(VaultDAO, ());
+        let client = VaultDAOClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let signer1 = Address::generate(&env);
+        let signer2 = Address::generate(&env);
+
+        let mut signers = Vec::new(&env);
+        signers.push_back(admin.clone());
+        signers.push_back(signer1.clone());
+        signers.push_back(signer2.clone());
+
+        let config = InitConfig {
+            veto_window_ledgers: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
+            signers,
+            threshold: 2, // threshold 2 so proposals stay in Approved state after 1 approval
+            quorum: 0,
+            quorum_percentage: 0,
+            spending_limit: 1_000_000,
+            daily_limit: 5_000_000,
+            weekly_limit: 10_000_000,
+            timelock_threshold: 0,
+            timelock_delay: 0,
+            velocity_limit: VelocityConfig {
+                limit: 100_000,
+                window: 3600,
+                per_token_limit: 0,
+            },
+            threshold_strategy: ThresholdStrategy::Fixed,
+            default_voting_deadline: 0,
+            veto_addresses: Vec::new(&env),
+            retry_config: crate::types::RetryConfig {
+                max_retry_delay: 0,
+                enabled: false,
+                max_retries: 0,
+                initial_backoff_ledgers: 0,
+            },
+            recovery_config: crate::types::RecoveryConfig::default(&env),
+            staking_config: crate::types::StakingConfig::default(),
+            proposal_id_prefix: 0,
+            pre_execution_hooks: Vec::new(&env),
+            post_execution_hooks: Vec::new(&env),
+        };
+
+        client.initialize(&admin, &config);
+        client.set_role(&admin, &signer1, &Role::Treasurer);
+        client.set_role(&admin, &signer2, &Role::Treasurer);
+
+        (client, admin, signer1, signer2, contract_id)
+    }
 
     fn setup_vault() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
         let env = Env::default();
@@ -398,6 +461,128 @@ mod tests {
         // Verify that archival mechanism exists and can be triggered
         let config = client.get_config();
         assert!(config.spending_limit > 0);
+    }
+
+    #[test]
+    fn test_execution_window_allows_execution_within_window() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2();
+
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+        let recipient = Address::generate(&env);
+
+        // Set execution window to 500 ledgers
+        client.set_exec_window_ledgers(&admin, &500);
+
+        // Create proposal at ledger 100
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100;
+        });
+        let proposal_id = propose_transfer(&env, &client, &signer1, &recipient, &token);
+
+        // First approval - proposal stays Pending (needs 2 approvals)
+        client.approve_proposal(&signer1, &proposal_id);
+        // Second approval - proposal becomes Approved
+        client.approve_proposal(&admin, &proposal_id);
+
+        let proposal = client.get_proposal(&proposal_id);
+        assert_eq!(proposal.status, ProposalStatus::Approved);
+        assert_eq!(proposal.approved_at, 100);
+
+        // Advance to ledger 500 (within window: 100 + 500 = 600)
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 500;
+        });
+
+        // Execution should succeed within the window
+        client.execute_proposal(&signer1, &proposal_id);
+
+        let executed = client.get_proposal(&proposal_id);
+        assert_eq!(executed.status, ProposalStatus::Executed);
+    }
+
+    #[test]
+    fn test_execution_window_rejects_execution_outside_window() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2();
+
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+        let recipient = Address::generate(&env);
+
+        // Set execution window to 200 ledgers
+        client.set_exec_window_ledgers(&admin, &200);
+
+        // Create proposal at ledger 100
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100;
+        });
+        let proposal_id = propose_transfer(&env, &client, &signer1, &recipient, &token);
+
+        // First approval
+        client.approve_proposal(&signer1, &proposal_id);
+        // Second approval - proposal becomes Approved at ledger 100
+        client.approve_proposal(&admin, &proposal_id);
+
+        let proposal = client.get_proposal(&proposal_id);
+        assert_eq!(proposal.status, ProposalStatus::Approved);
+
+        // Advance to ledger 400 (outside window: 100 + 200 = 300)
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 400;
+        });
+
+        // Execution should fail because window expired
+        let result = client.try_execute_proposal(&signer1, &proposal_id);
+        assert!(result.is_err());
+
+        // Proposal should now be Expired
+        let expired = client.get_proposal(&proposal_id);
+        assert_eq!(expired.status, ProposalStatus::Expired);
+    }
+
+    #[test]
+    fn test_execution_window_zero_disabled() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2();
+
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+        let recipient = Address::generate(&env);
+
+        // Keep exec_window_ledgers at 0 (default = disabled, no window)
+        // Create proposal at ledger 100
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100;
+        });
+        let proposal_id = propose_transfer(&env, &client, &signer1, &recipient, &token);
+
+        // First approval
+        client.approve_proposal(&signer1, &proposal_id);
+        // Second approval - proposal becomes Approved at ledger 100
+        client.approve_proposal(&admin, &proposal_id);
+
+        // Advance far into the future
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100000;
+        });
+
+        // Execution should succeed because window is 0 (disabled = no limit)
+        let result = client.try_execute_proposal(&signer1, &proposal_id);
+        assert!(result.is_ok());
     }
 
     #[test]

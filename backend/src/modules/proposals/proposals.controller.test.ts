@@ -11,6 +11,7 @@ import {
   type ProposalActivityPersistence,
   type ProposalActivityRecord,
 } from "./types.js";
+import { encodeCursor, decodeCursor } from "../../shared/pagination.js";
 
 function makeRecord(
   i: number,
@@ -261,7 +262,11 @@ test("getAllProposalsController cursor mode: last page returns nextCursor = null
   assert.equal(body.data.nextCursor, null);
 });
 
-test("getAllProposalsController cursor mode: invalid cursor falls back to offset 0", async () => {
+test("getAllProposalsController cursor mode: invalid cursor returns 400", async () => {
+  // A cursor that was explicitly supplied but can't be decoded is rejected
+  // with 400 instead of silently restarting at page one — silently
+  // restarting would look exactly like a duplicate/skip bug to the client
+  // that provided the cursor to resume a specific position.
   const records = Array.from({ length: 3 }, (_, i) =>
     makeRecord(i, "contract-1", `proposal-${i}`),
   );
@@ -276,9 +281,9 @@ test("getAllProposalsController cursor mode: invalid cursor falls back to offset
   );
 
   const body = state.body as any;
-  assert.equal(state.statusCode, 200);
-  // Should return data from the start (offset 0 fallback)
-  assert.equal(body.data.data.length, 2);
+  assert.equal(state.statusCode, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /cursor/i);
 });
 
 test("getAllProposalsController offset mode: backward-compatible with offset+limit params", async () => {
@@ -302,4 +307,224 @@ test("getAllProposalsController offset mode: backward-compatible with offset+lim
   assert.equal(body.data.total, 10);
   // Offset mode should NOT have nextCursor
   assert.equal(body.data.nextCursor, undefined);
+});
+
+// ============================================================================
+// Backward pagination (direction: 'prev') and hasMore
+// ============================================================================
+
+test("getAllProposalsController cursor mode: hasMore is true when more items remain, false on the last page", async () => {
+  const records = Array.from({ length: 5 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+
+  const { res: res1, state: state1 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2" } } as any,
+    res1 as any,
+    (() => {}) as any,
+  );
+  assert.equal((state1.body as any).data.hasMore, true);
+
+  const { res: res2, state: state2 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "10" } } as any,
+    res2 as any,
+    (() => {}) as any,
+  );
+  assert.equal((state2.body as any).data.hasMore, false);
+});
+
+test("getAllProposalsController cursor mode: prevCursor pages backward to the exact prior page", async () => {
+  const records = Array.from({ length: 6 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+
+  // Page 1: activity-0, activity-1
+  const { res: res1, state: state1 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2" } } as any,
+    res1 as any,
+    (() => {}) as any,
+  );
+  const body1 = (state1.body as any).data;
+  assert.deepEqual(body1.data.map((r: any) => r.activityId), ["activity-0", "activity-1"]);
+  assert.equal(body1.prevCursor, null, "no previous page from the very first page");
+
+  // Page 2: activity-2, activity-3
+  const { res: res2, state: state2 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2", cursor: body1.nextCursor } } as any,
+    res2 as any,
+    (() => {}) as any,
+  );
+  const body2 = (state2.body as any).data;
+  assert.deepEqual(body2.data.map((r: any) => r.activityId), ["activity-2", "activity-3"]);
+  assert.ok(body2.prevCursor, "page 2 should offer a way back to page 1");
+
+  // Page back to page 1 using body2.prevCursor
+  const decoded = decodeCursor(body2.prevCursor);
+  assert.equal(decoded?.direction, "prev");
+
+  const { res: res3, state: state3 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2", cursor: body2.prevCursor } } as any,
+    res3 as any,
+    (() => {}) as any,
+  );
+  const body3 = (state3.body as any).data;
+  assert.deepEqual(
+    body3.data.map((r: any) => r.activityId),
+    body1.data.map((r: any) => r.activityId),
+    "paging backward from page 2 reproduces page 1 exactly",
+  );
+});
+
+test("getAllProposalsController cursor mode: a hand-built direction:'prev' cursor returns the items immediately before it", async () => {
+  const records = Array.from({ length: 6 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+
+  // Anchor on activity-4 (index 4); paging backward with limit 2 should
+  // yield the 2 items immediately before it: activity-2, activity-3.
+  const cursor = encodeCursor({ lastId: "activity-4", offset: 4, direction: "prev" });
+
+  const { res, state } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2", cursor } } as any,
+    res as any,
+    (() => {}) as any,
+  );
+
+  const body = (state.body as any).data;
+  assert.equal(state.statusCode, 200);
+  assert.deepEqual(body.data.map((r: any) => r.activityId), ["activity-2", "activity-3"]);
+});
+
+// ============================================================================
+// Cursor stability under concurrent inserts (controller-level)
+// ============================================================================
+
+test("getAllProposalsController cursor mode: resuming via nextCursor is unaffected by an insert at the front, unlike offset pagination", async () => {
+  let records = Array.from({ length: 6 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  // Mutable persistence so the underlying list can change between requests.
+  const persistence: ProposalActivityPersistence = {
+    save: async () => {},
+    saveBatch: async () => {},
+    getByProposalId: async () => [],
+    getByContractId: async (contractId: string) =>
+      records.filter((r) => r.metadata.contractId === contractId),
+    getSummary: async () => null,
+  };
+  const handler = getAllProposalsController(persistence);
+
+  // Page 1 (limit 2): activity-0, activity-1
+  const { res: res1, state: state1 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2" } } as any,
+    res1 as any,
+    (() => {}) as any,
+  );
+  const body1 = (state1.body as any).data;
+  assert.deepEqual(body1.data.map((r: any) => r.activityId), ["activity-0", "activity-1"]);
+
+  // A brand-new proposal event arrives and is inserted at the FRONT of the list.
+  const inserted = makeRecord(999, "contract-1", "proposal-999");
+  records = [inserted, ...records];
+
+  // Page 2 via cursor: still resumes correctly right after activity-1.
+  const { res: res2, state: state2 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", limit: "2", cursor: body1.nextCursor } } as any,
+    res2 as any,
+    (() => {}) as any,
+  );
+  const body2 = (state2.body as any).data;
+  assert.deepEqual(
+    body2.data.map((r: any) => r.activityId),
+    ["activity-2", "activity-3"],
+    "cursor-based page 2 is unaffected by the insert at the front",
+  );
+
+  // Contrast: the equivalent OFFSET-based request (offset=2, limit=2) on the
+  // now-mutated list re-serves activity-1 (already seen) and skips activity-3.
+  const { res: res3, state: state3 } = createMockResponse();
+  await handler(
+    { query: { contractId: "contract-1", offset: "2", limit: "2" } } as any,
+    res3 as any,
+    (() => {}) as any,
+  );
+  const body3 = (state3.body as any).data;
+  assert.deepEqual(
+    body3.data.map((r: any) => r.activityId),
+    ["activity-1", "activity-2"],
+    "offset pagination duplicates activity-1 and skips activity-3 once an item is inserted at the front",
+  );
+});
+
+// ============================================================================
+// Deprecation warning for legacy offset pagination
+// ============================================================================
+
+test("getAllProposalsController: logs a deprecation warning when legacy `offset` param is used", async () => {
+  const records = Array.from({ length: 3 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+  const { res } = createMockResponse();
+
+  const originalWarn = console.warn;
+  const warnCalls: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnCalls.push(args);
+  };
+  try {
+    await handler(
+      { query: { contractId: "contract-1", offset: "0", limit: "2" } } as any,
+      res as any,
+      (() => {}) as any,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.ok(warnCalls.length > 0, "expected a deprecation warning to be logged");
+  const joined = warnCalls.map((args) => args.join(" ")).join("\n");
+  assert.match(joined, /deprecat/i);
+  assert.match(joined, /cursor/i);
+});
+
+test("getAllProposalsController: does NOT log a deprecation warning for cursor-mode requests", async () => {
+  const records = Array.from({ length: 3 }, (_, i) =>
+    makeRecord(i, "contract-1", `proposal-${i}`),
+  );
+  const persistence = createPersistence(records);
+  const handler = getAllProposalsController(persistence);
+  const { res } = createMockResponse();
+
+  const originalWarn = console.warn;
+  const warnCalls: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnCalls.push(args);
+  };
+  try {
+    await handler(
+      { query: { contractId: "contract-1", limit: "2" } } as any,
+      res as any,
+      (() => {}) as any,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnCalls.length, 0);
 });

@@ -738,6 +738,92 @@
         }
       ],
       "type": "table"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Proposal creation and execution throughput, normalised to per-hour rates. Used for capacity planning: the gap between the two series shows governance backlog building up.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "proposals / hour",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(proposals_created_total[5m])) * 3600",
+          "refId": "A",
+          "legendFormat": "created/hour"
+        },
+        {
+          "expr": "sum(rate(proposals_executed_total[5m])) * 3600",
+          "refId": "B",
+          "legendFormat": "executed/hour"
+        }
+      ],
+      "title": "Proposal Throughput (created/executed per hour)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

@@ -14,19 +14,30 @@ import type {
   SnapshotStorageAdapter,
   SnapshotRebuildOptions,
   SnapshotUpdateResult,
+  SnapshotRollbackOptions,
+  SnapshotRollbackResult,
   RoleAssignedData,
   SignerAddedData,
   SignerRemovedData,
   SnapshotStats,
   SnapshotFilter,
   GovernanceSnapshotData,
+  SnapshotConsistencyResult,
+  SnapshotConsistencyMismatch,
+  OnChainConfigProvider,
+  SnapshotVerificationEmitter,
 } from "./types.js";
 import { Role } from "./types.js";
 import { SnapshotNormalizer } from "./normalizer.js";
 import { EventNormalizer } from "../events/normalizers/index.js";
 import type { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
+import {
+  SnapshotRebuildLockManager,
+  InMemoryLockBackend,
+} from "./rebuild-lock.manager.js";
 
 import { createLogger } from "../../shared/logging/logger.js";
+import { randomUUID } from "node:crypto";
 
 const logger = createLogger("snapshot-service");
 
@@ -74,16 +85,85 @@ function validateSnapshot(snapshot: ContractSnapshot): boolean {
 }
 
 /**
+ * Compute the discrepancies between the on-chain signer set (the source of
+ * truth) and the snapshot's active signer set. Both inputs are expected to be
+ * sorted. Produces one mismatch entry per divergent address.
+ */
+function diffSignerSets(
+  onChainSigners: string[],
+  snapshotSigners: string[],
+): SnapshotConsistencyMismatch[] {
+  const mismatches: SnapshotConsistencyMismatch[] = [];
+  const onChainSet = new Set(onChainSigners);
+  const snapshotSet = new Set(snapshotSigners);
+
+  // On-chain signers the snapshot is missing (or has marked inactive).
+  for (const address of onChainSigners) {
+    if (!snapshotSet.has(address)) {
+      mismatches.push({
+        field: "signers",
+        onChain: address,
+        snapshot: null,
+        detail: `Signer ${address} is present on-chain but missing from (or inactive in) the snapshot.`,
+      });
+    }
+  }
+
+  // Signers the snapshot believes are active but the contract does not have.
+  for (const address of snapshotSigners) {
+    if (!onChainSet.has(address)) {
+      mismatches.push({
+        field: "signers",
+        onChain: null,
+        snapshot: address,
+        detail: `Signer ${address} is active in the snapshot but not present on-chain.`,
+      });
+    }
+  }
+
+  return mismatches;
+}
+
+/**
  * SnapshotService
  *
  * Aggregates signer and role state from normalized events.
  * Maintains current-state snapshots for fast queries.
+ * Prevents concurrent rebuilds with lock-based synchronization.
  */
 export class SnapshotService {
+  private readonly lockManager: SnapshotRebuildLockManager;
+  private readonly onChainProvider?: OnChainConfigProvider;
+  private readonly verificationEmitter?: SnapshotVerificationEmitter;
+
   constructor(
     private readonly adapter: SnapshotStorageAdapter,
     private readonly rpc?: SorobanRpcClient,
-  ) {}
+    options?: {
+      lockManager?: SnapshotRebuildLockManager;
+      onChainProvider?: OnChainConfigProvider;
+      verificationEmitter?: SnapshotVerificationEmitter;
+    },
+  ) {
+    // Use provided lock manager or create default
+    this.lockManager =
+      options?.lockManager ??
+      new SnapshotRebuildLockManager({
+        backend: new InMemoryLockBackend(),
+      });
+
+    this.onChainProvider = options?.onChainProvider;
+    this.verificationEmitter = options?.verificationEmitter;
+
+    // Register lock event handlers for logging
+    this.lockManager.onLockAcquired((contractId) => {
+      logger.info("snapshot rebuild lock acquired", { contractId });
+    });
+
+    this.lockManager.onLockReleased((contractId) => {
+      logger.info("snapshot rebuild lock released", { contractId });
+    });
+  }
 
   /**
    * Process a single normalized event and update snapshot.
@@ -164,10 +244,10 @@ export class SnapshotService {
           break;
         } catch (saveError) {
           if (attempt < MAX_RETRIES && isTransientError(saveError)) {
-            console.warn(
-              `[snapshot-service] saveSnapshot attempt ${attempt} failed, retrying...`,
-              saveError,
-            );
+            logger.warn("saveSnapshot attempt failed, retrying", {
+              attempt,
+              error: String(saveError),
+            });
             await sleep(100 * attempt);
           } else {
             throw saveError;
@@ -183,7 +263,7 @@ export class SnapshotService {
         lastProcessedLedger: event.metadata.ledger,
       };
     } catch (error) {
-      console.error("[snapshot-service] Error processing event:", error);
+      logger.error("Error processing event", { error: String(error) });
       return {
         success: false,
         signersUpdated: 0,
@@ -228,9 +308,10 @@ export class SnapshotService {
 
         if (consecutiveErrors >= maxConsecutiveErrors) {
           const skipped = events.length - (i + 1);
-          console.warn(
-            `[snapshot-service] max consecutive errors (${maxConsecutiveErrors}) reached — skipping remaining ${skipped} events in batch`,
-          );
+          logger.warn("max consecutive errors reached — skipping remaining events in batch", {
+            maxConsecutiveErrors,
+            skipped,
+          });
           return {
             success: false,
             signersUpdated: totalSignersUpdated,
@@ -257,12 +338,32 @@ export class SnapshotService {
 
   /**
    * Rebuild snapshot from scratch using event replay.
+   * Uses distributed lock to prevent concurrent rebuilds.
    */
   async rebuildSnapshot(
     events: NormalizedEvent[],
     options: SnapshotRebuildOptions,
   ): Promise<SnapshotUpdateResult> {
     const { contractId, clearExisting = true } = options;
+
+    // Attempt to acquire lock
+    const lockId = await this.lockManager.acquireLock(contractId);
+    if (!lockId) {
+      const message =
+        "rebuild already in progress for this contract — try again later";
+      logger.warn("[snapshot-service] rebuild lock failed", {
+        contractId,
+        message,
+      });
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        error: message,
+      };
+    }
 
     try {
       // Clear existing snapshot if requested
@@ -293,7 +394,7 @@ export class SnapshotService {
       // Process all events
       return await this.processEvents(filteredEvents);
     } catch (error) {
-      console.error("[snapshot-service] Error rebuilding snapshot:", error);
+      logger.error("Error rebuilding snapshot", { error: String(error) });
       return {
         success: false,
         signersUpdated: 0,
@@ -302,12 +403,16 @@ export class SnapshotService {
         lastProcessedLedger: 0,
         error: String(error),
       };
+    } finally {
+      // Always release lock
+      await this.lockManager.releaseLock(contractId, lockId);
     }
   }
 
   /**
    * Rebuild snapshot by fetching events directly from the Soroban RPC.
    * Processes events in batches of 200 to avoid memory spikes.
+   * Uses distributed lock to prevent concurrent rebuilds.
    * No-op if no RPC client was injected.
    */
   async rebuildFromRpc(
@@ -316,9 +421,7 @@ export class SnapshotService {
     endLedger: number,
   ): Promise<SnapshotUpdateResult> {
     if (!this.rpc) {
-      console.warn(
-        "[snapshot-service] rebuildFromRpc called but no RPC client is configured — skipping",
-      );
+      logger.warn("rebuildFromRpc called but no RPC client is configured — skipping");
       return {
         success: true,
         signersUpdated: 0,
@@ -328,69 +431,95 @@ export class SnapshotService {
       };
     }
 
-    await this.adapter.clearSnapshot(contractId);
-
-    let totalSignersUpdated = 0;
-    let totalRolesUpdated = 0;
-    let totalEventsProcessed = 0;
-    let lastProcessedLedger = 0;
-    const errors: string[] = [];
-
-    let currentLedger = startLedger;
-
-    while (currentLedger <= endLedger) {
-      const batchEnd = Math.min(
-        currentLedger + REBUILD_BATCH_SIZE - 1,
-        endLedger,
-      );
-
-      try {
-        const rawEvents = await this.rpc.getContractEvents({
-          startLedger: currentLedger,
-          filters: [{ type: "contract", contractIds: [contractId] }],
-          pagination: { limit: REBUILD_BATCH_SIZE },
-        });
-
-        const inRange = rawEvents.filter((e) => e.ledger <= batchEnd);
-        const normalized = inRange.map((e) => EventNormalizer.normalize(e));
-
-        console.log(
-          `[snapshot-service] rebuildFromRpc batch ledgers ${currentLedger}-${batchEnd}: ${normalized.length} events`,
-        );
-
-        if (normalized.length > 0) {
-          const result = await this.processEvents(normalized);
-          totalSignersUpdated += result.signersUpdated;
-          totalRolesUpdated += result.rolesUpdated;
-          totalEventsProcessed += result.eventsProcessed;
-          lastProcessedLedger = Math.max(
-            lastProcessedLedger,
-            result.lastProcessedLedger,
-          );
-          if (!result.success && result.error) {
-            errors.push(result.error);
-          }
-        }
-      } catch (error) {
-        const msg = String(error);
-        console.error(
-          `[snapshot-service] rebuildFromRpc error at ledger ${currentLedger}:`,
-          error,
-        );
-        errors.push(msg);
-      }
-
-      currentLedger = batchEnd + 1;
+    // Attempt to acquire lock
+    const lockId = await this.lockManager.acquireLock(contractId);
+    if (!lockId) {
+      const message =
+        "rebuild already in progress for this contract — try again later";
+      logger.warn("[snapshot-service] rebuildFromRpc lock failed", {
+        contractId,
+        message,
+      });
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        error: message,
+      };
     }
 
-    return {
-      success: errors.length === 0,
-      signersUpdated: totalSignersUpdated,
-      rolesUpdated: totalRolesUpdated,
-      eventsProcessed: totalEventsProcessed,
-      lastProcessedLedger,
-      error: errors.length > 0 ? errors.join("; ") : undefined,
-    };
+    try {
+      await this.adapter.clearSnapshot(contractId);
+
+      let totalSignersUpdated = 0;
+      let totalRolesUpdated = 0;
+      let totalEventsProcessed = 0;
+      let lastProcessedLedger = 0;
+      const errors: string[] = [];
+
+      let currentLedger = startLedger;
+
+      while (currentLedger <= endLedger) {
+        const batchEnd = Math.min(
+          currentLedger + REBUILD_BATCH_SIZE - 1,
+          endLedger,
+        );
+
+        try {
+          const rawEvents = await this.rpc.getContractEvents({
+            startLedger: currentLedger,
+            filters: [{ type: "contract", contractIds: [contractId] }],
+            pagination: { limit: REBUILD_BATCH_SIZE },
+          });
+
+          const inRange = rawEvents.filter((e) => e.ledger <= batchEnd);
+          const normalized = inRange.map((e) => EventNormalizer.normalize(e));
+
+          logger.info("rebuildFromRpc batch processed", {
+            startLedger: currentLedger,
+            endLedger: batchEnd,
+            eventCount: normalized.length,
+          });
+
+          if (normalized.length > 0) {
+            const result = await this.processEvents(normalized);
+            totalSignersUpdated += result.signersUpdated;
+            totalRolesUpdated += result.rolesUpdated;
+            totalEventsProcessed += result.eventsProcessed;
+            lastProcessedLedger = Math.max(
+              lastProcessedLedger,
+              result.lastProcessedLedger,
+            );
+            if (!result.success && result.error) {
+              errors.push(result.error);
+            }
+          }
+        } catch (error) {
+          const msg = String(error);
+          logger.error("rebuildFromRpc error", {
+            ledger: currentLedger,
+            error: msg,
+          });
+          errors.push(msg);
+        }
+
+        currentLedger = batchEnd + 1;
+      }
+
+      return {
+        success: errors.length === 0,
+        signersUpdated: totalSignersUpdated,
+        rolesUpdated: totalRolesUpdated,
+        eventsProcessed: totalEventsProcessed,
+        lastProcessedLedger,
+        error: errors.length > 0 ? errors.join("; ") : undefined,
+      };
+    } finally {
+      // Always release lock
+      await this.lockManager.releaseLock(contractId, lockId);
+    }
   }
 
   /**
@@ -657,6 +786,114 @@ export class SnapshotService {
     };
   }
 
+  /**
+   * Verify that an event-built snapshot matches current on-chain state.
+   *
+   * Snapshots are reconstructed from indexed events, so a missed event, a bug,
+   * or a chain reorg can silently desync them from the contract. This performs
+   * a point-in-time reconciliation of the *active signer set* — the state both
+   * the snapshot and the contract's `get_config` expose — and reports any
+   * divergence with a detailed diff.
+   *
+   * Corresponds to the `verify_snapshot_consistency(env, snapshot_id)` task.
+   * An event describing the outcome (consistent or drifted) is emitted after
+   * every verification when an emitter is configured.
+   *
+   * @param contractId - Vault contract whose snapshot should be verified.
+   * @returns A structured result whose `consistent` flag is the headline bool.
+   * @throws If no on-chain provider is configured, or no snapshot exists yet.
+   */
+  async verifySnapshotConsistency(
+    contractId: string,
+  ): Promise<SnapshotConsistencyResult> {
+    if (!this.onChainProvider) {
+      throw new Error(
+        "verifySnapshotConsistency requires an on-chain config provider",
+      );
+    }
+
+    const snapshot = await this.getSnapshot(contractId);
+    if (!snapshot) {
+      throw new Error(`No snapshot found for contract ${contractId}`);
+    }
+
+    // Active signers as reconstructed from events.
+    const snapshotSigners = Array.from(snapshot.signers.values())
+      .filter((s) => s.isActive)
+      .map((s) => s.address)
+      .sort();
+
+    // Authoritative signer set from the contract.
+    const onChain = await this.onChainProvider.getVaultConfig(contractId);
+    const onChainSigners = [...onChain.signers].sort();
+
+    const mismatches = diffSignerSets(onChainSigners, snapshotSigners);
+    const consistent = mismatches.length === 0;
+
+    const result: SnapshotConsistencyResult = {
+      consistent,
+      contractId,
+      checkedAt: new Date().toISOString(),
+      snapshotLedger: snapshot.lastProcessedLedger,
+      onChainSigners,
+      snapshotSigners,
+      mismatches,
+    };
+
+    if (consistent) {
+      logger.info("snapshot consistency verified", {
+        contractId,
+        snapshotLedger: result.snapshotLedger,
+        signerCount: onChainSigners.length,
+      });
+    } else {
+      logger.warn("snapshot consistency mismatch detected", {
+        contractId,
+        snapshotLedger: result.snapshotLedger,
+        mismatchCount: mismatches.length,
+        mismatches,
+      });
+    }
+
+    await this.emitVerificationEvent(result);
+
+    return result;
+  }
+
+  /**
+   * Publish a verification outcome to the configured emitter, if any.
+   * Emission failures are logged but never propagated — a failed webhook must
+   * not mask the verification result itself.
+   */
+  private async emitVerificationEvent(
+    result: SnapshotConsistencyResult,
+  ): Promise<void> {
+    if (!this.verificationEmitter) return;
+    try {
+      await this.verificationEmitter.deliver({
+        id: randomUUID(),
+        topic: result.consistent
+          ? "snapshot:consistency-verified"
+          : "snapshot:consistency-drift",
+        source: "snapshot-service",
+        createdAt: result.checkedAt,
+        payload: {
+          contractId: result.contractId,
+          consistent: result.consistent,
+          snapshotLedger: result.snapshotLedger,
+          mismatches: result.mismatches,
+          onChainSigners: result.onChainSigners,
+          snapshotSigners: result.snapshotSigners,
+        },
+      });
+    } catch (err) {
+      logger.warn("failed to emit snapshot verification event", {
+        contractId: result.contractId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   private computeRoleDistribution(
     roles: RoleSnapshot[],
   ): Record<string, number> {
@@ -666,6 +903,134 @@ export class SnapshotService {
       dist[key] = (dist[key] ?? 0) + 1;
     }
     return dist;
+  }
+
+  /**
+   * Rollback snapshot to a previous snapshot in history and replay events up to current.
+   */
+  async rollbackSnapshot(
+    arg1: string | SnapshotRollbackOptions | any,
+    toSnapshotId?: string | number,
+    reason = "Corrupt snapshot detected",
+    events: NormalizedEvent[] = [],
+  ): Promise<SnapshotRollbackResult> {
+    let contractId: string;
+    let targetSnapshotId: string | number;
+    let rollbackReason = reason;
+
+    if (typeof arg1 === "object" && arg1 !== null) {
+      if ("contractId" in arg1) {
+        contractId = arg1.contractId;
+        targetSnapshotId = arg1.toSnapshotId;
+        rollbackReason = arg1.reason ?? reason;
+      } else {
+        contractId = arg1.contractId ?? String(arg1);
+        targetSnapshotId = toSnapshotId!;
+      }
+    } else {
+      contractId = String(arg1);
+      targetSnapshotId = toSnapshotId!;
+    }
+
+    const lockId = await this.lockManager.acquireLock(contractId);
+    if (!lockId) {
+      const message = "rollback already in progress or lock unavailable";
+      logger.warn("[snapshot-service] rollback lock failed", { contractId, message });
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        rollbackSnapshotId: targetSnapshotId,
+        eventsReplayed: 0,
+        reason: rollbackReason,
+        error: message,
+      };
+    }
+
+    try {
+      let restoredSnapshot: ContractSnapshot | null = null;
+
+      if (typeof this.adapter.restoreSnapshot === "function") {
+        restoredSnapshot = await this.adapter.restoreSnapshot(contractId, targetSnapshotId);
+      }
+
+      if (!restoredSnapshot && typeof this.adapter.getSnapshotById === "function") {
+        const found = await this.adapter.getSnapshotById(contractId, targetSnapshotId);
+        if (found) {
+          restoredSnapshot = {
+            ...found,
+            signers: new Map(found.signers),
+            roles: new Map(found.roles),
+          };
+          await this.adapter.saveSnapshot(restoredSnapshot);
+        }
+      }
+
+      if (!restoredSnapshot) {
+        restoredSnapshot = this.createEmptySnapshot(contractId);
+        await this.adapter.saveSnapshot(restoredSnapshot);
+      }
+
+      const rollbackLedger = restoredSnapshot.lastProcessedLedger;
+
+      const eventsToReplay = events
+        .filter(
+          (e) =>
+            e.metadata.contractId === contractId &&
+            e.metadata.ledger > rollbackLedger
+        )
+        .sort((a, b) => a.metadata.ledger - b.metadata.ledger);
+
+      const replayResult = await this.processEvents(eventsToReplay);
+      const eventsReplayed = eventsToReplay.length;
+
+      logger.info("snapshot rollback completed", {
+        contractId,
+        rollbackSnapshotId: targetSnapshotId,
+        rollbackLedger,
+        reason: rollbackReason,
+        eventsReplayed,
+        success: replayResult.success,
+      });
+
+      return {
+        ...replayResult,
+        rollbackSnapshotId: targetSnapshotId,
+        eventsReplayed,
+        reason: rollbackReason,
+      };
+    } catch (error) {
+      logger.error("[snapshot-service] Error rolling back snapshot:", {
+        error: String(error),
+      });
+      return {
+        success: false,
+        signersUpdated: 0,
+        rolesUpdated: 0,
+        eventsProcessed: 0,
+        lastProcessedLedger: 0,
+        rollbackSnapshotId: targetSnapshotId,
+        eventsReplayed: 0,
+        reason: rollbackReason,
+        error: String(error),
+      };
+    } finally {
+      await this.lockManager.releaseLock(contractId, lockId);
+    }
+  }
+
+  /**
+   * Alias for rollbackSnapshot for flexible invocation matching rollback_snapshot(env, to_snapshot_id).
+   */
+  async rollback_snapshot(
+    arg1: any,
+    to_snapshot_id?: any,
+    reason?: string,
+    events?: NormalizedEvent[]
+  ): Promise<SnapshotRollbackResult> {
+    return this.rollbackSnapshot(arg1, to_snapshot_id, reason, events);
   }
 
   /**

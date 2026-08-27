@@ -18,7 +18,11 @@ import {
   ProposalAmendedActivityData,
   ProposalExecutedActivityData,
 } from "./types.js";
-import type { MetricsRegistry } from "../health/metrics.registry.js";
+import {
+  PROPOSALS_CREATED_COUNTER,
+  PROPOSALS_EXECUTED_COUNTER,
+  type MetricsRegistry,
+} from "../health/metrics.registry.js";
 import type { NotificationPublisher } from "../notifications/notification.types.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -114,6 +118,10 @@ export class ProposalActivityConsumer {
   private isDuplicate(event: NormalizedEvent): boolean {
     const key = this.deriveEventKey(event);
     if (this.processedEventIds.has(key)) {
+      // Emit dedup metric
+      this.metrics?.incrementCounter("vaultdao_proposals_consumer_duplicates_total", {
+        reason: "event_id",
+      });
       return true;
     }
     if (this.processedEventIds.size >= this.maxDedupeSize) {
@@ -197,7 +205,7 @@ export class ProposalActivityConsumer {
     }
 
     this.buffer.push(record);
-    console.debug("[proposal-consumer] buffered record:", record.activityId);
+    this.logger.debug("buffered record", { activityId: record.activityId });
 
     // Broadcast to realtime rooms immediately
     this.onActivity?.(record);
@@ -207,7 +215,7 @@ export class ProposalActivityConsumer {
       try {
         await this.persistence.save(record);
       } catch (error) {
-        console.error("[proposal-consumer] persistence error:", error);
+        this.logger.error("persistence error", { error: String(error) });
       }
     }
 
@@ -216,7 +224,7 @@ export class ProposalActivityConsumer {
       try {
         await consumer(record);
       } catch (error) {
-        console.error("[proposal-consumer] consumer error:", error);
+        this.logger.error("consumer error", { error: String(error) });
       }
     }
 
@@ -248,23 +256,19 @@ export class ProposalActivityConsumer {
     }
 
     if (records.length === 0) {
-      console.debug("[proposal-consumer] no proposal events in batch");
+      this.logger.debug("no proposal events in batch");
       return;
     }
 
     this.buffer.push(...records);
-    console.debug(
-      "[proposal-consumer] buffered",
-      records.length,
-      "records from batch",
-    );
+    this.logger.debug("buffered records from batch", { count: records.length });
 
     // Persist batch if configured
     if (this.persistence) {
       try {
         await this.persistence.saveBatch(records);
       } catch (error) {
-        console.error("[proposal-consumer] persistence error:", error);
+        this.logger.error("persistence error", { error: String(error) });
       }
     }
 
@@ -273,7 +277,7 @@ export class ProposalActivityConsumer {
       try {
         await consumer(records);
       } catch (error) {
-        console.error("[proposal-consumer] batch consumer error:", error);
+        this.logger.error("batch consumer error", { error: String(error) });
       }
     }
 
@@ -297,9 +301,7 @@ export class ProposalActivityConsumer {
     const activityType = PROPOSAL_ACTIVITY_TYPE_MAP[event.type];
 
     if (!activityType) {
-      console.warn(
-        `[proposal-consumer] unknown proposal event type: ${event.type}`,
-      );
+      this.logger.warn("unknown proposal event type", { eventType: event.type });
       return null;
     }
 
@@ -338,6 +340,15 @@ export class ProposalActivityConsumer {
       this.metrics.incrementCounter("vaultdao_proposals_indexed_total", {
         status: statusLabel,
       });
+
+      // Throughput counters — incremented only for the two lifecycle points
+      // capacity planning cares about, and only after every dedup check
+      // above has passed so a dropped duplicate never inflates the rate.
+      if (activityType === ProposalActivityType.CREATED) {
+        this.metrics.incrementCounter(PROPOSALS_CREATED_COUNTER);
+      } else if (activityType === ProposalActivityType.EXECUTED) {
+        this.metrics.incrementCounter(PROPOSALS_EXECUTED_COUNTER);
+      }
     }
 
     return {
@@ -411,10 +422,7 @@ export class ProposalActivityConsumer {
         });
         this.metrics?.incrementCounter("vaultdao_notifications_published_total");
       } catch (err) {
-        console.error(
-          "[proposal-consumer] failed to publish notification:",
-          err,
-        );
+        this.logger.error("failed to publish notification", { error: String(err) });
       }
     }
   }
@@ -441,31 +449,24 @@ export class ProposalActivityConsumer {
       // 1. Handle previously failed records if backoff has expired
       if (this.retryBuffer.length > 0 && now >= this.nextRetryTime) {
         const retryRecords = [...this.retryBuffer];
-        console.debug(
-          "[proposal-consumer] retrying persistence for",
-          retryRecords.length,
-          "records (attempt",
-          this.failureCount + 1,
-          ")",
-        );
+        this.logger.debug("retrying persistence for records", {
+          count: retryRecords.length,
+          attempt: this.failureCount + 1,
+        });
 
         if (this.persistence) {
           try {
             await this.persistence.saveBatch(retryRecords);
-            console.debug(
-              "[proposal-consumer] successfully persisted retry batch",
-            );
+            this.logger.debug("successfully persisted retry batch");
             this.retryBuffer = [];
             this.failureCount = 0;
             this.nextRetryTime = 0;
           } catch (error) {
             this.failureCount++;
             if (this.failureCount >= this.maxRetries) {
-              console.error(
-                "[proposal-consumer] CRITICAL: max retries reached. Dropping",
-                this.retryBuffer.length,
-                "records.",
-              );
+              this.logger.error("CRITICAL: max retries reached, dropping records", {
+                count: this.retryBuffer.length,
+              });
               this.retryBuffer = [];
               this.failureCount = 0;
               this.nextRetryTime = 0;
@@ -473,9 +474,7 @@ export class ProposalActivityConsumer {
               const backoff =
                 this.initialBackoffMs * Math.pow(2, this.failureCount - 1);
               this.nextRetryTime = now + backoff;
-              console.warn(
-                `[proposal-consumer] persistence retry failed. Next retry in ${backoff}ms`,
-              );
+              this.logger.warn("persistence retry failed", { nextRetryMs: backoff });
             }
           }
         }
@@ -486,34 +485,25 @@ export class ProposalActivityConsumer {
         const records = [...this.buffer];
         this.buffer = [];
 
-        console.debug(
-          "[proposal-consumer] flushing",
-          records.length,
-          "new records",
-        );
+        this.logger.debug("flushing new records", { count: records.length });
 
         // Save to persistence if configured
         if (this.persistence) {
           try {
             await this.persistence.saveBatch(records);
-            console.debug(
-              "[proposal-consumer] persisted",
-              records.length,
-              "new records",
-            );
+            this.logger.debug("persisted new records", { count: records.length });
           } catch (error) {
-            console.error(
-              "[proposal-consumer] persistence error for new records:",
-              error,
-            );
+            this.logger.error("persistence error for new records", {
+              error: String(error),
+            });
             // Move new records to retry buffer and initiate backoff if not already set
             this.retryBuffer.push(...records);
             if (this.failureCount === 0) {
               this.failureCount = 1;
               this.nextRetryTime = now + this.initialBackoffMs;
-              console.warn(
-                `[proposal-consumer] initiated backoff. Next retry in ${this.initialBackoffMs}ms`,
-              );
+              this.logger.warn("initiated backoff", {
+                nextRetryMs: this.initialBackoffMs,
+              });
             }
           }
         }
@@ -552,10 +542,9 @@ export class ProposalActivityConsumer {
               try {
                 await consumer(records);
               } catch (error) {
-                console.error(
-                  "[proposal-consumer] batch consumer error during flush:",
-                  error,
-                );
+                this.logger.error("batch consumer error during flush", {
+                  error: String(error),
+                });
               }
             }
           }
@@ -694,9 +683,7 @@ export class ProposalActivityConsumer {
 
       default:
         // This should be unreachable if PROPOSAL_ACTIVITY_TYPE_MAP is correctly configured
-        console.warn(
-          `[proposal-consumer] unhandled activity type: ${activityType}`,
-        );
+        this.logger.warn("unhandled activity type", { activityType });
         return {
           activityType: activityType as any,
         } as any;
@@ -748,7 +735,7 @@ export class ProposalActivityConsumer {
       try {
         await this.flush();
       } catch (error) {
-        console.error("[proposal-consumer] flush timer error:", error);
+        this.logger.error("flush timer error", { error: String(error) });
       }
     }, this.flushIntervalMs);
   }

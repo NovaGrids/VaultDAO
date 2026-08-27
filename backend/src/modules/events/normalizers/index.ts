@@ -12,6 +12,9 @@ import { MiscNormalizer } from "./misc.normalizer.js";
 import { GenericEventNormalizer } from "./generic.normalizer.js";
 import { UnknownEventNormalizer } from "./unknown.normalizer.js";
 import { SnapshotNormalizer } from "../../snapshots/normalizer.js";
+import { createLogger } from "../../../shared/logging/logger.js";
+
+const logger = createLogger("event-normalizer");
 
 export class EventNormalizer {
   public static normalize(event: ContractEvent): NormalizedEvent {
@@ -23,10 +26,7 @@ export class EventNormalizer {
     try {
       return EventNormalizer.dispatch(event, type);
     } catch (error) {
-      console.error(
-        `[event-normalizer] normalization failed for "${topic}":`,
-        error,
-      );
+      logger.error("normalization failed", { topic, error: String(error) });
       return EventNormalizer.unknown(
         event,
         `Normalization error: ${String(error)}`,

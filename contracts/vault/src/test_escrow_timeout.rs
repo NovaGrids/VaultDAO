@@ -48,7 +48,6 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
             quorum_percentage: 0,
-            arbitration_timeout_ledgers: 1000, // Set a small timeout for testing
         },
     );
 
@@ -62,14 +61,26 @@ fn test_escrow_arbitration_timeout_config_set() {
     let (client, _admin, _contract_id) = setup(&env);
 
     let config = client.get_config();
-    assert_eq!(config.arbitration_timeout_ledgers, 1000, "Arbitration timeout should be set");
+    // Default arbitration timeout is 30 days in ledgers (17_280 * 30)
+    assert_eq!(
+        config.arbitration_timeout_ledgers,
+        17_280 * 30,
+        "Arbitration timeout should use the initialize default"
+    );
 }
 
 #[test]
 fn test_escrow_auto_resolve_refunds_after_timeout() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, _contract_id) = setup(&env);
+    let (client, admin, contract_id) = setup(&env);
+
+    // Shrink arbitration timeout for the test
+    env.as_contract(&contract_id, || {
+        let mut config = crate::storage::get_config(&env).unwrap();
+        config.arbitration_timeout_ledgers = 1000;
+        crate::storage::set_config(&env, &config);
+    });
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -108,8 +119,15 @@ fn test_escrow_auto_resolve_refunds_after_timeout() {
 
     // Verify escrow is refunded
     let escrow = client.get_escrow_info(&escrow_id).unwrap();
-    assert_eq!(escrow.status, EscrowStatus::Refunded, "Escrow should be refunded");
-    assert_eq!(escrow.released_amount, 5000i128, "All funds should be released");
+    assert_eq!(
+        escrow.status,
+        EscrowStatus::Refunded,
+        "Escrow should be refunded"
+    );
+    assert_eq!(
+        escrow.released_amount, 5000i128,
+        "All funds should be released"
+    );
 }
 
 #[test]
@@ -185,5 +203,8 @@ fn test_escrow_auto_resolve_only_refunds_disputed() {
 
     // Try to auto-resolve non-disputed escrow - should fail
     let result = client.auto_resolve_escrow(&escrow_id);
-    assert!(result.is_err(), "Auto-resolve should fail for non-disputed escrow");
+    assert!(
+        result.is_err(),
+        "Auto-resolve should fail for non-disputed escrow"
+    );
 }

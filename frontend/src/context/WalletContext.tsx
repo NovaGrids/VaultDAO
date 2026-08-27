@@ -5,6 +5,8 @@ import { WalletContext } from './WalletContextProps';
 import type { WalletType } from './WalletContextProps';
 import { detectAvailableWallets, getAdapterById } from '../adapters';
 import type { WalletAdapter } from '../adapters';
+import { useIdleTimer } from '../hooks/useIdleTimer';
+import { env } from '../config/env';
 
 const PREFERRED_WALLET_KEY = 'vaultdao_preferred_wallet';
 const WALLET_CONNECTED_KEY = 'vaultdao_wallet_connected';
@@ -20,6 +22,8 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [accountRole, setAccountRole] = useState<string | null>(null);
   const activeAdapterRef = useRef<WalletAdapter | null>(null);
   const { showToast } = useToast();
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [countdown, setCountdown] = useState(60);
 
   const detectWallets = useCallback(async () => {
     const wallets = await detectAvailableWallets();
@@ -55,6 +59,9 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     async (adapter: WalletAdapter) => {
       try {
         const pubkey = await adapter.getPublicKey();
+        if (activeAdapterRef.current !== adapter) {
+          return false;
+        }
         if (pubkey) {
           setAddress(pubkey);
           setConnected(true);
@@ -112,6 +119,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       try {
         const available = await adapter.isAvailable();
         if (!cancelled && available) {
+          activeAdapterRef.current = adapter;
           await updateWalletState(adapter);
         } else if (!cancelled) {
           // Stored wallet no longer available — clear persisted state silently
@@ -198,6 +206,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     try {
       await adapter.connect();
+      activeAdapterRef.current = adapter;
       const success = await updateWalletState(adapter);
       if (success) {
         localStorage.setItem(WALLET_CONNECTED_KEY, 'true');
@@ -215,6 +224,13 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, [selectedWalletId, availableWallets, updateWalletState, savePreferredWallet, showToast]);
 
   const disconnect = useCallback(async () => {
+    setConnected(false);
+    setAddress(null);
+    setNetwork(null);
+    localStorage.removeItem(WALLET_CONNECTED_KEY);
+    localStorage.removeItem(LAST_ACCOUNT_KEY);
+    localStorage.removeItem(PREFERRED_WALLET_KEY);
+
     const adapter = activeAdapterRef.current;
     if (adapter) {
       try {
@@ -224,12 +240,31 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
       activeAdapterRef.current = null;
     }
-    setConnected(false);
-    setAddress(null);
-    setNetwork(null);
-    localStorage.removeItem(WALLET_CONNECTED_KEY);
     showToast('Wallet disconnected', 'info');
   }, [showToast]);
+
+  const { resetTimer } = useIdleTimer({
+    timeoutMs: env.walletIdleTimeoutMs ?? 15 * 60 * 1000,
+    onIdle: () => {
+      setShowWarningModal(false);
+      disconnect();
+    },
+    onCountdown: (remainingSeconds) => {
+      if (remainingSeconds > 0) {
+        setShowWarningModal(true);
+        setCountdown(remainingSeconds);
+      } else {
+        setShowWarningModal(false);
+      }
+    },
+    warningSeconds: 60,
+    enabled: connected,
+  });
+
+  const keepSessionAlive = useCallback(() => {
+    setShowWarningModal(false);
+    resetTimer();
+  }, [resetTimer]);
 
   const switchWallet = useCallback((adapter: WalletAdapter) => {
     setSelectedWalletId(adapter.id as WalletType);
@@ -288,6 +323,23 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }}
     >
       {children}
+      {showWarningModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black bg-opacity-70" role="dialog" aria-modal="true" data-testid="idle-warning-modal">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-md p-6 space-y-6">
+            <h3 className="text-xl font-bold text-yellow-400">Session Warning</h3>
+            <p className="text-gray-300">Session expiring in {countdown}s</p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={keepSessionAlive}
+                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors"
+                data-testid="idle-keep-alive-btn"
+              >
+                Keep Active
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </WalletContext.Provider>
   );
 };

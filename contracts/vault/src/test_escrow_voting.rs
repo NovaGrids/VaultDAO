@@ -97,7 +97,7 @@ fn test_escrow_created_with_voting_disabled_by_default() {
         &3600u64,
     );
 
-    let escrow = client.get_escrow(escrow_id).unwrap();
+    let escrow = client.get_escrow_info(escrow_id).unwrap();
     // Voting should be disabled by default
     assert!(!escrow.requires_signer_approval);
 }
@@ -148,7 +148,7 @@ fn test_escrow_vote_counts_initialized() {
         &3600u64,
     );
 
-    let escrow = client.get_escrow(escrow_id).unwrap();
+    let escrow = client.get_escrow_info(escrow_id).unwrap();
     // Vote counts should start at zero
     assert_eq!(escrow.approval_votes, 0);
     assert_eq!(escrow.rejection_votes, 0);
@@ -199,7 +199,7 @@ fn test_escrow_fields_populated() {
         &3600u64,
     );
 
-    let escrow = client.get_escrow(escrow_id).unwrap();
+    let escrow = client.get_escrow_info(escrow_id).unwrap();
     assert_eq!(escrow.total_amount, 100_000i128);
     assert_eq!(escrow.released_amount, 0);
     assert_eq!(escrow.funder, admin);

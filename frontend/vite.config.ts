@@ -2,9 +2,25 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { visualizer } from 'rollup-plugin-visualizer'
 import { resolve } from 'path'
+// The CSP policy lives in its own module so it can be imported by tests
+// without pulling in Vite / esbuild, which fail to load under jsdom.
+import { CSP_POLICY } from './src/config/csp'
+
+// Re-export so tooling that previously imported CSP_POLICY from this file continues to work.
+export { CSP_POLICY };
+
+const CSP_HEADERS = {
+  'Content-Security-Policy': CSP_POLICY,
+};
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    headers: CSP_HEADERS,
+  },
+  preview: {
+    headers: CSP_HEADERS,
+  },
   plugins: [
     react({
       babel: {

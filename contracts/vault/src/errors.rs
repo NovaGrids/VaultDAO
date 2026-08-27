@@ -98,6 +98,15 @@ pub enum VaultError {
     ClaimSelfVote = 243,
     ClaimVoteDeadlineTooShort = 244,
     ClaimBondInsufficient = 245,
+    // Issue #1355: quorum + explicit voting window closure
+    /// Vote cast after the claim's voting window has passed
+    ClaimVotingWindowClosed = 246,
+    /// Voting cannot be closed yet: the window has not elapsed and not everyone has voted
+    ClaimVotingStillOpen = 247,
+    /// Participation fell short of the claim's quorum requirement
+    ClaimQuorumNotMet = 248,
+    /// Voting for this claim has already been closed and tallied
+    ClaimAlreadyClosed = 249,
     // Issue #1081: Multi-Token Vault
     TokenAlreadySupported = 250,
     TokenNotSupported = 251,
@@ -304,6 +313,7 @@ pub enum VaultError {
     // Emergency pause / circuit breaker (#1084)
     // =========================================================
     VaultPaused = 1020,
+    VaultNotPaused = 1021,
 
     // =========================================================
     // Dependency graph depth (#1066)
@@ -354,6 +364,8 @@ pub enum VaultError {
     CannotRemoveSigner = 85,
     DuplicateProposal = 26,
     ExecutionWindowExpired = 27,
+    /// Approved proposal's execution window has passed (issue #1349)
+    ProposalExecutionWindowExpired = 28,
     GasLimitExceeded = 161,
     InsurancePoolInsufficient = 111,
     InvalidDeadline = 44,
@@ -368,6 +380,86 @@ pub enum VaultError {
     // =========================================================
     /// Gas-price oracle contract returned a zero or negative price
     GasPriceOracleInvalidPrice = 723,
+
+    // =========================================================
+    // Issue #1361: Atomic Batch Rollback
+    // =========================================================
+    /// A transfer failed during batch commit despite passing pre-commit simulation
+    BatchCommitFailed = 1120,
+
+    // =========================================================
+    // Issue #1091: Keeper Network Lifecycle Hooks
+    // =========================================================
+    /// Maximum hooks per event type (5) or total hooks (20) exceeded
+    HookLimitExceeded = 1200,
+    /// Hook registration not found for the specified keeper/event pair
+    HookNotFound = 1201,
+    /// A hook for this keeper+event_type combination already exists
+    HookAlreadyRegistered = 1202,
+    // Amendment diff viewer
+    // =========================================================
+    /// compare_amendments was called with an index outside the amendment history bounds
+    AmendmentIndexOutOfBounds = 1121,
+
+    // =========================================================
+    // Issue #23: Proposal supersession chain traversal
+    // =========================================================
+    /// Supersession chain traversal detected a cycle (defensive; should not occur in normal operation)
+    SupersessionCycleDetected = 1122,
+    /// Supersession chain exceeds the maximum traversal depth
+    SupersessionChainTooLong = 1123,
+
+    // =========================================================
+    // Vault template export/clone
+    // =========================================================
+    /// VaultTemplate failed validation (e.g. invalid threshold ratio)
+    InvalidTemplate = 1124,
+
+    // =========================================================
+    // Issue #1356: Proposal amendment limits
+    // =========================================================
+    /// The proposal has already been amended the maximum number of times
+    AmendmentLimitExceeded = 1125,
+
+    // =========================================================
+    // Issue #1363: Batch dependency validation
+    // =========================================================
+    /// A batched proposal depends on something that is neither in the batch nor already executed
+    BatchDependencyMissing = 1126,
+
+    // =========================================================
+    // Issue #1350: Pause Circuit Breaker Cooldown
+    // =========================================================
+    /// Pause/unpause action is in cooldown period
+    PauseCooldownActive = 1127,
+    /// Caller is not an emergency signer
+    NotEmergencySigner = 1128,
+
+    // =========================================================
+    // Issue #1093: Signer Participation Scoring
+    // =========================================================
+    /// get_participation_rate was called with a window exceeding the 100-proposal cap
+    InvalidParticipationWindow = 1129,
+    /// Target signer is not currently in a sustained (>= 30 day) low-participation streak
+    SignerNotEligibleForForceRotation = 1130,
+    /// This signer has already approved this force-rotation request
+    ForceRotationAlreadyApprovedBySigner = 1131,
+    /// This force-rotation request has already been executed
+    ForceRotationAlreadyExecuted = 1132,
+    /// The proposed replacement address is already a signer
+    ForceRotationReplacementAlreadySigner = 1133,
+    /// No force-rotation request exists for the given ID
+    ForceRotationRequestNotFound = 1134,
+
+    // =========================================================
+    // Issue #1092: Spending Limit Reset Audit
+    // =========================================================
+    /// This signer has already approved this manual spending-limit reset request
+    SpendingLimitResetAlreadyApprovedBySigner = 1135,
+    // Issue #1527: Veto config validation
+    // =========================================================
+    /// veto_addresses is non-empty but veto_window_ledgers is 0 (veto would be silently disabled)
+    InvalidVetoConfig = 1129,
 }
 
 // Compatibility markers for CI source checks:

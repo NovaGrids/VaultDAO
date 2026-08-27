@@ -5,6 +5,7 @@
   <img src="https://img.shields.io/badge/Security-Rust-orange" alt="Rust" />
   <img src="https://img.shields.io/badge/Status-Testnet-green" alt="Status" />
   <img src="https://github.com/NovaGrids/VaultDAO/actions/workflows/test.yml/badge.svg?branch=main" alt="CI Status" />
+  <img src="https://github.com/NovaGrids/VaultDAO/actions/workflows/bundle-size.yml/badge.svg?branch=main" alt="Bundle Size" />
 </div>
 
 **VaultDAO** is a Soroban-native treasury management dApp for high-value Stellar organizations. It brings the robust security of multi-signature wallets to the speed and efficiency of the Soroban smart contract platform.
@@ -159,7 +160,7 @@ npm run backend:typecheck
 npm run backend:test
 ```
 
-Read the full guide: [docs/TESTING.md](docs/TESTING.md)
+Read the full guide: [docs/reference/TESTING.md](docs/reference/TESTING.md)
 
 ## 🤝 Backend Contributor Setup
 
@@ -201,7 +202,7 @@ We welcome bug reports, feature ideas, and pull requests. See [CONTRIBUTING.md](
 ## 🛡️ Security & Conduct
 
 - **Security**: Please read our [SECURITY.md](docs/reference/SECURITY.md) for our vulnerability disclosure policy.
-- **Conduct**: We follow the [Contributor Covenant](docs/CODE_OF_CONDUCT.md).
+- **Conduct**: We follow the [Contributor Covenant](CODE_OF_CONDUCT.md).
 
 ## 📄 License
 

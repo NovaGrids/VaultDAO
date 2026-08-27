@@ -2,7 +2,7 @@
  * Tests for WalletContext multi-account switching
  */
 import React from 'react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { WalletProvider } from '../WalletContext';
 import { useWallet } from '../useWallet';
@@ -77,5 +77,56 @@ describe('WalletContext multi-account switching', () => {
     const { result } = renderHook(() => useWallet(), { wrapper });
     // accountRole starts null before connection
     expect(result.current.accountRole).toBeNull();
+  });
+
+  describe('Inactivity Auto-Disconnect', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('triggers warning countdown and then auto-disconnects on inactivity', async () => {
+      const { result } = renderHook(() => useWallet(), { wrapper });
+
+      // Connect wallet
+      await act(async () => {
+        await result.current.connect('freighter');
+      });
+      expect(result.current.isConnected).toBe(true);
+
+      // Advance time close to warning threshold (14 minutes = 840,000ms)
+      await act(async () => {
+        vi.advanceTimersByTime(840000);
+      });
+
+      // Now advance 1 second to enter the countdown warning phase
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      // Advance past the remaining 60 seconds (60,000ms) to trigger auto-disconnect:
+      await act(async () => {
+        vi.advanceTimersByTime(60000);
+      });
+
+      // Restore real timers so React's scheduler can run normally
+      act(() => {
+        vi.useRealTimers();
+      });
+
+      // Wait a tiny bit for React to flush the state updates
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+
+      expect(result.current.isConnected).toBe(false);
+      expect(result.current.address).toBeNull();
+      expect(localStorageMock.getItem('vaultdao_wallet_connected')).toBeNull();
+      expect(localStorageMock.getItem('vaultdao_last_account')).toBeNull();
+      expect(localStorageMock.getItem('vaultdao_preferred_wallet')).toBeNull();
+    });
   });
 });

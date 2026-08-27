@@ -98,14 +98,7 @@ fn create_subscription(
 
     client
         .create_subscription(
-            subscriber,
-            provider,
-            &tier,
-            token,
-            &amount,
-            &1000u64,
-            &true,
-            &200u64,
+            subscriber, provider, &tier, token, &amount, &1000u64, &true, &200u64,
         )
         .expect("create_subscription should succeed")
 }

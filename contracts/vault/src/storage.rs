@@ -26,15 +26,16 @@ use crate::types::{
     AuditCheckpoint, AuditEntry, BridgeConfig, CapabilityToken, ColdSignatureRecord,
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
-    ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
-    GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, InsuranceClaim, InsuranceConfig,
-    ListMode, MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
-    PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate,
-    RecoveryProposal, Reputation, ReputationConfig, RetryState, Role, RoleAssignment,
-    ScopedDelegation, SignerTier, StakeRecord, StakingConfig, StreamRateWindow, Subscription,
-    SwapProposal, SwapResult, Tag, TemplateVarRef, TimeWeightedConfig, TokenLock,
-    TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig, VestingSchedule,
-    VotingStrategy, WhitelistEntry,
+    ExecutionSnapshot, FeeStructure, ForceRotationRequest, FundingRound, FundingRoundConfig,
+    GasConfig, GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType,
+    HookRegistration, InsuranceClaim, InsuranceConfig, InsuranceVotingConfig, ListMode,
+    MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
+    PauseCooldownConfig, PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus,
+    ProposalTemplate, RecoveryProposal, Reputation, ReputationConfig, RetryState, Role,
+    RoleAssignment, ScopedDelegation, SignerParticipationScore, SignerTier, StakeRecord,
+    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
+    TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
+    VestingSchedule, VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 
@@ -102,6 +103,9 @@ pub enum DataKey {
     CancellationHistory,
     /// Amendment history for a proposal
     AmendmentHistory(u64),
+    // ---- Issue #1356: Amendment limits ----
+    /// Number of amendments applied to a proposal (proposal_id) -> u32
+    AmendmentCount(u64),
     /// Execution snapshot for rollback
     ExecutionSnapshot(u64),
     /// Execution fee estimate
@@ -194,6 +198,21 @@ pub enum DataKey {
     // ---- Issue #1414: Reentrancy Guard ----
     /// Reentrancy guard for proposal execution (proposal_id) -> bool
     ProposalInProgress(u64),
+    // ---- Issue #23: Proposal Supersession Chain ----
+    /// Proposal ID -> ID of the proposal it supersedes (its parent in the chain), if any
+    Supersedes(u64),
+    /// Proposal ID -> ID of the proposal that superseded it (its direct child), if any
+    SupersededBy(u64),
+    // ---- Issue #1640: Timelock Ready Index ----
+    /// Index of proposal IDs that are Approved and waiting inside a timelock window -> Vec<u64>
+    TimelockReady,
+    // ---- Issue #1093: Signer Participation Scoring ----
+    /// Per-signer participation score -> SignerParticipationScore
+    ParticipationScore(Address),
+    /// Pending/executed force-rotation request by ID -> ForceRotationReq
+    ForceRotationReq(u64),
+    /// Next force-rotation request ID -> u64
+    NextForceRotationId,
 }
 
 #[contracttype(export = false)]
@@ -274,6 +293,12 @@ pub enum FeatureKey {
     UserVolume(Address, Address),
     /// Staking configuration -> StakingConfig
     StakingConfig,
+    // ---- Issue #1355: Insurance claim voting governance ----
+    /// Insurance claim voting parameters -> InsuranceVotingConfig
+    InsuranceVotingConfig,
+    // ---- Issue #1356: Amendment limits ----
+    /// Maximum number of amendments allowed per proposal -> u32
+    MaxAmendments,
     /// Staking pool accumulated funds (Token Address) -> i128
     StakePool(Address),
     /// Stake record for a proposal -> StakeRecord
@@ -364,6 +389,8 @@ pub enum FeatureKey {
     PauseState,
     /// Emergency signers list -> Vec<Address>
     EmergencySigners,
+    /// Pause cooldown configuration -> PauseCooldownConfig (Issue #1350)
+    PauseCooldownConfig,
     /// Circuit breaker outflow per hour window -> i128
     CircuitBreakerOutflow(u64),
     /// Proposal content fingerprint -> bool
@@ -400,6 +427,11 @@ pub enum FeatureKey {
     ProposerAccumulatedRewards(Address),
     /// Subscription tier usage tracking (subscription_id) -> Map of usage metrics
     SubscriptionUsage(u64),
+    // ---- Issue #1091: Keeper Network Lifecycle Hooks ----
+    /// Registered keeper hooks for a specific event type -> Vec<HookRegistration>
+    KeeperHooks(u32),
+    /// Total keeper hook count across all event types -> u32
+    KeeperHookCount,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -645,6 +677,14 @@ pub fn get_proposal(env: &Env, id: u64) -> Result<Proposal, VaultError> {
         .get(&DataKey::Proposal(id))
         .ok_or(VaultError::ProposalNotFound)?;
     proposal.attachments = get_attachments(env, id);
+    // Issue #1345: migrate legacy proposals that predate spend bucket fields.
+    // `has_spend_buckets == false` is the Soroban default for old stored proposals.
+    if !proposal.has_spend_buckets {
+        proposal.spend_day = get_day_number(env);
+        proposal.spend_week = get_week_number(env);
+        proposal.has_spend_buckets = true;
+        set_proposal(env, &proposal);
+    }
     Ok(proposal)
 }
 
@@ -672,6 +712,15 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
         env.storage()
             .persistent()
             .extend_ttl(&idx_key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    }
+    // Maintain TimelockReady index (Issue #1640)
+    // A proposal belongs in the index only while it is Approved AND still inside
+    // its timelock window (unlock_ledger > 0).  Any terminal/non-timelocked
+    // transition removes it from the index.
+    if proposal.status == ProposalStatus::Approved && proposal.unlock_ledger > 0 {
+        add_to_timelock_ready_index(env, proposal.id);
+    } else {
+        remove_from_timelock_ready_index(env, proposal.id);
     }
 }
 
@@ -734,6 +783,122 @@ pub fn get_proposal_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64
         }
     }
     ids
+}
+
+// ============================================================================
+// TimelockReady Index  (Issue #1640)
+// ============================================================================
+
+/// Add `proposal_id` to the timelock-ready index.
+///
+/// Called when a proposal transitions to `Approved` with a non-zero `unlock_ledger`
+/// (i.e., it must wait inside its timelock window before execution).
+pub fn add_to_timelock_ready_index(env: &Env, proposal_id: u64) {
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TimelockReady)
+        .unwrap_or_else(|| Vec::new(env));
+    if !ids.contains(proposal_id) {
+        ids.push_back(proposal_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TimelockReady, &ids);
+        env.storage().persistent().extend_ttl(
+            &DataKey::TimelockReady,
+            PROPOSAL_TTL / 2,
+            PROPOSAL_TTL,
+        );
+    }
+}
+
+/// Remove `proposal_id` from the timelock-ready index.
+///
+/// Called when a proposal leaves the timelock window (executed, cancelled, rejected, expired)
+/// or when it is found to have become executable (unlock_ledger passed) during a query.
+pub fn remove_from_timelock_ready_index(env: &Env, proposal_id: u64) {
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TimelockReady)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut new_ids: Vec<u64> = Vec::new(env);
+    for id in ids.iter() {
+        if id != proposal_id {
+            new_ids.push_back(id);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::TimelockReady, &new_ids);
+    if !new_ids.is_empty() {
+        env.storage().persistent().extend_ttl(
+            &DataKey::TimelockReady,
+            PROPOSAL_TTL / 2,
+            PROPOSAL_TTL,
+        );
+    }
+}
+
+/// Return a paginated slice of proposal IDs that are `Approved` and are still
+/// inside their timelock window (`unlock_ledger > current_ledger`).
+///
+/// Entries that no longer satisfy these conditions (proposal gone, status changed,
+/// or timelock already expired) are skipped but **not** pruned here to keep this
+/// function read-only and gas-predictable.  Index compaction is handled lazily by
+/// `remove_from_timelock_ready_index` at execution/cancellation time.
+///
+/// # Arguments
+/// * `offset` – Number of qualifying entries to skip (0-based).
+/// * `limit`  – Maximum entries to return (capped at 50).
+///
+/// # Returns
+/// `Vec<u64>` of proposal IDs in index insertion order.
+pub fn get_pending_timelocked_proposals(env: &Env, offset: u64, limit: u32) -> Vec<u64> {
+    let cap: u32 = if limit > 50 { 50 } else { limit };
+    let current_ledger = env.ledger().sequence() as u64;
+
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TimelockReady)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut result: Vec<u64> = Vec::new(env);
+    let mut skipped: u64 = 0;
+
+    for i in 0..ids.len() {
+        if result.len() as u32 >= cap {
+            break;
+        }
+        let id = match ids.get(i) {
+            Some(v) => v,
+            None => continue,
+        };
+        // Skip proposals that no longer exist in storage
+        let proposal: Proposal = match env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposal(id))
+        {
+            Some(p) => p,
+            None => continue,
+        };
+        // Must still be Approved with a pending (non-zero, not-yet-passed) timelock
+        if proposal.status != ProposalStatus::Approved {
+            continue;
+        }
+        if proposal.unlock_ledger == 0 || current_ledger >= proposal.unlock_ledger {
+            continue;
+        }
+        // Entry qualifies — apply offset/limit
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        result.push_back(id);
+    }
+    result
 }
 
 // ============================================================================
@@ -1480,16 +1645,50 @@ pub fn add_amendment_record(env: &Env, record: &ProposalAmendment) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
-/// Refund spending limits when a proposal is cancelled
-pub fn refund_spending_limits(env: &Env, amount: i128) {
+/// Record that `new_id` supersedes `old_id`: links both directions so the
+/// chain can be walked forward (old -> new) and backward (new -> old).
+pub fn set_supersession_link(env: &Env, old_id: u64, new_id: u64) {
+    let supersedes_key = DataKey::Supersedes(new_id);
+    env.storage().persistent().set(&supersedes_key, &old_id);
+    env.storage().persistent().extend_ttl(
+        &supersedes_key,
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL,
+    );
+
+    let superseded_by_key = DataKey::SupersededBy(old_id);
+    env.storage().persistent().set(&superseded_by_key, &new_id);
+    env.storage().persistent().extend_ttl(
+        &superseded_by_key,
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL,
+    );
+}
+
+/// The proposal ID that `proposal_id` supersedes (its parent), if any.
+pub fn get_supersedes(env: &Env, proposal_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Supersedes(proposal_id))
+}
+
+/// The proposal ID that superseded `proposal_id` (its direct child), if any.
+pub fn get_superseded_by(env: &Env, proposal_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SupersededBy(proposal_id))
+}
+
+/// Refund spending limits when a proposal is cancelled.
+///
+/// Credits the original day/week buckets where the spend was reserved
+/// (Issue #1345), not the current ledger's buckets.
+pub fn refund_spending_limits(env: &Env, amount: i128, spend_day: u64, spend_week: u64) {
     // Use atomic try_deduct helpers to ensure counters never go negative.
     // Each helper reads, validates, and writes in a single storage call,
     // preventing double-refund if two cancellations land in the same ledger.
-    let today = get_day_number(env);
-    try_deduct_daily_spent(env, today, amount);
-
-    let week = get_week_number(env);
-    try_deduct_weekly_spent(env, week, amount);
+    try_deduct_daily_spent(env, spend_day, amount);
+    try_deduct_weekly_spent(env, spend_week, amount);
 }
 // ============================================================================
 // Comments
@@ -1697,6 +1896,164 @@ pub fn set_reputation_config(env: &Env, config: &ReputationConfig) {
     env.storage()
         .instance()
         .set(&FeatureKey::ReputationConfig, config);
+}
+
+// ============================================================================
+// Signer Participation Scoring (Issue #1093)
+// ============================================================================
+
+/// Max number of outcomes tracked per signer in the circular history buffer.
+pub const PARTICIPATION_HISTORY_CAP: u32 = 100;
+
+pub fn get_participation_score(env: &Env, signer: &Address) -> SignerParticipationScore {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ParticipationScore(signer.clone()))
+        .unwrap_or_else(|| SignerParticipationScore {
+            signer: signer.clone(),
+            proposals_voted: 0,
+            proposals_missed: 0,
+            last_active_ledger: 0,
+            history: Vec::new(env),
+            history_cursor: 0,
+            consecutive_low_periods: 0,
+            low_participation_since_ledger: None,
+        })
+}
+
+pub fn set_participation_score(env: &Env, score: &SignerParticipationScore) {
+    let key = DataKey::ParticipationScore(score.signer.clone());
+    env.storage().persistent().set(&key, score);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+fn push_history(score: &mut SignerParticipationScore, voted: bool) {
+    let len = score.history.len();
+    if len < PARTICIPATION_HISTORY_CAP {
+        score.history.push_back(voted);
+        score.history_cursor = score.history.len() % PARTICIPATION_HISTORY_CAP;
+    } else {
+        score.history.set(score.history_cursor, voted);
+        score.history_cursor = (score.history_cursor + 1) % PARTICIPATION_HISTORY_CAP;
+    }
+}
+
+/// Rate (0-100) of `true` (voted) outcomes among the most recent `window`
+/// entries of `score.history` (fewer, if less history exists). Callers are
+/// responsible for validating `window <= PARTICIPATION_HISTORY_CAP`.
+pub fn compute_participation_rate(score: &SignerParticipationScore, window: u32) -> u32 {
+    let len = score.history.len();
+    let n = window.min(len);
+    if n == 0 {
+        return 0;
+    }
+
+    // Modulus of the index space currently in use: while the buffer hasn't
+    // filled, indices only span 0..len; once full, they wrap over the cap.
+    let modulus = if len < PARTICIPATION_HISTORY_CAP {
+        len
+    } else {
+        PARTICIPATION_HISTORY_CAP
+    };
+    let mut idx = if len < PARTICIPATION_HISTORY_CAP {
+        len - 1
+    } else {
+        (score.history_cursor + PARTICIPATION_HISTORY_CAP - 1) % PARTICIPATION_HISTORY_CAP
+    };
+
+    let mut voted_count: u32 = 0;
+    for _ in 0..n {
+        if score.history.get(idx).unwrap_or(false) {
+            voted_count += 1;
+        }
+        idx = (idx + modulus - 1) % modulus;
+    }
+
+    (voted_count * 100) / n
+}
+
+/// Recomputes low-participation streak state after a new outcome was
+/// recorded. Returns `(current_rate, should_alert)` where `should_alert` is
+/// true exactly when the consecutive-low-periods counter has just reached
+/// (or continues to exceed) `Config.low_participation_streak_n`.
+fn update_low_participation_state(
+    env: &Env,
+    score: &mut SignerParticipationScore,
+    config: &Config,
+) -> (u32, bool) {
+    let rate = compute_participation_rate(score, config.participation_rate_window);
+    if (rate as u32) < config.min_participation_rate {
+        score.consecutive_low_periods += 1;
+        if score.low_participation_since_ledger.is_none() {
+            score.low_participation_since_ledger = Some(env.ledger().sequence());
+        }
+    } else {
+        score.consecutive_low_periods = 0;
+        score.low_participation_since_ledger = None;
+    }
+
+    let should_alert = score.low_participation_since_ledger.is_some()
+        && score.consecutive_low_periods >= config.low_participation_streak_n;
+    (rate, should_alert)
+}
+
+/// Records that `signer` explicitly voted (approved or abstained) on a
+/// proposal. Returns `(new_rate, should_alert)`.
+pub fn record_participation_vote(env: &Env, signer: &Address, config: &Config) -> (u32, bool) {
+    let mut score = get_participation_score(env, signer);
+    score.proposals_voted += 1;
+    score.last_active_ledger = env.ledger().sequence();
+    push_history(&mut score, true);
+    let result = update_low_participation_state(env, &mut score, config);
+    set_participation_score(env, &score);
+    result
+}
+
+/// Records that `signer` failed to vote before a proposal expired while
+/// still Pending. Returns `(new_rate, should_alert)`.
+pub fn record_participation_miss(env: &Env, signer: &Address, config: &Config) -> (u32, bool) {
+    let mut score = get_participation_score(env, signer);
+    score.proposals_missed += 1;
+    push_history(&mut score, false);
+    let result = update_low_participation_state(env, &mut score, config);
+    set_participation_score(env, &score);
+    result
+}
+
+// ============================================================================
+// Force Rotation Requests (Issue #1093)
+// ============================================================================
+
+pub fn next_force_rotation_id(env: &Env) -> u64 {
+    let id = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextForceRotationId)
+        .unwrap_or(1u64);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextForceRotationId, &(id + 1));
+    id
+}
+
+pub fn get_force_rotation_request(
+    env: &Env,
+    id: u64,
+) -> Result<ForceRotationRequest, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ForceRotationReq(id))
+        .ok_or(VaultError::ForceRotationRequestNotFound)
+}
+
+pub fn set_force_rotation_request(env: &Env, request: &ForceRotationRequest) {
+    let key = DataKey::ForceRotationReq(request.id);
+    env.storage().persistent().set(&key, request);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 // ============================================================================
@@ -2030,6 +2387,58 @@ pub fn set_staking_config(env: &Env, config: &StakingConfig) {
     env.storage()
         .instance()
         .set(&FeatureKey::StakingConfig, config);
+}
+
+// ----------------------------------------------------------------------------
+// Issue #1355: Insurance claim voting governance
+// ----------------------------------------------------------------------------
+
+pub fn get_insurance_voting_config(env: &Env) -> InsuranceVotingConfig {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::InsuranceVotingConfig)
+        .unwrap_or_else(InsuranceVotingConfig::default)
+}
+
+pub fn set_insurance_voting_config(env: &Env, config: &InsuranceVotingConfig) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::InsuranceVotingConfig, config);
+}
+
+// ----------------------------------------------------------------------------
+// Issue #1356: Proposal amendment limits
+// ----------------------------------------------------------------------------
+
+/// Default ceiling on how many times a single proposal may be amended.
+pub const DEFAULT_MAX_AMENDMENTS: u32 = 3;
+
+pub fn get_max_amendments(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::MaxAmendments)
+        .unwrap_or(DEFAULT_MAX_AMENDMENTS)
+}
+
+pub fn set_max_amendments(env: &Env, max: u32) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::MaxAmendments, &max);
+}
+
+pub fn get_amendment_count(env: &Env, proposal_id: u64) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AmendmentCount(proposal_id))
+        .unwrap_or(0)
+}
+
+pub fn set_amendment_count(env: &Env, proposal_id: u64, count: u32) {
+    let key = DataKey::AmendmentCount(proposal_id);
+    env.storage().persistent().set(&key, &count);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 pub fn get_stake_pool(env: &Env, token_addr: &Address) -> i128 {
@@ -2940,20 +3349,27 @@ pub fn remove_token_spending_config(env: &Env, token: &Address) {
 }
 
 /// Refund per-token spending when a proposal is cancelled.
-pub fn refund_token_spending_limits(env: &Env, token: &Address, amount: i128) {
-    let today = get_day_number(env);
-    let current_daily = get_token_daily_spent(env, token, today);
+///
+/// Credits the original day/week buckets where the spend was reserved
+/// (Issue #1345), not the current ledger's buckets.
+pub fn refund_token_spending_limits(
+    env: &Env,
+    token: &Address,
+    amount: i128,
+    spend_day: u64,
+    spend_week: u64,
+) {
+    let current_daily = get_token_daily_spent(env, token, spend_day);
     let refunded_daily = current_daily.saturating_sub(amount).max(0);
-    let key_daily = DataKey::TokenDailySpent(token.clone(), today);
+    let key_daily = DataKey::TokenDailySpent(token.clone(), spend_day);
     env.storage().temporary().set(&key_daily, &refunded_daily);
     env.storage()
         .temporary()
         .extend_ttl(&key_daily, DAY_IN_LEDGERS * 2, DAY_IN_LEDGERS * 2);
 
-    let week = get_week_number(env);
-    let current_weekly = get_token_weekly_spent(env, token, week);
+    let current_weekly = get_token_weekly_spent(env, token, spend_week);
     let refunded_weekly = current_weekly.saturating_sub(amount).max(0);
-    let key_weekly = DataKey::TokenWeeklySpent(token.clone(), week);
+    let key_weekly = DataKey::TokenWeeklySpent(token.clone(), spend_week);
     env.storage().temporary().set(&key_weekly, &refunded_weekly);
     env.storage()
         .temporary()
@@ -3892,6 +4308,48 @@ pub fn set_pause_state(env: &Env, state: &PauseState) {
     env.storage().instance().set(&FeatureKey::PauseState, state);
 }
 
+// ============================================================================
+// Issue #1350: Pause Circuit Breaker Cooldown
+// ============================================================================
+
+pub fn get_pause_cooldown_config(env: &Env) -> Option<PauseCooldownConfig> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::PauseCooldownConfig)
+}
+
+pub fn set_pause_cooldown_config(env: &Env, config: &PauseCooldownConfig) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::PauseCooldownConfig, config);
+}
+
+pub fn is_pause_cooldown_active(env: &Env) -> bool {
+    if let Some(config) = get_pause_cooldown_config(env) {
+        let current_ledger = env.ledger().sequence() as u64;
+        current_ledger < config.last_action_ledger + config.cooldown_ledgers
+    } else {
+        false
+    }
+}
+
+pub fn get_pause_cooldown_remaining_ledgers(env: &Env) -> u64 {
+    if let Some(config) = get_pause_cooldown_config(env) {
+        let current_ledger = env.ledger().sequence() as u64;
+        let target_ledger = config.last_action_ledger + config.cooldown_ledgers;
+        target_ledger.saturating_sub(current_ledger)
+    } else {
+        0
+    }
+}
+
+pub fn update_pause_cooldown_ledger(env: &Env) {
+    if let Some(mut config) = get_pause_cooldown_config(env) {
+        config.last_action_ledger = env.ledger().sequence() as u64;
+        set_pause_cooldown_config(env, &config);
+    }
+}
+
 pub fn get_emergency_signers(env: &Env) -> soroban_sdk::Vec<Address> {
     env.storage()
         .instance()
@@ -4382,7 +4840,12 @@ pub fn set_subscription_usage(env: &Env, subscription_id: u64, usage: &Map<Symbo
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
-pub fn increment_subscription_usage(env: &Env, subscription_id: u64, metric: &Symbol, amount: i128) {
+pub fn increment_subscription_usage(
+    env: &Env,
+    subscription_id: u64,
+    metric: &Symbol,
+    amount: i128,
+) {
     let mut usage = get_subscription_usage(env, subscription_id);
     let current = usage.get(metric.clone()).unwrap_or(0);
     usage.set(metric.clone(), current + amount);
@@ -4410,4 +4873,55 @@ pub fn clear_proposal_in_progress(env: &Env, proposal_id: u64) {
     env.storage()
         .instance()
         .remove(&DataKey::ProposalInProgress(proposal_id));
+}
+
+// ============================================================================
+// Issue #1091: Keeper Network Lifecycle Hooks
+// ============================================================================
+
+/// Maximum keeper hooks registered per event type.
+pub const MAX_KEEPER_HOOKS_PER_EVENT: u32 = 5;
+/// Maximum total keeper hooks across all event types per vault.
+pub const MAX_KEEPER_HOOKS_TOTAL: u32 = 20;
+
+fn hook_event_key(event_type: &HookEventType) -> FeatureKey {
+    FeatureKey::KeeperHooks(event_type.clone() as u32)
+}
+
+/// Return all registered hooks for a given event type (empty vec if none).
+pub fn get_keeper_hooks(env: &Env, event_type: &HookEventType) -> Vec<HookRegistration> {
+    let key = hook_event_key(event_type);
+    env.storage()
+        .persistent()
+        .get::<_, Vec<HookRegistration>>(&key)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Persist the hooks vec for an event type and extend its TTL.
+pub fn set_keeper_hooks(env: &Env, event_type: &HookEventType, hooks: &Vec<HookRegistration>) {
+    let key = hook_event_key(event_type);
+    env.storage().persistent().set(&key, hooks);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Get the total number of keeper hooks registered across all event types.
+pub fn get_keeper_hook_count(env: &Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<_, u32>(&FeatureKey::KeeperHookCount)
+        .unwrap_or(0)
+}
+
+/// Set the total number of keeper hooks.
+pub fn set_keeper_hook_count(env: &Env, count: u32) {
+    env.storage()
+        .persistent()
+        .set(&FeatureKey::KeeperHookCount, &count);
+    env.storage().persistent().extend_ttl(
+        &FeatureKey::KeeperHookCount,
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL,
+    );
 }

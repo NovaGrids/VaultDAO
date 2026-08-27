@@ -1,5 +1,4 @@
 import React from 'react';
-import { format } from 'date-fns';
 
 export interface TimelineEvent {
   status: string;
@@ -47,7 +46,15 @@ export const ProposalTimeline: React.FC<ProposalTimelineProps> = ({
 
   const formatTimestamp = (timestamp: number): string => {
     try {
-      return format(new Date(timestamp * 1000), 'MMM dd, yyyy HH:mm:ss');
+      return new Date(timestamp * 1000).toLocaleString('en-US', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
     } catch {
       return 'Invalid date';
     }

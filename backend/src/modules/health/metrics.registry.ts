@@ -196,3 +196,35 @@ export function registerDuePaymentMetrics(registry: MetricsRegistry): void {
     "gauge",
   );
 }
+
+// ── Proposal Throughput Metric Names ─────────────────────────────────────────
+
+/** Counter: proposals created (PROPOSAL_CREATED activities indexed). */
+export const PROPOSALS_CREATED_COUNTER = "proposals_created_total";
+/** Counter: proposals executed (PROPOSAL_EXECUTED activities indexed). */
+export const PROPOSALS_EXECUTED_COUNTER = "proposals_executed_total";
+
+/**
+ * Register the proposal throughput counters on the given registry.
+ *
+ * These two counters back the "Proposal Throughput (created/executed per hour)"
+ * Grafana panel, which capacity planning relies on. They are deliberately
+ * unlabelled so `rate()` over them stays cheap and cardinality stays flat —
+ * per-status breakdowns are already available from `vaultdao_proposals_total`.
+ *
+ * Call once at startup (idempotent — re-registration overwrites metadata).
+ */
+export function registerProposalThroughputMetrics(
+  registry: MetricsRegistry,
+): void {
+  registry.register(
+    PROPOSALS_CREATED_COUNTER,
+    "Total proposals created (PROPOSAL_CREATED events indexed)",
+    "counter",
+  );
+  registry.register(
+    PROPOSALS_EXECUTED_COUNTER,
+    "Total proposals executed (PROPOSAL_EXECUTED events indexed)",
+    "counter",
+  );
+}

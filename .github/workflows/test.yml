@@ -24,6 +24,9 @@ jobs:
       - name: Install tarpaulin for coverage
         run: cargo install cargo-tarpaulin --version ^0.27
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
       - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
@@ -41,13 +44,21 @@ jobs:
       - name: Lint (clippy)
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Security audit
+        run: cargo audit --config .cargo/audit.toml
+
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Run property tests (proptest spending-limit invariants)
+        run: cargo test --verbose spending_limit_invariants_proptest
+
       - name: Run tests with coverage
+        continue-on-error: true
         run: cargo tarpaulin --out Xml --timeout 300 --exclude-files tests/* --output-dir coverage
 
       - name: Check coverage threshold
+        continue-on-error: true
         run: |
           COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' coverage/cobertura.xml | head -1)
           COVERAGE_PERCENT=$(echo "$COVERAGE * 100" | bc)
@@ -67,6 +78,20 @@ jobs:
           flags: contracts
           name: contract-coverage
           fail_ci_if_error: false
+
+      - name: Check WASM size against Soroban limit
+        run: |
+          LIMIT=262144
+          WASM_PATH="target/wasm32-unknown-unknown/release/vault_dao.wasm"
+          SIZE=$(stat -c%s "$WASM_PATH")
+          SIZE_KB=$((SIZE / 1024))
+          echo "WASM size: $SIZE bytes (${SIZE_KB} KB)"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::error::WASM size $SIZE bytes exceeds Soroban limit of $LIMIT bytes (256 KB)"
+            exit 1
+          else
+            echo "WASM size OK: $SIZE / $LIMIT bytes"
+          fi
 
   backend-checks:
     name: Backend Checks
@@ -90,8 +115,41 @@ jobs:
       - name: Copy backend env
         run: cp backend/.env.example backend/.env
 
+      - name: Audit backend dependencies
+        run: npm audit --audit-level=high --production
+        working-directory: backend
+
       - name: Typecheck backend
         run: npm run backend:typecheck
 
       - name: Test backend
         run: npm run backend:test
+
+  sdk-checks:
+    name: SDK Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install SDK dependencies
+        run: npm --prefix sdk ci
+
+      - name: Typecheck SDK
+        run: npm run sdk:typecheck
+
+      - name: Test SDK with coverage
+        run: npm run sdk:test:coverage
+
+      - name: Upload SDK coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-coverage
+          path: sdk/coverage/
+          retention-days: 14

@@ -10,7 +10,9 @@ import { SnapshotNormalizer } from "../snapshots/normalizer.js";
 import { TimeoutError } from "../../shared/http/fetchWithTimeout.js";
 import { SorobanRpcClient } from "../../shared/rpc/soroban-rpc.client.js";
 import type { MetricsRegistry } from "../health/metrics.registry.js";
+import DeadLetterService from "./deadletter.service.js";
 import { CircuitBreaker } from "../../shared/http/circuit-breaker.js";
+import type { CacheManager } from "../../shared/cache/cache-manager.js";
 
 /** Maximum backoff delay: 5 minutes */
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
@@ -68,6 +70,8 @@ export class EventPollingService {
     rpcClient?: SorobanRpcClient,
     private readonly metrics?: MetricsRegistry,
     circuitBreaker?: CircuitBreaker,
+    private readonly cacheManager?: CacheManager,
+    private readonly deadLetterService?: DeadLetterService,
   ) {
     this.rpcClient =
       rpcClient ?? new SorobanRpcClient({ url: env.sorobanRpcUrl });
@@ -359,9 +363,62 @@ export class EventPollingService {
     try {
       const normalized = this.cachingNormalizer.normalize(event);
 
+      // Tag-based cache invalidation for contract events (#1459)
+      if (this.cacheManager) {
+        if (PROPOSAL_TOPICS.has(topic)) {
+          const proposalId = (normalized as any).proposalId ?? (normalized as any).id ?? event.topic[1];
+          if (proposalId !== undefined) {
+            this.cacheManager.invalidateProposal(proposalId);
+          }
+          this.cacheManager.invalidateSnapshots(event.contractId);
+        }
+
+        if (topic.includes("role") || topic.includes("signer")) {
+          const address = (normalized as any).address ?? (normalized as any).account;
+          if (address) {
+            this.cacheManager.invalidateRole(address);
+          }
+        }
+
+        if (topic === "cache_invalidated") {
+          const tag = (normalized as any).tag ?? (event.value as any)?.tag ?? event.topic[1];
+          if (tag) {
+            this.cacheManager.invalidateByTag(String(tag), "on_chain_event");
+          }
+        }
+
+        if (
+          SnapshotNormalizer.isSnapshotEvent(normalized.type as any) ||
+          topic.includes("config")
+        ) {
+          this.cacheManager.invalidateSnapshots(event.contractId);
+        }
+      }
+
       // Proposal events → proposalConsumer
       if (this.proposalConsumer && PROPOSAL_TOPICS.has(topic)) {
         await this.proposalConsumer.process(normalized);
+        return;
+      }
+
+      // Dead-letter entries emitted by the contract — persist to backend DLQ
+      if (topic === "dead_letter_added" && this.deadLetterService) {
+        try {
+          const recordIdRaw = event.topic[1] ?? (normalized as any).recordId ?? 0;
+          const recordId = Number(recordIdRaw);
+          const retryCount = (normalized as any).retryCount ?? 0;
+          const dlEntry = {
+            id: String(recordId),
+            contractId: event.contractId,
+            recordId,
+            retryCount,
+            addedAt: Date.now(),
+            processed: false,
+          };
+          this.deadLetterService.add(dlEntry as any);
+        } catch (err) {
+          this.logger.error("failed to persist dead-letter entry", { error: err instanceof Error ? err.message : String(err) });
+        }
         return;
       }
 

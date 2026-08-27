@@ -1,12 +1,11 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::types::{ConditionLogic, InitConfig, Priority, Role, ThresholdStrategy, VelocityConfig, VoteWeight};
-    use crate::{VaultDAO, VaultDAOClient};
-    use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env, Symbol, Vec,
+    use crate::types::{
+        ConditionLogic, InitConfig, Priority, Role, ThresholdStrategy, VelocityConfig, VoteWeight,
     };
+    use crate::{VaultDAO, VaultDAOClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
 
     fn setup_vault() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
         let env = Env::default();
@@ -280,7 +279,8 @@ mod tests {
         let recipient = Address::generate(&env);
 
         // Create a deep chain of proposals
-        let mut prev_id = propose_transfer(&env, &client, &signer1, &recipient, &token, &Vec::new(&env));
+        let mut prev_id =
+            propose_transfer(&env, &client, &signer1, &recipient, &token, &Vec::new(&env));
 
         for _ in 0..5 {
             let mut deps = Vec::new(&env);

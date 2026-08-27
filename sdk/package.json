@@ -10,6 +10,10 @@
   ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "bindings": "stellar contract bindings typescript --wasm ../contracts/vault/target/wasm32-unknown-unknown/release/vault_dao.wasm --id <CONTRACT_ID> --network testnet --output-dir src/bindings",
     "prepublishOnly": "npm run build"
   },
@@ -40,7 +44,9 @@
     "stellar-sdk": "^11.0.0"
   },
   "devDependencies": {
+    "@stellar/freighter-api": "1.7.1",
+    "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.0.0",
-    "@stellar/freighter-api": "1.7.1"
+    "vitest": "^4.1.1"
   }
 }

@@ -2,6 +2,8 @@
  * Transaction history types for the VaultDAO backend.
  */
 
+import type { CursorPayload } from "../../shared/pagination.js";
+
 export interface Transaction {
   readonly proposalId: string;
   readonly contractId: string;
@@ -18,7 +20,12 @@ export interface Transaction {
 
 export interface GetTransactionsParams {
   readonly contractId: string;
-  readonly cursor?: string;
+  /**
+   * Decoded cursor payload. `lastId` is matched against `transactionHash`
+   * (the service's natural keyset id); `offset` is used as a fallback when
+   * the hash can no longer be found (e.g. it aged out of the index).
+   */
+  readonly cursor?: CursorPayload | null;
   readonly token?: string;
   readonly recipient?: string;
   readonly from?: Date;
@@ -31,5 +38,6 @@ export interface GetTransactionsParams {
 export interface GetTransactionsResult {
   readonly data: Transaction[];
   readonly nextCursor: string | null;
+  readonly prevCursor: string | null;
   readonly hasMore: boolean;
 }
