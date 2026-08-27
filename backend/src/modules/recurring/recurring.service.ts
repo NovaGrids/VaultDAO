@@ -331,7 +331,7 @@ export class RecurringIndexerService {
   public async start(): Promise<void> {
     if (this.isRunning) return;
     if (!this.env.eventPollingEnabled) {
-      console.log("[recurring-indexer] disabled in config");
+      logger.info("disabled in config");
       return;
     }
 
@@ -340,19 +340,18 @@ export class RecurringIndexerService {
     if (lastCursor) {
       this.lastLedgerProcessed = lastCursor.lastLedger;
       this.totalPaymentsIndexed = (await this.storage.getAll()).length;
-      console.log(
-        `[recurring-indexer] resuming from cursor: ledger ${this.lastLedgerProcessed}`,
-      );
+      logger.info("resuming from cursor", { ledger: this.lastLedgerProcessed });
     } else {
       this.lastLedgerProcessed = 0;
-      console.log("[recurring-indexer] no cursor found, starting fresh");
+      logger.info("no cursor found, starting fresh");
     }
 
     this.isRunning = true;
-    console.log("[recurring-indexer] starting indexer loop");
-    console.log(`- rpc: ${this.env.sorobanRpcUrl}`);
-    console.log(`- contract: ${this.env.contractId}`);
-    console.log(`- interval: ${this.env.eventPollingIntervalMs}ms`);
+    logger.info("starting indexer loop", {
+      rpc: this.env.sorobanRpcUrl,
+      contract: this.env.contractId,
+      intervalMs: this.env.eventPollingIntervalMs,
+    });
 
     // Seed alerted IDs so pre-existing DUE payments don't re-trigger alerts.
     await this.seedAlertedIds();
@@ -371,7 +370,7 @@ export class RecurringIndexerService {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    console.log("[recurring-indexer] stopped indexer loop");
+    logger.info("stopped indexer loop");
   }
 
   private scheduleNextSync(): void {
@@ -382,7 +381,7 @@ export class RecurringIndexerService {
       const MAX_BACKOFF_MS = 5 * 60 * 1000;
       const backoff = delayMs * Math.pow(2, this.consecutiveErrors);
       delayMs = Math.min(backoff, MAX_BACKOFF_MS);
-      console.log(`[recurring-indexer] backing off for ${delayMs}ms`);
+      logger.info("backing off", { delayMs });
     }
 
     this.timer = setTimeout(async () => {
@@ -393,10 +392,10 @@ export class RecurringIndexerService {
         this.consecutiveErrors = 0;
       } catch (error) {
         this.consecutiveErrors++;
-        console.error(
-          `[recurring-indexer] sync error (attempt ${this.consecutiveErrors}):`,
-          error,
-        );
+        logger.error("sync error", {
+          attempt: this.consecutiveErrors,
+          error: String(error),
+        });
       } finally {
         this.scheduleNextSync();
       }
@@ -444,7 +443,7 @@ export class RecurringIndexerService {
    * Indexes a batch of recurring payments.
    */
   private async indexPayments(payments: RawRecurringPayment[]): Promise<void> {
-    console.log(`[recurring-indexer] indexing ${payments.length} payments`);
+    logger.info("indexing payments", { count: payments.length });
 
     for (const raw of payments) {
       const existing = await this.storage.getById(raw.id);

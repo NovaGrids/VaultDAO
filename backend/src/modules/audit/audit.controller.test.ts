@@ -191,11 +191,16 @@ test("getAuditController cursor mode: passes cursor to service (cursor in query)
   assert.strictEqual(capturedArgs[4], inputCursor);
 });
 
-test("getAuditController cursor mode: invalid cursor is passed through (service handles fallback)", async () => {
-  let capturedCursor: unknown;
+test("getAuditController cursor mode: invalid cursor returns 400 (rejected before reaching the service)", async () => {
+  // A cursor that was explicitly supplied but can't be decoded is rejected by
+  // validateCursorPagination with a 400 before the service is ever called —
+  // silently falling back to offset 0 would look exactly like a
+  // duplicate/skip bug to the client that provided the cursor to resume a
+  // specific position.
+  let serviceCalled = false;
   const service = makeService({
-    getAuditTrail: async (_contractId, _offset, _limit, _verify, cursor) => {
-      capturedCursor = cursor;
+    getAuditTrail: async () => {
+      serviceCalled = true;
       return makeAuditPage({ nextCursor: null });
     },
   });
@@ -208,8 +213,11 @@ test("getAuditController cursor mode: invalid cursor is passed through (service 
     (() => {}) as any,
   );
 
-  assert.strictEqual(state.statusCode, 200);
-  assert.strictEqual(capturedCursor, "garbage-cursor");
+  assert.strictEqual(state.statusCode, 400);
+  const body = state.body as any;
+  assert.strictEqual(body.success, false);
+  assert.match(body.error.message, /cursor/i);
+  assert.strictEqual(serviceCalled, false);
 });
 
 test("getAuditController offset mode: backward-compatible when offset param present", async () => {
@@ -231,4 +239,77 @@ test("getAuditController offset mode: backward-compatible when offset param pres
 
   assert.strictEqual(state.statusCode, 200);
   assert.strictEqual(capturedOffset, 10);
+});
+
+test("getAuditController cursor mode: response surfaces prevCursor and hasMore from the service", async () => {
+  const service = makeService({
+    getAuditTrail: async () =>
+      makeAuditPage({ total: 10, offset: 2, nextCursor: "next-tok", prevCursor: "prev-tok", hasMore: true }),
+  });
+  const handler = getAuditController(service);
+  const { res, state } = makeRes();
+
+  await handler(
+    { query: { contractId: "CABC", cursor: encodeCursor({ lastId: "entry-1", offset: 2 }) } } as any,
+    res as any,
+    (() => {}) as any,
+  );
+
+  const body = state.body as any;
+  assert.strictEqual(state.statusCode, 200);
+  assert.strictEqual(body.data.prevCursor, "prev-tok");
+  assert.strictEqual(body.data.hasMore, true);
+});
+
+test("getAuditController: logs a deprecation warning when legacy `offset` param is used", async () => {
+  const service = makeService({
+    getAuditTrail: async () => makeAuditPage({ nextCursor: null }),
+  });
+  const handler = getAuditController(service);
+  const { res } = makeRes();
+
+  const originalWarn = console.warn;
+  const warnCalls: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnCalls.push(args);
+  };
+  try {
+    await handler(
+      { query: { contractId: "CABC", offset: "0", limit: "5" } } as any,
+      res as any,
+      (() => {}) as any,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.ok(warnCalls.length > 0, "expected a deprecation warning to be logged");
+  const joined = warnCalls.map((args) => args.join(" ")).join("\n");
+  assert.match(joined, /deprecat/i);
+  assert.match(joined, /cursor/i);
+});
+
+test("getAuditController: does NOT log a deprecation warning for cursor-mode requests", async () => {
+  const service = makeService({
+    getAuditTrail: async () => makeAuditPage({ nextCursor: null }),
+  });
+  const handler = getAuditController(service);
+  const { res } = makeRes();
+
+  const originalWarn = console.warn;
+  const warnCalls: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnCalls.push(args);
+  };
+  try {
+    await handler(
+      { query: { contractId: "CABC", limit: "5" } } as any,
+      res as any,
+      (() => {}) as any,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnCalls.length, 0);
 });

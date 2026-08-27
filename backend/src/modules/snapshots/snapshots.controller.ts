@@ -4,6 +4,9 @@ import { success, error } from "../../shared/http/response.js";
 import { validateOptionalBoolean } from "../../shared/http/validateQuery.js";
 import type { SerializableContractSnapshot } from "./types.js";
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
+import { createLogger } from "../../shared/logging/logger.js";
+
+const logger = createLogger("snapshots-controller");
 
 /** TTL for snapshot cache: 60 seconds */
 const SNAPSHOT_CACHE_TTL_MS = 60_000;
@@ -45,10 +48,7 @@ export function createSnapshotControllers(
 
       success(res, serializable);
     } catch (err) {
-      console.error(
-        `[snapshot-controller] getSnapshot error (reqId=${req.headers["x-request-id"]})`,
-        err,
-      );
+      logger.error("getSnapshot error", { error: String(err) });
       error(res, { message: "Storage error", status: 503 });
     }
   };
@@ -62,10 +62,7 @@ export function createSnapshotControllers(
       const signers = await service.getSigners(contractId, { isActive });
       success(res, signers);
     } catch (err) {
-      console.error(
-        `[snapshot-controller] getSigners error (reqId=${req.headers["x-request-id"]})`,
-        err,
-      );
+      logger.error("getSigners error", { error: String(err) });
       error(res, { message: "Storage error", status: 503 });
     }
   };
@@ -80,10 +77,7 @@ export function createSnapshotControllers(
       }
       success(res, signer);
     } catch (err) {
-      console.error(
-        `[snapshot-controller] getSigner error (reqId=${req.headers["x-request-id"]})`,
-        err,
-      );
+      logger.error("getSigner error", { error: String(err) });
       error(res, { message: "Storage error", status: 503 });
     }
   };
@@ -93,10 +87,7 @@ export function createSnapshotControllers(
       const roles = await service.getRoles(req.params.contractId as string);
       success(res, roles);
     } catch (err) {
-      console.error(
-        `[snapshot-controller] getRoles error (reqId=${req.headers["x-request-id"]})`,
-        err,
-      );
+      logger.error("getRoles error", { error: String(err) });
       error(res, { message: "Storage error", status: 503 });
     }
   };
@@ -108,10 +99,7 @@ export function createSnapshotControllers(
         return error(res, { message: "Snapshot not found", status: 404 });
       success(res, stats);
     } catch (err) {
-      console.error(
-        `[snapshot-controller] getStats error (reqId=${req.headers["x-request-id"]})`,
-        err,
-      );
+      logger.error("getStats error", { error: String(err) });
       error(res, { message: "Storage error", status: 503 });
     }
   };
@@ -141,9 +129,7 @@ export function createSnapshotControllers(
         service
           .rebuildFromRpc(contractId, startLedger, finalEndLedger)
           .catch((rebuildErr) =>
-            console.error(
-              `[snapshot-controller] Async rebuild failed: ${rebuildErr}`,
-            ),
+            logger.error("Async rebuild failed", { error: String(rebuildErr) }),
           );
         // Invalidate cache after rebuild is triggered
         if (cache) cache.deleteByPrefix(`snapshot:${contractId}`);
@@ -184,10 +170,7 @@ export function createSnapshotControllers(
         },
       });
     } catch (err) {
-      console.error(
-        `[snapshot-controller] rebuildSnapshot error (reqId=${req.headers["x-request-id"]})`,
-        err,
-      );
+      logger.error("rebuildSnapshot error", { error: String(err) });
       error(res, { message: "Storage error", status: 503 });
     }
   };
@@ -210,10 +193,7 @@ export function createSnapshotControllers(
           status: 501,
         });
       }
-      console.error(
-        `[snapshot-controller] verifyConsistency error (reqId=${req.headers["x-request-id"]})`,
-        err,
-      );
+      logger.error("verifyConsistency error", { error: String(err) });
       error(res, { message: "Verification failed", status: 502 });
     }
   };

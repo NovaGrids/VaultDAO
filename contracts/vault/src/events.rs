@@ -184,6 +184,23 @@ pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address, p
     );
 }
 
+/// Emit when a signer explicitly rejects a proposal via `reject_proposal` (Issue #1522).
+///
+/// Published under the same `proposal_rejected` topic as `emit_proposal_rejected` since
+/// that is the on-chain event name integrators watch, but carries the vault-wide
+/// cumulative rejection count instead of the proposer.
+pub fn emit_proposal_explicit_rejection(
+    env: &Env,
+    proposal_id: u64,
+    rejector: &Address,
+    total_rejection_count: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_rejected"), proposal_id),
+        (rejector.clone(), total_rejection_count),
+    );
+}
+
 /// Emit when a proposal is cancelled with a refund
 pub fn emit_proposal_cancelled(
     env: &Env,
