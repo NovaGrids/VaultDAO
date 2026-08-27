@@ -434,6 +434,28 @@ pub enum VaultError {
     PauseCooldownActive = 1127,
     /// Caller is not an emergency signer
     NotEmergencySigner = 1128,
+
+    // =========================================================
+    // Issue #1093: Signer Participation Scoring
+    // =========================================================
+    /// get_participation_rate was called with a window exceeding the 100-proposal cap
+    InvalidParticipationWindow = 1129,
+    /// Target signer is not currently in a sustained (>= 30 day) low-participation streak
+    SignerNotEligibleForForceRotation = 1130,
+    /// This signer has already approved this force-rotation request
+    ForceRotationAlreadyApprovedBySigner = 1131,
+    /// This force-rotation request has already been executed
+    ForceRotationAlreadyExecuted = 1132,
+    /// The proposed replacement address is already a signer
+    ForceRotationReplacementAlreadySigner = 1133,
+    /// No force-rotation request exists for the given ID
+    ForceRotationRequestNotFound = 1134,
+
+    // =========================================================
+    // Issue #1092: Spending Limit Reset Audit
+    // =========================================================
+    /// This signer has already approved this manual spending-limit reset request
+    SpendingLimitResetAlreadyApprovedBySigner = 1135,
 }
 
 // Compatibility markers for CI source checks:

@@ -26,16 +26,16 @@ use crate::types::{
     AuditCheckpoint, AuditEntry, BridgeConfig, CapabilityToken, ColdSignatureRecord,
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
-    ExecutionSnapshot, FeeStructure, FundingRound, FundingRoundConfig, GasConfig,
-    GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType, HookRegistration,
-    InsuranceClaim, InsuranceConfig, InsuranceVotingConfig, ListMode, MergeRecord,
-    MultiPhaseProposal, NotificationPreferences, NotificationPrefs, PauseCooldownConfig,
-    PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus, ProposalTemplate,
-    RecoveryProposal, Reputation, ReputationConfig, RetryState, Role, RoleAssignment,
-    ScopedDelegation, SignerTier, StakeRecord, StakingConfig, StreamRateWindow, Subscription,
-    SwapProposal, SwapResult, Tag, TemplateVarRef, TimeWeightedConfig, TokenLock,
-    TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig, VestingSchedule,
-    VotingStrategy, WhitelistEntry,
+    ExecutionSnapshot, FeeStructure, ForceRotationRequest, FundingRound, FundingRoundConfig,
+    GasConfig, GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType,
+    HookRegistration, InsuranceClaim, InsuranceConfig, InsuranceVotingConfig, ListMode,
+    MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
+    PauseCooldownConfig, PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus,
+    ProposalTemplate, RecoveryProposal, Reputation, ReputationConfig, RetryState, Role,
+    RoleAssignment, ScopedDelegation, SignerParticipationScore, SignerTier, StakeRecord,
+    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
+    TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
+    VestingSchedule, VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 
@@ -206,6 +206,13 @@ pub enum DataKey {
     // ---- Issue #1640: Timelock Ready Index ----
     /// Index of proposal IDs that are Approved and waiting inside a timelock window -> Vec<u64>
     TimelockReady,
+    // ---- Issue #1093: Signer Participation Scoring ----
+    /// Per-signer participation score -> SignerParticipationScore
+    ParticipationScore(Address),
+    /// Pending/executed force-rotation request by ID -> ForceRotationReq
+    ForceRotationReq(u64),
+    /// Next force-rotation request ID -> u64
+    NextForceRotationId,
 }
 
 #[contracttype(export = false)]
@@ -1882,6 +1889,164 @@ pub fn set_reputation_config(env: &Env, config: &ReputationConfig) {
     env.storage()
         .instance()
         .set(&FeatureKey::ReputationConfig, config);
+}
+
+// ============================================================================
+// Signer Participation Scoring (Issue #1093)
+// ============================================================================
+
+/// Max number of outcomes tracked per signer in the circular history buffer.
+pub const PARTICIPATION_HISTORY_CAP: u32 = 100;
+
+pub fn get_participation_score(env: &Env, signer: &Address) -> SignerParticipationScore {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ParticipationScore(signer.clone()))
+        .unwrap_or_else(|| SignerParticipationScore {
+            signer: signer.clone(),
+            proposals_voted: 0,
+            proposals_missed: 0,
+            last_active_ledger: 0,
+            history: Vec::new(env),
+            history_cursor: 0,
+            consecutive_low_periods: 0,
+            low_participation_since_ledger: None,
+        })
+}
+
+pub fn set_participation_score(env: &Env, score: &SignerParticipationScore) {
+    let key = DataKey::ParticipationScore(score.signer.clone());
+    env.storage().persistent().set(&key, score);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+fn push_history(score: &mut SignerParticipationScore, voted: bool) {
+    let len = score.history.len();
+    if len < PARTICIPATION_HISTORY_CAP {
+        score.history.push_back(voted);
+        score.history_cursor = score.history.len() % PARTICIPATION_HISTORY_CAP;
+    } else {
+        score.history.set(score.history_cursor, voted);
+        score.history_cursor = (score.history_cursor + 1) % PARTICIPATION_HISTORY_CAP;
+    }
+}
+
+/// Rate (0-100) of `true` (voted) outcomes among the most recent `window`
+/// entries of `score.history` (fewer, if less history exists). Callers are
+/// responsible for validating `window <= PARTICIPATION_HISTORY_CAP`.
+pub fn compute_participation_rate(score: &SignerParticipationScore, window: u32) -> u32 {
+    let len = score.history.len();
+    let n = window.min(len);
+    if n == 0 {
+        return 0;
+    }
+
+    // Modulus of the index space currently in use: while the buffer hasn't
+    // filled, indices only span 0..len; once full, they wrap over the cap.
+    let modulus = if len < PARTICIPATION_HISTORY_CAP {
+        len
+    } else {
+        PARTICIPATION_HISTORY_CAP
+    };
+    let mut idx = if len < PARTICIPATION_HISTORY_CAP {
+        len - 1
+    } else {
+        (score.history_cursor + PARTICIPATION_HISTORY_CAP - 1) % PARTICIPATION_HISTORY_CAP
+    };
+
+    let mut voted_count: u32 = 0;
+    for _ in 0..n {
+        if score.history.get(idx).unwrap_or(false) {
+            voted_count += 1;
+        }
+        idx = (idx + modulus - 1) % modulus;
+    }
+
+    (voted_count * 100) / n
+}
+
+/// Recomputes low-participation streak state after a new outcome was
+/// recorded. Returns `(current_rate, should_alert)` where `should_alert` is
+/// true exactly when the consecutive-low-periods counter has just reached
+/// (or continues to exceed) `Config.low_participation_streak_n`.
+fn update_low_participation_state(
+    env: &Env,
+    score: &mut SignerParticipationScore,
+    config: &Config,
+) -> (u32, bool) {
+    let rate = compute_participation_rate(score, config.participation_rate_window);
+    if (rate as u32) < config.min_participation_rate {
+        score.consecutive_low_periods += 1;
+        if score.low_participation_since_ledger.is_none() {
+            score.low_participation_since_ledger = Some(env.ledger().sequence());
+        }
+    } else {
+        score.consecutive_low_periods = 0;
+        score.low_participation_since_ledger = None;
+    }
+
+    let should_alert = score.low_participation_since_ledger.is_some()
+        && score.consecutive_low_periods >= config.low_participation_streak_n;
+    (rate, should_alert)
+}
+
+/// Records that `signer` explicitly voted (approved or abstained) on a
+/// proposal. Returns `(new_rate, should_alert)`.
+pub fn record_participation_vote(env: &Env, signer: &Address, config: &Config) -> (u32, bool) {
+    let mut score = get_participation_score(env, signer);
+    score.proposals_voted += 1;
+    score.last_active_ledger = env.ledger().sequence();
+    push_history(&mut score, true);
+    let result = update_low_participation_state(env, &mut score, config);
+    set_participation_score(env, &score);
+    result
+}
+
+/// Records that `signer` failed to vote before a proposal expired while
+/// still Pending. Returns `(new_rate, should_alert)`.
+pub fn record_participation_miss(env: &Env, signer: &Address, config: &Config) -> (u32, bool) {
+    let mut score = get_participation_score(env, signer);
+    score.proposals_missed += 1;
+    push_history(&mut score, false);
+    let result = update_low_participation_state(env, &mut score, config);
+    set_participation_score(env, &score);
+    result
+}
+
+// ============================================================================
+// Force Rotation Requests (Issue #1093)
+// ============================================================================
+
+pub fn next_force_rotation_id(env: &Env) -> u64 {
+    let id = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextForceRotationId)
+        .unwrap_or(1u64);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextForceRotationId, &(id + 1));
+    id
+}
+
+pub fn get_force_rotation_request(
+    env: &Env,
+    id: u64,
+) -> Result<ForceRotationRequest, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ForceRotationReq(id))
+        .ok_or(VaultError::ForceRotationRequestNotFound)
+}
+
+pub fn set_force_rotation_request(env: &Env, request: &ForceRotationRequest) {
+    let key = DataKey::ForceRotationReq(request.id);
+    env.storage().persistent().set(&key, request);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 // ============================================================================
