@@ -420,6 +420,8 @@ export interface SdkOptions {
   maxRetries?: number;
   /** Base delay in milliseconds for exponential backoff after HTTP 429. */
   retryDelayMs?: number;
+  /** Polling interval for `watchProposal`, in milliseconds. */
+  proposalWatchIntervalMs?: number;
 }
 
 // ---------------------------------------------------------------------------

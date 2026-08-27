@@ -5,7 +5,9 @@
  */
 
 import {
+  Account,
   Contract,
+  Keypair,
   Networks,
   SorobanRpc,
   TransactionBuilder,
@@ -173,6 +175,50 @@ export async function buildTransaction(
 
   const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
   return preparedTx.toXDR();
+}
+
+/** Estimate the total fee for a Soroban contract invocation in stroops. */
+export async function estimateFee(
+  opts: SdkOptions,
+  contractFn: string,
+  args: any[]
+): Promise<number> {
+  if (!contractFn.trim()) {
+    throw new Error("Contract function name is required");
+  }
+  if (!Array.isArray(args)) {
+    throw new Error("Contract arguments must be an array");
+  }
+
+  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const sourceAccount = new Account(Keypair.random().publicKey(), "0");
+  const tx = new TransactionBuilder(sourceAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: opts.networkPassphrase,
+  })
+    .addOperation(
+      getContract(opts).call(
+        contractFn,
+        ...args.map((arg) =>
+          arg instanceof xdr.ScVal ? arg : nativeToScVal(arg)
+        )
+      )
+    )
+    .setTimeout(30)
+    .build();
+
+  const simResult = await server.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    throw parseSimulationError(simResult.error);
+  }
+
+  const fee = Number(BASE_FEE) + Number(simResult.minResourceFee);
+
+  if (!Number.isSafeInteger(fee) || fee < 0) {
+    throw new Error("RPC returned an invalid Soroban inclusion fee");
+  }
+
+  return fee;
 }
 
 // ---------------------------------------------------------------------------
