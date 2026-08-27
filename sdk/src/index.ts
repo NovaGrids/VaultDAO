@@ -50,6 +50,7 @@ export {
   buildTransaction,
   estimateFee,
   signAndSubmit,
+  retryOnRateLimit,
   extractStateDiff,
   simulateWithStateDiff,
   simulate_with_state_diff,

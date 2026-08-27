@@ -416,6 +416,10 @@ export interface SdkOptions {
    * ```
    */
   logger?: SdkLogger;
+  /** Maximum number of additional attempts after an HTTP 429 response. */
+  maxRetries?: number;
+  /** Base delay in milliseconds for exponential backoff after HTTP 429. */
+  retryDelayMs?: number;
   /** Polling interval for `watchProposal`, in milliseconds. */
   proposalWatchIntervalMs?: number;
 }

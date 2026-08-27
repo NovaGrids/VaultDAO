@@ -43,7 +43,7 @@ export const DEFAULT_RPC_URLS: Record<Exclude<Network, "custom">, string> = {
  *
  * @param network    - One of the known network presets.
  * @param contractId - Deployed contract ID (Strkey Cxxx format).
- * @param overrides  - Optional overrides, including a custom {@link SdkLogger}.
+ * @param overrides  - Optional overrides, including retry settings and a custom {@link SdkLogger}.
  *
  * @example
  * const opts = buildOptions("testnet", "CXXXXXXXXX...");
@@ -61,13 +61,15 @@ export const DEFAULT_RPC_URLS: Record<Exclude<Network, "custom">, string> = {
 export function buildOptions(
   network: Exclude<Network, "custom">,
   contractId: string,
-  overrides?: Partial<Pick<SdkOptions, "rpcUrl" | "networkPassphrase" | "logger">>
+  overrides?: Partial<Pick<SdkOptions, "rpcUrl" | "networkPassphrase" | "logger" | "maxRetries" | "retryDelayMs">>
 ): SdkOptions {
   return {
     contractId,
     rpcUrl: overrides?.rpcUrl ?? DEFAULT_RPC_URLS[network],
     networkPassphrase: overrides?.networkPassphrase ?? NETWORK_PASSPHRASES[network],
     logger: overrides?.logger,
+    maxRetries: overrides?.maxRetries ?? 3,
+    retryDelayMs: overrides?.retryDelayMs ?? 500,
   };
 }
 
@@ -263,7 +265,12 @@ export async function signAndSubmit(
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
   const { Transaction } = await import("stellar-sdk");
   const signedTx = new Transaction(signedXdr, opts.networkPassphrase);
-  const sendResult = await server.sendTransaction(signedTx);
+  const sendResult = await retryOnRateLimit(
+    () => server.sendTransaction(signedTx),
+    opts,
+    log,
+    "transaction submission"
+  );
 
   if (sendResult.status === "ERROR") {
     const errorMessage = `Transaction failed: ${sendResult.errorResult}`;
@@ -398,6 +405,46 @@ export function decodeScVal(scVal: xdr.ScVal): unknown {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Retry an RPC operation when the endpoint responds with HTTP 429. */
+export async function retryOnRateLimit<T>(
+  operation: () => Promise<T>,
+  opts: SdkOptions,
+  log: SdkLogger,
+  operationName: string
+): Promise<T> {
+  const maxRetries = Math.max(0, opts.maxRetries ?? 3);
+  const retryDelayMs = Math.max(0, opts.retryDelayMs ?? 500);
+
+  for (let retry = 0; ; retry++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isRateLimitError(error) || retry >= maxRetries) {
+        throw error;
+      }
+
+      const exponentialDelay = retryDelayMs * 2 ** retry;
+      const delayMs = Math.round(exponentialDelay * (0.5 + Math.random()));
+      log.warn(`Rate limited during ${operationName}; retrying`, {
+        retry: retry + 1,
+        maxRetries,
+        delayMs,
+      });
+      await sleep(delayMs);
+    }
+  }
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const responseStatus = (error as { response?: { status?: unknown } }).response?.status;
+  const status = (error as { status?: unknown }).status;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return responseStatus === 429 || status === 429 || statusCode === 429 ||
+    (error instanceof Error && /\b429\b|too many requests/i.test(error.message));
 }
 
 /**
