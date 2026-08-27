@@ -13,4 +13,10 @@ export interface WalletAdapter {
   getPublicKey(): Promise<string | null>;
   getNetwork(): Promise<string | null>;
   signTransaction(xdr: string, options?: { network?: string }): Promise<string>;
+  /**
+   * Return all accounts accessible through this wallet.
+   * Optional — wallets that expose only a single account at a time may omit
+   * this. Callers should fall back to `[publicKey]` when it is absent.
+   */
+  getAccounts?(): Promise<string[]>;
 }
