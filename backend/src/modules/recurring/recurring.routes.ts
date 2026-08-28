@@ -1,5 +1,7 @@
 import { Router } from "express";
 import type { RequestHandler } from "express";
+import { z } from "zod";
+import { validate } from "../../shared/validate.middleware.js";
 import type { RecurringIndexerService } from "./recurring.service.js";
 import {
   getAllRecurringController,
@@ -18,6 +20,36 @@ import {
  */
 import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 
+// ============================================================================
+// Issue #1165: Zod request validation schemas, co-located with the routes
+// that use them.
+// ============================================================================
+
+/** GET /api/v1/recurring/due?lookaheadLedgers=1440 */
+const dueQuerySchema = z.object({
+  lookaheadLedgers: z.coerce.number().int().min(1).max(17280).optional(),
+});
+
+/** GET /api/v1/recurring/predict?windowLedgers=<n>[&currentLedger=<n>] */
+const predictQuerySchema = z.object({
+  windowLedgers: z.coerce.number().int().min(1).max(1_048_576),
+  currentLedger: z.coerce.number().int().min(0).optional(),
+});
+
+/** POST /api/v1/recurring/check-conflict body: { recipient, amount, intervalLedgers } */
+const checkConflictBodySchema = z.object({
+  recipient: z.string().min(1, "recipient is required"),
+  amount: z.union([z.string(), z.number()]),
+  intervalLedgers: z.number().int().positive(),
+});
+
+/** POST /api/v1/recurring body: { recipient, amount?, intervalLedgers? } */
+const createRecurringBodySchema = z.object({
+  recipient: z.string().min(1, "recipient is required"),
+  amount: z.union([z.string(), z.number()]).optional(),
+  intervalLedgers: z.number().int().positive().optional(),
+});
+
 export function createRecurringRouter(
   service: RecurringIndexerService,
   authMiddleware?: RequestHandler,
@@ -31,9 +63,9 @@ export function createRecurringRouter(
    * Requires authMiddleware.
    */
   if (authMiddleware) {
-    router.get("/due", authMiddleware, getDueWithLookaheadController(service));
+    router.get("/due", authMiddleware, validate(dueQuerySchema, "query"), getDueWithLookaheadController(service));
   } else {
-    router.get("/due", getDueWithLookaheadController(service));
+    router.get("/due", validate(dueQuerySchema, "query"), getDueWithLookaheadController(service));
   }
 
   /**
@@ -47,20 +79,20 @@ export function createRecurringRouter(
    * Projects the next due dates for active/due payments within windowLedgers.
    * Emits a RECURRING_PREDICTION_QUERIED audit event at query time.
    */
-  router.get("/predict", predictRecurringDuesController(service));
+  router.get("/predict", validate(predictQuerySchema, "query"), predictRecurringDuesController(service));
 
   /**
    * POST /api/v1/recurring/check-conflict
    * Returns conflicts for proposed payment params.
    */
-  router.post("/check-conflict", checkConflictController(service));
+  router.post("/check-conflict", validate(checkConflictBodySchema), checkConflictController(service));
 
   /**
    * POST /api/v1/recurring
    * Creates a new recurring payment; sets X-Conflict-Warning header if duplicates found.
    * Use ?force=true to bypass.
    */
-  router.post("/", createRecurringController(service));
+  router.post("/", validate(createRecurringBodySchema), createRecurringController(service));
 
   /**
    * GET /api/v1/recurring

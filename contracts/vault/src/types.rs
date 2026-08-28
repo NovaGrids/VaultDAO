@@ -54,7 +54,9 @@ pub struct VaultPriceData {
 pub struct InitConfig {
     /// List of authorized signers
     pub signers: Vec<Address>,
-    /// Required number of approvals (M in M-of-N)
+    /// Required number of approvals (M in M-of-N). Must be >= 2: a threshold of 1
+    /// degrades the vault to a single-signer wallet, so `initialize` rejects it
+    /// with `VaultError::ThresholdTooLow`.
     pub threshold: u32,
     /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
     /// Set to 0 to disable quorum enforcement.
@@ -2429,6 +2431,10 @@ pub struct WhitelistEntry {
 pub enum ProposalOperation {
     /// Transfer tokens: (recipient, token, amount, memo)
     Transfer(Address, Address, i128, Symbol),
+    /// Remove a signer from the vault's signer set (Issue #1526). Requires
+    /// multisig approval via the proposal workflow rather than a direct
+    /// Admin call, so a single compromised Admin key cannot gut the signer set.
+    RemoveSigner(Address),
 }
 
 /// Optional ProposalOperation wrapper (Soroban contracttype limitation)

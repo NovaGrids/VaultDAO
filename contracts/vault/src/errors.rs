@@ -12,6 +12,8 @@ pub enum VaultError {
     NotInitialized = 2,
     /// No signers provided during initialization
     NoSigners = 3,
+    /// Threshold is below the required minimum of 2 (prevents single-signer wallets)
+    ThresholdTooLow = 4,
     /// Threshold exceeds the number of signers
     ThresholdTooHigh = 5,
     /// Quorum exceeds the number of signers
