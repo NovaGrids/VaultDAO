@@ -51,11 +51,10 @@ use types::{
     RecoveryStatus, RecurringPayment, RecurringStatus, Reputation, ReputationConfig, RetryConfig,
     RetryState, Role, RoleAssignment, ScheduledTransferConfig, ScopedDelegation,
     SignerParticipationScore, SignerTier, StakingConfig, StreamRateWindow, StreamStatus,
-    StreamingPayment, Subscription, SubscriptionStatus,
-    SubscriptionTier, SwapProposal, SwapResult, TemplateFeeTier, TemplateOverrides,
-    ThresholdStrategy, TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics,
-    VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig, VestingSchedule, VoteChoice,
-    VoteWeight, VotingStrategy, WhitelistEntry,
+    StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier, SwapProposal, SwapResult,
+    TemplateFeeTier, TemplateOverrides, ThresholdStrategy, TokenSpendingConfig, TransferDetails,
+    VaultAction, VaultMetrics, VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig,
+    VestingSchedule, VoteChoice, VoteWeight, VotingStrategy, WhitelistEntry,
 };
 use types_balance_snapshot::BalanceSnapshot;
 
@@ -329,9 +328,9 @@ fn calculate_impact_score(
 // #[cfg(test)]
 // mod test_fee_cache;
 #[cfg(test)]
-mod test_spending_refund_buckets;
-#[cfg(test)]
 mod test_spending_limit_invariants_proptest;
+#[cfg(test)]
+mod test_spending_refund_buckets;
 // #[cfg(test)]
 // mod test_fan_out_streams;
 // #[cfg(test)]
@@ -452,13 +451,13 @@ mod test_streaming;
 // #[cfg(test)]
 // mod test_subscription_downgrade_grace;
 #[cfg(test)]
-mod test_subscriptions;
-#[cfg(test)]
-mod test_supersession_chain;
+mod test_participation_scoring;
 #[cfg(test)]
 mod test_signers_with_roles;
 #[cfg(test)]
-mod test_participation_scoring;
+mod test_subscriptions;
+#[cfg(test)]
+mod test_supersession_chain;
 #[cfg(test)]
 mod test_tag_taxonomy;
 #[cfg(test)]
@@ -4983,8 +4982,7 @@ impl VaultDAO {
                                 let (rate, should_alert) =
                                     storage::record_participation_miss(&env, &eligible, &config);
                                 if should_alert {
-                                    let score =
-                                        storage::get_participation_score(&env, &eligible);
+                                    let score = storage::get_participation_score(&env, &eligible);
                                     events::emit_low_participation_alert(
                                         &env,
                                         &eligible,
@@ -5331,7 +5329,11 @@ impl VaultDAO {
         Ok(())
     }
 
-    fn execute_force_rotation(env: &Env, actor: &Address, request_id: u64) -> Result<(), VaultError> {
+    fn execute_force_rotation(
+        env: &Env,
+        actor: &Address,
+        request_id: u64,
+    ) -> Result<(), VaultError> {
         let mut request = storage::get_force_rotation_request(env, request_id)?;
         if request.executed {
             return Err(VaultError::ForceRotationAlreadyExecuted);
@@ -6440,7 +6442,9 @@ impl VaultDAO {
         if payment.status == crate::types::RecurringStatus::Stopped {
             return Err(VaultError::ProposalNotFound);
         }
-        if payment.status == crate::types::RecurringStatus::Stopping && payment.grace_executions == 0 {
+        if payment.status == crate::types::RecurringStatus::Stopping
+            && payment.grace_executions == 0
+        {
             payment.status = crate::types::RecurringStatus::Stopped;
             storage::set_recurring_payment(&env, &payment);
             return Err(VaultError::ProposalNotFound);

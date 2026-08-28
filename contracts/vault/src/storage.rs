@@ -876,11 +876,7 @@ pub fn get_pending_timelocked_proposals(env: &Env, offset: u64, limit: u32) -> V
             None => continue,
         };
         // Skip proposals that no longer exist in storage
-        let proposal: Proposal = match env
-            .storage()
-            .persistent()
-            .get(&DataKey::Proposal(id))
-        {
+        let proposal: Proposal = match env.storage().persistent().get(&DataKey::Proposal(id)) {
             Some(p) => p,
             None => continue,
         };
@@ -2031,10 +2027,7 @@ pub fn next_force_rotation_id(env: &Env) -> u64 {
     id
 }
 
-pub fn get_force_rotation_request(
-    env: &Env,
-    id: u64,
-) -> Result<ForceRotationRequest, VaultError> {
+pub fn get_force_rotation_request(env: &Env, id: u64) -> Result<ForceRotationRequest, VaultError> {
     env.storage()
         .persistent()
         .get(&DataKey::ForceRotationReq(id))

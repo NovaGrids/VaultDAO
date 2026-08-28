@@ -278,7 +278,10 @@ fn test_reject_proposal_transitions_to_rejected() {
     assert_eq!(proposal.status, ProposalStatus::Rejected);
 
     let metrics_after = client.get_metrics();
-    assert_eq!(metrics_after.rejected_count, metrics_before.rejected_count + 1);
+    assert_eq!(
+        metrics_after.rejected_count,
+        metrics_before.rejected_count + 1
+    );
 }
 
 #[test]
@@ -6870,7 +6873,10 @@ fn test_propose_config_change_rejects_negative_full_quorum_threshold() {
         &crate::types::ConfigParam::FullQuorumThreshold,
         &(-1i128),
     );
-    assert!(result.is_err(), "Negative full_quorum_threshold should be rejected");
+    assert!(
+        result.is_err(),
+        "Negative full_quorum_threshold should be rejected"
+    );
 }
 
 #[test]
