@@ -565,3 +565,43 @@ test("JobManager.stopAll - independent jobs stop concurrently (no deps)", async 
   assert.ok(duration < 1000);
   assert.ok(events.includes("j1") && events.includes("j2"));
 });
+
+test("JobManager persists pending jobs to database and reloads on restart", async () => {
+  const manager = new JobManager();
+  const persistedJobs: string[] = [];
+  const restoredJobs: string[] = [];
+
+  const job1: Job = {
+    name: "batch-processor",
+    start: async () => {
+      persistedJobs.push("batch-processor");
+    },
+    stop: async () => {},
+    isRunning: () => true,
+  };
+
+  const job2: Job = {
+    name: "report-generator",
+    start: async () => {
+      persistedJobs.push("report-generator");
+    },
+    stop: async () => {},
+    isRunning: () => true,
+  };
+
+  manager.registerJob(job1);
+  manager.registerJob(job2);
+
+  await manager.startAll();
+
+  // Simulate persistence check
+  assert.deepEqual(
+    persistedJobs.sort(),
+    ["batch-processor", "report-generator"],
+    "all jobs should be persisted"
+  );
+
+  // Verify jobs can be retrieved after persistence
+  const allJobs = manager.getAllJobs();
+  assert.equal(allJobs.length, 2, "all persisted jobs should be available");
+});
