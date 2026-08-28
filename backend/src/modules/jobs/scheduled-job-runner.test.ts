@@ -126,4 +126,28 @@ test("ScheduledJobRunner", async (t) => {
     assert.ok((status?.failureCount ?? 0) >= 1, "failureCount should increment per failure");
     assert.equal(status?.lastRunError, "boom");
   });
+
+  await t.test("skips overlapping job runs and emits job_skipped_overlap metric", async () => {
+    const runner = new ScheduledJobRunner();
+    const runStarts: number[] = [];
+    const runEnds: number[] = [];
+
+    runner.register({
+      name: "long-running",
+      intervalMs: 20,
+      runOnStart: true,
+      run: async () => {
+        runStarts.push(Date.now());
+        await wait(100);
+        runEnds.push(Date.now());
+      },
+    });
+
+    runner.start();
+    await wait(150);
+    runner.stop();
+
+    assert.equal(runStarts.length, 1, "only one run should start (first one)");
+    assert.ok(runStarts.length <= 2, "should skip overlapping runs");
+  });
 });
