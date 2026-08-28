@@ -84,6 +84,7 @@ export {
   // Recurring payments
   schedulePayment,
   executeRecurringPayment,
+  listRecurringPayments,
   // Streaming payments
   createStream,
   claimStream,

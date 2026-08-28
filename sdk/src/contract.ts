@@ -472,6 +472,51 @@ export async function executeRecurringPayment(
   return buildTransaction(callerPublicKey, op, opts);
 }
 
+/**
+ * List all recurring payments with pagination.
+ *
+ * Fetches a paginated list of recurring payments, handling RecurringNotFound
+ * gracefully when the end of the list is reached.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (used as simulation source).
+ * @param offset          - Starting index for pagination (0-based).
+ * @param limit           - Maximum number of payments to return per page.
+ * @param opts            - SDK connection options.
+ * @returns               Array of RecurringPayment objects for the requested page.
+ */
+export async function listRecurringPayments(
+  callerPublicKey: string,
+  offset: bigint,
+  limit: bigint,
+  opts: SdkOptions
+): Promise<RecurringPayment[]> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "list_recurring_payments",
+    u64ToScVal(offset),
+    u64ToScVal(limit)
+  );
+  const raw = await simulateReadOnly<Record<string, unknown>[]>(
+    op,
+    opts,
+    callerPublicKey,
+    "listRecurringPayments"
+  );
+
+  return raw.map((p) => ({
+    id: BigInt(p.id as number),
+    proposer: p.proposer as string,
+    recipient: p.recipient as string,
+    token: p.token as string,
+    amount: BigInt(p.amount as number),
+    memo: p.memo as string,
+    interval: BigInt(p.interval as number),
+    nextPaymentLedger: BigInt(p.next_payment_ledger as number),
+    paymentCount: Number(p.payment_count),
+    isActive: p.is_active as boolean,
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Streaming Payments
 // ---------------------------------------------------------------------------
