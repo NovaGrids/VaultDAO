@@ -1,6 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { StorageAdapter } from "./storage.adapter.js";
-import { configureWalMode } from "./sqlite-wal.js";
+import {
+  type SqlitePoolStats,
+  SqliteConnectionPool,
+  getSqlitePool,
+} from "./sqlite-pool.js";
 
 /**
  * SQLite-backed storage adapter using Node.js built-in `node:sqlite`.
@@ -51,14 +55,6 @@ export class SqliteStorageAdapter<T extends { id: string }>
     return this.pool.borrowSync(fn);
   }
 
-  constructor(dbPath: string, table: string) {
-    this.db = new DatabaseSync(dbPath);
-    configureWalMode(this.db);
-    this.db.exec(
-      `CREATE TABLE IF NOT EXISTS "${table}" (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
-    );
-  }
-
   private get(
     sql: string,
     ...params: unknown[]
@@ -76,7 +72,12 @@ export class SqliteStorageAdapter<T extends { id: string }>
   }
 
   async getAll(filter?: Record<string, unknown>): Promise<T[]> {
-    const rows = this.all(`SELECT data FROM "${this.table}"`);
+    const rows = this.withConnectionSync((db) =>
+      db.prepare(`SELECT data FROM "${this.table}"`).all() as {
+        id: string;
+        data: string;
+      }[],
+    );
     let results = rows.map((r) => JSON.parse(r.data) as T);
 
     if (filter) {
