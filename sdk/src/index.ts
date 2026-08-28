@@ -84,6 +84,7 @@ export {
   // Recurring payments
   schedulePayment,
   executeRecurringPayment,
+  listRecurringPayments,
   // Streaming payments
   createStream,
   claimStream,
@@ -116,6 +117,7 @@ export {
   getAuditTrail,
   getDelegationChain,
   // View / read-only
+  getConfig,
   getProposal,
   getRole,
   getTodaySpent,

@@ -144,4 +144,40 @@ describe('TransactionSimulatorModal', () => {
     render(<TransactionSimulatorModal {...defaultProps} simulateOnly />);
     expect(screen.queryByText('Approve')).not.toBeInTheDocument();
   });
+
+  it('restores focus to triggering element when modal closes', async () => {
+    const triggerButton = document.createElement('button');
+    triggerButton.textContent = 'Open Modal';
+    document.body.appendChild(triggerButton);
+
+    const { rerender } = render(
+      <>
+        <button>Open Modal</button>
+        <TransactionSimulatorModal {...defaultProps} isOpen={false} />
+      </>
+    );
+
+    triggerButton.focus();
+    expect(document.activeElement).toBe(triggerButton);
+
+    rerender(
+      <>
+        <button>Open Modal</button>
+        <TransactionSimulatorModal {...defaultProps} isOpen={true} />
+      </>
+    );
+
+    rerender(
+      <>
+        <button>Open Modal</button>
+        <TransactionSimulatorModal {...defaultProps} isOpen={false} />
+      </>
+    );
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(triggerButton);
+    });
+
+    document.body.removeChild(triggerButton);
+  });
 });

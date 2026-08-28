@@ -10,7 +10,7 @@ i18n
   .use(initReactI18next)
   .init({
     fallbackLng: 'en',
-    supportedLngs: ['en', 'es', 'fr', 'ar', 'zh'],
+    supportedLngs: ['en', 'es', 'fr', 'ar', 'zh', 'zh-TW'],
     ns: ['translation'],
     defaultNS: 'translation',
     debug: false,

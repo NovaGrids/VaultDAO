@@ -149,13 +149,20 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
   const [cpuInsns, setCpuInsns] = useState('0');
   const [memBytes, setMemBytes] = useState('0');
   const [showDetails, setShowDetails] = useState(false);
+  const triggeringElementRef = React.useRef<HTMLElement | null>(null);
 
-  // Reset state when modal opens
+  // Reset state when modal opens and manage focus
   useEffect(() => {
     if (isOpen) {
+      triggeringElementRef.current = document.activeElement as HTMLElement;
       setResult(null);
       setShowDetails(false);
       setProceeding(false);
+    } else {
+      // Restore focus when modal closes
+      if (triggeringElementRef.current) {
+        triggeringElementRef.current.focus();
+      }
     }
   }, [isOpen]);
 
