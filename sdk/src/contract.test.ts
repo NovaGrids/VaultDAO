@@ -55,6 +55,7 @@ import {
   getReputation,
   getAuditTrail,
   getDelegationChain,
+  getConfig,
   getProposal,
   getRole,
   getTodaySpent,
@@ -527,6 +528,32 @@ describe("contract.ts bindings", () => {
   describe("Read functions", () => {
     beforeEach(() => {
       serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+    });
+
+    it("getConfig decodes and maps VaultConfig", async () => {
+      serverMock.simulateTransaction.mockResolvedValue({ transactionData: {}, result: { retval: {} } });
+      (decodeScVal as Mock).mockReturnValue({
+        signers: ["GALICE", "GBOB"],
+        threshold: 2,
+        spending_limit: 1000000,
+        daily_limit: 5000000,
+        weekly_limit: 20000000,
+        timelock_threshold: 500000,
+        timelock_delay: 100,
+      });
+
+      const config = await getConfig("GCALLER", opts);
+
+      expect(config).toEqual({
+        signers: ["GALICE", "GBOB"],
+        threshold: 2,
+        spendingLimit: 1000000n,
+        dailyLimit: 5000000n,
+        weeklyLimit: 20000000n,
+        timelockThreshold: 500000n,
+        timelockDelay: 100n,
+      });
+      expect(contractCallSpy).toHaveBeenCalledWith("get_config");
     });
 
     it("getComments decodes and maps the raw comment array", async () => {

@@ -116,6 +116,7 @@ export {
   getAuditTrail,
   getDelegationChain,
   // View / read-only
+  getConfig,
   getProposal,
   getRole,
   getTodaySpent,
