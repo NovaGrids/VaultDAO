@@ -146,4 +146,124 @@ describe('TokenPortfolioView', () => {
     expect(mockRefresh).toHaveBeenCalledTimes(1);
     expect(mockOnRefresh).toHaveBeenCalledTimes(1);
   });
+
+  describe('empty state rendering', () => {
+    it('should render empty state message when tokenBalances array is empty', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.getByText('No assets found in this vault portfolio.')).toBeInTheDocument();
+    });
+
+    it('should render "Portfolio View" heading in empty state', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.getByText('Portfolio View')).toBeInTheDocument();
+    });
+
+    it('should display wallet icon in empty state', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      const { container } = render(<TokenPortfolioView tokenBalances={[]} />);
+      // Wallet icon should be rendered
+      const emptyStateDiv = container.querySelector('.text-center');
+      expect(emptyStateDiv).toBeInTheDocument();
+    });
+
+    it('should not render table when tokenBalances is empty', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    });
+
+    it('should not render chart when tokenBalances is empty', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      const { container } = render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(container.querySelector('[data-testid="pie-chart"]')).not.toBeInTheDocument();
+    });
+
+    it('should render CTA to deposit tokens in empty state', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      // The component should have some text guidance for users
+      expect(screen.getByText('Portfolio View')).toBeInTheDocument();
+      expect(screen.getByText('No assets found in this vault portfolio.')).toBeInTheDocument();
+    });
+
+    it('should show proper empty state styling', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      const { container } = render(<TokenPortfolioView tokenBalances={[]} />);
+      const emptyState = container.querySelector('.text-center');
+      expect(emptyState).toHaveClass('bg-gray-900');
+      expect(emptyState).toHaveClass('border');
+      expect(emptyState).toHaveClass('border-gray-800');
+      expect(emptyState).toHaveClass('rounded-2xl');
+    });
+
+    it('should differentiate empty state from loaded state', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        refresh: vi.fn(),
+      });
+
+      const emptyRender = render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.getByText('No assets found in this vault portfolio.')).toBeInTheDocument();
+
+      emptyRender.unmount();
+
+      mockUseTokenPrices.mockReturnValue({
+        prices: {
+          NATIVE: { usd: 0.10, change24h: 5.2 },
+        },
+        loading: false,
+        lastUpdated: Date.now(),
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+      expect(screen.queryByText('No assets found in this vault portfolio.')).not.toBeInTheDocument();
+    });
+  });
 });
