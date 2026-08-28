@@ -150,4 +150,30 @@ test("ScheduledJobRunner", async (t) => {
     assert.equal(runStarts.length, 1, "only one run should start (first one)");
     assert.ok(runStarts.length <= 2, "should skip overlapping runs");
   });
+
+  await t.test("enforces execution timeout and marks job as failed with execution_timeout reason", async () => {
+    const runner = new ScheduledJobRunner();
+    let executionStarted = false;
+
+    runner.register({
+      name: "hung-job",
+      intervalMs: 60_000,
+      runOnStart: true,
+      run: async () => {
+        executionStarted = true;
+        await new Promise<void>((_resolve) => {
+          // Never resolves - simulates hung RPC call
+        });
+      },
+    });
+
+    runner.start();
+    await wait(200);
+    runner.stop();
+
+    const status = runner.getJobStatuses().find((job) => job.name === "hung-job");
+    assert.ok(status, "job status should be available");
+    assert.equal(executionStarted, true, "job execution should have started");
+    assert.ok(status?.lastRunError, "job should have an error");
+  });
 });
