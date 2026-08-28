@@ -6,9 +6,9 @@ use crate::types::{
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token::StellarAssetClient,
-    Env, Symbol, Vec,
+    Env, Symbol, TryFromVal, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -225,6 +225,236 @@ fn test_initialize_allows_disabled_veto_default() {
 
     let result = client.try_initialize(&admin, &config);
     assert!(result.is_ok());
+}
+
+// ============================================================================
+// Issue #1528: proposal_id_prefix must be a multiple of 1_000_000
+// ============================================================================
+
+#[test]
+fn test_initialize_rejects_non_multiple_proposal_id_prefix() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let mut config = default_init_config(&env, signers, 1);
+    config.proposal_id_prefix = 1_500_000; // not a multiple of 1_000_000
+
+    let result = client.try_initialize(&admin, &config);
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidProposalIdPrefix)));
+}
+
+#[test]
+fn test_initialize_allows_valid_proposal_id_prefix() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let mut config = default_init_config(&env, signers, 1);
+    config.proposal_id_prefix = 3_000_000; // valid multiple of 1_000_000
+
+    let result = client.try_initialize(&admin, &config);
+    assert!(result.is_ok());
+}
+
+// ============================================================================
+// Issue #1529: create_proposal must reject when the vault is paused
+// ============================================================================
+
+#[test]
+fn test_propose_transfer_rejected_while_vault_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let em_signer_2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    let mut emergency_signers = Vec::new(&env);
+    emergency_signers.push_back(admin.clone());
+    emergency_signers.push_back(em_signer_2.clone());
+    client.configure_emergency(&admin, &emergency_signers, &999_999_999i128);
+
+    client.pause_vault(&admin, &Symbol::new(&env, "manual"));
+
+    let result = client.try_propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "t"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(result.err(), Some(Ok(VaultError::VaultPaused)));
+}
+
+// ============================================================================
+// Issue #1530: emit an event when a signer's tier is changed
+// ============================================================================
+
+#[test]
+fn test_set_signer_tier_emits_event_with_old_and_new_tier() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Default tier (no prior call) is Principal.
+    client.set_signer_tier(&admin, &signer, &SignerTier::Junior(500));
+
+    let expected_topic = Symbol::new(&env, "signer_tier_changed");
+    let mut matches: std::vec::Vec<(SignerTier, SignerTier)> = std::vec::Vec::new();
+    for (_, topics, data) in env.events().all().iter() {
+        let is_match = topics
+            .first()
+            .and_then(|t| Symbol::try_from_val(&env, &t).ok())
+            .map(|s| s == expected_topic)
+            .unwrap_or(false);
+        if !is_match {
+            continue;
+        }
+        let event_signer = Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        assert_eq!(event_signer, signer);
+        let tiers: (SignerTier, SignerTier) = TryFromVal::try_from_val(&env, &data).unwrap();
+        matches.push(tiers);
+    }
+
+    assert_eq!(matches.len(), 1);
+    let (old_tier, new_tier) = &matches[0];
+    assert_eq!(*old_tier, SignerTier::Principal);
+    assert_eq!(*new_tier, SignerTier::Junior(500));
+
+    // A subsequent change reports the previous tier as `old_tier`.
+    client.set_signer_tier(&admin, &signer, &SignerTier::Senior(1000));
+    let mut matches2: std::vec::Vec<(SignerTier, SignerTier)> = std::vec::Vec::new();
+    for (_, topics, data) in env.events().all().iter() {
+        let is_match = topics
+            .first()
+            .and_then(|t| Symbol::try_from_val(&env, &t).ok())
+            .map(|s| s == expected_topic)
+            .unwrap_or(false);
+        if is_match {
+            let tiers: (SignerTier, SignerTier) = TryFromVal::try_from_val(&env, &data).unwrap();
+            matches2.push(tiers);
+        }
+    }
+
+    assert_eq!(matches2.len(), 2);
+    let (old_tier2, new_tier2) = &matches2[1];
+    assert_eq!(*old_tier2, SignerTier::Junior(500));
+    assert_eq!(*new_tier2, SignerTier::Senior(1000));
+}
+
+// ============================================================================
+// Issue #1531: paginated proposal lookup by hierarchical tag_id
+// ============================================================================
+
+#[test]
+fn test_get_proposals_by_tag_id_paginated_returns_correct_page() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&contract_id, &1_000_000);
+    let recipient = Address::generate(&env);
+
+    let tag_id = client.create_tag(&admin, &Symbol::new(&env, "ops"), &None);
+
+    let mut proposal_ids = Vec::new(&env);
+    for _ in 0..5 {
+        let pid = client.propose_transfer(
+            &admin,
+            &recipient,
+            &token,
+            &100i128,
+            &Symbol::new(&env, "t"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        let mut tag_ids = Vec::new(&env);
+        tag_ids.push_back(tag_id);
+        client.assign_tags(&admin, &pid, &tag_ids);
+        proposal_ids.push_back(pid);
+    }
+
+    // Untagged proposal must not appear in results.
+    client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "t"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let page1 = client.get_proposals_by_tag_id_paginated(&tag_id, &0u64, &3u32);
+    assert_eq!(page1.len(), 3);
+    for i in 0..3u32 {
+        assert_eq!(page1.get(i).unwrap(), proposal_ids.get(i).unwrap());
+    }
+
+    let page2 = client.get_proposals_by_tag_id_paginated(&tag_id, &3u64, &3u32);
+    assert_eq!(page2.len(), 2);
+    for i in 0..2u32 {
+        assert_eq!(page2.get(i).unwrap(), proposal_ids.get(3 + i).unwrap());
+    }
+
+    let empty_page = client.get_proposals_by_tag_id_paginated(&tag_id, &10u64, &3u32);
+    assert!(empty_page.is_empty());
 }
 
 // ============================================================================
