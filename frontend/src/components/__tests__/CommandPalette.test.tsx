@@ -258,6 +258,72 @@ describe('CommandPalette', () => {
     });
   });
 
+  it('ArrowDown wraps from last item to first item', async () => {
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    const items = screen.getAllByRole('option');
+    const lastIndex = items.length - 1;
+
+    // Move to the last item
+    for (let i = 0; i < lastIndex; i++) {
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
+    }
+
+    await waitFor(() => {
+      expect(items[lastIndex]).toHaveAttribute('aria-selected', 'true');
+    });
+
+    // Press ArrowDown on the last item - should wrap to first
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+
+    await waitFor(() => {
+      const refreshedItems = screen.getAllByRole('option');
+      expect(refreshedItems[0]).toHaveAttribute('aria-selected', 'true');
+      expect(refreshedItems[lastIndex]).toHaveAttribute('aria-selected', 'false');
+    });
+  });
+
+  it('ArrowUp wraps from first item to last item', async () => {
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    const items = screen.getAllByRole('option');
+    const lastIndex = items.length - 1;
+
+    // First item is selected by default
+    expect(items[0]).toHaveAttribute('aria-selected', 'true');
+
+    // Press ArrowUp on the first item - should wrap to last
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+
+    await waitFor(() => {
+      const refreshedItems = screen.getAllByRole('option');
+      expect(refreshedItems[lastIndex]).toHaveAttribute('aria-selected', 'true');
+      expect(refreshedItems[0]).toHaveAttribute('aria-selected', 'false');
+    });
+  });
+
+  it('updates aria-activedescendant when navigation changes', async () => {
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox') as HTMLInputElement;
+    const items = screen.getAllByRole('option');
+
+    // First item should be active
+    expect(input.getAttribute('aria-activedescendant')).toBe(`cmd-item-${items[0].id}`);
+
+    // Move down
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+
+    await waitFor(() => {
+      expect(input.getAttribute('aria-activedescendant')).toBe(`cmd-item-${items[1].id}`);
+    });
+  });
+
   it('Enter executes the active action and closes palette', async () => {
     const actions = makeActions();
     render(<CommandPalette actions={actions} />);
