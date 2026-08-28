@@ -269,6 +269,7 @@ Before submitting your PR, ensure:
 - [ ] All tests pass (`cargo test`, `npm run build`)
 - [ ] New functionality includes tests
 - [ ] Documentation is updated (if needed)
+- [ ] Updated `sdk/CHANGELOG.md` if this PR changes SDK behaviour or API
 - [ ] Commit messages are clear and descriptive
 - [ ] PR description explains the changes
 - [ ] No merge conflicts with `main`

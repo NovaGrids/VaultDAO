@@ -56,7 +56,7 @@ export class ContractCache {
   private stats: CacheStats = { hits: 0, misses: 0, evictions: 0 };
   private defaultTtl: number; // milliseconds
   private maxEntries: number;
-  private cleanupInterval: NodeJS.Timeout | null = null;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(defaultTtlSeconds: number = 60, maxEntries: number = 1000) {
     this.defaultTtl = defaultTtlSeconds * 1000;
