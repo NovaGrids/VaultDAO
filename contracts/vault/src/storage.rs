@@ -1577,6 +1577,13 @@ pub fn check_and_update_velocity(
         .temporary()
         .extend_ttl(&global_key, DAY_IN_LEDGERS, DAY_IN_LEDGERS);
 
+    // Warn the signer when this write leaves exactly one transfer of
+    // remaining capacity before the sliding-window cap is hit.
+    let remaining_capacity = config.limit.saturating_sub(updated_global.len());
+    if remaining_capacity == 1 {
+        crate::events::emit_velocity_warning(env, addr, remaining_capacity);
+    }
+
     true
 }
 

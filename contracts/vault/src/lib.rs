@@ -9439,7 +9439,7 @@ impl VaultDAO {
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
             fee_estimate_cache: None,
             fee_cache_timestamp: 0,
-            spend_day: storage::get_day_number(&env),
+a            spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
             approved_at: 0,
