@@ -458,6 +458,12 @@ mod test_supersession_chain;
 #[cfg(test)]
 mod test_signers_with_roles;
 #[cfg(test)]
+mod test_threshold_min_init;
+#[cfg(test)]
+mod test_proposal_veto_event;
+#[cfg(test)]
+mod test_remove_signer_threshold;
+#[cfg(test)]
 mod test_participation_scoring;
 #[cfg(test)]
 mod test_tag_taxonomy;
@@ -571,8 +577,10 @@ impl VaultDAO {
         if config.signers.is_empty() {
             return Err(VaultError::NoSigners);
         }
-        if config.threshold < 1 {
-            return Err(VaultError::ThresholdTooHigh);
+        // Issue #1523: enforce a minimum threshold of 2 so the vault can never
+        // be reduced to a single-signer wallet where one compromised key drains it.
+        if config.threshold < 2 {
+            return Err(VaultError::ThresholdTooLow);
         }
         if config.threshold > config.signers.len() {
             return Err(VaultError::ThresholdTooHigh);
@@ -5574,6 +5582,14 @@ impl VaultDAO {
     ///
     /// Only Admin can call this. Rejects removal if it would leave fewer signers
     /// than the current threshold, making the vault unable to reach quorum.
+    ///
+    /// # Errors
+    /// - [`VaultError::CannotRemoveSigner`] if removal would drop the signer
+    ///   count below the configured threshold (Issue #1526). This guard
+    ///   applies equally to signer removal routed through the multisig
+    ///   proposal workflow via `ProposalOperation::RemoveSigner`
+    ///   (see [`Self::create_multi_phase_proposal`]) — a threshold breach
+    ///   cannot be pushed through even with full signer approval.
     pub fn remove_signer(env: Env, admin: Address, signer: Address) -> Result<(), VaultError> {
         admin.require_auth();
 
@@ -5581,11 +5597,19 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        let mut config = storage::get_config(&env)?;
+        Self::remove_signer_internal(&env, &admin, &signer)
+    }
+
+    /// Shared signer-removal logic used by both the direct Admin-only
+    /// `remove_signer` call and the multisig `ProposalOperation::RemoveSigner`
+    /// path (Issue #1526). Always rejects removals that would drop the
+    /// signer count below the current threshold.
+    fn remove_signer_internal(env: &Env, actor: &Address, signer: &Address) -> Result<(), VaultError> {
+        let mut config = storage::get_config(env)?;
 
         let mut found_idx: Option<u32> = None;
         for i in 0..config.signers.len() {
-            if config.signers.get(i).unwrap() == signer {
+            if config.signers.get(i).unwrap() == *signer {
                 found_idx = Some(i);
                 break;
             }
@@ -5598,11 +5622,11 @@ impl VaultDAO {
         }
 
         config.signers.remove(found_idx.unwrap());
-        storage::set_config(&env, &config);
-        storage::extend_instance_ttl(&env);
-        storage::create_audit_entry(&env, AuditAction::RemoveSigner, &admin, 0);
+        storage::set_config(env, &config);
+        storage::extend_instance_ttl(env);
+        storage::create_audit_entry(env, AuditAction::RemoveSigner, actor, 0);
 
-        events::emit_config_updated(&env, &admin);
+        events::emit_config_updated(env, actor);
 
         Ok(())
     }
@@ -16574,7 +16598,7 @@ impl VaultDAO {
         // Execute phases in order
         for i in 0..mp.phases.len() {
             let mut phase = mp.phases.get(i).unwrap();
-            let result = Self::execute_phase_operation(&env, &phase.operation);
+            let result = Self::execute_phase_operation(&env, &executor, &phase.operation);
             if result.is_ok() {
                 phase.status = ProposalPhaseStatus::Executed;
                 mp.last_executed_phase = i as i32;
@@ -16600,7 +16624,7 @@ impl VaultDAO {
                 if phase.status == ProposalPhaseStatus::Executed {
                     let rb_result = match &phase.rollback_operation {
                         OptionalProposalOperation::Some(op) => {
-                            Self::execute_phase_operation(&env, op)
+                            Self::execute_phase_operation(&env, &executor, op)
                         }
                         OptionalProposalOperation::None => Ok(()),
                     };
@@ -16628,10 +16652,21 @@ impl VaultDAO {
     }
 
     /// Execute a single ProposalOperation for multi-phase proposals
-    fn execute_phase_operation(env: &Env, op: &ProposalOperation) -> Result<(), VaultError> {
+    fn execute_phase_operation(
+        env: &Env,
+        executor: &Address,
+        op: &ProposalOperation,
+    ) -> Result<(), VaultError> {
         match op {
             ProposalOperation::Transfer(recipient, tok, amount, _memo) => {
                 token::try_transfer(env, tok, recipient, *amount)
+                    .map_err(|_| VaultError::PhaseExecutionFailed)
+            }
+            // Issue #1526: signer removal routed through the multisig proposal
+            // workflow instead of a direct Admin-only call. Still enforces the
+            // threshold floor via `remove_signer_internal`.
+            ProposalOperation::RemoveSigner(signer) => {
+                Self::remove_signer_internal(env, executor, signer)
                     .map_err(|_| VaultError::PhaseExecutionFailed)
             }
         }
