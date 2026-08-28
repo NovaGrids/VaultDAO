@@ -5,8 +5,8 @@
  * In a real project, you would use Jest or Vitest with @testing-library/react.
  */
 
-import { render, screen } from '@testing-library/react';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ProposalCard from '../ProposalCard';
 import type { Proposal } from '../type';
 
@@ -223,6 +223,166 @@ describe('ProposalCard', () => {
 
       const indicator = screen.getByLabelText('Live update received');
       expect(indicator).toBeInTheDocument();
+    });
+  });
+
+  describe('bulk selection state management', () => {
+    it('should not render checkbox when onToggleSelect is not provided', () => {
+      render(<ProposalCard proposal={mockProposal} />);
+
+      const checkbox = screen.queryByRole('checkbox');
+      expect(checkbox).not.toBeInTheDocument();
+    });
+
+    it('should render checkbox when onToggleSelect is provided', () => {
+      const mockToggle = vi.fn();
+      render(<ProposalCard proposal={mockProposal} onToggleSelect={mockToggle} />);
+
+      const checkbox = screen.getByRole('checkbox');
+      expect(checkbox).toBeInTheDocument();
+    });
+
+    it('should render unchecked checkbox by default', () => {
+      const mockToggle = vi.fn();
+      render(<ProposalCard proposal={mockProposal} onToggleSelect={mockToggle} />);
+
+      const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+    });
+
+    it('should render checked checkbox when selected prop is true', () => {
+      const mockToggle = vi.fn();
+      render(<ProposalCard proposal={mockProposal} selected={true} onToggleSelect={mockToggle} />);
+
+      const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+    });
+
+    it('should call onToggleSelect callback when checkbox is clicked', () => {
+      const mockToggle = vi.fn();
+      render(<ProposalCard proposal={mockProposal} onToggleSelect={mockToggle} />);
+
+      const checkbox = screen.getByRole('checkbox');
+      fireEvent.click(checkbox);
+
+      expect(mockToggle).toHaveBeenCalledTimes(1);
+      expect(mockToggle).toHaveBeenCalledWith(mockProposal.id);
+    });
+
+    it('should pass correct proposal ID to onToggleSelect callback', () => {
+      const mockToggle = vi.fn();
+      const proposalWithId = { ...mockProposal, id: 456 };
+      render(<ProposalCard proposal={proposalWithId} onToggleSelect={mockToggle} />);
+
+      const checkbox = screen.getByRole('checkbox');
+      fireEvent.click(checkbox);
+
+      expect(mockToggle).toHaveBeenCalledWith(456);
+    });
+
+    it('should toggle checkbox state when clicked multiple times', () => {
+      const mockToggle = vi.fn();
+      const { rerender } = render(
+        <ProposalCard proposal={mockProposal} selected={false} onToggleSelect={mockToggle} />
+      );
+
+      let checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+
+      // Simulate selection
+      rerender(<ProposalCard proposal={mockProposal} selected={true} onToggleSelect={mockToggle} />);
+      checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+
+      // Simulate deselection
+      rerender(<ProposalCard proposal={mockProposal} selected={false} onToggleSelect={mockToggle} />);
+      checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+    });
+
+    it('should disable checkbox when selectDisabled prop is true', () => {
+      const mockToggle = vi.fn();
+      render(
+        <ProposalCard
+          proposal={mockProposal}
+          selected={false}
+          onToggleSelect={mockToggle}
+          selectDisabled={true}
+        />
+      );
+
+      const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.disabled).toBe(true);
+    });
+
+    it('should have appropriate aria-label for checkbox', () => {
+      const mockToggle = vi.fn();
+      render(<ProposalCard proposal={mockProposal} onToggleSelect={mockToggle} />);
+
+      const checkbox = screen.getByLabelText(/select proposal/i);
+      expect(checkbox).toBeInTheDocument();
+    });
+
+    it('should update selected state when proposal changes', () => {
+      const mockToggle = vi.fn();
+      const { rerender } = render(
+        <ProposalCard proposal={mockProposal} selected={true} onToggleSelect={mockToggle} />
+      );
+
+      let checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+
+      const differentProposal = { ...mockProposal, id: 789 };
+      rerender(
+        <ProposalCard proposal={differentProposal} selected={false} onToggleSelect={mockToggle} />
+      );
+
+      checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+    });
+
+    it('should show correct border color when selected', () => {
+      const mockToggle = vi.fn();
+      const { container } = render(
+        <ProposalCard proposal={mockProposal} selected={true} onToggleSelect={mockToggle} />
+      );
+
+      const article = container.querySelector('article');
+      expect(article?.className).toContain('border-purple-500');
+    });
+
+    it('should show default border color when not selected', () => {
+      const mockToggle = vi.fn();
+      const { container } = render(
+        <ProposalCard proposal={mockProposal} selected={false} onToggleSelect={mockToggle} />
+      );
+
+      const article = container.querySelector('article');
+      expect(article?.className).toContain('border-gray-200');
+    });
+
+    it('should support bulk selection of multiple proposals', () => {
+      const mockToggle1 = vi.fn();
+      const mockToggle2 = vi.fn();
+      const mockToggle3 = vi.fn();
+
+      const proposal1 = { ...mockProposal, id: 1 };
+      const proposal2 = { ...mockProposal, id: 2 };
+      const proposal3 = { ...mockProposal, id: 3 };
+
+      const { container } = render(
+        <>
+          <ProposalCard proposal={proposal1} selected={true} onToggleSelect={mockToggle1} />
+          <ProposalCard proposal={proposal2} selected={true} onToggleSelect={mockToggle2} />
+          <ProposalCard proposal={proposal3} selected={false} onToggleSelect={mockToggle3} />
+        </>
+      );
+
+      const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+      expect(checkboxes).toHaveLength(3);
+      expect((checkboxes[0] as HTMLInputElement).checked).toBe(true);
+      expect((checkboxes[1] as HTMLInputElement).checked).toBe(true);
+      expect((checkboxes[2] as HTMLInputElement).checked).toBe(false);
     });
   });
 });
