@@ -2,7 +2,7 @@
 //!
 //! Standardized events for proposal lifecycle and admin actions.
 
-use crate::types::ProposalAmendment;
+use crate::types::{ProposalAmendment, SignerTier};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Emit when contract is initialized
@@ -2060,5 +2060,19 @@ pub fn emit_signer_force_rotated(
     env.events().publish(
         (Symbol::new(env, "signer_force_rotated"), request_id),
         (target.clone(), replacement.clone()),
+    );
+}
+
+/// Emit when a signer's tier is changed, so indexers can track tier
+/// transitions without polling every signer on every block.
+pub fn emit_signer_tier_changed(
+    env: &Env,
+    signer: &Address,
+    old_tier: &SignerTier,
+    new_tier: &SignerTier,
+) {
+    env.events().publish(
+        (Symbol::new(env, "signer_tier_changed"), signer.clone()),
+        (old_tier.clone(), new_tier.clone()),
     );
 }

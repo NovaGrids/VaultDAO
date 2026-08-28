@@ -8962,6 +8962,38 @@ impl VaultDAO {
         result
     }
 
+    /// Return proposal IDs tagged with `tag_id` from the `HTagProposals` index,
+    /// paginated (max 50 per page). Unlike `get_proposals_by_tag_id`, this does
+    /// not include descendant tags.
+    pub fn get_proposals_by_tag_id_paginated(
+        env: Env,
+        tag_id: u64,
+        offset: u64,
+        limit: u32,
+    ) -> Vec<u64> {
+        const MAX_RESULTS: u32 = 50;
+        let cap = if limit == 0 || limit > MAX_RESULTS {
+            MAX_RESULTS
+        } else {
+            limit
+        };
+
+        let ids = storage::get_htag_proposals(&env, tag_id);
+        let mut result = Vec::new(&env);
+        let mut count: u32 = 0;
+        for (i, id) in ids.iter().enumerate() {
+            if (i as u64) < offset {
+                continue;
+            }
+            if count >= cap {
+                break;
+            }
+            result.push_back(id);
+            count += 1;
+        }
+        result
+    }
+
     /// Get a hierarchical tag by ID.
     pub fn get_tag(env: Env, tag_id: u64) -> Result<types::Tag, VaultError> {
         storage::get_htag(&env, tag_id)
@@ -16774,9 +16806,9 @@ impl VaultDAO {
             }
             _ => {}
         }
+        let old_tier = storage::get_signer_tier(&env, &signer);
         storage::set_signer_tier(&env, &signer, &tier);
-        env.events()
-            .publish((Symbol::new(&env, "signer_tier_set"), signer), tier);
+        events::emit_signer_tier_changed(&env, &signer, &old_tier, &tier);
         Ok(())
     }
 
