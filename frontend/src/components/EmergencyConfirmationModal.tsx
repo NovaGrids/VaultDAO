@@ -36,6 +36,7 @@ export function EmergencyConfirmationModal({
   // requestAnimationFrame variables
   const animationFrameId = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const triggeringElementRef = useRef<HTMLElement | null>(null);
 
   // Load log history
   useEffect(() => {
@@ -56,8 +57,16 @@ export function EmergencyConfirmationModal({
         cancelAnimationFrame(animationFrameId.current);
       }
       startTimeRef.current = null;
+
+      // Restore focus to the triggering element
+      if (triggeringElementRef.current) {
+        triggeringElementRef.current.focus();
+      }
       return;
     }
+
+    // Store the currently focused element when modal opens
+    triggeringElementRef.current = document.activeElement as HTMLElement;
 
     // Reset countdown and confirmations when modal opens
     setTimeLeft(60.0);
