@@ -51,11 +51,10 @@ use types::{
     RecoveryStatus, RecurringPayment, RecurringStatus, Reputation, ReputationConfig, RetryConfig,
     RetryState, Role, RoleAssignment, ScheduledTransferConfig, ScopedDelegation,
     SignerParticipationScore, SignerTier, StakingConfig, StreamRateWindow, StreamStatus,
-    StreamingPayment, Subscription, SubscriptionStatus,
-    SubscriptionTier, SwapProposal, SwapResult, TemplateFeeTier, TemplateOverrides,
-    ThresholdStrategy, TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics,
-    VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig, VestingSchedule, VoteChoice,
-    VoteWeight, VotingStrategy, WhitelistEntry,
+    StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier, SwapProposal, SwapResult,
+    TemplateFeeTier, TemplateOverrides, ThresholdStrategy, TokenSpendingConfig, TransferDetails,
+    VaultAction, VaultMetrics, VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig,
+    VestingSchedule, VoteChoice, VoteWeight, VotingStrategy, WhitelistEntry,
 };
 use types_balance_snapshot::BalanceSnapshot;
 
@@ -329,9 +328,9 @@ fn calculate_impact_score(
 // #[cfg(test)]
 // mod test_fee_cache;
 #[cfg(test)]
-mod test_spending_refund_buckets;
-#[cfg(test)]
 mod test_spending_limit_invariants_proptest;
+#[cfg(test)]
+mod test_spending_refund_buckets;
 // #[cfg(test)]
 // mod test_fan_out_streams;
 // #[cfg(test)]
@@ -452,9 +451,7 @@ mod test_streaming;
 // #[cfg(test)]
 // mod test_subscription_downgrade_grace;
 #[cfg(test)]
-mod test_subscriptions;
-#[cfg(test)]
-mod test_supersession_chain;
+mod test_participation_scoring;
 #[cfg(test)]
 mod test_signers_with_roles;
 #[cfg(test)]
@@ -465,6 +462,9 @@ mod test_proposal_veto_event;
 mod test_remove_signer_threshold;
 #[cfg(test)]
 mod test_participation_scoring;
+mod test_subscriptions;
+#[cfg(test)]
+mod test_supersession_chain;
 #[cfg(test)]
 mod test_tag_taxonomy;
 #[cfg(test)]
@@ -4991,8 +4991,7 @@ impl VaultDAO {
                                 let (rate, should_alert) =
                                     storage::record_participation_miss(&env, &eligible, &config);
                                 if should_alert {
-                                    let score =
-                                        storage::get_participation_score(&env, &eligible);
+                                    let score = storage::get_participation_score(&env, &eligible);
                                     events::emit_low_participation_alert(
                                         &env,
                                         &eligible,
@@ -5339,7 +5338,11 @@ impl VaultDAO {
         Ok(())
     }
 
-    fn execute_force_rotation(env: &Env, actor: &Address, request_id: u64) -> Result<(), VaultError> {
+    fn execute_force_rotation(
+        env: &Env,
+        actor: &Address,
+        request_id: u64,
+    ) -> Result<(), VaultError> {
         let mut request = storage::get_force_rotation_request(env, request_id)?;
         if request.executed {
             return Err(VaultError::ForceRotationAlreadyExecuted);
@@ -6464,7 +6467,9 @@ impl VaultDAO {
         if payment.status == crate::types::RecurringStatus::Stopped {
             return Err(VaultError::ProposalNotFound);
         }
-        if payment.status == crate::types::RecurringStatus::Stopping && payment.grace_executions == 0 {
+        if payment.status == crate::types::RecurringStatus::Stopping
+            && payment.grace_executions == 0
+        {
             payment.status = crate::types::RecurringStatus::Stopped;
             storage::set_recurring_payment(&env, &payment);
             return Err(VaultError::ProposalNotFound);
@@ -8986,6 +8991,38 @@ impl VaultDAO {
         result
     }
 
+    /// Return proposal IDs tagged with `tag_id` from the `HTagProposals` index,
+    /// paginated (max 50 per page). Unlike `get_proposals_by_tag_id`, this does
+    /// not include descendant tags.
+    pub fn get_proposals_by_tag_id_paginated(
+        env: Env,
+        tag_id: u64,
+        offset: u64,
+        limit: u32,
+    ) -> Vec<u64> {
+        const MAX_RESULTS: u32 = 50;
+        let cap = if limit == 0 || limit > MAX_RESULTS {
+            MAX_RESULTS
+        } else {
+            limit
+        };
+
+        let ids = storage::get_htag_proposals(&env, tag_id);
+        let mut result = Vec::new(&env);
+        let mut count: u32 = 0;
+        for (i, id) in ids.iter().enumerate() {
+            if (i as u64) < offset {
+                continue;
+            }
+            if count >= cap {
+                break;
+            }
+            result.push_back(id);
+            count += 1;
+        }
+        result
+    }
+
     /// Get a hierarchical tag by ID.
     pub fn get_tag(env: Env, tag_id: u64) -> Result<types::Tag, VaultError> {
         storage::get_htag(&env, tag_id)
@@ -9463,7 +9500,7 @@ impl VaultDAO {
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
             fee_estimate_cache: None,
             fee_cache_timestamp: 0,
-            spend_day: storage::get_day_number(&env),
+a            spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
             approved_at: 0,
@@ -16809,9 +16846,9 @@ impl VaultDAO {
             }
             _ => {}
         }
+        let old_tier = storage::get_signer_tier(&env, &signer);
         storage::set_signer_tier(&env, &signer, &tier);
-        env.events()
-            .publish((Symbol::new(&env, "signer_tier_set"), signer), tier);
+        events::emit_signer_tier_changed(&env, &signer, &old_tier, &tier);
         Ok(())
     }
 
@@ -16832,7 +16869,7 @@ impl VaultDAO {
     /// instead — the change will go through the normal governance proposal
     /// workflow and require supermajority approval.
     pub fn set_full_quorum_threshold(
-        env: Env,
+        _env: Env,
         admin: Address,
         _threshold: i128,
     ) -> Result<(), VaultError> {
@@ -17061,8 +17098,7 @@ impl VaultDAO {
         memo: Symbol,
         interval: u64,
         max_missed_payments: u32,
-        skip_holidays: bool,
-        holiday_behavior: HolidayBehavior,
+        holiday_behavior: Option<HolidayBehavior>,
         jitter_window: u32,
         grace_executions: u32,
     ) -> Result<u64, VaultError> {
@@ -17079,8 +17115,8 @@ impl VaultDAO {
             grace_executions,
         )?;
         let mut payment = storage::get_recurring_payment(&env, id)?;
-        payment.skip_holidays = skip_holidays;
-        payment.holiday_behavior = holiday_behavior;
+        payment.skip_holidays = holiday_behavior.is_some();
+        payment.holiday_behavior = holiday_behavior.unwrap_or(HolidayBehavior::PayLate);
         storage::set_recurring_payment(&env, &payment);
         Ok(id)
     }

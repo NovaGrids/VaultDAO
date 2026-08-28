@@ -12,6 +12,7 @@
 import { SorobanRpc, xdr } from "stellar-sdk";
 import type {
   InitConfig,
+  VaultConfig,
   Proposal,
   RecurringPayment,
   SdkOptions,
@@ -469,6 +470,51 @@ export async function executeRecurringPayment(
     u64ToScVal(paymentId)
   );
   return buildTransaction(callerPublicKey, op, opts);
+}
+
+/**
+ * List all recurring payments with pagination.
+ *
+ * Fetches a paginated list of recurring payments, handling RecurringNotFound
+ * gracefully when the end of the list is reached.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (used as simulation source).
+ * @param offset          - Starting index for pagination (0-based).
+ * @param limit           - Maximum number of payments to return per page.
+ * @param opts            - SDK connection options.
+ * @returns               Array of RecurringPayment objects for the requested page.
+ */
+export async function listRecurringPayments(
+  callerPublicKey: string,
+  offset: bigint,
+  limit: bigint,
+  opts: SdkOptions
+): Promise<RecurringPayment[]> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "list_recurring_payments",
+    u64ToScVal(offset),
+    u64ToScVal(limit)
+  );
+  const raw = await simulateReadOnly<Record<string, unknown>[]>(
+    op,
+    opts,
+    callerPublicKey,
+    "listRecurringPayments"
+  );
+
+  return raw.map((p) => ({
+    id: BigInt(p.id as number),
+    proposer: p.proposer as string,
+    recipient: p.recipient as string,
+    token: p.token as string,
+    amount: BigInt(p.amount as number),
+    memo: p.memo as string,
+    interval: BigInt(p.interval as number),
+    nextPaymentLedger: BigInt(p.next_payment_ledger as number),
+    paymentCount: Number(p.payment_count),
+    isActive: p.is_active as boolean,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -929,6 +975,36 @@ export async function getDelegationChain(
 // ---------------------------------------------------------------------------
 // View / Read-only Functions
 // ---------------------------------------------------------------------------
+
+/**
+ * Fetch the current vault configuration without submitting a transaction.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (used as simulation source).
+ * @param opts            - SDK connection options.
+ * @returns               The current vault configuration.
+ */
+export async function getConfig(
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<VaultConfig> {
+  const contract = getContract(opts);
+  const op = contract.call("get_config");
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey,
+    "getConfig"
+  );
+  return {
+    signers: (raw.signers as string[]) || [],
+    threshold: Number(raw.threshold) || 0,
+    spendingLimit: BigInt(raw.spending_limit as number) || 0n,
+    dailyLimit: BigInt(raw.daily_limit as number) || 0n,
+    weeklyLimit: BigInt(raw.weekly_limit as number) || 0n,
+    timelockThreshold: BigInt(raw.timelock_threshold as number) || 0n,
+    timelockDelay: BigInt(raw.timelock_delay as number) || 0n,
+  };
+}
 
 /**
  * Fetch a proposal by ID without submitting a transaction.

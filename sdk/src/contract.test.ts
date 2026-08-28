@@ -31,6 +31,7 @@ import {
   updateThreshold,
   schedulePayment,
   executeRecurringPayment,
+  listRecurringPayments,
   createStream,
   claimStream,
   pauseStream,
@@ -55,6 +56,7 @@ import {
   getReputation,
   getAuditTrail,
   getDelegationChain,
+  getConfig,
   getProposal,
   getRole,
   getTodaySpent,
@@ -336,6 +338,87 @@ describe("contract.ts bindings", () => {
         opts,
       );
     });
+
+    it("listRecurringPayments encodes offset and limit, returns mapped payments", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue([
+        {
+          id: 1,
+          proposer: "GALICE",
+          recipient: "GBOB",
+          token: "CTOKEN",
+          amount: 100,
+          memo: "rent",
+          interval: 720,
+          next_payment_ledger: 1000,
+          payment_count: 5,
+          is_active: true,
+        },
+        {
+          id: 2,
+          proposer: "GALICE",
+          recipient: "GCAROL",
+          token: "CTOKEN",
+          amount: 50,
+          memo: "utilities",
+          interval: 1440,
+          next_payment_ledger: 2000,
+          payment_count: 3,
+          is_active: true,
+        },
+      ]);
+
+      const payments = await listRecurringPayments("GCALLER", 0n, 10n, opts);
+
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "list_recurring_payments",
+        "u64:0",
+        "u64:10",
+      );
+      expect(payments).toEqual([
+        {
+          id: 1n,
+          proposer: "GALICE",
+          recipient: "GBOB",
+          token: "CTOKEN",
+          amount: 100n,
+          memo: "rent",
+          interval: 720n,
+          nextPaymentLedger: 1000n,
+          paymentCount: 5,
+          isActive: true,
+        },
+        {
+          id: 2n,
+          proposer: "GALICE",
+          recipient: "GCAROL",
+          token: "CTOKEN",
+          amount: 50n,
+          memo: "utilities",
+          interval: 1440n,
+          nextPaymentLedger: 2000n,
+          paymentCount: 3,
+          isActive: true,
+        },
+      ]);
+    });
+
+    it("listRecurringPayments returns empty array when no payments found", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue([]);
+
+      const payments = await listRecurringPayments("GCALLER", 10n, 10n, opts);
+
+      expect(payments).toEqual([]);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -527,6 +610,32 @@ describe("contract.ts bindings", () => {
   describe("Read functions", () => {
     beforeEach(() => {
       serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+    });
+
+    it("getConfig decodes and maps VaultConfig", async () => {
+      serverMock.simulateTransaction.mockResolvedValue({ transactionData: {}, result: { retval: {} } });
+      (decodeScVal as Mock).mockReturnValue({
+        signers: ["GALICE", "GBOB"],
+        threshold: 2,
+        spending_limit: 1000000,
+        daily_limit: 5000000,
+        weekly_limit: 20000000,
+        timelock_threshold: 500000,
+        timelock_delay: 100,
+      });
+
+      const config = await getConfig("GCALLER", opts);
+
+      expect(config).toEqual({
+        signers: ["GALICE", "GBOB"],
+        threshold: 2,
+        spendingLimit: 1000000n,
+        dailyLimit: 5000000n,
+        weeklyLimit: 20000000n,
+        timelockThreshold: 500000n,
+        timelockDelay: 100n,
+      });
+      expect(contractCallSpy).toHaveBeenCalledWith("get_config");
     });
 
     it("getComments decodes and maps the raw comment array", async () => {

@@ -149,7 +149,11 @@ fn test_small_proposal_not_in_timelock_queue() {
     assert_eq!(proposal.unlock_ledger, 0, "no timelock expected");
 
     let queue = client.get_pending_timelocked_proposals(&0u64, &50u32);
-    assert_eq!(queue.len(), 0, "queue must be empty for non-timelocked approval");
+    assert_eq!(
+        queue.len(),
+        0,
+        "queue must be empty for non-timelocked approval"
+    );
 }
 
 /// A proposal at or above the timelock threshold must appear in the queue immediately
@@ -310,7 +314,11 @@ fn test_cancelled_proposal_removed_from_index() {
     client.cancel_proposal(&admin, &pid, &Symbol::new(&env, "cancel"));
 
     let queue_after = client.get_pending_timelocked_proposals(&0u64, &50u32);
-    assert_eq!(queue_after.len(), 0, "cancelled proposal must not be in the queue");
+    assert_eq!(
+        queue_after.len(),
+        0,
+        "cancelled proposal must not be in the queue"
+    );
 }
 
 /// Pagination: create 5 timelocked proposals and verify offset / limit slicing.

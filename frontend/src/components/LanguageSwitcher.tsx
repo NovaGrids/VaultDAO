@@ -14,6 +14,7 @@ const languages: Language[] = [
   { code: 'fr', name: 'Français', direction: 'ltr' },
   { code: 'ar', name: 'العربية', direction: 'rtl' },
   { code: 'zh', name: '中文', direction: 'ltr' },
+  { code: 'zh-TW', name: '繁體中文', direction: 'ltr' },
 ];
 
 export const LanguageSwitcher: React.FC = () => {
@@ -92,6 +93,7 @@ export const LanguageSwitcher: React.FC = () => {
             >
               {lang.code === 'ar' && <span className="text-lg">🇸🇦</span>}
               {lang.code === 'zh' && <span className="text-lg">🇨🇳</span>}
+              {lang.code === 'zh-TW' && <span className="text-lg">🇹🇼</span>}
               {lang.code === 'en' && <span className="text-lg">🇺🇸</span>}
               {lang.code === 'es' && <span className="text-lg">🇪🇸</span>}
               {lang.code === 'fr' && <span className="text-lg">🇫🇷</span>}
