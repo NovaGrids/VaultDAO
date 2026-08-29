@@ -80,6 +80,46 @@ export function clearExpiredCache(): void {
 }
 
 /**
+ * Drop every cached simulation.
+ *
+ * Called when a new ledger closes: the cache is keyed on call arguments, not
+ * on chain state, so any entry may be stale the moment the ledger advances.
+ * Time-based expiry alone lets a balance or proposal state be served up to a
+ * full `CACHE_DURATION` after it changed on chain.
+ *
+ * Returns the number of entries dropped, which callers use for diagnostics.
+ */
+export function invalidateSimulationCache(): number {
+    const keys = Object.keys(simulationCache);
+    keys.forEach((key) => delete simulationCache[key]);
+    return keys.length;
+}
+
+/**
+ * Drop only the cached simulations whose key mentions one of `substrings`.
+ *
+ * Cache keys are the JSON of `{ functionName, args }`, so passing a function
+ * name invalidates just that call's entries and leaves unrelated ones warm.
+ */
+export function invalidateSimulationKeys(substrings: string[]): number {
+    if (substrings.length === 0) return 0;
+
+    let removed = 0;
+    Object.keys(simulationCache).forEach((key) => {
+        if (substrings.some((needle) => key.includes(needle))) {
+            delete simulationCache[key];
+            removed += 1;
+        }
+    });
+    return removed;
+}
+
+/** Number of entries currently cached. Exposed for tests and diagnostics. */
+export function getSimulationCacheSize(): number {
+    return Object.keys(simulationCache).length;
+}
+
+/**
  * Convert stroops to XLM
  */
 export function stroopsToXLM(stroops: string | number): string {
