@@ -399,6 +399,12 @@ mod test_disputes;
 // #[cfg(test)]
 // mod test_fee_cache;
 #[cfg(test)]
+mod test_escrow_counterparty_acknowledgment;
+#[cfg(test)]
+mod test_escrow_milestone_verification_event;
+#[cfg(test)]
+mod test_escrow_dispute_filing_deadline;
+#[cfg(test)]
 mod test_fees;
 // #[cfg(test)]
 // mod test_gas_price_oracle;
@@ -460,6 +466,8 @@ mod test_threshold_min_init;
 mod test_proposal_veto_event;
 #[cfg(test)]
 mod test_remove_signer_threshold;
+#[cfg(test)]
+mod test_recurring_payment_max_total_amount;
 #[cfg(test)]
 mod test_participation_scoring;
 mod test_subscriptions;
