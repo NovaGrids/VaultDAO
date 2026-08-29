@@ -28,6 +28,13 @@ export const env = {
 
   contractId: requireEnv('VITE_CONTRACT_ID'),
   sorobanRpcUrl: requireEnv('VITE_SOROBAN_RPC_URL'),
+  /**
+   * Optional WebSocket endpoint for ledger-close notifications. When unset,
+   * the ledger subscription falls back to polling `getLatestLedger`.
+   */
+  sorobanWebSocketUrl: optionalEnv('VITE_SOROBAN_WS_URL', ''),
+  /** Poll interval for the ledger-subscription fallback transport. */
+  ledgerPollIntervalMs: parseInt(optionalEnv('VITE_LEDGER_POLL_INTERVAL_MS', '5000'), 10),
   networkPassphrase: requireEnv('VITE_STELLAR_NETWORK_PASSPHRASE'),
   horizonUrl: optionalEnv('VITE_HORIZON_URL', 'https://horizon-testnet.stellar.org'),
   stellarNetwork: optionalEnv('VITE_STELLAR_NETWORK', 'TESTNET'),

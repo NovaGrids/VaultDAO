@@ -2542,11 +2542,32 @@ pub fn set_audit_entry(env: &Env, entry: &AuditEntry) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
 }
 
+/// Read an audit entry, extending its TTL on the way out.
+///
+/// Audit entries are the vault's permanent record of privileged actions, but
+/// persistent storage is rent-based: an entry that is only ever read — never
+/// rewritten — has its TTL run down and can be evicted by the network, losing
+/// exactly the historical actions most worth keeping. Extending on read means
+/// any entry someone still consults stays alive.
+///
+/// The extension is a no-op when the entry is already above the threshold, so
+/// repeated reads do not accumulate cost.
 pub fn get_audit_entry(env: &Env, id: u64) -> Result<AuditEntry, VaultError> {
+    let key = DataKey::AuditEntry(id);
+
+    let entry: AuditEntry = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(VaultError::ProposalNotFound)?;
+
+    // Only extend once the read has confirmed the entry exists — extending a
+    // missing key would create a phantom entry.
     env.storage()
         .persistent()
-        .get(&DataKey::AuditEntry(id))
-        .ok_or(VaultError::ProposalNotFound)
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+
+    Ok(entry)
 }
 
 /// Compute audit hash using SHA256 over deterministic serialization
