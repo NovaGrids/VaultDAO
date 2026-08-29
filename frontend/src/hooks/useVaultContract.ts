@@ -34,10 +34,12 @@ import {
     generateCacheKey,
     getCachedSimulation,
     cacheSimulation,
+    invalidateSimulationCache,
     parseSimulationError,
     extractStateChanges,
     formatFeeBreakdown,
 } from '../utils/simulation';
+import { subscribeToLedgers } from '../utils/ledgerSubscription';
 import { eventPayloadDigest } from '../utils/auditVerification';
 
 const EVENTS_PAGE_SIZE = 20;
@@ -364,6 +366,33 @@ export const useVaultContract = () => {
             }),
         );
     }, [recipientListMode, whitelistAddresses, blacklistAddresses, recipientStorageKey]);
+
+    // Invalidate cached simulations whenever the ledger advances.
+    //
+    // The cache is keyed on call arguments, not on chain state, so time-based
+    // expiry alone can serve a stale balance or proposal status for the full
+    // cache TTL after it changed on chain. A ledger close is the earliest
+    // point at which any cached value may have gone stale, so that is when we
+    // drop them.
+    const [latestLedger, setLatestLedger] = useState<number | null>(null);
+
+    useEffect(() => {
+        const subscription = subscribeToLedgers(
+            (sequence) => {
+                invalidateSimulationCache();
+                setLatestLedger(sequence);
+            },
+            {
+                webSocketUrl: env.sorobanWebSocketUrl || undefined,
+                pollIntervalMs: env.ledgerPollIntervalMs,
+                fetchLatestLedger: async () => (await server.getLatestLedger()).sequence,
+                onError: (error) =>
+                    console.warn('[VaultDAO] ledger subscription error:', error),
+            },
+        );
+
+        return () => subscription.close();
+    }, []);
 
     const readContractValue = useCallback(async (functionName: string, args: xdr.ScVal[] = []): Promise<unknown> => {
         const source = address ?? env.feesAccount;
@@ -1756,5 +1785,11 @@ interface RecurringPaymentRaw {
         updateSpendingLimits,
         getProposals,
         assertReady,
+        /**
+         * Most recent ledger sequence observed by the subscription, or null
+         * before the first one arrives. Consumers can key on it to re-render
+         * once cached simulations have been invalidated.
+         */
+        latestLedger,
     };
 };
