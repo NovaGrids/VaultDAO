@@ -479,6 +479,14 @@ mod test_var_templates;
 mod test_vault_template;
 #[cfg(test)]
 mod test_voting_deadline;
+#[cfg(test)]
+mod test_max_concurrent_streams_per_recipient;
+#[cfg(test)]
+mod test_velocity_history_authorization;
+#[cfg(test)]
+mod test_treasurer_pause_recurring;
+#[cfg(test)]
+mod test_stream_rate_window_clawback;
 
 #[cfg(test)]
 pub mod mock_oracle {
