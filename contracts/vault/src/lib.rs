@@ -461,6 +461,10 @@ mod test_proposal_veto_event;
 #[cfg(test)]
 mod test_remove_signer_threshold;
 #[cfg(test)]
+mod test_whitelist_proposal;
+#[cfg(test)]
+mod test_cold_signature_age;
+#[cfg(test)]
 mod test_participation_scoring;
 mod test_subscriptions;
 #[cfg(test)]
@@ -7280,9 +7284,47 @@ impl VaultDAO {
         storage::get_list_mode(&env)
     }
 
+    /// Shared whitelist-mutation logic used by both the direct Admin-only
+    /// `add_to_whitelist` / `remove_from_whitelist` calls and the multisig
+    /// `ProposalOperation::UpdateWhitelist` path.
+    ///
+    /// Keeping one implementation means the membership checks — rejecting a
+    /// duplicate add or a removal of an absent address — apply identically
+    /// however the change was authorised, so the proposal route cannot be used
+    /// to slip past a guard the direct route enforces.
+    fn update_whitelist_internal(
+        env: &Env,
+        actor: &Address,
+        addr: &Address,
+        action: &types::ListAction,
+    ) -> Result<(), VaultError> {
+        match action {
+            types::ListAction::Add => {
+                if storage::is_whitelisted(env, addr) {
+                    return Err(VaultError::AddressAlreadyOnList);
+                }
+                storage::add_to_whitelist(env, addr);
+            }
+            types::ListAction::Remove => {
+                if !storage::is_whitelisted(env, addr) {
+                    return Err(VaultError::AddressNotOnList);
+                }
+                storage::remove_from_whitelist(env, addr);
+            }
+        }
+
+        storage::extend_instance_ttl(env);
+        events::emit_config_updated(env, actor);
+
+        Ok(())
+    }
+
     /// Add an address to the whitelist
     ///
-    /// Only Admin can add to whitelist.
+    /// Only Admin can add to whitelist. High-value vaults should instead route
+    /// whitelist changes through the multisig proposal workflow via
+    /// `ProposalOperation::UpdateWhitelist`, so a single compromised Admin key
+    /// cannot grant itself a payout destination.
     pub fn add_to_whitelist(env: Env, admin: Address, addr: Address) -> Result<(), VaultError> {
         admin.require_auth();
 
@@ -7291,19 +7333,13 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        if storage::is_whitelisted(&env, &addr) {
-            return Err(VaultError::AddressAlreadyOnList);
-        }
-
-        storage::add_to_whitelist(&env, &addr);
-        storage::extend_instance_ttl(&env);
-
-        Ok(())
+        Self::update_whitelist_internal(&env, &admin, &addr, &types::ListAction::Add)
     }
 
     /// Remove an address from the whitelist
     ///
-    /// Only Admin can remove from whitelist.
+    /// Only Admin can remove from whitelist. Also available through the
+    /// multisig proposal workflow via `ProposalOperation::UpdateWhitelist`.
     pub fn remove_from_whitelist(
         env: Env,
         admin: Address,
@@ -7316,14 +7352,7 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        if !storage::is_whitelisted(&env, &addr) {
-            return Err(VaultError::AddressNotOnList);
-        }
-
-        storage::remove_from_whitelist(&env, &addr);
-        storage::extend_instance_ttl(&env);
-
-        Ok(())
+        Self::update_whitelist_internal(&env, &admin, &addr, &types::ListAction::Remove)
     }
 
     /// Check if an address is whitelisted
@@ -9561,21 +9590,71 @@ a            spend_day: storage::get_day_number(&env),
         storage::get_cold_signer_config(&env)
     }
 
+    /// Reject a cold signature whose stated creation ledger is too old, or is
+    /// dishonestly set in the future.
+    ///
+    /// A `max_cold_sig_age_ledgers` of `0` disables the check so existing
+    /// vaults keep their previous behaviour until they opt in.
+    fn assert_cold_signature_age(
+        env: &Env,
+        cold_config: &types::ColdSignerConfig,
+        created_at_ledger: u32,
+    ) -> Result<(), VaultError> {
+        let current_ledger = env.ledger().sequence();
+
+        // A signature cannot honestly be dated ahead of the chain; allowing it
+        // would let a submitter set an arbitrarily far-future ledger and make
+        // the age check unfalsifiable.
+        if created_at_ledger > current_ledger {
+            return Err(VaultError::ColdSignatureFutureDated);
+        }
+
+        if cold_config.max_cold_sig_age_ledgers == 0 {
+            return Ok(());
+        }
+
+        let age_ledgers = (current_ledger - created_at_ledger) as u64;
+        if age_ledgers > cold_config.max_cold_sig_age_ledgers {
+            return Err(VaultError::ColdSignatureTooOld);
+        }
+
+        Ok(())
+    }
+
     /// Submit a cold-storage Ed25519 signature for a proposal.
     ///
     /// Verifies the signature over the proposal hash using `soroban_sdk::crypto::ed25519_verify`.
     /// Prevents replay by recording a hash of the raw signature bytes.
+    ///
+    /// # Signature age
+    /// `created_at_ledger` is the ledger the signature was produced against.
+    /// It is checked against `ColdSignerConfig::max_cold_sig_age_ledgers`:
+    /// replay prevention alone only stops a signature being used *twice*, it
+    /// does not stop one produced offline long ago from being used once, far
+    /// in the future, to approve a proposal that did not exist when it was
+    /// signed. Set `max_cold_sig_age_ledgers` to `0` to disable the check.
+    ///
+    /// # Errors
+    /// - [`VaultError::ColdSignatureTooOld`] if the signature is older than
+    ///   the configured maximum age.
+    /// - [`VaultError::ColdSignatureFutureDated`] if `created_at_ledger` is
+    ///   ahead of the current ledger.
     pub fn submit_cold_signature(
         env: Env,
         proposal_id: u64,
         signature: BytesN<64>,
         public_key: BytesN<32>,
+        created_at_ledger: u32,
     ) -> Result<(), VaultError> {
         let cold_config = storage::get_cold_signer_config(&env);
 
         if cold_config.cold_sig_threshold == 0 {
             return Err(VaultError::ColdSignerConfigNotSet);
         }
+
+        // Age check runs before signature verification so a stale signature is
+        // rejected on the cheapest possible path.
+        Self::assert_cold_signature_age(&env, &cold_config, created_at_ledger)?;
 
         let mut signer_idx: Option<u32> = None;
         for (i, pk) in cold_config.cold_signers.iter().enumerate() {
@@ -16704,6 +16783,14 @@ a            spend_day: storage::get_day_number(&env),
             // threshold floor via `remove_signer_internal`.
             ProposalOperation::RemoveSigner(signer) => {
                 Self::remove_signer_internal(env, executor, signer)
+                    .map_err(|_| VaultError::PhaseExecutionFailed)
+            }
+            // Whitelist mutation routed through the multisig proposal workflow
+            // so M-of-N approval is required. Shares `update_whitelist_internal`
+            // with the direct Admin path, so both routes apply the same
+            // membership checks.
+            ProposalOperation::UpdateWhitelist(addr, action) => {
+                Self::update_whitelist_internal(env, executor, addr, action)
                     .map_err(|_| VaultError::PhaseExecutionFailed)
             }
         }

@@ -2425,6 +2425,20 @@ pub struct WhitelistEntry {
 // Issue #1096: Multi-Phase Proposal Execution
 // ============================================================================
 
+/// Which direction a list-membership change applies.
+///
+/// Used by [`ProposalOperation::UpdateWhitelist`] so one operation variant
+/// covers both additions and removals.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ListAction {
+    /// Add the address to the list.
+    Add = 0,
+    /// Remove the address from the list.
+    Remove = 1,
+}
+
 /// Operation that can be performed in a proposal phase
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -2435,6 +2449,13 @@ pub enum ProposalOperation {
     /// multisig approval via the proposal workflow rather than a direct
     /// Admin call, so a single compromised Admin key cannot gut the signer set.
     RemoveSigner(Address),
+    /// Add or remove a whitelist address.
+    ///
+    /// Routed through the proposal workflow so a high-value vault can require
+    /// M-of-N approval for whitelist changes instead of trusting a single
+    /// Admin key. The whitelist governs who may receive funds, so unilateral
+    /// edits amount to unilateral spending authority.
+    UpdateWhitelist(Address, ListAction),
 }
 
 /// Optional ProposalOperation wrapper (Soroban contracttype limitation)
@@ -2741,6 +2762,16 @@ pub struct ColdSignerConfig {
     pub cold_sig_threshold: u32,
     /// Ledgers after submission before a cold signature expires
     pub cold_sig_expiry: u32,
+    /// Maximum age, in ledgers, a cold signature may have when it is
+    /// submitted.
+    ///
+    /// `cold_sig_expiry` only bounds a signature's life *after* submission.
+    /// Without this bound a signature produced offline years ago and never
+    /// submitted stays valid forever, so a leaked or stale cold-storage
+    /// signature could approve a proposal that did not exist when it was
+    /// signed. A value of `0` disables the check, preserving the previous
+    /// behaviour for vaults that have not opted in.
+    pub max_cold_sig_age_ledgers: u64,
 }
 
 impl ColdSignerConfig {
@@ -2750,6 +2781,7 @@ impl ColdSignerConfig {
             cold_signer_addresses: Vec::new(env),
             cold_sig_threshold: 0,
             cold_sig_expiry: 17280, // ~1 day at 5 s/ledger
+            max_cold_sig_age_ledgers: 120_960, // ~7 days at 5 s/ledger
         }
     }
 }

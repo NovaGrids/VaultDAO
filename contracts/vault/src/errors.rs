@@ -212,6 +212,16 @@ pub enum VaultError {
     /// This proposal does not use private (commit-reveal) voting
     PrivateVotingNotEnabled = 1107,
 
+    /// Cold signature was created more ledgers ago than
+    /// `ColdSignerConfig::max_cold_sig_age_ledgers` permits. Guards against a
+    /// signature produced offline long ago being submitted to approve a
+    /// proposal that did not exist when it was signed.
+    ColdSignatureTooOld = 1110,
+
+    /// Cold signature claims a creation ledger in the future, which cannot be
+    /// honest and would otherwise sidestep the maximum-age check.
+    ColdSignatureFutureDated = 1111,
+
     // =========================================================
     // Dependency graph errors (Issue #1066)
     // =========================================================
