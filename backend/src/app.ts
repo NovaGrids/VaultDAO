@@ -330,7 +330,12 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime, adminAuthMiddleware));
   v1Router.use("/health", createDetailedHealthRouter(env, runtime));
-  v1Router.use("/events", authMiddleware, hmacMiddleware, createEventsRouter());
+  v1Router.use(
+    "/events",
+    authMiddleware,
+    hmacMiddleware,
+    createEventsRouter(runtime.sseBroadcaster),
+  );
 
   // Contracts listing
   const registry = new (

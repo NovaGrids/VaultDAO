@@ -27,6 +27,7 @@ import {
   createMemoryPersistence,
 } from "./modules/proposals/index.js";
 import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
+import { EventSseBroadcaster } from "./modules/events/sse/sse.broadcaster.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import { ScheduledJobRunner } from "./modules/jobs/scheduled-job-runner.js";
 import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
@@ -69,6 +70,7 @@ export interface BackendRuntime {
   readonly jobManager: JobManager;
   readonly scheduledJobRunner: ScheduledJobRunner;
   readonly wsServer?: EventWebSocketServer;
+  readonly sseBroadcaster?: EventSseBroadcaster;
   readonly metricsRegistry: MetricsRegistry;
   readonly notificationQueue?: PriorityNotificationQueue;
   readonly notificationQueueStore?: NotificationQueueStore;
@@ -290,6 +292,13 @@ export async function startServer(
 
   const wsServer = new EventWebSocketServer(server, env.wsMaxSubscriptionsPerClient);
   runtime.wsServer = wsServer;
+
+  // SSE is a read-only alternative to the WebSocket channel — it piggybacks
+  // on the same contract-event stream via the "contract_event" emitter
+  // rather than EventPollingService pushing to it directly.
+  const sseBroadcaster = new EventSseBroadcaster();
+  wsServer.on("contract_event", (event) => sseBroadcaster.broadcast(event));
+  runtime.sseBroadcaster = sseBroadcaster;
 
   // Determine cursor storage and run one-time file→database migration if needed
   let dbCursorAdapter: DatabaseCursorAdapter | undefined;
