@@ -8,7 +8,14 @@
  * WidgetLibrary slides in from the right.
  */
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  Suspense,
+  lazy,
+} from "react";
 import GridLayout, {
   type Layout as GridLayoutType,
 } from "react-grid-layout/legacy";
@@ -25,15 +32,29 @@ import {
 } from "lucide-react";
 import WidgetLibrary from "./WidgetLibrary";
 import WidgetSystem from "./WidgetSystem";
-import LineChartWidget from "./widgets/LineChartWidget";
-import BarChartWidget from "./widgets/BarChartWidget";
-import PieChartWidget from "./widgets/PieChartWidget";
 import StatCardWidget from "./widgets/StatCardWidget";
 import ProposalListWidget from "./widgets/ProposalListWidget";
 import CalendarWidget from "./widgets/CalendarWidget";
-import GovernanceHealthWidget from "./widgets/GovernanceHealthWidget";
 import DocInfoWidget from "./widgets/DocInfoWidget";
 import DashboardErrorBoundary from "./DashboardErrorBoundary";
+
+// Chart widgets pull in recharts, by far the heaviest dependency in the
+// dashboard bundle — code-split them so that bundle only loads once a chart
+// widget is actually placed on the dashboard.
+const LineChartWidget = lazy(() => import("./widgets/LineChartWidget"));
+const BarChartWidget = lazy(() => import("./widgets/BarChartWidget"));
+const PieChartWidget = lazy(() => import("./widgets/PieChartWidget"));
+const GovernanceHealthWidget = lazy(
+  () => import("./widgets/GovernanceHealthWidget"),
+);
+
+function WidgetLoadingFallback() {
+  return (
+    <div className="flex items-center justify-center h-full min-h-[80px] text-gray-500 text-xs">
+      <div className="animate-pulse">Loading widget…</div>
+    </div>
+  );
+}
 import type {
   WidgetConfig,
   WidgetType,
@@ -454,9 +475,11 @@ const DashboardBuilder: React.FC<DashboardBuilderProps> = ({
                 )}
                 <div className="flex-1 min-h-0 p-2">
                   <DashboardErrorBoundary widgetTitle={widget.title}>
-                    {renderWidgetContent(widget, (data) =>
-                      setDrillDownData({ widget: widget.title, data }),
-                    )}
+                    <Suspense fallback={<WidgetLoadingFallback />}>
+                      {renderWidgetContent(widget, (data) =>
+                        setDrillDownData({ widget: widget.title, data }),
+                      )}
+                    </Suspense>
                   </DashboardErrorBoundary>
                 </div>
               </div>

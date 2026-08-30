@@ -128,6 +128,10 @@ export declare interface EventWebSocketServer {
   /** Emitted on each successful heartbeat round-trip. */
   on(event: "heartbeat", listener: (e: HeartbeatEvent) => void): this;
   emit(event: "heartbeat", e: HeartbeatEvent): boolean;
+
+  /** Emitted whenever a contract event is broadcast to WebSocket clients. */
+  on(event: "contract_event", listener: (e: ContractEvent) => void): this;
+  emit(event: "contract_event", e: ContractEvent): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -783,6 +787,10 @@ export class EventWebSocketServer extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   public broadcastEvent(event: ContractEvent) {
+    // Let other channels (e.g. the SSE broadcaster) piggyback on the same
+    // event stream without EventPollingService needing to know about them.
+    this.emit("contract_event", event);
+
     const eventType = event.topic[0];
     const _proposalId =
       event.topic[1] || (event.value && (event.value as any).proposal_id);
