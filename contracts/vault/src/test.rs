@@ -387,7 +387,7 @@ fn test_set_signer_tier_emits_event_with_old_and_new_tier() {
 // ============================================================================
 
 #[test]
-fn test_get_proposals_by_tag_id_paginated_returns_correct_page() {
+fn test_get_tag_proposals_page_returns_correct_page() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -441,19 +441,19 @@ fn test_get_proposals_by_tag_id_paginated_returns_correct_page() {
         &0i128,
     );
 
-    let page1 = client.get_proposals_by_tag_id_paginated(&tag_id, &0u64, &3u32);
+    let page1 = client.get_tag_proposals_page(&tag_id, &0u64, &3u32);
     assert_eq!(page1.len(), 3);
     for i in 0..3u32 {
         assert_eq!(page1.get(i).unwrap(), proposal_ids.get(i).unwrap());
     }
 
-    let page2 = client.get_proposals_by_tag_id_paginated(&tag_id, &3u64, &3u32);
+    let page2 = client.get_tag_proposals_page(&tag_id, &3u64, &3u32);
     assert_eq!(page2.len(), 2);
     for i in 0..2u32 {
         assert_eq!(page2.get(i).unwrap(), proposal_ids.get(3 + i).unwrap());
     }
 
-    let empty_page = client.get_proposals_by_tag_id_paginated(&tag_id, &10u64, &3u32);
+    let empty_page = client.get_tag_proposals_page(&tag_id, &10u64, &3u32);
     assert!(empty_page.is_empty());
 }
 

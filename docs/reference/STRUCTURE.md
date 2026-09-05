@@ -1,77 +1,61 @@
 # Project Structure
 
-VaultDAO is organized as a monorepo containing the smart contract, frontend dashboard, backend service, SDK, and documentation.
+VaultDAO is a monorepo for the Soroban treasury contract, dashboard, support services, and docs.
 
-## Directory Overview
+## Directory overview
 
 ```text
 .
-├── contracts/          # Soroban smart contracts (Rust)
-│   └── vault/
-├── frontend/           # Dashboard web app (React)
-├── backend/            # Indexing, jobs, notifications, WebSocket API
-├── sdk/                # TypeScript SDK for contract integration
-├── docs/               # Technical documentation
-│   ├── guides/         # How-to guides (features, contribution, ops)
-│   │   ├── backend/    # Backend deployment & roadmap
-│   │   └── frontend/   # Frontend feature guides (i18n, voice, etc.)
-│   └── reference/      # Architecture, API, security, testing, runbooks
-├── scripts/            # Deployment and utility scripts
+├── contracts/vault/    # Soroban smart contract (Rust)
+├── frontend/           # React dashboard
+├── backend/            # Indexing / API scaffold
+├── sdk/                # TypeScript SDK
+├── docs/               # Guides and reference
+│   ├── guides/         # How-tos (features, contribution, ops)
+│   └── reference/      # Architecture, API, security, testing
 ├── terraform/          # Infrastructure as code
 ├── monitoring/         # Prometheus / Grafana assets
 ├── load-tests/         # Load testing scripts
-├── README.md           # Project entry point
-├── CONTRIBUTING.md     # Contributor guidelines
-├── CODE_OF_CONDUCT.md  # Community standards
-└── LICENSE             # AGPL-3.0
+├── .github/workflows/  # CI (frontend typecheck + contract check)
+├── README.md
+├── CONTRIBUTING.md
+├── CODE_OF_CONDUCT.md
+└── LICENSE
 ```
 
-## Documentation Layout
+## Documentation
 
-### Guides (`docs/guides/`)
+See [docs/README.md](../README.md) for the full index.
 
-Hands-on docs for building and operating features:
+- **Guides** (`docs/guides/`): contribution, features, frontend, backend, contracts
+- **Reference** (`docs/reference/`): architecture, API, security, testing, runbooks
 
-- Contribution: `FIRST_CONTRIBUTION.md`, `FRONTEND_CONTRIBUTION.md`, `BACKEND_MODULES.md`
-- Product features: recurring payments, delegation, expiration, widgets, etc.
-- Ops: `LOCAL_STACK.md`, `TESTNET_DEPLOYMENT.md`, `SIGNING_GUIDE.md`
-- `backend/`: backend deployment and roadmap
-- `frontend/`: i18n, notifications, voice navigation
+## Components
 
-### Reference (`docs/reference/`)
+### Smart contract (`contracts/vault`)
 
-Canonical technical docs:
-
-- `ARCHITECTURE.md`, `API.md`, `EVENTS.md`, `STORAGE.md`
-- `TESTING.md`, `DEPLOYMENT.md`, `SECURITY.md`, `AUDIT_SCOPE.md`
-- `PRODUCTION_RUNBOOK.md`, `INTEGRATION_CHECKLIST.md`, `STRUCTURE.md`
-
-## Component Breakdown
-
-### Smart Contract (`contracts/vault`)
-
-- `src/lib.rs` — protocol logic and contract implementation
-- `src/types.rs` — shared data structures and enums
-- `src/storage.rs` — Instance / Persistent / Temporary storage helpers
-- `src/errors.rs` — contract error codes
-- `src/test*.rs` — unit and feature tests
+- `src/lib.rs` — contract implementation
+- `src/types.rs` — shared types
+- `src/storage.rs` — Instance / Persistent / Temporary helpers
+- `src/errors.rs` — error codes
+- `src/events.rs` — event emitters
+- `src/test*.rs` — unit tests (`#[cfg(test)]`)
 
 ### Frontend (`frontend`)
 
-- `src/components/` — UI building blocks
+- `src/app/` — views
+- `src/components/` — UI
 - `src/hooks/` — contract and app hooks
-- `src/app/` — primary views (dashboard, proposals, settings)
-- `src/utils/` — formatting and helpers
+- `src/context/` / `src/contexts/` — React providers
 
 ### Backend (`backend`)
 
 - `src/modules/` — events, proposals, recurring, notifications, websocket, jobs
 - `src/shared/` — logging, cache, HTTP helpers
-- See [backend roadmap](../guides/backend/ROADMAP.md) for planned work
 
-### Root Files
+### CI
 
-- `README.md` — quick start
-- `CONTRIBUTING.md` — PR workflow and setup
-- `CODE_OF_CONDUCT.md` — community expectations
-- `LICENSE` — AGPL-3.0
+GitHub Actions runs two jobs on `main` PRs and pushes:
+
+1. **Frontend** — `npm ci --legacy-peer-deps` + `npm run typecheck`
+2. **Contract** — `cargo check --lib`

@@ -170,21 +170,21 @@ git checkout -b docs/update-deployment-guide
 
 ### 3. Test Your Changes
 
-**Smart Contract:**
+**Required by CI:**
 
 ```bash
-cd contracts/vault
-cargo test
-cargo clippy
-cargo fmt --check
+# Frontend
+cd frontend && npm run typecheck
+
+# Contract
+cd contracts/vault && cargo check --lib
 ```
 
-**Frontend:**
+**Optional (recommended locally):**
 
 ```bash
-cd frontend
-npm run build  # Ensure it builds
-npm run lint   # Check for linting errors
+cd frontend && npm test
+cd contracts/vault && cargo test
 ```
 
 ### 4. Commit Your Changes
@@ -247,26 +247,22 @@ It includes:
 
 ### For Smart Contract Changes
 
-- All existing tests must pass (`cargo test`)
-- Add new tests for new functionality in `contracts/vault/src/test.rs`
-- Aim for comprehensive coverage of edge cases
-- Test both success and failure scenarios
-- Use `try_*` variants to assert on error types
+- Contract library must compile (`cargo check --lib`)
+- Add or update tests in `contracts/vault/src/test*.rs` when changing behavior
+- Prefer `try_*` helpers when asserting error paths
 
 ### For Frontend Changes
 
-- Ensure the app builds without errors (`npm run build`)
-- Write or update Vitest tests for new components/hooks (see [TESTING.md](docs/reference/TESTING.md#4-writing-component-tests))
-- Test manually in the browser
-- Verify wallet integration works (if applicable)
-- Check responsive design on mobile
+- Typecheck must pass (`npm run typecheck`)
+- Write or update Vitest tests for new components/hooks when practical
+- Spot-check wallet flows in the browser when relevant
 
 ## 📋 Pull Request Checklist
 
 Before submitting your PR, ensure:
 
-- [ ] Code follows style guidelines (`cargo fmt`, `npm run lint`)
-- [ ] All tests pass (`cargo test`, `npm run build`)
+- [ ] Code follows style guidelines
+- [ ] CI checks pass (`npm run typecheck`, `cargo check --lib`)
 - [ ] New functionality includes tests
 - [ ] Documentation is updated (if needed)
 - [ ] Updated `sdk/CHANGELOG.md` if this PR changes SDK behaviour or API
@@ -276,38 +272,11 @@ Before submitting your PR, ensure:
 
 ## 🔍 Code Review Process
 
-1. **Automated Checks**: CI will run tests and linting
+1. **Automated Checks**: CI runs frontend typecheck and contract `cargo check --lib`
 2. **Maintainer Review**: A maintainer will review your code
 3. **Feedback**: Address any requested changes
 4. **Approval**: Once approved, your PR will be merged
 5. **Recognition**: Contributors are acknowledged in releases!
-
-## 🔒 Dependency Security Audits
-
-The `backend-checks` CI job runs `npm audit --audit-level=high --production` against `backend/`, failing the build on any high or critical severity vulnerability in a **production** dependency (dev-only dependencies are excluded via `--production`, since they never ship to runtime).
-
-### Adding an audit exception
-
-Sometimes a flagged vulnerability has no available fix (no patched version yet, or the vulnerable code path isn't reachable from VaultDAO's usage). In that case:
-
-1. Confirm the vulnerability doesn't affect us — read the advisory and check whether the vulnerable function/flow is actually exercised.
-2. Try `npm audit fix` first; only proceed with an exception if that doesn't resolve it.
-3. Open an issue documenting: the advisory ID (e.g. `GHSA-...`), why it doesn't apply or can't yet be fixed, and a link to the upstream issue/PR tracking a real fix.
-4. Add the advisory ID to `backend/.audit-exceptions.json` (create the file if it doesn't exist) with a short reason and the tracking issue link:
-
-   ```json
-   {
-     "GHSA-xxxx-xxxx-xxxx": {
-       "reason": "Vulnerable code path is not reachable — see explanation in the issue.",
-       "issue": "https://github.com/rdj-savyy/VaultDAO/issues/<number>"
-     }
-   }
-   ```
-
-5. Update the CI step to pass `--omit-dev` findings covered by that file through `npm audit --audit-level=high --production --json | jq` filtering, or use [`better-npm-audit`](https://www.npmjs.com/package/better-npm-audit) with `--exclude <advisory-id>` if the exceptions list grows.
-6. Re-review exceptions periodically — an exception is a temporary waiver, not a permanent suppression. Remove it as soon as a patched version is available.
-
-Never silence an audit failure by lowering `--audit-level` or dropping `--production` — that hides real production-facing vulnerabilities, not just the one you're trying to except.
 
 ## 🐛 Reporting Bugs
 

@@ -82,9 +82,7 @@ npm run test:watch  # re-run on file changes
 
 ### CI
 
-SDK tests are not currently wired into `.github/workflows/test.yml` (only the smart contract and
-backend jobs run in CI). Until that's added, treat `npm test` passing locally as a hard requirement
-before opening a PR that touches `sdk/`, and mention in your PR description that you ran it.
+SDK tests are not part of `.github/workflows/ci.yml` (only frontend typecheck and contract `cargo check --lib`). Run `npm test` locally before opening a PR that touches `sdk/`.
 
 ---
 

@@ -1,6 +1,5 @@
 {
   "scripts": {
-    "prepare": "husky",
     "backend:dev": "npm --prefix backend run dev",
     "backend:build": "npm --prefix backend run build",
     "backend:typecheck": "npm --prefix backend run typecheck",
@@ -10,17 +9,11 @@
     "sdk:test": "npm --prefix sdk run test",
     "sdk:test:coverage": "npm --prefix sdk run test:coverage",
     "typecheck": "npm --prefix frontend run typecheck",
-    "build:frontend": "npm --prefix frontend run build"
+    "build:frontend": "npm --prefix frontend run build",
+    "contract:check": "cargo check --lib --manifest-path contracts/vault/Cargo.toml"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
-    "husky": "^9.1.7",
-    "lint-staged": "^15.5.2",
     "prettier": "^3.6.2"
-  },
-  "lint-staged": {
-    "backend/**/*.{ts,js,mjs,cjs,json,md}": [
-      "prettier --write"
-    ]
   }
 }

@@ -2076,3 +2076,11 @@ pub fn emit_signer_tier_changed(
         (old_tier.clone(), new_tier.clone()),
     );
 }
+
+/// Emit when a signer is one transfer away from the velocity sliding-window cap.
+pub fn emit_velocity_warning(env: &Env, addr: &Address, remaining_capacity: u32) {
+    env.events().publish(
+        (Symbol::new(env, "velocity_warning"), addr.clone()),
+        remaining_capacity,
+    );
+}

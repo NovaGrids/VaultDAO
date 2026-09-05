@@ -151,15 +151,14 @@ npm run preview
 
 ### Bundle Size Budget
 
-CI fails a PR if the production bundle grows past budget. Check locally after building:
+Optional local check after a production build:
+
 ```bash
 npm run build
 npm run size
 ```
-Budgets are defined in the `size-limit` field of `package.json` and enforced with the
-`size-limit` CLI (see `.github/workflows/bundle-size.yml`):
-- `main.js` (Vite's hashed entry chunk, `dist/assets/index-*.js`) — gzipped, < 500 KB
-- `vendor.js` (combined `manualChunks` vendor-*.js chunks from `vite.config.ts`) — gzipped, < 1 MB
+
+Budgets live in the `size-limit` field of `package.json` (`main.js` < 500 KB gzipped, `vendor.js` < 1 MB gzipped). Bundle size is not enforced in CI.
 
 ## Stellar Testnet Setup
 

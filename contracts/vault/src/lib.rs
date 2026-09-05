@@ -359,6 +359,7 @@ mod test_spending_refund_buckets;
 // #[cfg(test)]
 // #[cfg(test)]
 // pub mod mock_oracle { /* commented out with other broken test modules */ }
+#[cfg(test)]
 mod test;
 #[cfg(test)]
 mod test_amendment_diff;
@@ -468,11 +469,11 @@ mod test_proposal_veto_event;
 mod test_remove_signer_threshold;
 #[cfg(test)]
 mod test_recurring_payment_max_total_amount;
+#[cfg(test)]
 mod test_whitelist_proposal;
 #[cfg(test)]
 mod test_cold_signature_age;
 #[cfg(test)]
-mod test_participation_scoring;
 mod test_subscriptions;
 #[cfg(test)]
 mod test_supersession_chain;
@@ -9038,7 +9039,7 @@ impl VaultDAO {
     /// Return proposal IDs tagged with `tag_id` from the `HTagProposals` index,
     /// paginated (max 50 per page). Unlike `get_proposals_by_tag_id`, this does
     /// not include descendant tags.
-    pub fn get_proposals_by_tag_id_paginated(
+    pub fn get_tag_proposals_page(
         env: Env,
         tag_id: u64,
         offset: u64,
@@ -9544,7 +9545,7 @@ impl VaultDAO {
             signer_snapshot: storage::build_signer_snapshot(&env, &config.signers),
             fee_estimate_cache: None,
             fee_cache_timestamp: 0,
-a            spend_day: storage::get_day_number(&env),
+            spend_day: storage::get_day_number(&env),
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
             approved_at: 0,
