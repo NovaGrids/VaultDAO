@@ -26,6 +26,7 @@ import { DEFAULT_TOKENS } from '../../constants/tokens';
 import VoiceCommands from '../../components/VoiceCommands';
 import ReadinessWarning from '../../components/ReadinessWarning';
 import { nativeToScVal, Address, xdr } from 'stellar-sdk';
+import { env } from '../../config/env';
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
@@ -507,7 +508,13 @@ const Proposals: React.FC = () => {
   return (
     <div className="space-y-6 pb-10">
       <div className="max-w-7xl mx-auto">
-        <ReadinessWarning />
+        {env.demoMode ? (
+          <div className="mb-4 rounded-lg bg-purple-500/10 border border-purple-500/30 px-4 py-2 text-sm text-purple-300">
+            Demo mode — exploring seeded treasury data. Connect a wallet anytime to use live testnet actions.
+          </div>
+        ) : (
+          <ReadinessWarning />
+        )}
         {connectionStatus === 'connecting' && (
           <div className="mb-4 flex items-center gap-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 px-4 py-2 text-sm text-yellow-400">
             <Loader2 size={14} className="animate-spin" />
@@ -635,7 +642,7 @@ const Proposals: React.FC = () => {
                           <p className="text-sm text-gray-400 truncate max-w-[200px] sm:max-w-md">{prop.memo}</p>
                           <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
                             <span className="flex items-center gap-1"><Clock size={12} /> {new Date(prop.createdAt).toLocaleDateString()}</span>
-                            <span>• {prop.amount} {prop.token}</span>
+                            <span>• {stroopsToDecimal(prop.amount).toLocaleString()} {prop.tokenSymbol || (prop.token === 'NATIVE' ? 'XLM' : prop.token)}</span>
                           </div>
                         </div>
                       </div>

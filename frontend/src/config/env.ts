@@ -29,6 +29,11 @@ export const env = {
   contractId: requireEnv('VITE_CONTRACT_ID'),
   sorobanRpcUrl: requireEnv('VITE_SOROBAN_RPC_URL'),
   /**
+   * When true, the dashboard serves seeded treasury data so demos work
+   * without a live wallet or deployed contract.
+   */
+  demoMode: optionalEnv('VITE_DEMO_MODE', 'false') === 'true',
+  /**
    * Optional WebSocket endpoint for ledger-close notifications. When unset,
    * the ledger subscription falls back to polling `getLatestLedger`.
    */

@@ -42,8 +42,8 @@ Think of it as the **"Gnosis Safe of Stellar"** — built for DAOs, enterprise t
 ### Prerequisites
 
 - Rust (1.70+) with `wasm32-unknown-unknown`
-- Node.js 18+
-- [Freighter wallet](https://www.freighter.app/)
+- **Node.js 20+** (22 recommended — Vite 7 requires it)
+- [Freighter wallet](https://www.freighter.app/) (optional for live wallet flows)
 
 ### Smart contract
 
@@ -53,15 +53,28 @@ cargo check --lib
 cargo build --target wasm32-unknown-unknown --release
 ```
 
-### Frontend
+### Frontend (demo mode — recommended for walkthroughs)
+
+Demo mode loads seeded treasury data so the dashboard works **without a wallet or live contract**.
 
 ```bash
 cd frontend
+cp .env.example .env
+# In .env set:
+#   VITE_DEMO_MODE=true
+#   VITE_CONTRACT_ID / VITE_FEES_ACCOUNT / RPC URLs (see .env.example)
+
 npm install --legacy-peer-deps
 npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+Useful demo pages: `/dashboard` (overview), `/dashboard/proposals`, `/dashboard/analytics`.
+
+### Frontend (live testnet)
+
+Set `VITE_DEMO_MODE=false` and point `VITE_CONTRACT_ID` at a deployed VaultDAO contract on Soroban testnet. There is **no fixed public contract ID checked into this repo** right now — deploy from `contracts/vault` (see [docs/guides/contracts/TESTNET_INTEGRATION.md](docs/guides/contracts/TESTNET_INTEGRATION.md)) and paste the Contract ID into `.env`.
 
 ### Backend (optional)
 
@@ -73,11 +86,36 @@ npm run backend:dev
 
 ---
 
+## Deploy frontend on Vercel
+
+1. Import the GitHub repo in Vercel.
+2. Set **Root Directory** to `frontend`.
+3. Framework preset: Vite (or Other). Build: `npm run build`, Output: `dist`.
+4. Install command: `npm install --legacy-peer-deps`
+5. Add environment variables (Production):
+
+| Variable | Suggested value |
+| --- | --- |
+| `VITE_DEMO_MODE` | `true` |
+| `VITE_CONTRACT_ID` | placeholder `CD…` is fine in demo mode |
+| `VITE_SOROBAN_RPC_URL` | `https://soroban-testnet.stellar.org` |
+| `VITE_STELLAR_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` |
+| `VITE_STELLAR_NETWORK` | `TESTNET` |
+| `VITE_HORIZON_URL` | `https://horizon-testnet.stellar.org` |
+| `VITE_STELLAR_EXPLORER_URL` | `https://stellar.expert/explorer/testnet` |
+| `VITE_FEES_ACCOUNT` | any valid G… address placeholder |
+
+`frontend/vercel.json` rewrites SPA routes to `index.html`.
+
+After deploy, use the Vercel URL in your pitch / GrantFox official links.
+
+---
+
 ## CI
 
-Pull requests and pushes to `main` run a simple workflow (`.github/workflows/ci.yml`):
+Pull requests and pushes to `main` run `.github/workflows/ci.yml`:
 
-1. **Frontend** — install + TypeScript typecheck
+1. **Frontend** — install + TypeScript typecheck  
 2. **Contract** — `cargo check --lib`
 
 ---

@@ -39,41 +39,35 @@ Before you begin, ensure you have the following installed:
 
 ### 1. Create Your Environment File
 
-This project uses environment variables for Stellar network configuration. Follow these steps to set up your environment:
-
-**Step 1:** Copy the example environment file
 ```bash
 cp .env.example .env
 ```
 
-**Step 2:** Open the `.env` file in your text editor
-
-**Step 3:** Update the values according to your setup (see below for guidance)
+For demos and Vercel pitch deploys, set `VITE_DEMO_MODE=true` so the dashboard loads seeded treasury data without a wallet or live contract.
 
 ### 2. Required Environment Variables
 
-#### Stellar Network Configuration
+| Variable | Description |
+| --- | --- |
+| `VITE_CONTRACT_ID` | Deployed Soroban contract ID (placeholder OK in demo mode) |
+| `VITE_SOROBAN_RPC_URL` | Soroban RPC (`https://soroban-testnet.stellar.org`) |
+| `VITE_STELLAR_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` |
+| `VITE_STELLAR_NETWORK` | `TESTNET` |
+| `VITE_HORIZON_URL` | Horizon REST URL |
+| `VITE_FEES_ACCOUNT` | Fee/source account for read sims |
+| `VITE_DEMO_MODE` | `true` = seeded demo UI; `false` = live RPC |
 
-| Variable | Description | Example Value |
-|----------|-------------|---------------|
-| `VITE_STELLAR_NETWORK` | Network to use (testnet/mainnet) | `testnet` |
-| `VITE_STELLAR_NETWORK_PASSPHRASE` | Network passphrase for transaction signing | `Test SDF Network ; September 2015` |
-| `VITE_HORIZON_URL` | Horizon API endpoint for blockchain data | `https://horizon-testnet.stellar.org` |
-| `VITE_SOROBAN_RPC_URL` | Soroban RPC endpoint for smart contracts | `https://soroban-testnet.stellar.org` |
+See `.env.example` for the full list.
 
-#### Smart Contract Configuration
+### Deploy on Vercel
 
-| Variable | Description | Where to Get It |
-|----------|-------------|-----------------|
-| `VITE_CONTRACT_ADDRESS` | Your deployed smart contract address | Obtained after deploying your Soroban contract |
-| `VITE_CONTRACT_ID` | Contract identifier (usually same as address) | Same as contract address |
+- Root directory: `frontend`
+- Install: `npm install --legacy-peer-deps`
+- Build: `npm run build`
+- Output: `dist`
+- Set the `VITE_*` variables above (`VITE_DEMO_MODE=true` for a populated demo)
 
-#### Optional Configuration
-
-| Variable | Description | Default Value |
-|----------|-------------|---------------|
-| `VITE_APP_ENV` | Application environment | `development` |
-| `VITE_DEBUG_MODE` | Enable debug logging | `true` |
+SPA routing is handled by `vercel.json`.
 
 ### 3. Where to Get Configuration Values
 

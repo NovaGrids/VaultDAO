@@ -25,6 +25,14 @@ import { Priority, ConditionLogic } from '../types';
 import type { TokenBalance } from '../types';
 import type { TokenInfo } from '../constants/tokens';
 import {
+    DEMO_DASHBOARD_STATS,
+    DEMO_VAULT_BALANCE_STROOPS,
+    DEMO_TOKEN_BALANCES,
+    DEMO_PORTFOLIO_USD,
+    DEMO_VAULT_CONFIG,
+    DEMO_PROPOSALS,
+    getDemoVaultEvents,
+} from '../demo/seedData';import {
     getAllTrackedTokens,
     isValidStellarAddress,
     loadCustomTokens,
@@ -449,6 +457,9 @@ export const useVaultContract = () => {
     }, [address, readContractValue]);
 
     const getDashboardStats = useCallback(async () => {
+        if (env.demoMode) {
+            return { ...DEMO_DASHBOARD_STATS };
+        }
         try {
             return await withRetry(async () => {
 // Fetch balance, config, and proposals in parallel
@@ -572,6 +583,9 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
 }, [readContractValue]);
 
     const getVaultConfig = useCallback(async (): Promise<VaultConfig> => {
+        if (env.demoMode) {
+            return { ...DEMO_VAULT_CONFIG };
+        }
         const [configRawPrimary, configRawLegacy, userRole, isSigner] = await Promise.all([
             readContractValue('get_config').catch(() => null),
             readContractValue('get_vault_config').catch(() => null),
@@ -902,10 +916,13 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
         }
     };
 
-    const getVaultEvents = async (
+    const getVaultEvents = useCallback(async (
         cursor?: string,
         limit: number = EVENTS_PAGE_SIZE
     ): Promise<GetVaultEventsResult> => {
+        if (env.demoMode) {
+            return getDemoVaultEvents();
+        }
         try {
             const latestLedgerRes = await fetch(env.sorobanRpcUrl, {
                 method: 'POST',
@@ -963,7 +980,7 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
             console.error('getVaultEvents', e);
             return { activities: [], latestLedger: '0', hasMore: false };
         }
-    };
+    }, []);
 
     /**
      * Paginate Soroban getEvents until exhausted or maxEvents reached.
@@ -1223,6 +1240,9 @@ const exportSignatures = useCallback(async (proposalId: number) => {
      * events to reconstruct current proposal state.
      */
     const getProposals = useCallback(async (): Promise<import('../app/dashboard/Proposals').Proposal[]> => {
+        if (env.demoMode) {
+            return DEMO_PROPOSALS.map((p) => ({ ...p, approvedBy: [...p.approvedBy] }));
+        }
         // Fetch all relevant events in one pass
         const result = await getVaultEvents(undefined, 200);
         const activities = result.activities;
@@ -1289,6 +1309,9 @@ const exportSignatures = useCallback(async (proposalId: number) => {
      * Fetch the vault's XLM balance from Horizon.
      */
     const getVaultBalance = useCallback(async (): Promise<string> => {
+        if (env.demoMode) {
+            return DEMO_VAULT_BALANCE_STROOPS;
+        }
         try {
             const res = await fetch(`${env.horizonUrl}/accounts/${env.contractId}`);
             if (!res.ok) return '0';
@@ -1413,6 +1436,9 @@ const exportSignatures = useCallback(async (proposalId: number) => {
      * Each token is fetched independently so partial failures don't block others.
      */
     const getTokenBalances = useCallback(async (): Promise<TokenBalance[]> => {
+        if (env.demoMode) {
+            return DEMO_TOKEN_BALANCES.map((b) => ({ ...b, token: { ...b.token } }));
+        }
         const tokens = getAllTrackedTokens();
         const results = await Promise.allSettled(
             tokens.map(async (token): Promise<TokenBalance> => {
@@ -1430,6 +1456,9 @@ const exportSignatures = useCallback(async (proposalId: number) => {
      * Uses Stellar Expert price API for XLM; other tokens default to 0 if unavailable.
      */
     const getPortfolioValue = useCallback(async (): Promise<string> => {
+        if (env.demoMode) {
+            return DEMO_PORTFOLIO_USD;
+        }
         try {
             const balances = await getTokenBalances();
             // Fetch XLM price from Stellar Expert
