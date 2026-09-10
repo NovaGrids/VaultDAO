@@ -185,43 +185,68 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
      
   }, [selectedWalletId, connected, updateWalletState]);
 
-  const connect = useCallback(async (walletType?: WalletType) => {
+  const connect = useCallback(async (walletType?: WalletType): Promise<boolean> => {
+    // Re-detect right before connect so a freshly installed / late-injected
+    // extension is visible (Freighter content scripts can load after first paint).
+    const wallets = await detectWallets();
     const targetWalletId = walletType ?? selectedWalletId;
-    const adapter = targetWalletId ? getAdapterById(targetWalletId) : availableWallets[0];
+    const adapter =
+      (targetWalletId ? getAdapterById(targetWalletId) : undefined) ??
+      wallets[0] ??
+      availableWallets[0];
+
     if (!adapter) {
       showToast('No wallet selected. Please install Freighter, Albedo, or Rabet.', 'error');
-      if (availableWallets.length === 0) {
-        window.open('https://www.freighter.app/', '_blank');
-      }
-      return;
+      window.open('https://www.freighter.app/', '_blank');
+      return false;
     }
     setSelectedWalletId(adapter.id as WalletType);
 
-    const isAvailable = await adapter.isAvailable();
+    let isAvailable = await adapter.isAvailable();
     if (!isAvailable) {
-      showToast(`${adapter.name} not found. Please install it.`, 'error');
+      await new Promise((r) => setTimeout(r, 400));
+      isAvailable = await adapter.isAvailable();
+    }
+    if (!isAvailable) {
+      showToast(`${adapter.name} not found. Install the extension, then refresh and try again.`, 'error');
       window.open(adapter.url, '_blank');
-      return;
+      return false;
     }
 
     try {
-      await adapter.connect();
+      const connectedAccount = await adapter.connect();
       activeAdapterRef.current = adapter;
+      // Prefer the key returned by connect(); fall back to adapter state sync.
+      if (connectedAccount?.publicKey) {
+        setAddress(connectedAccount.publicKey);
+        setConnected(true);
+        if (connectedAccount.network) setNetwork(connectedAccount.network);
+        setAvailableAccounts([connectedAccount.publicKey]);
+        try { localStorage.setItem(LAST_ACCOUNT_KEY, connectedAccount.publicKey); } catch { /* ignore */ }
+        localStorage.setItem(WALLET_CONNECTED_KEY, 'true');
+        savePreferredWallet(adapter.id);
+        showToast('Wallet connected successfully!', 'success');
+        const net = connectedAccount.network ?? (await adapter.getNetwork());
+        if (net && net !== 'TESTNET' && net !== 'testnet' && net !== 'Test SDF Network ; September 2015') {
+          showToast('Application works best on Testnet — switch network in your wallet.', 'warning');
+        }
+        return true;
+      }
+
       const success = await updateWalletState(adapter);
       if (success) {
         localStorage.setItem(WALLET_CONNECTED_KEY, 'true');
         savePreferredWallet(adapter.id);
         showToast('Wallet connected successfully!', 'success');
-        const net = await adapter.getNetwork();
-        if (net && net !== 'TESTNET' && net !== 'testnet') {
-          showToast('Application works best on Testnet', 'warning');
-        }
+        return true;
       }
+      return false;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Connection failed';
       showToast(msg, 'error');
+      return false;
     }
-  }, [selectedWalletId, availableWallets, updateWalletState, savePreferredWallet, showToast]);
+  }, [selectedWalletId, availableWallets, detectWallets, updateWalletState, savePreferredWallet, showToast]);
 
   const disconnect = useCallback(async () => {
     setConnected(false);

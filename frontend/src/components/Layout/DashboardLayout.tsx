@@ -41,7 +41,7 @@ import { useOnboarding } from "../../context/OnboardingProvider";
 import { ONBOARDING_CONFIG } from "../../constants/onboarding";
 import VoiceCommands from "../VoiceCommands";
 import VoiceNavigation from "../VoiceNavigation";
-import { useWalletProviderInfo } from "../WalletProviders";
+import { useWalletProviders } from "../WalletProviders";
 import { useKeyboardShortcut } from "../../hooks/useKeyboardShortcut";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { KeyboardShortcuts } from "../KeyboardShortcuts";
@@ -53,7 +53,13 @@ const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
   const { theme, toggleTheme } = useTheme();
   const { isConnected, address, network, connect, disconnect, walletType } = useWallet();
-  const { providers } = useWalletProviderInfo();
+  const { available: detectedWallets, loading: walletsLoading, refresh: refreshWallets } = useWalletProviders();
+  const detectedIds = new Set(detectedWallets.map((a) => a.id));
+  const providers = [
+    { id: 'freighter' as const, name: 'Freighter', url: 'https://www.freighter.app/', available: detectedIds.has('freighter') },
+    { id: 'albedo' as const, name: 'Albedo', url: 'https://albedo.link/', available: detectedIds.has('albedo') },
+    { id: 'rabet' as const, name: 'Rabet', url: 'https://rabet.io/', available: detectedIds.has('rabet') },
+  ];
   const { unreadCount } = useNotifications();
   const onboarding = useOnboarding();
   const location = useLocation();
@@ -274,7 +280,10 @@ const DashboardLayout: React.FC = () => {
               </div>
             ) : (
               <button
-                onClick={() => setIsWalletModalOpen(true)}
+                onClick={() => {
+                  void refreshWallets();
+                  setIsWalletModalOpen(true);
+                }}
                 className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-5 py-2.5 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95 flex items-center min-h-[44px] shadow-lg shadow-purple-500/20"
               >
                 <Wallet size={18} className="mr-2" /> {t('wallet.connect')}
@@ -454,12 +463,18 @@ const DashboardLayout: React.FC = () => {
               </button>
             </div>
             <div className="space-y-2">
+              {walletsLoading && (
+                <p className="text-xs text-slate-500 dark:text-gray-400 px-1 pb-1">
+                  Detecting wallet extensions…
+                </p>
+              )}
               {providers.map((provider) => (
                 <button
                   key={provider.id}
                   onClick={async () => {
-                    await connect(provider.id);
-                    setIsWalletModalOpen(false);
+                    const ok = await connect(provider.id);
+                    if (ok) setIsWalletModalOpen(false);
+                    else void refreshWallets();
                   }}
                   className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
                     provider.available
@@ -475,6 +490,13 @@ const DashboardLayout: React.FC = () => {
                   </div>
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => void refreshWallets()}
+                className="w-full text-center text-xs text-purple-600 dark:text-purple-400 py-2 hover:underline"
+              >
+                Refresh detection
+              </button>
             </div>
           </div>
         </div>
