@@ -2037,6 +2037,9 @@ pub struct TimeWeightedConfig {
     pub apply_decay: bool,
     /// Penalty for early unlock (basis points, e.g., 1000 = 10%)
     pub early_unlock_penalty_bps: u32,
+    /// The only token that may be locked for voting power (#1705).
+    /// `None` means no token is accepted.
+    pub governance_token: Option<Address>,
 }
 
 impl Default for TimeWeightedConfig {
@@ -2048,6 +2051,7 @@ impl Default for TimeWeightedConfig {
             max_lock_duration: 730 * DAY_LEDGERS, // 2 years maximum
             apply_decay: true,
             early_unlock_penalty_bps: 1000, // 10% penalty
+            governance_token: None,
         }
     }
 }
