@@ -32,6 +32,7 @@ import CopyButton from '../CopyButton';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { LayoutErrorBoundary } from '../ErrorHandler';
 import NotificationCenter from '../NotificationCenter';
+import NotificationDropdown from '../NotificationDropdown';
 import { useNotifications } from '../../context/NotificationContext';
 import { CriticalNotificationOverlay } from "../CriticalNotificationOverlay";
 import { OnboardingFlow } from "../OnboardingFlow";
@@ -61,6 +62,7 @@ const DashboardLayout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
+  const [isNotificationDropdownOpen, setIsNotificationDropdownOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
@@ -75,6 +77,11 @@ const DashboardLayout: React.FC = () => {
   const pendingGRef = React.useRef(false);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsNotificationDropdownOpen(false);
+        return;
+      }
+
       const target = e.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
@@ -205,19 +212,34 @@ const DashboardLayout: React.FC = () => {
             </div>
             
             {/* Notification Bell */}
-            <button
-              onClick={() => setIsNotificationCenterOpen(true)}
-              className="relative p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors"
-              aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
-              aria-describedby="notifications-description"
-            >
-              <Bell size={20} className="text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white transition-colors" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-purple-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
+            <div className="relative">
+              <button
+                onClick={() => setIsNotificationDropdownOpen((open) => !open)}
+                className="relative p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors"
+                aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+                aria-describedby="notifications-description"
+                aria-expanded={isNotificationDropdownOpen}
+                aria-haspopup="dialog"
+              >
+                <Bell size={20} className="text-slate-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-white transition-colors" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-purple-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {isNotificationDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setIsNotificationDropdownOpen(false)}></div>
+                  <NotificationDropdown
+                    isOpen={isNotificationDropdownOpen}
+                    onClose={() => setIsNotificationDropdownOpen(false)}
+                    onViewAll={() => setIsNotificationCenterOpen(true)}
+                  />
+                </>
               )}
-            </button>
+            </div>
 
             {/* Help Button */}
             <button
