@@ -2305,6 +2305,10 @@ pub fn emit_config_param_changed(env: &Env, param: Symbol, admin: &Address) {
     env.events().publish(
         (Symbol::new(env, "config_param_changed"), param),
         admin.clone(),
+    );
+}
+
+// ============================================================================
 // Issue #1736: Variable Template CRUD Events
 // ============================================================================
 

@@ -5,7 +5,7 @@
 //! (Treasurer successfully pauses) and negative case (Members cannot pause).
 
 use crate::errors::VaultError;
-use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{RecurringStatus, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, Role, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -98,14 +98,14 @@ fn test_treasurer_pauses_recurring_payment_successfully() {
 
     // Verify payment is active
     let payment_before = client.get_recurring_payment(&payment_id);
-    assert!(payment_before.is_active);
+    assert_eq!(payment_before.status, RecurringStatus::Active);
 
     // Treasurer pauses the recurring payment
     client.pause_recurring_payment(&treasurer, &payment_id);
 
     // Verify payment is now paused
     let payment_after = client.get_recurring_payment(&payment_id);
-    assert!(!payment_after.is_active);
+    assert_ne!(payment_after.status, RecurringStatus::Active);
 }
 
 // ============================================================================
@@ -134,7 +134,7 @@ fn test_member_role_is_rejected_pausing_recurring_payment() {
 
     // Verify payment is active
     let payment_before = client.get_recurring_payment(&payment_id);
-    assert!(payment_before.is_active);
+    assert_eq!(payment_before.status, RecurringStatus::Active);
 
     // Member attempts to pause the recurring payment (should fail)
     let result = client.try_pause_recurring_payment(&member, &payment_id);
@@ -142,7 +142,7 @@ fn test_member_role_is_rejected_pausing_recurring_payment() {
 
     // Verify payment is still active
     let payment_after = client.get_recurring_payment(&payment_id);
-    assert!(payment_after.is_active);
+    assert_eq!(payment_after.status, RecurringStatus::Active);
 }
 
 // ============================================================================
@@ -168,14 +168,14 @@ fn test_admin_can_pause_recurring_payment() {
 
     // Verify payment is active
     let payment_before = client.get_recurring_payment(&payment_id);
-    assert!(payment_before.is_active);
+    assert_eq!(payment_before.status, RecurringStatus::Active);
 
     // Admin pauses the recurring payment
     client.pause_recurring_payment(&admin, &payment_id);
 
     // Verify payment is now paused
     let payment_after = client.get_recurring_payment(&payment_id);
-    assert!(!payment_after.is_active);
+    assert_ne!(payment_after.status, RecurringStatus::Active);
 }
 
 // ============================================================================

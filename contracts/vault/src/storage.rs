@@ -31,7 +31,7 @@ use crate::types::{
     HookRegistration, InsuranceClaim, InsuranceConfig, InsuranceVotingConfig, ListMode,
     MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
     PauseCooldownConfig, PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus,
-    ProposalTemplate, RecoveryProposal, Reputation, ReputationConfig, RetryState, Role,
+    ProposalTemplate, RecoveryConfigChangeProposal, RecoveryProposal, Reputation, ReputationConfig, RetryState, Role,
     RoleAssignment, ScopedDelegation, SignerParticipationScore, SignerTier, StakeRecord,
     StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
     TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,

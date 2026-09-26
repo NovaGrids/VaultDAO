@@ -958,6 +958,17 @@ export class EventWebSocketServer extends EventEmitter {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
+    // wss.close() does not close existing connections when attached to an
+    // external HTTP server, so terminate them (and their auth timers) here;
+    // otherwise open clients keep the process alive after shutdown.
+    for (const [ws, sub] of this.clients) {
+      if (sub.authTimer) {
+        clearTimeout(sub.authTimer);
+        sub.authTimer = null;
+      }
+      ws.terminate();
+    }
+    this.clients.clear();
     this.wss.close();
   }
 

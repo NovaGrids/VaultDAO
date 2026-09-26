@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { startServer } from "../../server.js";
+import { stopTestServer } from "../../test-support/server.js";
 
 const mockEnv = {
   port: 0,
@@ -44,7 +45,8 @@ function waitForMessage(ws: WebSocket, predicate: (msg: any) => boolean): Promis
 }
 
 test("WebSocket Message Size Limit (Issue #1559)", async (t) => {
-  const { server, runtime } = await startServer(mockEnv as any);
+  const backend = await startServer(mockEnv as any);
+  const { server } = backend;
 
   if (!server.listening) {
     await new Promise((resolve) => server.once("listening", resolve));
@@ -53,11 +55,7 @@ test("WebSocket Message Size Limit (Issue #1559)", async (t) => {
   const address: any = server.address();
   const wsUrl = `ws://127.0.0.1:${address.port}`;
 
-  t.after(() => {
-    return new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-  });
+  t.after(() => stopTestServer(backend));
 
   await t.test("should accept messages within size limit", async () => {
     const ws = new WebSocket(wsUrl);

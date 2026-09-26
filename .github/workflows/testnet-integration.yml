@@ -1,0 +1,82 @@
+name: Testnet Integration
+
+# Manual only: talks to the live Stellar testnet and needs funded accounts.
+# Configure the secrets below under Settings -> Secrets and variables -> Actions.
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Stellar network to target"
+        required: true
+        default: testnet
+        type: choice
+        options:
+          - testnet
+          - futurenet
+      deploy:
+        description: "Deploy a fresh contract before running the tests"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  integration:
+    name: Testnet integration tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/vault
+    env:
+      TESTNET_ENABLED: "true"
+      TESTNET_RPC_URL: ${{ vars.TESTNET_RPC_URL || 'https://soroban-testnet.stellar.org' }}
+      TESTNET_CONTRACT_ID: ${{ secrets.TESTNET_CONTRACT_ID }}
+      TESTNET_ADMIN_SECRET: ${{ secrets.TESTNET_ADMIN_SECRET }}
+      TESTNET_SIGNER1_SECRET: ${{ secrets.TESTNET_SIGNER1_SECRET }}
+      TESTNET_SIGNER2_SECRET: ${{ secrets.TESTNET_SIGNER2_SECRET }}
+      TESTNET_RECIPIENT: ${{ secrets.TESTNET_RECIPIENT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/vault/target
+          key: ${{ runner.os }}-cargo-testnet-${{ hashFiles('contracts/vault/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Stellar CLI
+        if: ${{ inputs.deploy }}
+        # deploy_testnet.sh invokes `soroban`; stellar-cli is its successor
+        # with the same subcommands, so expose it under that name too.
+        run: |
+          cargo install --locked stellar-cli
+          ln -sf "$(command -v stellar)" "$HOME/.cargo/bin/soroban"
+
+      - name: Deploy contract
+        if: ${{ inputs.deploy }}
+        run: |
+          chmod +x scripts/deploy_testnet.sh
+          ./scripts/deploy_testnet.sh "${{ inputs.network }}" "$TESTNET_ADMIN_SECRET" | tee deploy.log
+          CONTRACT_ID=$(grep -Eo '\bC[A-Z2-7]{55}\b' deploy.log | tail -1)
+          if [ -n "$CONTRACT_ID" ]; then
+            echo "TESTNET_CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run testnet integration tests
+        run: cargo test --features testnet test_testnet_integration -- --nocapture
+
+      - name: Upload results log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: testnet-integration-results
+          path: contracts/vault/testnet_integration_results.log
+          if-no-files-found: ignore

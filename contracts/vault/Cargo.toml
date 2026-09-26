@@ -16,6 +16,8 @@ soroban-sdk = "22.0.8"
 [features]
 default = []
 bridge = []
+# Enables the testnet integration test module (src/test_testnet_integration.rs).
+testnet = []
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.8", features = ["testutils"] }

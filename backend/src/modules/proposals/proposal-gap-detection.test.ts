@@ -81,17 +81,8 @@ class MockProposalIndexer {
     const nextProposalId = await this.rpcClient.fetchNextProposalId();
     const highestIndexed = this.getHighestIndexedProposalId();
 
-    // No gap if indexed is up to date
-    if (highestIndexed >= nextProposalId - 1) {
-      return {
-        gapDetected: false,
-        expectedNextId: nextProposalId,
-        highestIndexedId: highestIndexed,
-        missingProposalIds: [],
-      };
-    }
-
-    // Find missing proposal IDs
+    // Scan the full range rather than comparing only the highest indexed ID:
+    // a dropped event can leave a hole below the head (e.g. 1, 3, 5 indexed).
     const missingIds: number[] = [];
     for (let i = 1; i < nextProposalId; i++) {
       if (!this.indexedProposals.has(i)) {

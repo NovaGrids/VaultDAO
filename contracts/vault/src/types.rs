@@ -796,15 +796,24 @@ pub struct HolidayCalendar {
     pub holiday_ledgers: Vec<u64>,
 }
 
-/// Recurring payment schedule
+/// Recurring payment schedule.
+///
+/// Lifecycle is tracked by `status` ([`RecurringStatus`]); there is no
+/// separate `is_active` flag. Check `status == RecurringStatus::Active`.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RecurringPayment {
+    /// Unique recurring payment ID
     pub id: u64,
+    /// Address that created the schedule
     pub proposer: Address,
+    /// Address receiving each payment
     pub recipient: Address,
+    /// Token contract address
     pub token: Address,
+    /// Amount transferred per execution
     pub amount: i128,
+    /// Short memo attached to each payment
     pub memo: Symbol,
     /// Interval in ledgers (e.g., 172800 for ~1 week)
     pub interval: u64,
@@ -879,7 +888,10 @@ pub enum StreamStatus {
     Completed = 3,
 }
 
-/// Continuous token transfer over time
+/// Continuous token transfer over time.
+///
+/// The committed amount is `total_amount` (not `amount_total`), and
+/// lifecycle is tracked by `status` ([`StreamStatus`]).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct StreamingPayment {

@@ -1,5 +1,5 @@
 import type { MetricsSnapshot } from "./metrics.registry.js";
-import { baseName } from "./metrics.formatter.js";
+import { baseName, formatHistogramLines } from "./metrics.formatter.js";
 
 /**
  * Formats a metrics snapshot per the OpenMetrics exposition format
@@ -30,17 +30,7 @@ export class OpenMetricsFormatter {
       lines.push(`# TYPE ${name} ${type}`);
 
       if (meta.type === "histogram") {
-        const histogram = snapshot.histograms.get(name);
-        if (!histogram) {
-          continue;
-        }
-
-        for (let i = 0; i < histogram.buckets.length; i++) {
-          lines.push(`${name}_bucket{le="${histogram.buckets[i]}"} ${histogram.counts[i] ?? 0}`);
-        }
-        lines.push(`${name}_bucket{le="+Inf"} ${histogram.count}`);
-        lines.push(`${name}_sum ${histogram.sum}`);
-        lines.push(`${name}_count ${histogram.count}`);
+        lines.push(...formatHistogramLines(name, snapshot));
         continue;
       }
 

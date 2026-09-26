@@ -5,6 +5,30 @@ export function baseName(key: string): string {
   return idx >= 0 ? key.slice(0, idx) : key;
 }
 
+/**
+ * Renders every series of histogram `name` (unlabelled and labelled) as
+ * `_bucket`/`_sum`/`_count` lines, merging series labels with `le`.
+ */
+export function formatHistogramLines(name: string, snapshot: MetricsSnapshot): string[] {
+  const lines: string[] = [];
+  for (const [key, histogram] of snapshot.histograms) {
+    if (baseName(key) !== name) {
+      continue;
+    }
+    const labels = key.length > name.length ? key.slice(name.length + 1, -1) : "";
+    const withLe = (le: string) => (labels ? `{${labels},le="${le}"}` : `{le="${le}"}`);
+    const suffix = labels ? `{${labels}}` : "";
+
+    for (let i = 0; i < histogram.buckets.length; i++) {
+      lines.push(`${name}_bucket${withLe(String(histogram.buckets[i]))} ${histogram.counts[i] ?? 0}`);
+    }
+    lines.push(`${name}_bucket${withLe("+Inf")} ${histogram.count}`);
+    lines.push(`${name}_sum${suffix} ${histogram.sum}`);
+    lines.push(`${name}_count${suffix} ${histogram.count}`);
+  }
+  return lines;
+}
+
 export class PrometheusFormatter {
   public static format(snapshot: MetricsSnapshot): string {
     const lines: string[] = [];
@@ -23,17 +47,7 @@ export class PrometheusFormatter {
       lines.push(`# TYPE ${name} ${meta.type}`);
 
       if (meta.type === "histogram") {
-        const histogram = snapshot.histograms.get(name);
-        if (!histogram) {
-          continue;
-        }
-
-        for (let i = 0; i < histogram.buckets.length; i++) {
-          lines.push(`${name}_bucket{le="${histogram.buckets[i]}"} ${histogram.counts[i] ?? 0}`);
-        }
-        lines.push(`${name}_bucket{le="+Inf"} ${histogram.count}`);
-        lines.push(`${name}_sum ${histogram.sum}`);
-        lines.push(`${name}_count ${histogram.count}`);
+        lines.push(...formatHistogramLines(name, snapshot));
         continue;
       }
 
