@@ -1165,15 +1165,26 @@ pub fn emit_recovery_config_updated(env: &Env, admin: &Address) {
 /// Emit when a recovery config change proposal is created (Issue #1702)
 pub fn emit_recovery_config_proposal_created(env: &Env, proposal_id: u64, proposer: &Address) {
     env.events().publish(
-        (Symbol::new(env, "recovery_config_proposal_created"), proposal_id),
+        (
+            Symbol::new(env, "recovery_config_proposal_created"),
+            proposal_id,
+        ),
         proposer.clone(),
     );
 }
 
 /// Emit when a recovery config change proposal is approved (Issue #1702)
-pub fn emit_recovery_config_proposal_approved(env: &Env, proposal_id: u64, voter: &Address, approval_count: u32) {
+pub fn emit_recovery_config_proposal_approved(
+    env: &Env,
+    proposal_id: u64,
+    voter: &Address,
+    approval_count: u32,
+) {
     env.events().publish(
-        (Symbol::new(env, "recovery_config_proposal_approved"), proposal_id),
+        (
+            Symbol::new(env, "recovery_config_proposal_approved"),
+            proposal_id,
+        ),
         (voter.clone(), approval_count),
     );
 }
@@ -2276,10 +2287,8 @@ pub fn emit_tag_created(
 /// Topics: `("tag_deleted", tag_id)`
 /// Data:   `caller`
 pub fn emit_tag_deleted(env: &Env, tag_id: u64, caller: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "tag_deleted"), tag_id),
-        caller.clone(),
-    );
+    env.events()
+        .publish((Symbol::new(env, "tag_deleted"), tag_id), caller.clone());
 }
 
 /// Emit when the tags on a proposal change (add, remove, bulk add, assign).
@@ -2305,6 +2314,10 @@ pub fn emit_config_param_changed(env: &Env, param: Symbol, admin: &Address) {
     env.events().publish(
         (Symbol::new(env, "config_param_changed"), param),
         admin.clone(),
+    );
+}
+
+// ============================================================================
 // Issue #1736: Variable Template CRUD Events
 // ============================================================================
 
@@ -2366,7 +2379,13 @@ pub fn emit_vesting_created(
 ) {
     env.events().publish(
         (Symbol::new(env, "vesting_created"), schedule_id),
-        (beneficiary.clone(), token.clone(), total, cliff_ledger, end_ledger),
+        (
+            beneficiary.clone(),
+            token.clone(),
+            total,
+            cliff_ledger,
+            end_ledger,
+        ),
     );
 }
 

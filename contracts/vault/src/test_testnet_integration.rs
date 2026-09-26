@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod testnet_integration_tests {
+    use crate::types::{Config, ConfigParam, InitConfig, ProposalOperation};
+    use crate::{VaultDAO, VaultDAOClient};
     use soroban_sdk::{
         testutils::{Address as TestAddress, MockAuth, MockAuthInvoke},
         vec, Address, Env, IntoVal, String, Symbol, Vec,
     };
-    use crate::{VaultDAO, VaultDAOClient};
-    use crate::types::{Config, ConfigParam, InitConfig, ProposalOperation};
 
     #[test]
     fn test_full_proposal_workflow() {
@@ -172,7 +172,8 @@ mod testnet_integration_tests {
         let init_result = client.initialize(&admin, &config);
         assert!(init_result.is_ok());
 
-        let cancel_result = client.cancel_proposal(&proposer, &1, &String::from_slice(&env, "Testing"));
+        let cancel_result =
+            client.cancel_proposal(&proposer, &1, &String::from_slice(&env, "Testing"));
         // Cancellation pathway validation
     }
 }

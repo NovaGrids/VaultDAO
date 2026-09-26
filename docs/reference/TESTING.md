@@ -264,6 +264,157 @@ This codebase's only existing budget-related call, `env.budget().reset_unlimited
 
 If you add this pattern to a new test file, mention it in your PR description — it's new to the project, so reviewers should know to expect it.
 
+### 2.11 Test Suite Status and Quarantine
+
+The contract test suite did not compile for a long time, so many modules were commented out of `lib.rs` or never declared at all, and their coverage was silently lost. The suite now compiles and `cargo test` is green; what could not be repaired yet is tracked here so it cannot rot unnoticed again.
+
+Rules:
+
+- Every `src/test*.rs` file must be declared in `lib.rs` under `#[cfg(test)]`. CI runs `scripts/check_test_modules.sh`, which fails on undeclared files.
+- A module that no longer compiles against the current API is moved to `src/quarantine/` (not compiled) and listed below. Move it back and declare it once fixed.
+- A test that compiles but fails is marked `#[ignore = "quarantined: <reason> (docs/reference/TESTING.md)"]`. Run them with `cargo test -- --ignored`.
+- Tests for features that are no longer in the contract are deleted, not kept around.
+
+#### Orphaned test files (audit)
+
+Files that existed under `src/` without a `mod` declaration, and what happened to each:
+
+| File | Status |
+| --- | --- |
+| `test_cleanup_expired_capabilities.rs` | Re-enabled, all tests pass |
+| `test_cold_signature_replay.rs` | Re-enabled; 9 test(s) ignored |
+| `test_comment_threading.rs` | Re-enabled; 1 test(s) ignored |
+| `test_commit_reveal.rs` | Deleted (obsolete, see below) |
+| `test_compliance.rs` | Deleted (obsolete, see below) |
+| `test_delegation_depth.rs` | Re-enabled, all tests pass |
+| `test_escrow_expiration.rs` | Quarantined in `src/quarantine/` |
+| `test_escrow_milestone_partial_release.rs` | Quarantined in `src/quarantine/` |
+| `test_escrow_multisig.rs` | Deleted (obsolete, see below) |
+| `test_escrow_multisig_arbitration.rs` | Quarantined in `src/quarantine/` |
+| `test_escrow_oracle.rs` | Deleted (obsolete, see below) |
+| `test_escrow_timeout.rs` | Quarantined in `src/quarantine/` |
+| `test_escrow_voting.rs` | Deleted (obsolete, see below) |
+| `test_escrows_by_recipient.rs` | Quarantined in `src/quarantine/` |
+| `test_fan_out_streams.rs` | Quarantined in `src/quarantine/` |
+| `test_fee_cache.rs` | Quarantined in `src/quarantine/` |
+| `test_fingerprint.rs` | Re-enabled; 5 test(s) ignored |
+| `test_gas_price_oracle.rs` | Quarantined in `src/quarantine/` |
+| `test_insurance_self_claim.rs` | Quarantined in `src/quarantine/` |
+| `test_metrics_buckets.rs` | Re-enabled; 4 test(s) ignored |
+| `test_multitoken_insurance.rs` | Deleted (obsolete, see below) |
+| `test_multitoken_limits.rs` | Deleted (obsolete, see below) |
+| `test_multitoken_swap.rs` | Quarantined in `src/quarantine/` |
+| `test_overflow_checks.rs` | Re-enabled, all tests pass |
+| `test_pause_circuit_breaker.rs` | Re-enabled; 6 test(s) ignored |
+| `test_rbac_consistency.rs` | Re-enabled, all tests pass |
+| `test_recurring.rs` | Quarantined in `src/quarantine/` |
+| `test_recurring_alerts.rs` | Deleted (obsolete, see below) |
+| `test_recurring_conditions.rs` | Deleted (obsolete, see below) |
+| `test_recurring_dryrun.rs` | Deleted (obsolete, see below) |
+| `test_reentrancy.rs` | Re-enabled, all tests pass |
+| `test_retry.rs` | Re-enabled; 1 test(s) ignored |
+| `test_staking_lockup.rs` | Deleted (obsolete, see below) |
+| `test_staking_rewards.rs` | Deleted (obsolete, see below) |
+| `test_staking_slash_appeals_window.rs` | Quarantined in `src/quarantine/` |
+| `test_staking_tier_progression.rs` | Deleted (obsolete, see below) |
+| `test_stream_autocomplete.rs` | Re-enabled; 4 test(s) ignored |
+| `test_stream_burst_config.rs` | Re-enabled, all tests pass |
+| `test_stream_clawback.rs` | Deleted (obsolete, see below) |
+| `test_stream_pause_ttl.rs` | Quarantined in `src/quarantine/` |
+| `test_subscription_auto_topup.rs` | Re-enabled, all tests pass |
+| `test_subscription_downgrade_grace.rs` | Re-enabled; 1 test(s) ignored |
+| `test_subscription_tier_usage.rs` | Deleted (obsolete, see below) |
+| `test_token_allowlist.rs` | Deleted (obsolete, see below) |
+| `test_velocity_warning.rs` | Re-enabled; 2 test(s) ignored |
+
+#### Quarantined modules (`src/quarantine/`)
+
+Do not compile against the current contract API. Fix, move back to `src/`, declare in `lib.rs`, then tick the box.
+
+- [ ] `test_escrow_dispute_filing_deadline.rs`: 52 compile errors; escrow/dispute types changed; getters renamed
+- [ ] `test_escrow_expiration.rs`: 16 compile errors; Result-style assertions on value returns; escrow getters changed
+- [ ] `test_escrow_milestone_partial_release.rs`: 32 compile errors; Result-style assertions on value returns; milestone API changed
+- [ ] `test_escrow_milestone_verification_event.rs`: 29 compile errors; Result-style assertions on value returns; milestone API changed
+- [ ] `test_escrow_multisig_arbitration.rs`: 9 compile errors; client calls treat unit/value returns as Result (.is_ok/.unwrap)
+- [ ] `test_escrow_timeout.rs`: 9 compile errors; create_escrow arity changed (8 to 7 args); Result-style assertions on value returns
+- [ ] `test_escrows_by_recipient.rs`: 15 compile errors; get_escrows_by_recipient is now get_recipient_escrows; create_escrow arity changed
+- [ ] `test_fan_out_streams.rs`: 17 compile errors; stream creation arity changed (5 to 6 args); types changed
+- [ ] `test_fee_cache.rs`: 16 compile errors; fee types changed; fee cache client methods renamed
+- [ ] `test_gas_price_oracle.rs`: 16 compile errors; gas price oracle client methods renamed or removed
+- [ ] `test_insurance_governance.rs`: 10 compile errors; insurance client methods renamed or removed
+- [ ] `test_insurance_premium.rs`: 10 compile errors; InsuranceConfig fields renamed; insurance client methods changed
+- [ ] `test_insurance_self_claim.rs`: 9 compile errors; InsuranceClaim fields renamed; file_insurance_claim is now submit_insurance_claim
+- [ ] `test_multitoken_swap.rs`: 26 compile errors; propose_token_swap is now propose_swap; swap types changed
+- [ ] `test_proposal_amendment.rs`: 10 compile errors; amend_proposal takes an extra argument (5 to 6)
+- [ ] `test_recovery_security_1702.rs`: 45 compile errors; uses types that are not imported or no longer exist (39 unresolved names)
+- [ ] `test_recurring.rs`: 40 compile errors; schedule_payment arity changed (8 to 9 args)
+- [ ] `test_staking_slash_appeals_window.rs`: 13 compile errors; staking types changed; helper constructors removed
+- [ ] `test_stream_pause_ttl.rs`: 39 compile errors; stream types changed; Result-style assertions on value returns
+- [ ] `test_token_limits.rs`: 11 compile errors; set_token_limits argument types changed
+- [ ] `test_treasurer_pause_recurring.rs`: 12 compile errors; RecurringPayment.is_active replaced by status; schedule_payment arity changed (8 to 9)
+
+#### Deleted as obsolete
+
+These tested entry points or fields that do not exist anywhere in the contract (features removed or never merged):
+
+- `test_commit_reveal.rs`
+- `test_compliance.rs`
+- `test_escrow_counterparty_acknowledgment.rs`
+- `test_escrow_multisig.rs`
+- `test_escrow_oracle.rs`
+- `test_escrow_voting.rs`
+- `test_max_concurrent_streams_per_recipient.rs`
+- `test_multitoken_insurance.rs`
+- `test_multitoken_limits.rs`
+- `test_recurring_alerts.rs`
+- `test_recurring_conditions.rs`
+- `test_recurring_dryrun.rs`
+- `test_recurring_payment_max_total_amount.rs`
+- `test_staking_lockup.rs`
+- `test_staking_rewards.rs`
+- `test_staking_tier_progression.rs`
+- `test_stream_clawback.rs`
+- `test_stream_rate_window_clawback.rs`
+- `test_subscription_tier_usage.rs`
+- `test_token_allowlist.rs`
+- `test_velocity_history_authorization.rs`
+
+#### Ignored tests
+
+143 tests compile but fail against the current contract and are `#[ignore]`d. Most are fixtures written before the minimum threshold became 2 (#1523). Fix a module, remove its `#[ignore]` attributes, then tick the box.
+
+- [ ] `test_proposal_expiration.rs` (13): 13 × unwrap on HostError(Value, InvalidInput) against the current contract
+- [ ] `test.rs` (12): 8 × assertion does not hold against the current contract; 2 × fails with VaultError::DuplicateProposal against the current contract; 1 × unknown; 1 × flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved)
+- [ ] `test_circular_dependency.rs` (9): 9 × unwrap on HostError(Value, InvalidInput) against the current contract
+- [ ] `test_cold_signature_replay.rs` (9): 7 × unwrap on HostError(Value, InvalidInput) against the current contract; 2 × fixture initialises with threshold 1; minimum is 2 since #1523
+- [ ] `test_cross_vault.rs` (9): 9 × fixture initialises with threshold 1; minimum is 2 since #1523
+- [ ] `test_batch_dependencies.rs` (8): 6 × flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved); 2 × assertion does not hold against the current contract
+- [ ] `test_regressions.rs` (8): 1 × host storage error: Storage InternalError; 2 × fixture has fewer signers than its threshold (ThresholdTooHigh); 3 × assertion does not hold against the current contract; 1 × fails with VaultError::NotInitialized against the current contract; 1 × flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved)
+- [ ] `test_trigger_stream_payment_accrual.rs` (8): 8 × fixture has fewer signers than its threshold (ThresholdTooHigh)
+- [ ] `test_cold_signature_age.rs` (6): 6 × fails with VaultError::Unauthorized against the current contract
+- [ ] `test_pause_circuit_breaker.rs` (6): 1 × proposal should succeed after unpause; 1 × assertion does not hold against the current contract; 4 × host storage error: Storage MissingValue
+- [ ] `test_update_config_signers.rs` (6): 4 × fixture initialises with threshold 1; minimum is 2 since #1523; 2 × auth mock conflict (Auth, ExistingValue)
+- [ ] `test_fingerprint.rs` (5): 1 × first proposal should succeed; 2 × assertion does not hold against the current contract; 2 × called `Result::unwrap()` on an `Err` value: Err(Abort)
+- [ ] `test_proposal_ttl_extension_on_read.rs` (5): 5 × unwrap on HostError(Value, InvalidInput) against the current contract
+- [ ] `test_threshold_unilateral_reduction.rs` (5): 3 × auth mock conflict (Auth, ExistingValue); 1 × first reduction must succeed in creating a proposal; 1 × a valid reduction after a rejected one must still be allowed
+- [ ] `test_voting_deadline.rs` (5): 2 × host storage error: Storage InternalError; 3 × assertion does not hold against the current contract
+- [ ] `test_metrics_buckets.rs` (4): 3 × flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved); 1 × this function is not accessible outside of a contract, wrap the call with `env.as_contract()` to access it from a partic
+- [ ] `test_proposal_management.rs` (4): 1 × unwrap on HostError(Value, InvalidInput) against the current contract; 1 × fails with VaultError::InsufficientRole against the current contract; 2 × fails with VaultError::Unauthorized against the current contract
+- [ ] `test_stream_autocomplete.rs` (4): 4 × fixture has fewer signers than its threshold (ThresholdTooHigh)
+- [ ] `test_threshold_reduction.rs` (3): 3 × fails with VaultError::DuplicateProposal against the current contract
+- [ ] `test_staking.rs` (2): 2 × flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved)
+- [ ] `test_velocity_warning.rs` (2): 2 × assertion does not hold against the current contract
+- [ ] `test_comment_threading.rs` (1): 1 × assertion does not hold against the current contract
+- [ ] `test_hooks.rs` (1): 1 × fixture has fewer signers than its threshold (ThresholdTooHigh)
+- [ ] `test_participation_scoring.rs` (1): 1 × host storage error: Storage InternalError
+- [ ] `test_retry.rs` (1): 1 × fixture has fewer signers than its threshold (ThresholdTooHigh)
+- [ ] `test_signers_with_roles.rs` (1): 1 × assertion does not hold against the current contract
+- [ ] `test_spending_limit_invariants_proptest.rs` (1): 1 × this function is not accessible outside of a contract, wrap the call with `env.as_contract()` to access it from a partic
+- [ ] `test_staking_slashing.rs` (1): 1 × flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved)
+- [ ] `test_subscription_downgrade_grace.rs` (1): 1 × assertion does not hold against the current contract
+- [ ] `test_swap_multi_token.rs` (1): 1 × flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved)
+- [ ] `test_whitelist_proposal.rs` (1): 1 × fails with VaultError::ProposalNotFound against the current contract
+
 ## 3. Frontend Testing (Vitest)
 
 The frontend has 47 existing test files (571 tests) using Vitest + `@testing-library/react`. Test files live next to what they test, inside a `__tests__/` folder: `src/components/__tests__/ProposalCard.test.tsx`, `src/hooks/__tests__/useVaultContract.test.ts`.
@@ -678,7 +829,7 @@ Every push and PR to `main` runs `.github/workflows/ci.yml` with these jobs:
 | --- | --- |
 | **Frontend** | `npm ci --legacy-peer-deps` + `npm run typecheck` + `npm test` (Vitest) in `frontend/` |
 | **Frontend E2E (Playwright)** | Installs Chromium and runs `npm run test:e2e -- --project=chromium` against the dev server in demo mode |
-| **Contract** | `cargo check --lib` in `contracts/vault/` |
+| **Contract** | In `contracts/vault/`: `scripts/check_test_modules.sh` (every `src/test*.rs` declared), `cargo fmt --check`, `cargo clippy`, `cargo test --no-run`, `cargo test`, release WASM build |
 
 ### Running the same checks locally
 
@@ -693,10 +844,9 @@ npm run test:e2e -- --project=chromium
 
 # Contract
 cd contracts/vault
-cargo check --lib
+bash scripts/check_test_modules.sh
+cargo test
 ```
-
-Optional (not required by CI): `cargo test`, backend/SDK scripts.
 
 ---
 

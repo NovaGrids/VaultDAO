@@ -237,7 +237,7 @@ mod tests {
         client
             .approve_recovery_config_change(&admin, &prop_id)
             .unwrap();
-        let proposal = client.get_recovery_config_change_proposal(&prop_id).unwrap();
+        let proposal = client.get_recovery_cfg_change_proposal(&prop_id).unwrap();
         assert_eq!(proposal.status, ProposalStatus::Pending);
 
         // Admin tries to execute without supermajority (should fail)
@@ -250,7 +250,7 @@ mod tests {
             .unwrap();
 
         // Now proposal should be approved
-        let proposal = client.get_recovery_config_change_proposal(&prop_id).unwrap();
+        let proposal = client.get_recovery_cfg_change_proposal(&prop_id).unwrap();
         assert_eq!(proposal.status, ProposalStatus::Approved);
 
         // Execute should now succeed
@@ -416,7 +416,7 @@ mod tests {
             .unwrap();
 
         // Only admin has approved so far - proposal should be pending
-        let proposal = client.get_recovery_config_change_proposal(&malicious_prop_id).unwrap();
+        let proposal = client.get_recovery_cfg_change_proposal(&malicious_prop_id).unwrap();
         assert_eq!(proposal.status, ProposalStatus::Pending);
 
         // Try to execute without signer1's approval - should fail

@@ -55,6 +55,7 @@ fn make_checkpoint_config(env: &Env) -> (Address, crate::VaultDAOClient<'_>, Add
     let admin = Address::generate(env);
     let mut signers = soroban_sdk::Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
 
     let contract_id = env.register(VaultDAO, ());
     let client = crate::VaultDAOClient::new(env, &contract_id);
@@ -67,7 +68,7 @@ fn make_checkpoint_config(env: &Env) -> (Address, crate::VaultDAOClient<'_>, Add
         high_impact_threshold: 70,
         admin_rotation_delay: 1440,
         signers,
-        threshold: 1,
+        threshold: 2,
         quorum: 0,
         quorum_percentage: 0,
         default_voting_deadline: 0,

@@ -54,7 +54,11 @@ pub(crate) const REP_APPROVAL_BONUS: u32 = 2;
 ///
 /// Called at emission time so indexers receive a ready-made push list inside
 /// the companion `notif_dispatch` event.
-pub(crate) fn compute_relevant_signers(env: &Env, event_type: &Symbol, amount: i128) -> Vec<Address> {
+pub(crate) fn compute_relevant_signers(
+    env: &Env,
+    event_type: &Symbol,
+    amount: i128,
+) -> Vec<Address> {
     let day_offset = (env.ledger().sequence() as u64 % QUIET_HOURS_CYCLE) as u32;
     // Use the dedicated prefs index (signers/role holders only, hard-capped).
     let known = storage::get_notification_prefs_index(env);
@@ -124,7 +128,11 @@ pub(crate) fn compute_swap_price_impact(
     u32::try_from(impact.max(0)).map_err(|_| VaultError::ArithmeticOverflow)
 }
 
-pub(crate) fn calculate_expiration_ledger(config: &Config, priority: &Priority, current_ledger: u64) -> u64 {
+pub(crate) fn calculate_expiration_ledger(
+    config: &Config,
+    priority: &Priority,
+    current_ledger: u64,
+) -> u64 {
     let multiplier = match priority {
         Priority::Low => 2,
         Priority::Normal => 1,

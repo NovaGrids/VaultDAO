@@ -20,8 +20,11 @@ mod token;
 pub mod types;
 mod types_balance_snapshot;
 
-// #[cfg(test)]
-// mod test_testnet_integration;
+// Talks to a live Stellar testnet deployment, so it only builds with
+// `cargo test --features testnet` (see docs/guides/contracts/TESTNET_INTEGRATION.md
+// and the manual `Testnet Integration` workflow).
+#[cfg(all(test, feature = "testnet"))]
+mod test_testnet_integration;
 
 use errors::VaultError;
 use soroban_sdk::xdr::ToXdr;
@@ -41,14 +44,15 @@ use types::{
     InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
     NotificationPrefs, OptionalProposalOperation, OptionalVaultOracleConfig, PauseCooldownConfig,
     PauseState, Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase,
-    ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryConfigChangeProposal,
-    RecoveryProposal, RecoveryStatus, RecurringPayment, RecurringStatus, Reputation, ReputationConfig,
-    RetryConfig, RetryState, Role, RoleAssignment, ScheduledTransferConfig, ScopedDelegation,
-    SignerParticipationScore, SignerTier, StakingConfig, StreamRateWindow, StreamStatus,
-    StreamingPayment, Subscription, SubscriptionStatus, SubscriptionTier, SwapProposal, SwapResult,
-    TemplateFeeTier, TemplateOverrides, ThresholdStrategy, TokenSpendingConfig, TransferDetails,
-    VaultAction, VaultMetrics, VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig,
-    VestingSchedule, VoteChoice, VoteWeight, VotingStrategy, WhitelistEntry,
+    ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig,
+    RecoveryConfigChangeProposal, RecoveryProposal, RecoveryStatus, RecurringPayment,
+    RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
+    ScheduledTransferConfig, ScopedDelegation, SignerParticipationScore, SignerTier, StakingConfig,
+    StreamRateWindow, StreamStatus, StreamingPayment, Subscription, SubscriptionStatus,
+    SubscriptionTier, SwapProposal, SwapResult, TemplateFeeTier, TemplateOverrides,
+    ThresholdStrategy, TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics,
+    VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig, VestingSchedule, VoteChoice,
+    VoteWeight, VotingStrategy, WhitelistEntry,
 };
 use types_balance_snapshot::BalanceSnapshot;
 
@@ -62,108 +66,18 @@ pub struct VaultDAO;
 mod helpers;
 use helpers::*;
 
-// Broken upstream test modules commented out so Issue #1345 spending_refund
-// tests compile. Do not re-enable via a cargo feature -- clippy uses --all-features.
-// #[cfg(test)]
-// mod test;
-// #[cfg(test)]
-// mod test_attachments;
-// #[cfg(test)]
-// mod test_audit;
-// #[cfg(test)]
-// mod test_cost_estimation;
-// #[cfg(test)]
-// mod test_cross_vault;
-// #[cfg(test)]
-// mod test_disputes;
-// #[cfg(test)]
-// mod test_escrow_expiration;
-// #[cfg(test)]
-// mod test_escrow_milestone_partial_release;
-// #[cfg(test)]
-// mod test_escrow_multisig_arbitration;
-// #[cfg(test)]
-// mod test_escrow_timeout;
-// #[cfg(test)]
-// mod test_fees;
-// #[cfg(test)]
-// mod test_gas_price_oracle;
-// #[cfg(test)]
-// mod test_hooks;
-// #[cfg(test)]
-// mod test_cold_signature_replay;
-// #[cfg(test)]
-// mod test_merge;
-// #[cfg(test)]
-// mod test_notification_prefs;
-// #[cfg(test)]
-// mod test_recurring;
-// #[cfg(test)]
-// mod test_recurring_conditions;
-// #[cfg(test)]
-// mod test_recurring_alerts;
-// #[cfg(test)]
-// mod test_recurring_dryrun;
-// #[cfg(test)]
-// mod test_escrow_multisig;
-// #[cfg(test)]
-// mod test_multitoken_limits;
-// #[cfg(test)]
-// mod test_multitoken_swap;
-// #[cfg(test)]
-// mod test_stream_clawback;
-// #[cfg(test)]
-// mod test_multitoken_insurance;
-// #[cfg(test)]
-// mod test_rbac_consistency;
-// #[cfg(test)]
-// mod test_reentrancy;
-// #[cfg(test)]
-// mod test_retry;
-// #[cfg(test)]
-// mod test_stream_burst_config;
-// #[cfg(test)]
-// mod test_streaming;
-// #[cfg(test)]
-// mod test_subscriptions;
-// #[cfg(test)]
-// mod test_subscription_downgrade_grace;
-// #[cfg(test)]
-// mod test_tag_taxonomy;
-// #[cfg(test)]
-// mod test_tags;
-// #[cfg(test)]
-// mod test_var_templates;
-// #[cfg(test)]
-// mod test_voting_deadline;
-// #[cfg(test)]
-// mod test_fee_cache;
+// Test modules. Every src/test*.rs file must be declared here: CI runs
+// scripts/check_test_modules.sh and fails on undeclared files. Modules that no
+// longer compile against the current API live in src/quarantine/ (not compiled)
+// and individual failing tests are #[ignore]d; both are tracked in
+// docs/reference/TESTING.md.
 #[cfg(test)]
 mod test_spending_limit_invariants_proptest;
 #[cfg(test)]
-mod test_stream_vesting_invariants_proptest;
-#[cfg(test)]
 mod test_spending_refund_buckets;
-// #[cfg(test)]
-// mod test_fan_out_streams;
-// #[cfg(test)]
-// mod test_stream_pause_ttl;
-// #[cfg(test)]
-// mod test_escrow_voting;
-// #[cfg(test)]
-// mod test_token_allowlist;
-// #[cfg(test)]
-// mod test_overflow_checks;
-// #[cfg(test)]
-// mod test_delegation_depth;
-// #[cfg(test)]
-// mod test_stream_autocomplete;
-
-// #[cfg(test)]
-// #[cfg(test)]
-// pub mod mock_oracle { /* commented out with other broken test modules */ }
 #[cfg(test)]
-mod test_recovery_security_1702;
+mod test_stream_vesting_invariants_proptest;
+
 #[cfg(test)]
 mod test;
 #[cfg(test)]
@@ -178,105 +92,48 @@ mod test_audit;
 mod test_batch_dependencies;
 #[cfg(test)]
 mod test_cache_invalidation;
-// #[cfg(test)]
-// mod test_cold_signature_replay;
+#[cfg(test)]
+mod test_cold_signature_age;
 #[cfg(test)]
 mod test_cost_estimation;
 #[cfg(test)]
 mod test_cross_vault;
 #[cfg(test)]
 mod test_disputes;
-// #[cfg(test)]
-// mod test_escrow_expiration;
-// #[cfg(test)]
-// mod test_escrow_milestone_partial_release;
-// #[cfg(test)]
-// mod test_escrow_multisig;
-// #[cfg(test)]
-// mod test_escrow_multisig_arbitration;
-// #[cfg(test)]
-// mod test_escrow_timeout;
-// #[cfg(test)]
-// mod test_escrow_voting;
-// #[cfg(test)]
-// mod test_fan_out_streams;
-// #[cfg(test)]
-// mod test_fee_cache;
 #[cfg(test)]
-mod test_escrow_counterparty_acknowledgment;
+mod test_earmarked_balances;
 #[cfg(test)]
-mod test_escrow_dispute_filing_deadline;
-#[cfg(test)]
-mod test_escrow_milestone_verification_event;
+mod test_execution_recipient_recheck;
 #[cfg(test)]
 mod test_fees;
-// #[cfg(test)]
-// mod test_gas_price_oracle;
 #[cfg(test)]
 mod test_hooks;
 #[cfg(test)]
 mod test_insurance_claim_quorum;
 #[cfg(test)]
 mod test_merge;
-// #[cfg(test)]
-// mod test_multitoken_insurance;
-// #[cfg(test)]
-// mod test_multitoken_limits;
-// #[cfg(test)]
-// mod test_multitoken_swap;
+#[cfg(test)]
+mod test_notification_index_cap;
 #[cfg(test)]
 mod test_notification_prefs;
-// #[cfg(test)]
-// mod test_rbac_consistency;
-// #[cfg(test)]
-// mod test_recurring;
-// #[cfg(test)]
-// mod test_recurring_alerts;
-// #[cfg(test)]
-// mod test_recurring_conditions;
-// #[cfg(test)]
-// mod test_recurring_dryrun;
-// #[cfg(test)]
-// mod test_reentrancy;
-// #[cfg(test)]
-// mod test_retry;
-#[cfg(test)]
-mod test_staking_slashing;
-// #[cfg(test)]
-// mod test_stream_burst_config;
-// #[cfg(test)]
-// mod test_stream_clawback;
-// #[cfg(test)]
-// mod test_stream_pause_ttl;
-#[cfg(test)]
-mod test_streaming;
-#[cfg(test)]
-mod test_trigger_stream_payment_accrual;
-#[cfg(test)]
-mod test_cold_signature_age;
 #[cfg(test)]
 mod test_participation_scoring;
-mod test_recovery_role_revocation;
-#[cfg(test)]
-mod test_threshold_min_init;
-#[cfg(test)]
-mod test_threshold_unilateral_reduction;
 #[cfg(test)]
 mod test_proposal_veto_event;
 #[cfg(test)]
 mod test_remove_signer_threshold;
 #[cfg(test)]
-mod test_update_config_signers;
-#[cfg(test)]
-mod test_recurring_payment_max_total_amount;
-#[cfg(test)]
-mod test_remove_signer_threshold;
-#[cfg(test)]
 mod test_signers_with_roles;
+#[cfg(test)]
+mod test_staking_slashing;
+#[cfg(test)]
+mod test_streaming;
 #[cfg(test)]
 mod test_subscriptions;
 #[cfg(test)]
 mod test_supersession_chain;
+#[cfg(test)]
+mod test_swap_price_impact;
 #[cfg(test)]
 mod test_tag_taxonomy;
 #[cfg(test)]
@@ -284,63 +141,78 @@ mod test_tags;
 #[cfg(test)]
 mod test_threshold_min_init;
 #[cfg(test)]
-mod test_whitelist_proposal;
-#[cfg(test)]
-mod test_max_concurrent_streams_per_recipient;
-#[cfg(test)]
-mod test_stream_rate_window_clawback;
+mod test_threshold_unilateral_reduction;
 #[cfg(test)]
 mod test_timelock_ready_queue;
 #[cfg(test)]
-mod test_treasurer_pause_recurring;
+mod test_trigger_stream_payment_accrual;
+#[cfg(test)]
+mod test_update_config_signers;
 #[cfg(test)]
 mod test_var_templates;
 #[cfg(test)]
 mod test_vault_template;
 #[cfg(test)]
-mod test_velocity_history_authorization;
-#[cfg(test)]
-mod test_treasurer_pause_recurring;
-#[cfg(test)]
-mod test_stream_rate_window_clawback;
-#[cfg(test)]
-mod test_execution_recipient_recheck;
-#[cfg(test)]
-mod test_swap_price_impact;
-#[cfg(test)]
-mod test_notification_index_cap;
-#[cfg(test)]
-mod test_earmarked_balances;
 mod test_voting_deadline;
+#[cfg(test)]
+mod test_whitelist_proposal;
 
 #[cfg(test)]
-mod test_staking;
+mod test_circular_dependency;
 #[cfg(test)]
-mod test_insurance_governance;
+mod test_cleanup_expired_capabilities;
 #[cfg(test)]
-mod test_insurance_premium;
+mod test_cold_signature_replay;
 #[cfg(test)]
-mod test_token_insurance;
+mod test_comment_threading;
+#[cfg(test)]
+mod test_delegation_depth;
+#[cfg(test)]
+mod test_fingerprint;
+#[cfg(test)]
+mod test_metrics_buckets;
 #[cfg(test)]
 mod test_multi_token;
 #[cfg(test)]
-mod test_swap_multi_token;
+mod test_overflow_checks;
 #[cfg(test)]
-mod test_token_limits;
+mod test_pause_circuit_breaker;
 #[cfg(test)]
 mod test_proposal_expiration;
 #[cfg(test)]
 mod test_proposal_management;
 #[cfg(test)]
-mod test_proposal_amendment;
-#[cfg(test)]
 mod test_proposal_ttl_extension_on_read;
 #[cfg(test)]
-mod test_circular_dependency;
+mod test_rbac_consistency;
+#[cfg(test)]
+mod test_recovery_role_revocation;
+#[cfg(test)]
+mod test_reentrancy;
+#[cfg(test)]
+mod test_regressions;
+#[cfg(test)]
+mod test_remove_signer_privileges;
+#[cfg(test)]
+mod test_retry;
+#[cfg(test)]
+mod test_staking;
+#[cfg(test)]
+mod test_stream_autocomplete;
+#[cfg(test)]
+mod test_stream_burst_config;
+#[cfg(test)]
+mod test_subscription_auto_topup;
+#[cfg(test)]
+mod test_subscription_downgrade_grace;
+#[cfg(test)]
+mod test_swap_multi_token;
 #[cfg(test)]
 mod test_threshold_reduction;
 #[cfg(test)]
-mod test_regressions;
+mod test_token_insurance;
+#[cfg(test)]
+mod test_velocity_warning;
 #[cfg(test)]
 pub mod mock_oracle {
     use crate::types::VaultPriceData;
@@ -2950,7 +2822,14 @@ impl VaultDAO {
             chain_depth: depth,
         };
 
+        // Keep the delegate -> delegators index in sync; incoming-delegation
+        // lookups (chain depth, represented voters, signer removal) rely on it.
+        let previous = storage::get_delegation(&env, &delegator);
+        if previous.is_active && previous.delegate != delegate {
+            storage::remove_delegator_index(&env, &previous.delegate, &delegator);
+        }
         storage::set_delegation(&env, &delegation);
+        storage::add_delegator_index(&env, &delegate, &delegator);
 
         // If this signer was already the final delegate for another signer,
         // extending the chain changes that original delegation to depth two.
@@ -3040,6 +2919,7 @@ impl VaultDAO {
         }
 
         storage::remove_delegation(&env, &delegator);
+        storage::remove_delegator_index(&env, &old_delegation.delegate, &delegator);
 
         let history = DelegationHistory {
             id: storage::increment_delegation_id(&env),
@@ -4074,8 +3954,7 @@ impl VaultDAO {
         let total_active_seconds = stream.accumulated_seconds + elapsed_since_update;
 
         // gross_claimable = rate * total_active_seconds, capped at total_amount
-        let gross_claimable = (stream.rate * total_active_seconds as i128)
-            .min(stream.total_amount);
+        let gross_claimable = (stream.rate * total_active_seconds as i128).min(stream.total_amount);
         // net claimable = gross − already_claimed
         let claimable = gross_claimable.saturating_sub(stream.claimed_amount);
 
@@ -5784,6 +5663,7 @@ impl VaultDAO {
         }
 
         config.signers.remove(found_idx.unwrap());
+        Self::revoke_signer_privileges(env, &mut config, signer);
         storage::set_config(env, &config);
         storage::extend_instance_ttl(env);
         storage::create_audit_entry(env, AuditAction::RemoveSigner, actor, 0);
@@ -5792,6 +5672,87 @@ impl VaultDAO {
 
         Ok(())
     }
+
+    /// Strip every privilege a signer holds once they leave the signer set, so
+    /// a removed Treasurer/Admin cannot keep acting through leftover state.
+    ///
+    /// Clears the role (falls back to `Member`), the signer tier in `config`
+    /// (the caller persists it), direct permission grants, plain and scoped
+    /// delegations in both directions, permissions delegated to them by the
+    /// remaining signers, and capability tokens granted to them.
+    ///
+    /// Velocity history is kept on purpose: it only rate-limits, and clearing it
+    /// would let a signer who is removed and re-added bypass the window.
+    fn revoke_signer_privileges(env: &Env, config: &mut Config, signer: &Address) {
+        storage::remove_role(env, signer);
+        config.signer_tiers.remove(signer.clone());
+        storage::set_permissions(env, signer, Vec::new(env));
+
+        // Outgoing plain delegation.
+        let outgoing = storage::get_delegation(env, signer);
+        if outgoing.is_active {
+            storage::remove_delegator_index(env, &outgoing.delegate, signer);
+        }
+        storage::remove_delegation(env, signer);
+
+        // Incoming plain delegations: every delegator that points at this signer.
+        for delegator in storage::get_delegators_for(env, signer).iter() {
+            let delegation = storage::get_delegation(env, &delegator);
+            if delegation.is_active && delegation.delegate == *signer {
+                storage::remove_delegation(env, &delegator);
+            }
+            storage::remove_delegator_index(env, signer, &delegator);
+        }
+
+        // Scoped delegations held as delegator or as delegate.
+        let scoped = storage::get_scoped_delegations_by_delegator(env, signer);
+        let incoming_scoped = storage::get_scoped_delegations_by_delegate(env, signer);
+        for id in scoped.iter().chain(incoming_scoped.iter()) {
+            if let Some(mut d) = storage::get_scoped_delegation(env, id) {
+                if d.is_active {
+                    d.is_active = false;
+                    storage::set_scoped_delegation(env, &d);
+                }
+            }
+        }
+
+        // Permissions the remaining signers delegated to this address. (Ones this
+        // signer delegated out are already inert: checks only honour delegators
+        // that are current signers.)
+        for delegator in config.signers.iter() {
+            for permission in Self::ALL_PERMISSIONS.iter() {
+                storage::remove_delegated_permission(env, signer, &delegator, *permission as u32);
+            }
+        }
+
+        // Capability tokens granted to this signer.
+        for id in storage::get_capability_tokens_by_holder(env, signer).iter() {
+            if let Some(mut token) = storage::get_capability_token(env, &id) {
+                if !token.revoked {
+                    token.revoked = true;
+                    storage::set_capability_token(env, &token);
+                }
+            }
+        }
+        storage::clear_capability_tokens_by_holder(env, signer);
+    }
+
+    const ALL_PERMISSIONS: [types::Permission; 14] = [
+        types::Permission::CreateProposal,
+        types::Permission::ApproveProposal,
+        types::Permission::ExecuteProposal,
+        types::Permission::CancelProposal,
+        types::Permission::ManageRoles,
+        types::Permission::ManageSigners,
+        types::Permission::ManageConfig,
+        types::Permission::ManageRecurring,
+        types::Permission::ManageLists,
+        types::Permission::ManageTemplates,
+        types::Permission::ManageEscrow,
+        types::Permission::ManageSubscriptions,
+        types::Permission::ViewMetrics,
+        types::Permission::ManageRecovery,
+    ];
 
     /// Get currently configured voting strategy.
     pub fn get_voting_strategy(env: Env) -> VotingStrategy {
@@ -7625,7 +7586,12 @@ impl VaultDAO {
             }
         }
         events::emit_config_updated(&env, &admin);
-        events::emit_recipient_list_bulk_changed(&env, Symbol::new(&env, "whitelist"), changed, true);
+        events::emit_recipient_list_bulk_changed(
+            &env,
+            Symbol::new(&env, "whitelist"),
+            changed,
+            true,
+        );
         Ok(())
     }
 
@@ -7652,7 +7618,12 @@ impl VaultDAO {
             }
         }
         events::emit_config_updated(&env, &admin);
-        events::emit_recipient_list_bulk_changed(&env, Symbol::new(&env, "whitelist"), changed, false);
+        events::emit_recipient_list_bulk_changed(
+            &env,
+            Symbol::new(&env, "whitelist"),
+            changed,
+            false,
+        );
         Ok(())
     }
 
@@ -7679,7 +7650,12 @@ impl VaultDAO {
             }
         }
         events::emit_config_updated(&env, &admin);
-        events::emit_recipient_list_bulk_changed(&env, Symbol::new(&env, "blacklist"), changed, true);
+        events::emit_recipient_list_bulk_changed(
+            &env,
+            Symbol::new(&env, "blacklist"),
+            changed,
+            true,
+        );
         Ok(())
     }
 
@@ -7706,7 +7682,12 @@ impl VaultDAO {
             }
         }
         events::emit_config_updated(&env, &admin);
-        events::emit_recipient_list_bulk_changed(&env, Symbol::new(&env, "blacklist"), changed, false);
+        events::emit_recipient_list_bulk_changed(
+            &env,
+            Symbol::new(&env, "blacklist"),
+            changed,
+            false,
+        );
         Ok(())
     }
 
@@ -13599,7 +13580,7 @@ impl VaultDAO {
     // ========================================================================
 
     /// Propose a recovery configuration change (Issue #1702)
-    /// 
+    ///
     /// Routes recovery config changes through multisig governance with timelock.
     /// Requires multisig approval from vault signers before taking effect.
     pub fn propose_recovery_config_change(
@@ -13620,7 +13601,7 @@ impl VaultDAO {
 
         let current_ledger = env.ledger().sequence() as u64;
         let id = storage::increment_recovery_config_change_id(&env);
-        
+
         let proposal = RecoveryConfigChangeProposal {
             id,
             proposer: proposer.clone(),
@@ -13673,7 +13654,12 @@ impl VaultDAO {
         }
 
         storage::set_recovery_config_change_proposal(&env, &proposal);
-        events::emit_recovery_config_proposal_approved(&env, proposal_id, &voter, proposal.approvals.len());
+        events::emit_recovery_config_proposal_approved(
+            &env,
+            proposal_id,
+            &voter,
+            proposal.approvals.len(),
+        );
         Ok(())
     }
 
@@ -13696,8 +13682,11 @@ impl VaultDAO {
 
         proposal.status = ProposalStatus::Executed;
         storage::set_recovery_config_change_proposal(&env, &proposal);
-        storage::set_active_governance_count(&env, storage::get_active_governance_count(&env).saturating_sub(1));
-        
+        storage::set_active_governance_count(
+            &env,
+            storage::get_active_governance_count(&env).saturating_sub(1),
+        );
+
         events::emit_recovery_config_updated(&env, &proposal.proposer);
         Ok(())
     }
@@ -13705,7 +13694,7 @@ impl VaultDAO {
     /// Update recovery configuration (DEPRECATED - use propose_recovery_config_change instead)
     /// This function is kept for backward compatibility but will reject all calls.
     pub fn set_recovery_config(
-        env: Env,
+        _env: Env,
         _admin: Address,
         _config: RecoveryConfig,
     ) -> Result<(), VaultError> {
@@ -13976,28 +13965,10 @@ impl VaultDAO {
             }
         }
 
-        // For every removed signer: clear their role entry and revoke both
-        // kinds of delegation (plain + scoped) that they may hold as delegator.
+        // For every removed signer: clear their role, delegations (both
+        // directions), permissions, tier and capability tokens.
         for signer in removed.iter() {
-            // 1. Clear the role so they can no longer satisfy Admin/Treasurer checks.
-            storage::remove_role(&env, &signer);
-
-            // 2. Revoke any active plain delegation they held.
-            let delegation = storage::get_delegation(&env, &signer);
-            if delegation.is_active {
-                storage::remove_delegation(&env, &signer);
-            }
-
-            // 3. Deactivate every scoped delegation they held as delegator.
-            let scoped_ids = storage::get_scoped_delegations_by_delegator(&env, &signer);
-            for id in scoped_ids.iter() {
-                if let Some(mut d) = storage::get_scoped_delegation(&env, id) {
-                    if d.is_active {
-                        d.is_active = false;
-                        storage::set_scoped_delegation(&env, &d);
-                    }
-                }
-            }
+            Self::revoke_signer_privileges(&env, &mut config, &signer);
         }
 
         // For every genuinely new signer: grant them the Member role so they
@@ -14071,9 +14042,13 @@ impl VaultDAO {
     }
 
     /// Cancel a recovery proposal (requires guardian quorum - Issue #1702)
-    pub fn cancel_recovery(env: Env, guardian: Address, proposal_id: u64) -> Result<(), VaultError> {
+    pub fn cancel_recovery(
+        env: Env,
+        guardian: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
         guardian.require_auth();
-        
+
         let config = storage::get_config(&env)?;
         if !config.recovery_config.guardians.contains(&guardian) {
             return Err(VaultError::Unauthorized);
@@ -14092,9 +14067,9 @@ impl VaultDAO {
             if proposal.approvals.contains(&guardian) {
                 return Err(VaultError::AlreadyApproved);
             }
-            
+
             proposal.approvals.push_back(guardian.clone());
-            
+
             // Require threshold of guardians to approve the cancellation
             if proposal.approvals.len() >= config.recovery_config.threshold {
                 proposal.status = RecoveryStatus::Cancelled;
@@ -14128,7 +14103,10 @@ impl VaultDAO {
     }
 
     /// Get recovery config change proposal details (Issue #1702)
-    pub fn get_recovery_config_change_proposal(env: Env, id: u64) -> Result<RecoveryConfigChangeProposal, VaultError> {
+    pub fn get_recovery_cfg_change_proposal(
+        env: Env,
+        id: u64,
+    ) -> Result<RecoveryConfigChangeProposal, VaultError> {
         storage::get_recovery_config_change_proposal(&env, id)
     }
 
@@ -15222,7 +15200,12 @@ impl VaultDAO {
         storage::set_funding_round(&env, &round);
         events::emit_funding_round_cancelled(&env, round_id, &canceller);
 
-        storage::create_audit_entry(&env, AuditAction::FundingRoundCancelled, &canceller, round_id);
+        storage::create_audit_entry(
+            &env,
+            AuditAction::FundingRoundCancelled,
+            &canceller,
+            round_id,
+        );
 
         Ok(())
     }
@@ -15986,7 +15969,7 @@ impl VaultDAO {
 
         let sub = Subscription {
             id,
-            subscriber,
+            subscriber: subscriber.clone(),
             service_provider: provider,
             tier: tier.clone(),
             token,
@@ -16120,7 +16103,12 @@ impl VaultDAO {
 
         events::emit_subscription_cancelled(&env, subscription_id, &caller);
 
-        storage::create_audit_entry(&env, AuditAction::SubscriptionCancelled, &caller, subscription_id);
+        storage::create_audit_entry(
+            &env,
+            AuditAction::SubscriptionCancelled,
+            &caller,
+            subscription_id,
+        );
 
         Ok(())
     }
@@ -17335,6 +17323,7 @@ impl VaultDAO {
             return Err(VaultError::InsufficientRole);
         }
         storage::set_capability_token(&env, &token);
+        storage::add_capability_token_to_holder_index(&env, &token.granted_to, &token.id);
         storage::extend_instance_ttl(&env);
         events::emit_capability_granted(
             &env,
@@ -17914,6 +17903,10 @@ impl VaultDAO {
         let mut ids = storage::get_scoped_delegations_by_delegator(&env, &delegator);
         ids.push_back(id);
         storage::set_scoped_delegations_by_delegator(&env, &delegator, &ids);
+
+        let mut incoming = storage::get_scoped_delegations_by_delegate(&env, &delegate);
+        incoming.push_back(id);
+        storage::set_scoped_delegations_by_delegate(&env, &delegate, &incoming);
 
         events::emit_scoped_delegation_created(&env, id, &delegator, &delegate, max_amount);
         Ok(id)

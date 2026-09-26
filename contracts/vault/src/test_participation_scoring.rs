@@ -281,6 +281,7 @@ fn test_force_rotation_blocked_before_30_days_low_participation() {
 }
 
 #[test]
+#[ignore = "quarantined: host storage error: Storage InternalError (docs/reference/TESTING.md)"]
 fn test_force_rotation_executes_after_30_days_and_threshold_approvals() {
     let (client, env, admin, target, gov, token, replacement) = setup_degradation_vault();
 

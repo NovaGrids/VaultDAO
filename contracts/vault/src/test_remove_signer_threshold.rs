@@ -194,6 +194,8 @@ fn test_remove_signer_via_proposal_operation_still_enforces_threshold() {
     assert_eq!(result, Err(Ok(VaultError::PhaseExecutionFailed)));
     assert!(client.is_signer(&signer1));
 
-    let rejected = client.get_proposal(&proposal_id);
-    assert_eq!(rejected.status, crate::types::ProposalStatus::Rejected);
+    // A failed invocation rolls back all of its writes, so the proposal is left
+    // exactly as it was (still Approved) rather than marked Rejected.
+    let after = client.get_proposal(&proposal_id);
+    assert_eq!(after.status, crate::types::ProposalStatus::Approved);
 }

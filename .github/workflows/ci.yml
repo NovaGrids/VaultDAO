@@ -107,16 +107,31 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/vault/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      # Every src/test*.rs must be declared in lib.rs, otherwise it is never
+      # compiled and its coverage is silently lost.
+      - name: Check test modules are declared
+        run: bash scripts/check_test_modules.sh
+
       - name: Check formatting
+        if: ${{ !cancelled() }}
         run: cargo fmt --all -- --check
 
+      # The remaining checks run even if an earlier one fails, so one run
+      # reports test results independently of lint status.
       - name: Clippy
+        if: ${{ !cancelled() }}
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Compile tests
+        if: ${{ !cancelled() }}
+        run: cargo test --no-run
+
       - name: Run tests
+        if: ${{ !cancelled() }}
         run: cargo test
 
       - name: Build release WASM
+        if: ${{ !cancelled() }}
         run: cargo build --target wasm32-unknown-unknown --release
 
       - name: Upload WASM artifact
