@@ -142,15 +142,16 @@ export class JobManager {
       const job = this.jobs.get(name);
       if (!job) continue;
 
+      let stopTimer: NodeJS.Timeout | undefined;
       try {
         await Promise.race([
           Promise.resolve(job.stop()),
-          new Promise<never>((_, reject) =>
-            setTimeout(
+          new Promise<never>((_, reject) => {
+            stopTimer = setTimeout(
               () => reject(new Error(`Stop timeout after ${timeoutMs}ms`)),
               timeoutMs,
-            ),
-          ),
+            );
+          }),
         ]);
 
         this.logger.info("job stopped", { job: job.name });
@@ -161,6 +162,8 @@ export class JobManager {
           error: errorMessage,
         });
         errors.push({ job: job.name, error: errorMessage });
+      } finally {
+        clearTimeout(stopTimer);
       }
     }
 

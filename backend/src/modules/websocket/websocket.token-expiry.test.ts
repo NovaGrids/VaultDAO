@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { startServer } from "../../server.js";
+import { stopTestServer } from "../../test-support/server.js";
 
 const mockEnv = {
   port: 0,
@@ -40,7 +41,8 @@ function waitForMessage(ws: WebSocket, predicate: (msg: any) => boolean): Promis
 }
 
 test("WebSocket Token Expiry Validation (Issue #1560)", async (t) => {
-  const { server, runtime } = await startServer(mockEnv as any);
+  const backend = await startServer(mockEnv as any);
+  const { server } = backend;
 
   if (!server.listening) {
     await new Promise((resolve) => server.once("listening", resolve));
@@ -49,11 +51,7 @@ test("WebSocket Token Expiry Validation (Issue #1560)", async (t) => {
   const address: any = server.address();
   const wsUrl = `ws://127.0.0.1:${address.port}`;
 
-  t.after(() => {
-    return new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-  });
+  t.after(() => stopTestServer(backend));
 
   await t.test("should accept valid token at connection time", async () => {
     const ws = new WebSocket(wsUrl);
@@ -103,7 +101,9 @@ test("WebSocket Token Expiry Validation (Issue #1560)", async (t) => {
     const subsMsg = await waitForMessage(ws, (m) => m.type === "subscriptions");
 
     assert.ok(Array.isArray(subsMsg.topics));
-    assert.ok(subsMsg.topics.includes("proposal_created"));
+    // Short topic names are normalised to their fully-qualified form.
+    assert.ok(subsMsg.topics.includes("notification:events:PROPOSAL_CREATED"));
+    assert.ok(subsMsg.topics.includes("notification:events:PROPOSAL_EXECUTED"));
 
     ws.close();
   });

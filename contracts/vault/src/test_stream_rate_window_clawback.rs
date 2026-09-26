@@ -157,8 +157,8 @@ fn test_clawed_back_stream_window_does_not_affect_new_streams() {
     let stream_2_info = client.get_stream(&stream_id_2);
     let stream_3_info = client.get_stream(&stream_id_3);
 
-    assert_eq!(stream_2_info.amount_total, 50_000i128);
-    assert_eq!(stream_3_info.amount_total, 50_000i128);
+    assert_eq!(stream_2_info.total_amount, 50_000i128);
+    assert_eq!(stream_3_info.total_amount, 50_000i128);
 }
 
 // ============================================================================

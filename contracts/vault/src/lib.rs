@@ -20,8 +20,11 @@ mod token;
 pub mod types;
 mod types_balance_snapshot;
 
-// #[cfg(test)]
-// mod test_testnet_integration;
+// Talks to a live Stellar testnet deployment, so it only builds with
+// `cargo test --features testnet` (see docs/guides/contracts/TESTNET_INTEGRATION.md
+// and the manual `Testnet Integration` workflow).
+#[cfg(all(test, feature = "testnet"))]
+mod test_testnet_integration;
 
 use errors::VaultError;
 use soroban_sdk::xdr::ToXdr;
@@ -13674,7 +13677,7 @@ impl VaultDAO {
     /// Update recovery configuration (DEPRECATED - use propose_recovery_config_change instead)
     /// This function is kept for backward compatibility but will reject all calls.
     pub fn set_recovery_config(
-        env: Env,
+        _env: Env,
         _admin: Address,
         _config: RecoveryConfig,
     ) -> Result<(), VaultError> {
@@ -14098,6 +14101,7 @@ impl VaultDAO {
 
     /// Get recovery config change proposal details (Issue #1702)
     pub fn get_recovery_cfg_proposal(env: Env, id: u64) -> Result<RecoveryConfigChangeProposal, VaultError> {
+    pub fn get_recovery_cfg_change_proposal(env: Env, id: u64) -> Result<RecoveryConfigChangeProposal, VaultError> {
         storage::get_recovery_config_change_proposal(&env, id)
     }
 

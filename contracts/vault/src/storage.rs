@@ -36,6 +36,11 @@ use crate::types::{
     StakeRecord, StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag,
     TemplateVarRef, TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics,
     VelocityConfig, VestingSchedule, VotingStrategy, WhitelistEntry,
+    ProposalTemplate, RecoveryConfigChangeProposal, RecoveryProposal, Reputation, ReputationConfig, RetryState, Role,
+    RoleAssignment, ScopedDelegation, SignerParticipationScore, SignerTier, StakeRecord,
+    StakingConfig, StreamRateWindow, Subscription, SwapProposal, SwapResult, Tag, TemplateVarRef,
+    TimeWeightedConfig, TokenLock, TokenSpendingConfig, VarTemplate, VaultMetrics, VelocityConfig,
+    VestingSchedule, VotingStrategy, WhitelistEntry,
 };
 use crate::types_balance_snapshot::BalanceSnapshot;
 

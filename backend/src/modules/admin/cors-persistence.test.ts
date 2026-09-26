@@ -215,11 +215,16 @@ test("CORS Allowlist Persistence (Issue #1558)", async (t) => {
       body: JSON.stringify({ origin: "*" }),
     });
 
-    // If we already have specific origins, wildcard should fail
+    // Specific origins already exist, so the wildcard must be rejected
+    assert.strictEqual(response.status, 400);
     const body = (await response.json()) as any;
-    if (!body.data.changed) {
-      assert.ok(body.data.origins.length > 0, "Should have existing origins");
-    }
+    assert.strictEqual(body.success, false);
+
+    const listResponse = await fetch(`${baseUrl}/api/v1/admin/cors/origins`, {
+      headers: { Authorization: `Bearer ${mockEnv.apiKey}` },
+    });
+    const listBody = (await listResponse.json()) as any;
+    assert.ok(!listBody.data.origins.includes("*"), "wildcard must not be added");
   });
 
   await t.test("should enforce CORS origin validation on connections", async () => {

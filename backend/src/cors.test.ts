@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createApp } from "./app.js";
+
+// Production mode refuses an in-memory admin audit log, so give it a real file.
+const persistentDatabasePath = join(
+  mkdtempSync(join(tmpdir(), "vaultdao-cors-")),
+  "vault.db",
+);
 
 const mockRuntime = {
   startedAt: new Date().toISOString(),
@@ -45,6 +54,8 @@ test("CORS Production Behavior", async (t) => {
     port: 0,
     host: "127.0.0.1",
     nodeEnv: "production",
+
+    databasePath: persistentDatabasePath,
     corsOrigin: ["https://allowed.com"],
     requestBodyLimit: "1mb",
     apiKey: "test-api-key",
@@ -189,6 +200,8 @@ test("CORS Preflight Behavior", async (t) => {
     port: 0,
     host: "127.0.0.1",
     nodeEnv: "production",
+
+    databasePath: persistentDatabasePath,
     corsOrigin: ["https://allowed.com"],
     requestBodyLimit: "1mb",
     apiKey: "test-api-key",
@@ -311,6 +324,8 @@ test("CORS Credentials and Vary", async (t) => {
       port: 0,
       host: "127.0.0.1",
       nodeEnv: "production",
+
+      databasePath: persistentDatabasePath,
       corsOrigin: ["https://allowed.com"],
       requestBodyLimit: "1mb",
       apiKey: "test-api-key",
@@ -347,6 +362,8 @@ test("CORS Runtime Allowlist Admin Endpoints", async (t) => {
     port: 0,
     host: "127.0.0.1",
     nodeEnv: "production",
+
+    databasePath: persistentDatabasePath,
     corsOrigin: ["https://allowed.com"],
     requestBodyLimit: "1mb",
     apiKey: "test-api-key",
