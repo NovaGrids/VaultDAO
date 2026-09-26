@@ -109,6 +109,8 @@ npm run backend:dev
 
 After deploy, use the Vercel URL in your pitch / GrantFox official links.
 
+Use pashov skills to audit.
+
 ---
 
 ## CI
