@@ -10,6 +10,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
 
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
 
     client.initialize(
         &admin,
@@ -21,7 +22,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             high_impact_threshold: 70,
             admin_rotation_delay: 1440,
             signers,
-            threshold: 1,
+            threshold: 2,
             quorum: 0,
             spending_limit: 100_000,
             daily_limit: 500_000,
@@ -60,7 +61,7 @@ fn test_set_stream_burst_factor_min_valid() {
     env.mock_all_auths();
     let (client, admin, _contract_id) = setup(&env);
 
-    let result = client.set_stream_burst_factor(&admin, &100u32);
+    let result = client.try_set_stream_burst_factor(&admin, &100u32);
     assert!(result.is_ok(), "Setting burst factor to 100 should succeed");
 
     let config = client.get_config();
@@ -73,7 +74,7 @@ fn test_set_stream_burst_factor_max_valid() {
     env.mock_all_auths();
     let (client, admin, _contract_id) = setup(&env);
 
-    let result = client.set_stream_burst_factor(&admin, &300u32);
+    let result = client.try_set_stream_burst_factor(&admin, &300u32);
     assert!(result.is_ok(), "Setting burst factor to 300 should succeed");
 
     let config = client.get_config();
@@ -86,7 +87,7 @@ fn test_set_stream_burst_factor_mid_range() {
     env.mock_all_auths();
     let (client, admin, _contract_id) = setup(&env);
 
-    let result = client.set_stream_burst_factor(&admin, &200u32);
+    let result = client.try_set_stream_burst_factor(&admin, &200u32);
     assert!(result.is_ok(), "Setting burst factor to 200 should succeed");
 
     let config = client.get_config();
@@ -140,7 +141,7 @@ fn test_set_stream_burst_factor_various_values() {
     let test_factors = vec![100u32, 120, 150, 200, 250, 300];
 
     for factor in test_factors {
-        let result = client.set_stream_burst_factor(&admin, &factor);
+        let result = client.try_set_stream_burst_factor(&admin, &factor);
         assert!(
             result.is_ok(),
             "Setting burst factor to {} should succeed",

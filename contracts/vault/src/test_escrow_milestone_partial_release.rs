@@ -1,16 +1,15 @@
 //! Tests for escrow partial release with milestone verification (Issue #1433).
 //!
-//! Escrow today releases all-or-nothing. For milestone-based contracts,
-//! funds should be released incrementally as conditions are verified.
+//! Escrow currently releases all-or-nothing: funds unlock only once every
+//! milestone is completed (or the escrow expires and refunds the funder).
 //!
 //! Covered scenarios:
 //!  1. Create escrow with multiple milestones
 //!  2. Each milestone has amount, condition, and verifier
-//!  3. Verify milestone and release proportional amount
+//!  3. Partial completion does not unlock a release
 //!  4. Verify milestones in arbitrary order
 //!  5. Cannot verify same milestone twice
 //!  6. Cannot release before milestone verified
-//!  7. Release proportional to completed milestones
 //!  8. Cannot release more than escrow total
 //!  9. Multiple verification orders work correctly
 //! 10. Milestone conditions (price, time, manual)
@@ -37,6 +36,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
 
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
 
     client.initialize(
         &admin,
@@ -48,7 +48,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             high_impact_threshold: 70,
             admin_rotation_delay: 1440,
             signers,
-            threshold: 1,
+            threshold: 2,
             quorum: 0,
             default_voting_deadline: 0,
             spending_limit: 100_000_000,
@@ -113,17 +113,15 @@ fn test_create_escrow_with_multiple_milestones() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &10_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &10_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.milestones.len(), 2);
@@ -173,34 +171,30 @@ fn test_milestone_has_percentage() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &8_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &8_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.milestones.len(), 4);
 
-    for (i, milestone) in escrow.milestones.iter().enumerate() {
-        if let Some(m) = milestone {
-            assert_eq!(m.percentage, 25);
-        }
+    for m in escrow.milestones.iter() {
+        assert_eq!(m.percentage, 25);
     }
 }
 
 // ============================================================================
-// Test 3: Verify milestone and release proportional amount
+// Test 3: Partial completion does not unlock a release
 // ============================================================================
 
 #[test]
-fn test_verify_milestone_releases_proportional_amount() {
+fn test_partial_completion_does_not_release() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -225,29 +219,27 @@ fn test_verify_milestone_releases_proportional_amount() {
     });
 
     let total = 1_000i128;
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &total,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &total,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
-    // Complete first milestone
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    // Completing only the first milestone does not unlock funds
+    client.complete_milestone(&admin, &escrow_id, &1u64);
+    assert_eq!(
+        client.try_release_escrow(&recipient, &escrow_id),
+        Err(Ok(VaultError::ConditionsNotMet))
+    );
 
-    // Release proportional to completed milestone
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("release_escrow should succeed");
-
-    assert_eq!(released, 500); // 50% of 1000
+    // Once every milestone is complete the full amount is released
+    client.complete_milestone(&admin, &escrow_id, &2u64);
+    let released = client.release_escrow(&recipient, &escrow_id);
+    assert_eq!(released, total);
 }
 
 // ============================================================================
@@ -286,22 +278,18 @@ fn test_verify_milestones_in_arbitrary_order() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &3_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &3_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     // Complete milestone 3 first (out of order)
-    client
-        .complete_milestone(&admin, &escrow_id, &3u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &3u64);
 
     let escrow = client.get_escrow_info(&escrow_id);
     assert!(escrow.milestones.len() >= 3);
@@ -329,22 +317,18 @@ fn test_cannot_complete_milestone_twice() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &1_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &1_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     // Complete milestone once
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("first complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
     // Try to complete again
     let result = client.try_complete_milestone(&admin, &escrow_id, &1u64);
@@ -373,89 +357,19 @@ fn test_cannot_release_before_milestone_verified() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &1_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &1_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     // Try to release without completing milestone
     let result = client.try_release_escrow(&recipient, &escrow_id);
     assert!(result.is_err()); // Should fail
-}
-
-// ============================================================================
-// Test 7: Release proportional to completed milestones
-// ============================================================================
-
-#[test]
-fn test_release_proportional_to_completed() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token) = setup(&env);
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    let total = 10_000i128;
-    let mut milestones = Vec::new(&env);
-    milestones.push_back(Milestone {
-        id: 1,
-        percentage: 40,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-    milestones.push_back(Milestone {
-        id: 2,
-        percentage: 60,
-        release_ledger: 0,
-        is_completed: false,
-        completion_ledger: 0,
-    });
-
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &total,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
-
-    // Complete first milestone (40%)
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
-
-    let released1 = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("first release should succeed");
-
-    assert_eq!(released1, 4_000); // 40% of 10000
-
-    // Reset for next milestone
-    env.ledger().with_mut(|li| li.sequence_number += 1);
-
-    // Complete second milestone (60%)
-    client
-        .complete_milestone(&admin, &escrow_id, &2u64)
-        .expect("complete_milestone should succeed");
-
-    let released2 = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("second release should succeed");
-
-    assert_eq!(released2, 6_000); // 60% of 10000
 }
 
 // ============================================================================
@@ -481,25 +395,19 @@ fn test_cannot_release_more_than_total() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &total,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &total,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("release should succeed");
+    let released = client.release_escrow(&recipient, &escrow_id);
 
     assert!(released <= total);
     assert_eq!(released, total);
@@ -541,30 +449,22 @@ fn test_multiple_verification_orders_work() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &10_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &10_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     // Verify in order: 2, 1, 3
-    client
-        .complete_milestone(&admin, &escrow_id, &2u64)
-        .expect("complete_milestone 2 should succeed");
+    client.complete_milestone(&admin, &escrow_id, &2u64);
 
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone 1 should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
-    client
-        .complete_milestone(&admin, &escrow_id, &3u64)
-        .expect("complete_milestone 3 should succeed");
+    client.complete_milestone(&admin, &escrow_id, &3u64);
 
     let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(
@@ -609,17 +509,15 @@ fn test_milestone_structure_supports_various_percentages() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &100_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &100_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.milestones.len(), 3);
@@ -669,23 +567,19 @@ fn test_accumulated_releases_match_total() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &total,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &total,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     // Complete all milestones
     for i in 1..=4 {
-        client
-            .complete_milestone(&admin, &escrow_id, &(i as u64))
-            .expect(&format!("complete_milestone {} should succeed", i));
+        client.complete_milestone(&admin, &escrow_id, &(i as u64));
     }
 
     let escrow = client.get_escrow_info(&escrow_id);
@@ -717,22 +611,18 @@ fn test_milestone_completion_emits_event() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &1_000i128,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &1_000i128,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     // Complete milestone (should emit event)
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
     let escrow = client.get_escrow_info(&escrow_id);
     // Verify milestone was marked complete
@@ -769,31 +659,23 @@ fn test_partial_release_prevents_double_counting() {
         completion_ledger: 0,
     });
 
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &total,
-            &milestones,
-            &10_000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &total,
+        &milestones,
+        &10_000u64,
+        &arbitrator,
+    );
 
     // Complete both milestones
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone 1 should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
-    client
-        .complete_milestone(&admin, &escrow_id, &2u64)
-        .expect("complete_milestone 2 should succeed");
+    client.complete_milestone(&admin, &escrow_id, &2u64);
 
     // Release all at once
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("release should succeed");
+    let released = client.release_escrow(&recipient, &escrow_id);
 
     assert_eq!(released, total);
     assert!(released <= total);

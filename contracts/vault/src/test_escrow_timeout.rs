@@ -1,7 +1,22 @@
 use super::*;
-use crate::types::EscrowStatus;
+use crate::types::{EscrowStatus, Milestone};
 use crate::{VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env, Symbol, Vec,
+};
+
+fn single_milestone(env: &Env) -> Vec<Milestone> {
+    let mut milestones = Vec::new(env);
+    milestones.push_back(Milestone {
+        id: 1,
+        percentage: 100,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    milestones
+}
 
 fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
@@ -10,6 +25,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
 
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
 
     client.initialize(
         &admin,
@@ -21,7 +37,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             high_impact_threshold: 70,
             admin_rotation_delay: 1440,
             signers,
-            threshold: 1,
+            threshold: 2,
             quorum: 0,
             spending_limit: 100_000,
             daily_limit: 500_000,
@@ -99,10 +115,9 @@ fn test_escrow_auto_resolve_refunds_after_timeout() {
         &recipient,
         &token,
         &5000i128,
-        &1000u64, // expires_at
+        &single_milestone(&env),
+        &1000u64,
         &arbitrator,
-        &Vec::new(&env),
-        &Vec::new(&env),
     );
 
     // Dispute the escrow
@@ -110,15 +125,15 @@ fn test_escrow_auto_resolve_refunds_after_timeout() {
 
     // Move time forward beyond timeout (1000 ledgers)
     env.ledger().with_mut(|ledger| {
-        ledger.sequence = 2000;
+        ledger.sequence_number = 2000;
     });
 
     // Auto-resolve should succeed
-    let result = client.auto_resolve_escrow(&escrow_id);
+    let result = client.try_auto_resolve_escrow(&escrow_id);
     assert!(result.is_ok(), "Auto-resolve should succeed after timeout");
 
     // Verify escrow is refunded
-    let escrow = client.get_escrow_info(&escrow_id).unwrap();
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(
         escrow.status,
         EscrowStatus::Refunded,
@@ -153,17 +168,16 @@ fn test_escrow_auto_resolve_fails_before_timeout() {
         &recipient,
         &token,
         &5000i128,
+        &single_milestone(&env),
         &2000u64,
         &arbitrator,
-        &Vec::new(&env),
-        &Vec::new(&env),
     );
 
     // Dispute the escrow
     client.dispute_escrow(&funder, &escrow_id, &Symbol::new(&env, "test_dispute"));
 
     // Try to auto-resolve before timeout - should fail
-    let result = client.auto_resolve_escrow(&escrow_id);
+    let result = client.try_auto_resolve_escrow(&escrow_id);
     assert!(result.is_err(), "Auto-resolve should fail before timeout");
 }
 
@@ -190,19 +204,18 @@ fn test_escrow_auto_resolve_only_refunds_disputed() {
         &recipient,
         &token,
         &5000i128,
+        &single_milestone(&env),
         &2000u64,
         &arbitrator,
-        &Vec::new(&env),
-        &Vec::new(&env),
     );
 
     // Move time forward beyond timeout
     env.ledger().with_mut(|ledger| {
-        ledger.sequence = 2000;
+        ledger.sequence_number = 2000;
     });
 
     // Try to auto-resolve non-disputed escrow - should fail
-    let result = client.auto_resolve_escrow(&escrow_id);
+    let result = client.try_auto_resolve_escrow(&escrow_id);
     assert!(
         result.is_err(),
         "Auto-resolve should fail for non-disputed escrow"

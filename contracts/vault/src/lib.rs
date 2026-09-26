@@ -77,14 +77,6 @@ use helpers::*;
 // #[cfg(test)]
 // mod test_disputes;
 // #[cfg(test)]
-// mod test_escrow_expiration;
-// #[cfg(test)]
-// mod test_escrow_milestone_partial_release;
-// #[cfg(test)]
-// mod test_escrow_multisig_arbitration;
-// #[cfg(test)]
-// mod test_escrow_timeout;
-// #[cfg(test)]
 // mod test_fees;
 // #[cfg(test)]
 // mod test_gas_price_oracle;
@@ -97,21 +89,9 @@ use helpers::*;
 // #[cfg(test)]
 // mod test_notification_prefs;
 // #[cfg(test)]
-// mod test_recurring;
-// #[cfg(test)]
-// mod test_recurring_conditions;
-// #[cfg(test)]
-// mod test_recurring_alerts;
-// #[cfg(test)]
-// mod test_recurring_dryrun;
-// #[cfg(test)]
-// mod test_escrow_multisig;
-// #[cfg(test)]
 // mod test_multitoken_limits;
 // #[cfg(test)]
 // mod test_multitoken_swap;
-// #[cfg(test)]
-// mod test_stream_clawback;
 // #[cfg(test)]
 // mod test_multitoken_insurance;
 // #[cfg(test)]
@@ -120,8 +100,6 @@ use helpers::*;
 // mod test_reentrancy;
 // #[cfg(test)]
 // mod test_retry;
-// #[cfg(test)]
-// mod test_stream_burst_config;
 // #[cfg(test)]
 // mod test_streaming;
 // #[cfg(test)]
@@ -145,19 +123,11 @@ mod test_stream_vesting_invariants_proptest;
 #[cfg(test)]
 mod test_spending_refund_buckets;
 // #[cfg(test)]
-// mod test_fan_out_streams;
-// #[cfg(test)]
-// mod test_stream_pause_ttl;
-// #[cfg(test)]
-// mod test_escrow_voting;
-// #[cfg(test)]
 // mod test_token_allowlist;
 // #[cfg(test)]
 // mod test_overflow_checks;
 // #[cfg(test)]
 // mod test_delegation_depth;
-// #[cfg(test)]
-// mod test_stream_autocomplete;
 
 // #[cfg(test)]
 // #[cfg(test)]
@@ -187,20 +157,6 @@ mod test_cross_vault;
 #[cfg(test)]
 mod test_disputes;
 // #[cfg(test)]
-// mod test_escrow_expiration;
-// #[cfg(test)]
-// mod test_escrow_milestone_partial_release;
-// #[cfg(test)]
-// mod test_escrow_multisig;
-// #[cfg(test)]
-// mod test_escrow_multisig_arbitration;
-// #[cfg(test)]
-// mod test_escrow_timeout;
-// #[cfg(test)]
-// mod test_escrow_voting;
-// #[cfg(test)]
-// mod test_fan_out_streams;
-// #[cfg(test)]
 // mod test_fee_cache;
 #[cfg(test)]
 mod test_escrow_counterparty_acknowledgment;
@@ -229,25 +185,11 @@ mod test_notification_prefs;
 // #[cfg(test)]
 // mod test_rbac_consistency;
 // #[cfg(test)]
-// mod test_recurring;
-// #[cfg(test)]
-// mod test_recurring_alerts;
-// #[cfg(test)]
-// mod test_recurring_conditions;
-// #[cfg(test)]
-// mod test_recurring_dryrun;
-// #[cfg(test)]
 // mod test_reentrancy;
 // #[cfg(test)]
 // mod test_retry;
 #[cfg(test)]
 mod test_staking_slashing;
-// #[cfg(test)]
-// mod test_stream_burst_config;
-// #[cfg(test)]
-// mod test_stream_clawback;
-// #[cfg(test)]
-// mod test_stream_pause_ttl;
 #[cfg(test)]
 mod test_streaming;
 #[cfg(test)]
@@ -256,6 +198,7 @@ mod test_trigger_stream_payment_accrual;
 mod test_cold_signature_age;
 #[cfg(test)]
 mod test_participation_scoring;
+#[cfg(test)]
 mod test_recovery_role_revocation;
 #[cfg(test)]
 mod test_threshold_min_init;
@@ -270,8 +213,6 @@ mod test_update_config_signers;
 #[cfg(test)]
 mod test_recurring_payment_max_total_amount;
 #[cfg(test)]
-mod test_remove_signer_threshold;
-#[cfg(test)]
 mod test_signers_with_roles;
 #[cfg(test)]
 mod test_subscriptions;
@@ -281,8 +222,6 @@ mod test_supersession_chain;
 mod test_tag_taxonomy;
 #[cfg(test)]
 mod test_tags;
-#[cfg(test)]
-mod test_threshold_min_init;
 #[cfg(test)]
 mod test_whitelist_proposal;
 #[cfg(test)]
@@ -300,10 +239,6 @@ mod test_vault_template;
 #[cfg(test)]
 mod test_velocity_history_authorization;
 #[cfg(test)]
-mod test_treasurer_pause_recurring;
-#[cfg(test)]
-mod test_stream_rate_window_clawback;
-#[cfg(test)]
 mod test_execution_recipient_recheck;
 #[cfg(test)]
 mod test_swap_price_impact;
@@ -311,6 +246,33 @@ mod test_swap_price_impact;
 mod test_notification_index_cap;
 #[cfg(test)]
 mod test_earmarked_balances;
+#[cfg(test)]
+mod test_stream_burst_config;
+#[cfg(test)]
+mod test_stream_clawback;
+#[cfg(test)]
+mod test_stream_pause_ttl;
+#[cfg(test)]
+mod test_fan_out_streams;
+#[cfg(test)]
+mod test_stream_autocomplete;
+#[cfg(test)]
+mod test_escrow_expiration;
+#[cfg(test)]
+mod test_escrow_milestone_partial_release;
+#[cfg(test)]
+mod test_escrow_multisig_arbitration;
+#[cfg(test)]
+mod test_escrow_timeout;
+#[cfg(test)]
+mod test_escrow_voting;
+#[cfg(test)]
+mod test_recurring;
+#[cfg(test)]
+mod test_escrows_by_recipient;
+#[cfg(test)]
+mod test_time_weighted_lock_token;
+#[cfg(test)]
 mod test_voting_deadline;
 
 #[cfg(test)]
@@ -13508,6 +13470,13 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+        // Only the configured, supported governance token grants voting power (#1705)
+        if config.governance_token.as_ref() != Some(&token)
+            || !storage::get_config(&env)?.supported_tokens.contains(&token)
+        {
+            return Err(VaultError::TokenNotSupported);
+        }
+
         // Check if user already has an active lock
         if let Some(existing_lock) = storage::get_token_lock(&env, &owner) {
             if existing_lock.is_active {
@@ -14128,7 +14097,7 @@ impl VaultDAO {
     }
 
     /// Get recovery config change proposal details (Issue #1702)
-    pub fn get_recovery_config_change_proposal(env: Env, id: u64) -> Result<RecoveryConfigChangeProposal, VaultError> {
+    pub fn get_recovery_cfg_proposal(env: Env, id: u64) -> Result<RecoveryConfigChangeProposal, VaultError> {
         storage::get_recovery_config_change_proposal(&env, id)
     }
 
@@ -15986,7 +15955,7 @@ impl VaultDAO {
 
         let sub = Subscription {
             id,
-            subscriber,
+            subscriber: subscriber.clone(),
             service_provider: provider,
             tier: tier.clone(),
             token,

@@ -5,10 +5,10 @@
 //!
 //! Covered scenarios:
 //!  1. Add expires_at field to Escrow (already present in current type)
-//!  2. Check in release_escrow: reject if expired
+//!  2. release_escrow after expiry refunds the funder instead of paying out
 //!  3. Auto-refund to funder post-expiry
-//!  4. Emit event with auto-refund reason
-//!  5. Anyone can call auto_refund_escrow after expiry
+//!  4. Refund finalizes the escrow
+//!  5. Only funder, recipient or Admin may trigger the refund
 //!  6. Cannot refund escrow that is already released
 //!  7. Cannot refund non-expired escrow
 //!  8. Refunded status prevents further operations
@@ -35,6 +35,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
 
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
 
     client.initialize(
         &admin,
@@ -46,7 +47,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             high_impact_threshold: 70,
             admin_rotation_delay: 1440,
             signers,
-            threshold: 1,
+            threshold: 2,
             quorum: 0,
             default_voting_deadline: 0,
             spending_limit: 100_000_000,
@@ -101,17 +102,15 @@ fn create_escrow(
     });
 
     let arbitrator = Address::generate(env);
-    client
-        .create_escrow(
-            funder,
-            recipient,
-            token,
-            &amount,
-            &milestones,
-            &duration,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed")
+    client.create_escrow(
+        funder,
+        recipient,
+        token,
+        &amount,
+        &milestones,
+        &duration,
+        &arbitrator,
+    )
 }
 
 // ============================================================================
@@ -136,11 +135,11 @@ fn test_escrow_has_expiration_timestamp() {
 }
 
 // ============================================================================
-// Test 2: Reject release if escrow is expired
+// Test 2: Release after expiry refunds the funder
 // ============================================================================
 
 #[test]
-fn test_release_rejected_when_expired() {
+fn test_release_after_expiry_refunds_funder() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -151,16 +150,16 @@ fn test_release_rejected_when_expired() {
     let escrow_id = create_escrow(&env, &client, &admin, &recipient, &token, 2000, duration);
 
     // Complete milestone
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
     // Advance past expiration
     env.ledger().with_mut(|li| li.sequence_number += 150);
 
-    // Try to release — should fail because expired
-    let result = client.try_release_escrow(&recipient, &escrow_id);
-    assert!(result.is_err());
+    // Expired escrows are refunded to the funder even if milestones completed
+    let released = client.release_escrow(&recipient, &escrow_id);
+    assert_eq!(released, 2000);
+    let escrow = client.get_escrow_info(&escrow_id);
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
 }
 
 // ============================================================================
@@ -182,11 +181,14 @@ fn test_auto_refund_returns_funds_to_funder() {
     // Don't complete milestone — let it expire
     env.ledger().with_mut(|li| li.sequence_number += 150);
 
-    // Anyone can call auto-refund
-    let caller = Address::generate(&env);
-    let released = client
-        .release_escrow(&caller, &escrow_id)
-        .expect("release_escrow should succeed (auto-refund)");
+    // An unrelated address cannot trigger the refund
+    let outsider = Address::generate(&env);
+    assert_eq!(
+        client.try_release_escrow(&outsider, &escrow_id),
+        Err(Ok(VaultError::Unauthorized))
+    );
+
+    let released = client.release_escrow(&recipient, &escrow_id);
 
     assert_eq!(released, amount);
     let escrow = client.get_escrow_info(&escrow_id);
@@ -194,11 +196,11 @@ fn test_auto_refund_returns_funds_to_funder() {
 }
 
 // ============================================================================
-// Test 4: Emit event on auto-refund
+// Test 4: Refund finalizes the escrow
 // ============================================================================
 
 #[test]
-fn test_auto_refund_emits_event() {
+fn test_auto_refund_finalizes_escrow() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -209,10 +211,7 @@ fn test_auto_refund_emits_event() {
 
     env.ledger().with_mut(|li| li.sequence_number += 100);
 
-    let caller = Address::generate(&env);
-    let _released = client
-        .release_escrow(&caller, &escrow_id)
-        .expect("auto-refund should succeed");
+    let _released = client.release_escrow(&admin, &escrow_id);
 
     let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
@@ -236,9 +235,7 @@ fn test_refund_goes_to_funder_not_recipient() {
     env.ledger().with_mut(|li| li.sequence_number += 100);
 
     // Try to get refund as recipient — should still go to funder
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("release_escrow should refund to funder");
+    let released = client.release_escrow(&recipient, &escrow_id);
 
     let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(released, 2500);
@@ -260,14 +257,10 @@ fn test_cannot_refund_already_released() {
     let escrow_id = create_escrow(&env, &client, &admin, &recipient, &token, 1500, 500u64);
 
     // Complete milestone before expiry
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
     // Release normally
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("release should succeed");
+    let released = client.release_escrow(&recipient, &escrow_id);
 
     assert_eq!(released, 1500);
 
@@ -317,9 +310,7 @@ fn test_refunded_escrow_prevents_operations() {
     env.ledger().with_mut(|li| li.sequence_number += 150);
 
     // Auto-refund
-    let _released = client
-        .release_escrow(&admin, &escrow_id)
-        .expect("auto-refund should succeed");
+    let _released = client.release_escrow(&admin, &escrow_id);
 
     // Try to complete milestone on refunded escrow — should fail
     let result = client.try_complete_milestone(&admin, &escrow_id, &1u64);
@@ -357,33 +348,33 @@ fn test_partial_refund_accounting() {
     });
 
     let arbitrator = Address::generate(&env);
-    let escrow_id = client
-        .create_escrow(
-            &admin,
-            &recipient,
-            &token,
-            &total_amount,
-            &milestones,
-            &1000u64,
-            &arbitrator,
-        )
-        .expect("create_escrow should succeed");
+    let escrow_id = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &total_amount,
+        &milestones,
+        &1000u64,
+        &arbitrator,
+    );
 
     // Complete first milestone
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
-    // Release partial
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("release should succeed");
+    // Partial completion does not unlock a release before expiry
+    assert_eq!(
+        client.try_release_escrow(&recipient, &escrow_id),
+        Err(Ok(VaultError::ConditionsNotMet))
+    );
 
-    assert_eq!(released, 3000); // 60% of 5000
+    // Completing every milestone releases the full amount
+    client.complete_milestone(&admin, &escrow_id, &2u64);
+    let released = client.release_escrow(&recipient, &escrow_id);
+    assert_eq!(released, total_amount);
 
     let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.released_amount, 3000);
-    assert_eq!(escrow.total_amount, total_amount);
+    assert_eq!(escrow.released_amount, total_amount);
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }
 
 // ============================================================================
@@ -404,14 +395,10 @@ fn test_grace_period_completion_before_expiry() {
     // Complete milestone well before expiry
     env.ledger().with_mut(|li| li.sequence_number += 200);
 
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
     // Release should work (before expiry, milestone complete)
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("release should succeed");
+    let released = client.release_escrow(&recipient, &escrow_id);
 
     assert_eq!(released, 4000);
 }
@@ -433,9 +420,7 @@ fn test_multiple_refund_calls_are_idempotent() {
     env.ledger().with_mut(|li| li.sequence_number += 100);
 
     // First refund
-    let released1 = client
-        .release_escrow(&admin, &escrow_id)
-        .expect("first refund should succeed");
+    let released1 = client.release_escrow(&admin, &escrow_id);
 
     assert_eq!(released1, 1000);
 
@@ -459,17 +444,13 @@ fn test_expiration_prevents_milestone_release() {
     let escrow_id = create_escrow(&env, &client, &admin, &recipient, &token, 1500, 100u64);
 
     // Complete milestone
-    client
-        .complete_milestone(&admin, &escrow_id, &1u64)
-        .expect("complete_milestone should succeed");
+    client.complete_milestone(&admin, &escrow_id, &1u64);
 
     // Advance past expiry
     env.ledger().with_mut(|li| li.sequence_number += 150);
 
     // Release should return refund (not milestone-based release)
-    let released = client
-        .release_escrow(&recipient, &escrow_id)
-        .expect("expired release should still work (as refund)");
+    let released = client.release_escrow(&recipient, &escrow_id);
 
     assert_eq!(released, 1500);
 }

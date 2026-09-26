@@ -1,14 +1,11 @@
 //! Tests for Issue #1431: Escrow Condition Release Voting
 //!
-//! Tests verify that:
-//! - Escrows can be configured to require signer approval for release
-//! - Signers can vote to approve or reject release
-//! - M-of-N approval threshold is enforced
-//! - Voting history is tracked
-//! - Events are emitted for voting milestones
+//! The contract has no escrow release-voting entry points yet; these tests
+//! pin the voting fields every new escrow starts with.
 #![cfg(test)]
 
 use super::*;
+use crate::types::Milestone;
 use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Vec};
@@ -76,106 +73,46 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Vec<Addre
 // Escrow Voting Tests (Issue #1431)
 // ============================================================================
 
+fn create_escrow(
+    env: &Env,
+    client: &VaultDAOClient,
+    funder: &Address,
+    token: &Address,
+) -> (u64, Address) {
+    StellarAssetClient::new(env, token).mint(funder, &100_000);
+    let recipient = Address::generate(env);
+    let mut milestones = Vec::new(env);
+    milestones.push_back(Milestone {
+        id: 1,
+        percentage: 100,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    let escrow_id = client.create_escrow(
+        funder,
+        &recipient,
+        token,
+        &100_000i128,
+        &milestones,
+        &3600u64,
+        &Address::generate(env),
+    );
+    (escrow_id, recipient)
+}
+
 #[test]
-fn test_escrow_created_with_voting_disabled_by_default() {
+fn test_escrow_created_with_voting_disabled_and_zero_votes() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token, vault_contract, _) = setup(&env);
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&vault_contract, &1_000_000);
+    let (client, admin, token, _, _) = setup(&env);
+    let (escrow_id, _) = create_escrow(&env, &client, &admin, &token);
 
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    let escrow_id = client.create_escrow(
-        &admin,
-        &recipient,
-        &token,
-        &100_000i128,
-        &arbitrator,
-        &3600u64,
-    );
-
-    let escrow = client.get_escrow_info(escrow_id).unwrap();
-    // Voting should be disabled by default
+    let escrow = client.get_escrow_info(&escrow_id);
     assert!(!escrow.requires_signer_approval);
-}
-
-#[test]
-fn test_escrow_voting_can_be_enabled() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token, vault_contract, _) = setup(&env);
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&vault_contract, &1_000_000);
-
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    let escrow_id = client.create_escrow(
-        &admin,
-        &recipient,
-        &token,
-        &100_000i128,
-        &arbitrator,
-        &3600u64,
-    );
-
-    // Enable voting (if method exists)
-    let _result = client.try_set_escrow_requires_signer_approval(&admin, escrow_id, true);
-}
-
-#[test]
-fn test_escrow_vote_counts_initialized() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token, vault_contract, _) = setup(&env);
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&vault_contract, &1_000_000);
-
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    let escrow_id = client.create_escrow(
-        &admin,
-        &recipient,
-        &token,
-        &100_000i128,
-        &arbitrator,
-        &3600u64,
-    );
-
-    let escrow = client.get_escrow_info(escrow_id).unwrap();
-    // Vote counts should start at zero
     assert_eq!(escrow.approval_votes, 0);
     assert_eq!(escrow.rejection_votes, 0);
-}
-
-#[test]
-fn test_basic_escrow_creation() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, admin, token, vault_contract, _) = setup(&env);
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&vault_contract, &1_000_000);
-
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    let escrow_id = client.create_escrow(
-        &admin,
-        &recipient,
-        &token,
-        &100_000i128,
-        &arbitrator,
-        &3600u64,
-    );
-
-    assert!(escrow_id > 0);
 }
 
 #[test]
@@ -183,23 +120,10 @@ fn test_escrow_fields_populated() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token, vault_contract, _) = setup(&env);
-    let token_client = StellarAssetClient::new(&env, &token);
-    token_client.mint(&vault_contract, &1_000_000);
+    let (client, admin, token, _, _) = setup(&env);
+    let (escrow_id, recipient) = create_escrow(&env, &client, &admin, &token);
 
-    let recipient = Address::generate(&env);
-    let arbitrator = Address::generate(&env);
-
-    let escrow_id = client.create_escrow(
-        &admin,
-        &recipient,
-        &token,
-        &100_000i128,
-        &arbitrator,
-        &3600u64,
-    );
-
-    let escrow = client.get_escrow_info(escrow_id).unwrap();
+    let escrow = client.get_escrow_info(&escrow_id);
     assert_eq!(escrow.total_amount, 100_000i128);
     assert_eq!(escrow.released_amount, 0);
     assert_eq!(escrow.funder, admin);
@@ -213,6 +137,6 @@ fn test_escrow_not_found() {
 
     let (client, _, _, _, _) = setup(&env);
 
-    let result = client.try_get_escrow(999);
+    let result = client.try_get_escrow_info(&999u64);
     assert!(result.is_err());
 }

@@ -1,10 +1,10 @@
-//! Tests for Issue #1541: Add `get_escrows_by_recipient` Query Function
+//! Tests for Issue #1541: query escrows by recipient (`get_recipient_escrows`)
 #![cfg(test)]
 
 use super::*;
-use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{Milestone, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Symbol, Vec};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Vec};
 
 fn setup_with_escrows(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
@@ -30,7 +30,7 @@ fn setup_with_escrows(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Addre
             high_impact_threshold: 70,
             admin_rotation_delay: 1440,
             signers,
-            threshold: 1,
+            threshold: 2,
             quorum: 0,
             quorum_percentage: 0,
             default_voting_deadline: 0,
@@ -65,6 +65,18 @@ fn setup_with_escrows(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Addre
     (client, admin, sender, token, contract_id)
 }
 
+fn one_milestone(env: &Env) -> Vec<Milestone> {
+    let mut milestones = Vec::new(env);
+    milestones.push_back(Milestone {
+        id: 1,
+        percentage: 100,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    milestones
+}
+
 #[test]
 fn test_get_escrows_by_recipient_empty_initially() {
     let env = Env::default();
@@ -73,8 +85,11 @@ fn test_get_escrows_by_recipient_empty_initially() {
     let (_client, _admin, _sender, _token, _contract_id) = setup_with_escrows(&env);
     let recipient = Address::generate(&env);
 
-    let escrows = _client.get_escrows_by_recipient(&recipient);
-    assert!(escrows.is_empty(), "Recipient should have no escrows initially");
+    let escrows = _client.get_recipient_escrows(&recipient);
+    assert!(
+        escrows.is_empty(),
+        "Recipient should have no escrows initially"
+    );
 }
 
 #[test]
@@ -82,7 +97,7 @@ fn test_get_escrows_by_recipient_single_escrow() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, sender, token, contract_id) = setup_with_escrows(&env);
+    let (client, _admin, sender, token, _contract_id) = setup_with_escrows(&env);
     let recipient = Address::generate(&env);
 
     // Mint funds to sender
@@ -94,17 +109,14 @@ fn test_get_escrows_by_recipient_single_escrow() {
         &recipient,
         &token,
         &500i128,
+        &one_milestone(&env),
         &100u64,
-        &Symbol::new(&env, "test"),
+        &Address::generate(&env),
     );
 
     // Query escrows by recipient
-    let escrows = client.get_escrows_by_recipient(&recipient);
-    assert_eq!(
-        escrows.len(),
-        1,
-        "Recipient should have exactly one escrow"
-    );
+    let escrows = client.get_recipient_escrows(&recipient);
+    assert_eq!(escrows.len(), 1, "Recipient should have exactly one escrow");
     assert_eq!(escrows.get(0).unwrap(), escrow_id);
 }
 
@@ -125,8 +137,9 @@ fn test_get_escrows_by_recipient_multiple_escrows() {
         &recipient,
         &token,
         &500i128,
+        &one_milestone(&env),
         &100u64,
-        &Symbol::new(&env, "escrow1"),
+        &Address::generate(&env),
     );
 
     let escrow_id_2 = client.create_escrow(
@@ -134,8 +147,9 @@ fn test_get_escrows_by_recipient_multiple_escrows() {
         &recipient,
         &token,
         &600i128,
+        &one_milestone(&env),
         &200u64,
-        &Symbol::new(&env, "escrow2"),
+        &Address::generate(&env),
     );
 
     let escrow_id_3 = client.create_escrow(
@@ -143,12 +157,13 @@ fn test_get_escrows_by_recipient_multiple_escrows() {
         &recipient,
         &token,
         &700i128,
+        &one_milestone(&env),
         &300u64,
-        &Symbol::new(&env, "escrow3"),
+        &Address::generate(&env),
     );
 
     // Query escrows by recipient
-    let escrows = client.get_escrows_by_recipient(&recipient);
+    let escrows = client.get_recipient_escrows(&recipient);
     assert_eq!(
         escrows.len(),
         3,
@@ -178,8 +193,9 @@ fn test_get_escrows_by_recipient_different_recipients_isolated() {
         &recipient_a,
         &token,
         &500i128,
+        &one_milestone(&env),
         &100u64,
-        &Symbol::new(&env, "a1"),
+        &Address::generate(&env),
     );
 
     let escrow_a_2 = client.create_escrow(
@@ -187,8 +203,9 @@ fn test_get_escrows_by_recipient_different_recipients_isolated() {
         &recipient_a,
         &token,
         &600i128,
+        &one_milestone(&env),
         &200u64,
-        &Symbol::new(&env, "a2"),
+        &Address::generate(&env),
     );
 
     // Create escrows for recipient B
@@ -197,18 +214,19 @@ fn test_get_escrows_by_recipient_different_recipients_isolated() {
         &recipient_b,
         &token,
         &700i128,
+        &one_milestone(&env),
         &300u64,
-        &Symbol::new(&env, "b1"),
+        &Address::generate(&env),
     );
 
     // Query for recipient A
-    let escrows_a = client.get_escrows_by_recipient(&recipient_a);
+    let escrows_a = client.get_recipient_escrows(&recipient_a);
     assert_eq!(escrows_a.len(), 2, "Recipient A should have 2 escrows");
     assert_eq!(escrows_a.get(0).unwrap(), escrow_a_1);
     assert_eq!(escrows_a.get(1).unwrap(), escrow_a_2);
 
     // Query for recipient B
-    let escrows_b = client.get_escrows_by_recipient(&recipient_b);
+    let escrows_b = client.get_recipient_escrows(&recipient_b);
     assert_eq!(escrows_b.len(), 1, "Recipient B should have 1 escrow");
     assert_eq!(escrows_b.get(0).unwrap(), escrow_b_1);
 }
@@ -229,19 +247,20 @@ fn test_get_escrows_by_recipient_sender_has_no_escrows_as_recipient() {
         &recipient,
         &token,
         &500i128,
+        &one_milestone(&env),
         &100u64,
-        &Symbol::new(&env, "test"),
+        &Address::generate(&env),
     );
 
     // Sender should have no escrows as recipient
-    let sender_escrows = client.get_escrows_by_recipient(&sender);
+    let sender_escrows = client.get_recipient_escrows(&sender);
     assert!(
         sender_escrows.is_empty(),
         "Sender should have no escrows as recipient"
     );
 
     // But recipient should have the escrow
-    let recipient_escrows = client.get_escrows_by_recipient(&recipient);
+    let recipient_escrows = client.get_recipient_escrows(&recipient);
     assert_eq!(
         recipient_escrows.len(),
         1,
