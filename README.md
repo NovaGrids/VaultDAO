@@ -136,3 +136,6 @@ AGPL-3.0 — see [LICENSE](LICENSE).
 
 <!-- handsoff-issue-1780 -->
 - #1780: Restored Notifications Lose Their Original Delivery Targets
+
+<!-- handsoff-issue-1782 -->
+- #1782: Split the 1,824-Line `useVaultContract` Hook by Domain
