@@ -37,3 +37,56 @@ test('DeadLetterService: exhausts retries and keeps entry', async () => {
   assert.ok(stored);
   assert.equal(stored?.recordId, 43);
 });
+
+test('DeadLetterService: DLQ entries survive a service restart via storage adapter', async () => {
+  // Minimal in-memory storage adapter standing in for the persistent backend.
+  const store = new Map<string, string>();
+  const storage = {
+    async set(key: string, value: string): Promise<void> {
+      store.set(key, value);
+    },
+    async get(key: string): Promise<string | undefined> {
+      return store.get(key);
+    },
+    async delete(key: string): Promise<void> {
+      store.delete(key);
+    },
+  };
+
+  const first = new DeadLetterService({ maxRetries: 3, backoffMs: [10], storage: storage as any });
+  const entry = { id: '44', contractId: 'CXXX', recordId: 44, retryCount: 0, addedAt: Date.now() };
+  first.add(entry as any);
+  await first.flush();
+
+  // Simulate a restart: brand new service instance sharing the same storage.
+  const restarted = new DeadLetterService({ maxRetries: 3, backoffMs: [10], storage: storage as any });
+  await restarted.load();
+
+  const restored = restarted.get('44');
+  assert.ok(restored, 'dead-letter entry should survive restart');
+  assert.equal(restored?.recordId, 44);
+});
+
+test('DeadLetterService: delivery metrics array is capped and does not grow without bound', async () => {
+  const cap = 5;
+  const svc = new DeadLetterService({ maxRetries: 1, backoffMs: [1], maxMetrics: cap });
+
+  const handler = async () => {
+    throw new Error('permanent');
+  };
+
+  // Record far more delivery attempts than the configured cap.
+  for (let i = 0; i < cap * 4; i++) {
+    const entry = { id: `m-${i}`, contractId: 'CXXX', recordId: i, retryCount: 0, addedAt: Date.now() };
+    svc.add(entry as any);
+    await svc.processDeadLetter(`m-${i}`, handler);
+  }
+
+  const metrics = svc.getMetrics();
+  assert.ok(metrics.length <= cap, `metrics length ${metrics.length} should not exceed cap ${cap}`);
+  assert.equal(metrics.length, cap);
+
+  // Explicit reset still clears the metrics.
+  svc.resetMetrics();
+  assert.equal(svc.getMetrics().length, 0);
+});
