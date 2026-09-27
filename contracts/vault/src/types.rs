@@ -1367,6 +1367,10 @@ pub enum AuditAction {
     FundingRoundCancelled = 24,
     SubscriptionCreated = 25,
     SubscriptionCancelled = 26,
+    /// Funds left a pool (insurance, stake or fees) via a governed withdrawal proposal.
+    PoolWithdrawn = 27,
+    /// Collected fees withdrawn directly by an Admin (within the spending limit).
+    FeesWithdrawn = 28,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -2510,6 +2514,10 @@ pub enum ProposalOperation {
     /// Admin key. The whitelist governs who may receive funds, so unilateral
     /// edits amount to unilateral spending authority.
     UpdateWhitelist(Address, ListAction),
+    /// Create a vesting schedule: (beneficiary, token, total, cliff_ledger,
+    /// start_ledger, end_ledger). Only reachable through an approved proposal,
+    /// so a single Admin cannot commit treasury funds to vesting on their own.
+    CreateVesting(Address, Address, i128, u32, u32, u32),
 }
 
 /// Optional ProposalOperation wrapper (Soroban contracttype limitation)

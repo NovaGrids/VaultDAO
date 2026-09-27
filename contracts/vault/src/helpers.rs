@@ -211,3 +211,68 @@ pub(crate) fn calculate_impact_score(
         total_score: total,
     }
 }
+
+/// Reject the call while the vault is paused (#1084).
+///
+/// Every entry point that moves vault-held funds to someone else calls this
+/// first, so an emergency pause actually stops outflows during an exploit.
+/// Intentionally exempt, because they only hand a depositor back their own
+/// funds or are themselves protective actions: `unlock_tokens`,
+/// `cancel_proposal` (refunds the proposer's insurance/stake), `cancel_stream`
+/// (returns the unstreamed remainder to the sender) and `veto_proposal`.
+pub(crate) fn require_not_paused(env: &Env) -> Result<(), VaultError> {
+    if storage::get_pause_state(env).is_paused {
+        return Err(VaultError::VaultPaused);
+    }
+    Ok(())
+}
+
+/// Vault-held balances that can only leave through a governed withdrawal
+/// proposal (`propose_*_withdrawal` / `execute_*_withdrawal`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WithdrawalPool {
+    /// Slashed insurance deposits.
+    Insurance,
+    /// Slashed proposer stakes.
+    Stake,
+    /// Collected execution fees.
+    Fees,
+}
+
+impl WithdrawalPool {
+    /// Proposal memo that marks a proposal as a withdrawal from this pool.
+    pub(crate) fn memo(self, env: &Env) -> Symbol {
+        Symbol::new(env, self.name())
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            WithdrawalPool::Insurance => "ins_withdraw",
+            WithdrawalPool::Stake => "stk_withdraw",
+            WithdrawalPool::Fees => "fee_withdraw",
+        }
+    }
+
+    pub(crate) fn balance(self, env: &Env, token: &Address) -> i128 {
+        match self {
+            WithdrawalPool::Insurance => storage::get_insurance_pool(env, token),
+            WithdrawalPool::Stake => storage::get_stake_pool(env, token),
+            WithdrawalPool::Fees => storage::get_fees_collected(env, token),
+        }
+    }
+
+    pub(crate) fn debit(self, env: &Env, token: &Address, amount: i128) {
+        match self {
+            WithdrawalPool::Insurance => storage::subtract_from_insurance_pool(env, token, amount),
+            WithdrawalPool::Stake => storage::subtract_from_stake_pool(env, token, amount),
+            WithdrawalPool::Fees => storage::subtract_fees_collected(env, token, amount),
+        }
+    }
+
+    pub(crate) fn insufficient(self) -> VaultError {
+        match self {
+            WithdrawalPool::Insurance => VaultError::InsurancePoolInsufficient,
+            WithdrawalPool::Stake | WithdrawalPool::Fees => VaultError::InsufficientBalance,
+        }
+    }
+}

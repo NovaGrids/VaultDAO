@@ -73,12 +73,16 @@ const big = (v: unknown): bigint => BigInt((v as bigint | number | undefined) ??
 // ---------------------------------------------------------------------------
 
 /**
- * Build a transaction that creates a linear vesting schedule funded from the vault.
+ * Build a transaction that proposes a linear vesting schedule funded from the vault.
+ *
+ * Vesting is governed: the contract creates a multi-phase proposal and returns
+ * its **proposal ID**. The schedule only exists once the proposal is approved
+ * and executed with `execute_multi_phase_proposal`.
  *
  * Nothing is claimable before `cliffLedger`; vesting is linear from
  * `startLedger` to `endLedger`.
  *
- * @param adminPublicKey - Admin creating the schedule.
+ * @param adminPublicKey - Treasurer or Admin proposing the schedule.
  * @param beneficiary    - Address that can claim vested tokens.
  * @param token          - Token contract ID.
  * @param total          - Total amount to vest (smallest unit).
