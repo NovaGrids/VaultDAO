@@ -49,6 +49,7 @@ import {
   approveRecovery,
   executeRecovery,
   getVaultMetrics,
+  getMetricsForPeriod,
   getReputation,
   getAuditTrail,
   getDelegationChain,
@@ -93,6 +94,7 @@ vi.mock("./utils", () => ({
   symbolToScVal: vi.fn((v: unknown) => `sym:${v}`),
   decodeScVal: vi.fn(),
   parseError: vi.fn((e: unknown) => e),
+  retryOnRateLimit: vi.fn(async (fn: () => Promise<unknown>) => fn()),
 }));
 
 vi.mock("stellar-sdk", async (importOriginal) => {
@@ -624,20 +626,57 @@ describe("contract.ts bindings", () => {
     it("getVaultMetrics decodes and maps to VaultMetrics", async () => {
       serverMock.simulateTransaction.mockResolvedValue({ transactionData: {}, result: { retval: {} } });
       (decodeScVal as Mock).mockReturnValue({
+        total_proposals: 10,
         executed_count: 3,
         rejected_count: 1,
         expired_count: 0,
-        total_volume: 90000,
+        total_execution_time_ledgers: 4500,
+        total_gas_used: 987654,
+        last_updated_ledger: 5500000,
       });
 
       const metrics = await getVaultMetrics("GCALLER", opts);
 
       expect(metrics).toEqual({
+        totalProposals: 10n,
         executedCount: 3n,
         rejectedCount: 1n,
         expiredCount: 0n,
-        totalVolume: 90000n,
+        totalExecutionTimeLedgers: 4500n,
+        totalGasUsed: 987654n,
+        lastUpdatedLedger: 5500000n,
       });
+      expect(contractCallSpy).toHaveBeenCalledWith("get_metrics");
+    });
+
+    it("getMetricsForPeriod decodes and maps to VaultMetrics", async () => {
+      serverMock.simulateTransaction.mockResolvedValue({ transactionData: {}, result: { retval: {} } });
+      (decodeScVal as Mock).mockReturnValue({
+        total_proposals: 5,
+        executed_count: 2,
+        rejected_count: 1,
+        expired_count: 0,
+        total_execution_time_ledgers: 2200,
+        total_gas_used: 444000,
+        last_updated_ledger: 5500010,
+      });
+
+      const metrics = await getMetricsForPeriod("GCALLER", 5n, 8n, opts);
+
+      expect(metrics).toEqual({
+        totalProposals: 5n,
+        executedCount: 2n,
+        rejectedCount: 1n,
+        expiredCount: 0n,
+        totalExecutionTimeLedgers: 2200n,
+        totalGasUsed: 444000n,
+        lastUpdatedLedger: 5500010n,
+      });
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "get_metrics_for_period",
+        "u64:5",
+        "u64:8",
+      );
     });
 
     it("getReputation decodes and maps to Reputation", async () => {
