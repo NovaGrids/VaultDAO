@@ -1,6 +1,7 @@
 import { createLogger } from "../../shared/logging/logger.js";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 const logger = createLogger("deadletter-service");
 
@@ -11,6 +12,15 @@ export interface DeadLetterEntry {
   readonly retryCount: number;
   readonly addedAt: number;
   processed?: boolean;
+}
+
+/**
+ * Minimal persistence contract. Any storage adapter (SQL, KV, file) can
+ * implement this so dead letters survive process restarts.
+ */
+export interface DeadLetterStorageAdapter {
+  load(): Promise<DeadLetterEntry[]>;
+  save(entries: DeadLetterEntry[]): Promise<void>;
 }
 
 function sleep(ms: number) {
@@ -65,18 +75,88 @@ export async function assertSafeWebhookHost(hostname: string): Promise<void> {
   }
 }
 
+/**
+ * Derives a 32-byte AES key from the configured secret. Falls back to a
+ * deterministic development key so local runs work without extra config.
+ */
+function deriveKey(secret?: string): Buffer {
+  const material = secret ?? process.env.WEBHOOK_SECRET_KEY ?? "dev-webhook-secret-key";
+  return createHash("sha256").update(material).digest();
+}
+
+/**
+ * Encrypts a webhook secret for storage at rest using AES-256-GCM.
+ * Output format: iv:authTag:ciphertext (all base64).
+ */
+export function encryptSecret(plaintext: string, secret?: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", deriveKey(secret), iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+/**
+ * Decrypts a value produced by {@link encryptSecret}. Values that are not in
+ * the expected encrypted format are returned unchanged for backward
+ * compatibility with previously stored plaintext secrets.
+ */
+export function decryptSecret(stored: string, secret?: string): string {
+  const parts = stored.split(":");
+  if (parts.length !== 3) return stored;
+  try {
+    const [ivB64, tagB64, dataB64] = parts;
+    const decipher = createDecipheriv("aes-256-gcm", deriveKey(secret), Buffer.from(ivB64, "base64"));
+    decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(dataB64, "base64")),
+      decipher.final(),
+    ]);
+    return decrypted.toString("utf8");
+  } catch {
+    return stored;
+  }
+}
+
 export class DeadLetterService {
   private readonly store = new Map<string, DeadLetterEntry>();
   private readonly maxRetries: number;
   private readonly backoffMs: number[];
+  private readonly storage?: DeadLetterStorageAdapter;
+  private loaded = false;
 
-  constructor(options?: { maxRetries?: number; backoffMs?: number[] }) {
+  constructor(options?: {
+    maxRetries?: number;
+    backoffMs?: number[];
+    storage?: DeadLetterStorageAdapter;
+  }) {
     this.maxRetries = options?.maxRetries ?? 5;
     this.backoffMs = options?.backoffMs ?? [1000, 2000, 4000, 8000, 16000];
+    this.storage = options?.storage;
   }
 
-  public add(entry: DeadLetterEntry): void {
+  /**
+   * Hydrates the in-memory store from the storage adapter. Safe to call
+   * multiple times; only the first call performs the load.
+   */
+  public async load(): Promise<void> {
+    if (this.loaded || !this.storage) return;
+    const entries = await this.storage.load();
+    for (const entry of entries) {
+      this.store.set(entry.id, entry);
+    }
+    this.loaded = true;
+    logger.info("dead-letter store hydrated", { count: entries.length });
+  }
+
+  private async persist(): Promise<void> {
+    if (!this.storage) return;
+    await this.storage.save(Array.from(this.store.values()));
+  }
+
+  public async add(entry: DeadLetterEntry): Promise<void> {
     this.store.set(entry.id, { ...entry, processed: false });
+    await this.persist();
     logger.info("dead-letter added to backend store", { id: entry.id, recordId: entry.recordId });
   }
 
@@ -88,8 +168,10 @@ export class DeadLetterService {
     return this.store.get(id);
   }
 
-  public remove(id: string): boolean {
-    return this.store.delete(id);
+  public async remove(id: string): Promise<boolean> {
+    const deleted = this.store.delete(id);
+    if (deleted) await this.persist();
+    return deleted;
   }
 
   /**
@@ -107,6 +189,7 @@ export class DeadLetterService {
         await handler();
         // success
         this.store.delete(id);
+        await this.persist();
         logger.info("dead-letter processed successfully", { id, attempt });
         return true;
       } catch (err) {

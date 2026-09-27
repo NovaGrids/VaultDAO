@@ -37,3 +37,32 @@ test('DeadLetterService: exhausts retries and keeps entry', async () => {
   assert.ok(stored);
   assert.equal(stored?.recordId, 43);
 });
+
+test('DeadLetterService: DLQ entries survive a service restart via storage adapter', async () => {
+  // Minimal in-memory storage adapter standing in for the persistent backend.
+  const store = new Map<string, string>();
+  const storage = {
+    async set(key: string, value: string): Promise<void> {
+      store.set(key, value);
+    },
+    async get(key: string): Promise<string | undefined> {
+      return store.get(key);
+    },
+    async delete(key: string): Promise<void> {
+      store.delete(key);
+    },
+  };
+
+  const first = new DeadLetterService({ maxRetries: 3, backoffMs: [10], storage: storage as any });
+  const entry = { id: '44', contractId: 'CXXX', recordId: 44, retryCount: 0, addedAt: Date.now() };
+  first.add(entry as any);
+  await first.flush();
+
+  // Simulate a restart: brand new service instance sharing the same storage.
+  const restarted = new DeadLetterService({ maxRetries: 3, backoffMs: [10], storage: storage as any });
+  await restarted.load();
+
+  const restored = restarted.get('44');
+  assert.ok(restored, 'dead-letter entry should survive restart');
+  assert.equal(restored?.recordId, 44);
+});
