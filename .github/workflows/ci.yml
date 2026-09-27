@@ -73,6 +73,31 @@ jobs:
         if: ${{ !cancelled() }}
         run: npm test
 
+  backend-docker-smoke:
+    name: Backend Docker smoke test (node:sqlite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds the production image and verifies the container runs on a Node
+      # version that ships `node:sqlite`, so SQLite-backed features work (#1768).
+      - name: Build backend image
+        run: docker build -t backend-smoke ./backend
+
+      - name: Verify node:sqlite is available in the image
+        run: |
+          docker run --rm backend-smoke node -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync(':memory:');
+            db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
+            db.prepare('INSERT INTO t (v) VALUES (?)').run('ok');
+            const row = db.prepare('SELECT v FROM t WHERE id = 1').get();
+            if (!row || row.v !== 'ok') {
+              throw new Error('SQLite round-trip failed: ' + JSON.stringify(row));
+            }
+            console.log('node:sqlite OK on', process.version);
+          "
+
   frontend-e2e:
     name: Frontend E2E (Playwright)
     runs-on: ubuntu-latest

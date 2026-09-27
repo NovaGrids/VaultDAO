@@ -4,6 +4,9 @@
   "description": "VaultDAO backend service exposing version and build metadata",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "build": {
     "channel": "stable",
     "updatedAt": "2026-03-25T13:35:46Z"
