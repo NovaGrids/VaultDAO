@@ -9,7 +9,7 @@ const logger = createLogger("database-cursor");
  *
  * Stores event polling cursors in a database for robust persistence across
  * container restarts. Uses a generic StorageAdapter to decouple cursor logic
- * from the specific database implementation (SQLite, etc).
+ * from the specific database implementation (SQLite, Postgres, etc).
  *
  * Supports multi-key cursors (one per contract / poller instance) as well as
  * the legacy singleton-cursor pattern used by the original file adapter.

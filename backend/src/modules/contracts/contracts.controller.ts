@@ -4,10 +4,18 @@ import type { ContractStateValidator } from "./contract-state-validator.js";
 import { error, success } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 
+export interface PollerStatusProvider {
+  getStatus(): { lastLedgerPolled: number };
+}
+
 export function getContractsController(
   registry: ContractRegistry,
+  poller?: PollerStatusProvider,
 ): RequestHandler {
   return (_req, res) => {
+    if (poller) {
+      registry.setLastIndexedLedger(poller.getStatus().lastLedgerPolled);
+    }
     const list = registry.list();
     res.status(200).json({ success: true, data: list });
   };
@@ -45,12 +53,13 @@ export function createContractsRouter(
   registry: ContractRegistry,
   adminAuthMiddleware: RequestHandler,
   validator?: ContractStateValidator,
+  poller?: PollerStatusProvider,
 ): Router {
   if (!adminAuthMiddleware) {
     throw new Error("createContractsRouter requires adminAuthMiddleware");
   }
   const router = express.Router();
-  router.get("/", getContractsController(registry));
+  router.get("/", getContractsController(registry, poller));
   router.post("/", adminAuthMiddleware, registerContractController(registry));
 
   // GET /api/v1/contracts/drift — drift status for all contracts

@@ -21,6 +21,15 @@ export type ContractInfo = {
 };
 
 /**
+ * Minimal shape of the poller status consumed by the registry.
+ * Kept structural so the registry does not depend on the poller module.
+ */
+export type PollerStatus = {
+  lastLedgerPolled?: number;
+  running?: boolean;
+};
+
+/**
  * ContractRegistry manages the set of VaultDAO contracts indexed by this backend.
  * Supports dynamic registration (persisted via DatabaseCursorAdapter key convention).
  * Maximum 10 contracts per backend instance.
@@ -29,6 +38,7 @@ export class ContractRegistry {
   private readonly logger = createLogger("contract-registry");
   private contracts: ContractInfo[] = [];
   private abiCache: Map<string, ContractABI> = new Map();
+  private pollerStatusProvider?: () => PollerStatus;
 
   constructor(env: BackendEnv) {
     const ids =
@@ -36,6 +46,15 @@ export class ContractRegistry {
         ? env.contractIds
         : [env.contractId];
     this.contracts = ids.map((id) => ({ id, pollingStatus: "idle" as const, abiVersion: "1.0.0" }));
+  }
+
+  /**
+   * Register a live source of poller status. When set, `list()` reads the
+   * current `lastLedgerPolled` on every call instead of relying on a
+   * one-time snapshot taken at app creation.
+   */
+  public setPollerStatusProvider(provider: () => PollerStatus): void {
+    this.pollerStatusProvider = provider;
   }
 
   /**
@@ -69,15 +88,23 @@ export class ContractRegistry {
     this.logger.info("contract discovery completed", {
       count: this.contracts.length,
     });
-    return this.contracts;
+    return this.list();
   }
 
   public list(): ContractInfo[] {
-    return this.contracts;
+    const status = this.pollerStatusProvider?.();
+    if (!status) return this.contracts;
+    const lastLedgerPolled = status.lastLedgerPolled;
+    const pollingStatus: "active" | "idle" = status.running ? "active" : "idle";
+    return this.contracts.map((c) => ({
+      ...c,
+      lastIndexedLedger: lastLedgerPolled ?? c.lastIndexedLedger,
+      pollingStatus,
+    }));
   }
 
   public get(id: string): ContractInfo | undefined {
-    return this.contracts.find((c) => c.id === id);
+    return this.list().find((c) => c.id === id);
   }
 
   /**

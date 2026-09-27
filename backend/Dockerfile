@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN pnpm build
 RUN pnpm prune --prod
 
 # Runtime stage
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
 # Set production environment
 ENV NODE_ENV=production

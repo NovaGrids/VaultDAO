@@ -5,6 +5,9 @@
   "description": "VaultDAO backend service exposing version and build metadata",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "build": {
     "channel": "stable",
     "updatedAt": "2026-03-25T13:35:46Z"
@@ -26,7 +29,6 @@
     "@opentelemetry/sdk-node": "^0.221.0",
     "express": "^5.1.0",
     "ioredis": "5.6.1",
-    "prom-client": "^14.0.0",
     "stellar-sdk": "^11.0.0",
     "ws": "^8.21.2",
     "zod": "^3.23.8"

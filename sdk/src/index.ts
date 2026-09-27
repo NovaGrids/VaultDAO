@@ -123,6 +123,7 @@ export {
   executeRecovery,
   // Read functions
   getVaultMetrics,
+  getMetricsForPeriod,
   getReputation,
   getAuditTrail,
   getDelegationChain,

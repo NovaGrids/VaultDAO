@@ -135,3 +135,14 @@ Pull requests and pushes to `main` run `.github/workflows/ci.yml`:
 | Repository root, backend, and frontend | Apache-2.0 | [LICENSE](LICENSE) |
 | Soroban contract (`contracts/vault`) | AGPL-3.0-only | [GNU AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html) |
 | TypeScript SDK (`sdk`) | MIT | [MIT License](https://opensource.org/license/mit) |
+AGPL-3.0 — see [LICENSE](LICENSE).
+
+## Handsoff notes
+
+<!-- handsoff-issue-1747 -->
+- #1747: `execute_recovery` Does Not Validate the New Threshold Against Minimums
+<!-- handsoff-issue-1780 -->
+- #1780: Restored Notifications Lose Their Original Delivery Targets
+
+<!-- handsoff-issue-1782 -->
+- #1782: Split the 1,824-Line `useVaultContract` Hook by Domain

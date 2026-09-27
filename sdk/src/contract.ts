@@ -756,7 +756,7 @@ export async function getComments(
   opts: SdkOptions
 ): Promise<Comment[]> {
   const contract = getContract(opts);
-  const op = contract.call("get_comments", u64ToScVal(proposalId));
+  const op = contract.call("get_proposal_comments", u64ToScVal(proposalId));
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
     op,
     opts,
@@ -830,7 +830,7 @@ export async function getVaultMetrics(
   opts: SdkOptions
 ): Promise<VaultMetrics> {
   const contract = getContract(opts);
-  const op = contract.call("get_vault_metrics");
+  const op = contract.call("get_metrics");
   const raw = await simulateReadOnly<Record<string, unknown>>(
     op,
     opts,
@@ -838,10 +838,51 @@ export async function getVaultMetrics(
     "getVaultMetrics"
   );
   return {
+    totalProposals: BigInt(raw.total_proposals as number),
     executedCount: BigInt(raw.executed_count as number),
     rejectedCount: BigInt(raw.rejected_count as number),
     expiredCount: BigInt(raw.expired_count as number),
-    totalVolume: BigInt(raw.total_volume as number),
+    totalExecutionTimeLedgers: BigInt(raw.total_execution_time_ledgers as number),
+    totalGasUsed: BigInt(raw.total_gas_used as number),
+    lastUpdatedLedger: BigInt(raw.last_updated_ledger as number),
+  };
+}
+
+/**
+ * Get vault metrics for a specific weekly period.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (used as simulation source).
+ * @param fromWeek        - Start week number (inclusive).
+ * @param toWeek          - End week number (inclusive).
+ * @param opts            - SDK connection options.
+ * @returns               Aggregated VaultMetrics for the requested period.
+ */
+export async function getMetricsForPeriod(
+  callerPublicKey: string,
+  fromWeek: bigint,
+  toWeek: bigint,
+  opts: SdkOptions
+): Promise<VaultMetrics> {
+  const contract = getContract(opts);
+  const op = contract.call(
+    "get_metrics_for_period",
+    u64ToScVal(fromWeek),
+    u64ToScVal(toWeek)
+  );
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey,
+    "getMetricsForPeriod"
+  );
+  return {
+    totalProposals: BigInt(raw.total_proposals as number),
+    executedCount: BigInt(raw.executed_count as number),
+    rejectedCount: BigInt(raw.rejected_count as number),
+    expiredCount: BigInt(raw.expired_count as number),
+    totalExecutionTimeLedgers: BigInt(raw.total_execution_time_ledgers as number),
+    totalGasUsed: BigInt(raw.total_gas_used as number),
+    lastUpdatedLedger: BigInt(raw.last_updated_ledger as number),
   };
 }
 
