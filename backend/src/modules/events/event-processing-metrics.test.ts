@@ -115,4 +115,34 @@ test("Event Processing Latency Metrics", async (t) => {
     assert.ok(openMetrics.includes("event_processing_duration_ms"), "OpenMetrics should include the metric");
     assert.ok(openMetrics.includes("# EOF"), "OpenMetrics should end with EOF marker");
   });
+
+  await t.test("Webhook delivery metrics array is bounded by a ring buffer cap", async () => {
+    const { WebhookDeliveryMetrics } = await import("./webhook-delivery-metrics.js");
+
+    const cap = 100;
+    const metrics = new WebhookDeliveryMetrics(cap);
+
+    // Push far more delivery attempts than the cap allows.
+    for (let i = 0; i < cap * 5; i++) {
+      metrics.recordDelivery({
+        webhookId: `wh_${i}`,
+        eventType: "proposal_created",
+        status: i % 2 === 0 ? "success" : "failure",
+        durationMs: i,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    assert.equal(metrics.size, cap, "metrics array must not exceed the configured cap");
+    assert.ok(metrics.size <= cap, "metrics array must stay bounded");
+
+    // The most recent entries should be retained (ring buffer semantics).
+    const recent = metrics.recent(1);
+    assert.equal(recent.length, 1, "should return the most recent entry");
+    assert.equal(recent[0].webhookId, `wh_${cap * 5 - 1}`, "ring buffer should retain the latest entry");
+
+    // Explicit reset still clears metrics.
+    metrics.reset();
+    assert.equal(metrics.size, 0, "reset should clear the metrics array");
+  });
 });
