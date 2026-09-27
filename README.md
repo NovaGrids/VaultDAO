@@ -131,3 +131,8 @@ Pull requests and pushes to `main` run `.github/workflows/ci.yml`:
 ## License
 
 AGPL-3.0 — see [LICENSE](LICENSE).
+
+## Handsoff notes
+
+<!-- handsoff-issue-1747 -->
+- #1747: `execute_recovery` Does Not Validate the New Threshold Against Minimums
