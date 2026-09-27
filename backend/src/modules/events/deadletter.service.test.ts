@@ -66,3 +66,27 @@ test('DeadLetterService: DLQ entries survive a service restart via storage adapt
   assert.ok(restored, 'dead-letter entry should survive restart');
   assert.equal(restored?.recordId, 44);
 });
+
+test('DeadLetterService: delivery metrics array is capped and does not grow without bound', async () => {
+  const cap = 5;
+  const svc = new DeadLetterService({ maxRetries: 1, backoffMs: [1], maxMetrics: cap });
+
+  const handler = async () => {
+    throw new Error('permanent');
+  };
+
+  // Record far more delivery attempts than the configured cap.
+  for (let i = 0; i < cap * 4; i++) {
+    const entry = { id: `m-${i}`, contractId: 'CXXX', recordId: i, retryCount: 0, addedAt: Date.now() };
+    svc.add(entry as any);
+    await svc.processDeadLetter(`m-${i}`, handler);
+  }
+
+  const metrics = svc.getMetrics();
+  assert.ok(metrics.length <= cap, `metrics length ${metrics.length} should not exceed cap ${cap}`);
+  assert.equal(metrics.length, cap);
+
+  // Explicit reset still clears the metrics.
+  svc.resetMetrics();
+  assert.equal(svc.getMetrics().length, 0);
+});
