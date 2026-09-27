@@ -61,7 +61,9 @@ jobs:
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
-      - name: Install dependencies
+      # `npm ci` fails fast when package-lock.json drifts from package.json,
+      # so this step guards against the lockfile going out of sync (#1767).
+      - name: Verify lockfile is in sync (npm ci)
         run: npm ci
 
       - name: Typecheck
