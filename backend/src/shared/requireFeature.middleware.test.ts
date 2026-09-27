@@ -35,9 +35,9 @@ test("requireFeature middleware: returns 501 when flag is disabled", () => {
   assert.strictEqual(res.getStatus(), 501);
 });
 
-test("requireFeature middleware: returns 501 for unknown flag", () => {
+test("requireFeature middleware: returns 501 for flag not set in env", () => {
   initFeatureFlags("");
-  const mw = requireFeature("nonexistent_flag");
+  const mw = requireFeature("multi_vault");
   const res = makeMockRes();
   mw({} as Request, res, () => {
     assert.fail("next should not be called");

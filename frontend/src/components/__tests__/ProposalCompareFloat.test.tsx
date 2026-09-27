@@ -8,8 +8,9 @@ import ProposalCard from '../ProposalCard';
 import ProposalCompareFloat from '../ProposalCompareFloat';
 import type { Proposal } from '../type';
 
-vi.mock('../utils/pdfExport', () => ({ exportComparisonToPDF: vi.fn() }));
-vi.mock('./ComparisonView', () => ({
+// Mock paths resolve relative to this test file.
+vi.mock('../../utils/pdfExport', () => ({ exportComparisonToPDF: vi.fn() }));
+vi.mock('../ComparisonView', () => ({
   default: ({ onClose }: { onClose: () => void }) => (
     <div data-testid="comparison-view">
       <button onClick={onClose}>Close</button>
@@ -87,13 +88,14 @@ describe('ProposalCompareFloat', () => {
     expect(checkboxes[2]).toBeDisabled();
   });
 
-  it('opens comparison modal when Compare button clicked', () => {
+  it('opens comparison modal when Compare button clicked', async () => {
     render(<ProposalCompareFloat proposals={proposals} />);
     const checkboxes = screen.getAllByRole('checkbox');
     fireEvent.click(checkboxes[0]);
     fireEvent.click(checkboxes[1]);
     fireEvent.click(screen.getByRole('button', { name: /compare selected/i }));
-    expect(screen.getByTestId('comparison-view')).toBeInTheDocument();
+    // ComparisonView is loaded with a dynamic import
+    expect(await screen.findByTestId('comparison-view')).toBeInTheDocument();
   });
 
   it('clears selection when X button clicked', () => {

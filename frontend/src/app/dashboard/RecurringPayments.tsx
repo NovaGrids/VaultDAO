@@ -544,6 +544,8 @@ const RecurringPayments: React.FC = () => {
     schedulePayment,
     executeRecurringPayment,
     cancelRecurringPayment,
+    pauseRecurringPayment,
+    resumeRecurringPayment,
     getVaultConfig,
     loading,
   } = useVaultContract();
@@ -651,14 +653,14 @@ const RecurringPayments: React.FC = () => {
     }
   };
 
-  // Pause — locally marks as paused via cancelRecurringPayment (contract has no pause fn)
+  // Pause — on-chain pause_recurring_payment
   const handlePausePayment = async () => {
     const payment = actionModal.payment;
     if (!payment) return;
     const { ready, message } = checkReady();
     if (!ready) { notify('config_updated', message ?? 'Not ready', 'error'); setActionModal({ action: null, payment: null }); return; }
     try {
-      await cancelRecurringPayment?.(payment.id);
+      await pauseRecurringPayment?.(payment.id);
       notify('proposal_rejected', 'Payment paused successfully', 'success');
       setActionModal({ action: null, payment: null });
       await fetchPayments();
@@ -668,14 +670,14 @@ const RecurringPayments: React.FC = () => {
     }
   };
 
-  // Resume — re-schedules by executing (simplest on-chain resume path)
+  // Resume — on-chain resume_recurring_payment
   const handleResumePayment = async () => {
     const payment = actionModal.payment;
     if (!payment) return;
     const { ready, message } = checkReady();
     if (!ready) { notify('config_updated', message ?? 'Not ready', 'error'); setActionModal({ action: null, payment: null }); return; }
     try {
-      await executeRecurringPayment?.(payment.id);
+      await resumeRecurringPayment?.(payment.id);
       notify('proposal_executed', 'Payment resumed successfully!', 'success');
       setActionModal({ action: null, payment: null });
       await fetchPayments();

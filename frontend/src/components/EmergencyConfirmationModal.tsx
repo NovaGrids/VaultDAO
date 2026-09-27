@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { AlertTriangle, Clock, Check, X, ShieldAlert } from 'lucide-react';
+import { Clock, Check, X, ShieldAlert, ExternalLink } from 'lucide-react';
+import { useEmergencyHistory } from '../hooks/useEmergencyHistory';
+import { env } from '../config/env';
 
 interface EmergencyConfirmationModalProps {
   isOpen: boolean;
@@ -9,19 +11,16 @@ interface EmergencyConfirmationModalProps {
   currentUserAddress?: string;
 }
 
-export interface ActivationLogEntry {
-  timestamp: number;
-  action: string;
-  confirmedBy: string[];
-}
-
 export const EMERGENCY_SIGNERS = [
   'GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR',
   'GBIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR',
   'GCIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR'
 ];
 
-const LOG_STORAGE_KEY = 'vaultdao_emergency_activation_logs';
+function truncateAddress(addr: string): string {
+  if (!addr || addr.length <= 12) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
 
 export function EmergencyConfirmationModal({
   isOpen,
@@ -31,23 +30,14 @@ export function EmergencyConfirmationModal({
 }: EmergencyConfirmationModalProps) {
   const [confirmations, setConfirmations] = useState<Record<string, boolean>>({});
   const [timeLeft, setTimeLeft] = useState(60.0);
-  const [activationLogs, setActivationLogs] = useState<ActivationLogEntry[]>([]);
+  // Emergency history comes from on-chain vault_paused / vault_unpaused
+  // events so it is shared by all signers and cannot be edited locally.
+  const { entries: history, loading: historyLoading, error: historyError } = useEmergencyHistory(isOpen);
 
   // requestAnimationFrame variables
   const animationFrameId = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
-
-  // Load log history
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(LOG_STORAGE_KEY);
-      if (stored) {
-        setActivationLogs(JSON.parse(stored));
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
+  const triggeringElementRef = useRef<HTMLElement | null>(null);
 
   // requestAnimationFrame countdown
   useEffect(() => {
@@ -56,8 +46,16 @@ export function EmergencyConfirmationModal({
         cancelAnimationFrame(animationFrameId.current);
       }
       startTimeRef.current = null;
+
+      // Restore focus to the triggering element
+      if (triggeringElementRef.current) {
+        triggeringElementRef.current.focus();
+      }
       return;
     }
+
+    // Store the currently focused element when modal opens
+    triggeringElementRef.current = document.activeElement as HTMLElement;
 
     // Reset countdown and confirmations when modal opens
     setTimeLeft(60.0);
@@ -102,21 +100,6 @@ export function EmergencyConfirmationModal({
 
   const handleExecute = () => {
     if (!isConfirmed) return;
-    
-    // Save to logs
-    const newEntry: ActivationLogEntry = {
-      timestamp: Date.now(),
-      action: 'Pause Vault',
-      confirmedBy: confirmedSigners
-    };
-    const updatedLogs = [newEntry, ...activationLogs];
-    setActivationLogs(updatedLogs);
-    try {
-      localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(updatedLogs));
-    } catch (e) {
-      console.error(e);
-    }
-
     onConfirm();
     onClose();
   };
@@ -235,28 +218,57 @@ export function EmergencyConfirmationModal({
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
               Emergency Action Log
             </h3>
-            {activationLogs.length === 0 ? (
+            <p className="text-[10px] text-gray-500">
+              Read from on-chain <code>vault_paused</code> / <code>vault_unpaused</code> events.
+            </p>
+            {historyLoading ? (
+              <p className="text-xs text-gray-500 italic">Loading emergency history…</p>
+            ) : historyError ? (
+              <p className="text-xs text-red-400" role="alert">
+                Could not load emergency history: {historyError}
+              </p>
+            ) : history.length === 0 ? (
               <p className="text-xs text-gray-600 italic">
-                No previous emergency activations logged.
+                No emergency pause events found on-chain.
               </p>
             ) : (
               <div className="max-h-36 overflow-y-auto space-y-2 pr-2">
-                {activationLogs.map((log, idx) => (
-                  <div 
-                    key={idx}
-                    className="flex justify-between items-center p-2.5 rounded-lg bg-gray-800/30 border border-gray-800 text-xs"
-                  >
-                    <div>
-                      <p className="font-semibold text-red-400">{log.action}</p>
-                      <p className="text-[10px] text-gray-500">
-                        Confirmed by {log.confirmedBy.length} signers
-                      </p>
+                {history.map((entry) => {
+                  const paused = entry.type === 'vault_paused';
+                  const cause = typeof entry.details.cause === 'string' ? entry.details.cause : '';
+                  return (
+                    <div
+                      key={entry.id}
+                      className="flex justify-between items-center gap-3 p-2.5 rounded-lg bg-gray-800/30 border border-gray-800 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <p className={`font-semibold ${paused ? 'text-red-400' : 'text-green-400'}`}>
+                          {paused ? 'Vault Paused' : 'Vault Unpaused'}
+                          {paused && cause ? ` — ${cause}` : ''}
+                        </p>
+                        <p className="text-[10px] text-gray-500 font-mono truncate" title={entry.actor}>
+                          By {truncateAddress(entry.actor) || 'unknown'} · ledger {entry.ledger}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] text-gray-400 font-mono">
+                          {new Date(entry.timestamp).toLocaleString()}
+                        </span>
+                        {entry.txHash && (
+                          <a
+                            href={`${env.explorerUrl}/tx/${entry.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-gray-500 hover:text-white"
+                            aria-label="View transaction"
+                          >
+                            <ExternalLink size={12} />
+                          </a>
+                        )}
+                      </div>
                     </div>
-                    <span className="text-[10px] text-gray-400 font-mono">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

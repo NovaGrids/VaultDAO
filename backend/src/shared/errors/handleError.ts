@@ -7,6 +7,9 @@ import {
 } from "./AppError.js";
 import { ErrorCode } from "../http/errorCodes.js";
 import { error as errorResponse } from "../http/response.js";
+import { createLogger } from "../logging/logger.js";
+
+const logger = createLogger("error-handler");
 
 function appErrorToCode(err: AppError): ErrorCode {
   switch (err.name) {
@@ -45,9 +48,8 @@ export function handleError(
   if (err instanceof AppError) {
     appError = err;
   } else {
-    console.error("[app-error] Unexpected error:", {
-      at: new Date().toISOString(),
-      error: err,
+    logger.error("Unexpected error", {
+      error: String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
     appError = new InternalServerError("An unexpected error occurred");

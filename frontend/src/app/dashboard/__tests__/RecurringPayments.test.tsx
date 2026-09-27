@@ -155,7 +155,8 @@ describe('RecurringPayments page', () => {
     });
   });
 
-  it('calls cancelRecurringPayment when Pause is confirmed (Treasurer role)', async () => {
+  it('calls pauseRecurringPayment when Pause is confirmed (Treasurer role)', async () => {
+    const pauseFn = vi.fn().mockResolvedValue(undefined);
     const cancelFn = vi.fn().mockResolvedValue(undefined);
     const activePayment = makeRecurringPayment({
       id: 'rp-active',
@@ -169,6 +170,7 @@ describe('RecurringPayments page', () => {
         loading: false,
         getRecurringPayments: vi.fn().mockResolvedValue([activePayment]),
         getRecurringPaymentHistory: vi.fn().mockResolvedValue([]),
+        pauseRecurringPayment: pauseFn,
         cancelRecurringPayment: cancelFn,
         // Treasurer role = 1
         getVaultConfig: vi.fn().mockResolvedValue({ currentUserRole: 1 }),
@@ -191,7 +193,8 @@ describe('RecurringPayments page', () => {
     fireEvent.click(screen.getByText('confirm'));
 
     await waitFor(() => {
-      expect(cancelFn).toHaveBeenCalledWith('rp-active');
+      expect(pauseFn).toHaveBeenCalledWith('rp-active');
+      expect(cancelFn).not.toHaveBeenCalled();
     });
   });
 

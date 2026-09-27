@@ -33,6 +33,15 @@
 //!
 //! Track progress in GitHub issue #288.
 //!
+//! # Relationship to vault templates
+//!
+//! `VaultTemplate` / `VaultDAO::export_vault_template` / `initialize_from_template`
+//! (see `types.rs` / `lib.rs`) already ship outside this feature flag and cover
+//! same-chain vault cloning. Once cross-contract calls are wired up here, the
+//! bridge should reuse `VaultTemplate` as the payload for initializing a new
+//! vault deployed on another contract/chain, rather than inventing a second
+//! config-transfer format.
+//!
 //! # Planned public surface (do not expose until complete)
 //!
 //! ```text

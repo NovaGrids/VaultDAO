@@ -36,21 +36,24 @@ vi.mock('stellar-sdk', () => ({
       isSimulationSuccess: vi.fn().mockReturnValue(true),
     },
   },
-  TransactionBuilder: vi.fn().mockImplementation(() => ({
-    setNetworkPassphrase: vi.fn().mockReturnThis(),
-    setTimeout: vi.fn().mockReturnThis(),
-    addOperation: vi.fn().mockReturnThis(),
-    build: vi.fn().mockReturnValue({ toXDR: () => 'mock-xdr' }),
-  })),
+  // Constructed with `new`: implementations must be regular functions.
+  TransactionBuilder: vi.fn().mockImplementation(function () {
+    return {
+      setNetworkPassphrase: vi.fn().mockReturnThis(),
+      setTimeout: vi.fn().mockReturnThis(),
+      addOperation: vi.fn().mockReturnThis(),
+      build: vi.fn().mockReturnValue({ toXDR: () => 'mock-xdr' }),
+    };
+  }),
   Operation: { invokeHostFunction: vi.fn().mockReturnValue({}) },
   Address: { fromString: vi.fn().mockReturnValue({ toScAddress: () => ({}) }) },
   xdr: {
     HostFunction: { hostFunctionTypeInvokeContract: vi.fn().mockReturnValue({}) },
-    InvokeContractArgs: vi.fn().mockImplementation(() => ({})),
+    InvokeContractArgs: vi.fn().mockImplementation(function () { return {}; }),
   },
   xdrModule: {
     HostFunction: { hostFunctionTypeInvokeContract: vi.fn().mockReturnValue({}) },
-    InvokeContractArgs: vi.fn().mockImplementation(() => ({})),
+    InvokeContractArgs: vi.fn().mockImplementation(function () { return {}; }),
   },
 }));
 
@@ -127,21 +130,58 @@ describe('TransactionSimulatorModal', () => {
       expect(screen.getByText('Simulation failed')).toBeInTheDocument();
     });
 
-    // Proceed button should be disabled
-    const proceedBtn = screen.getByText('Approve');
-    expect(proceedBtn.closest('button')).toBeDisabled();
+    // Submission is blocked: no proceed button, and the primary action is disabled
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /simulate first/i })).toBeDisabled();
   });
 
   it('calls onProceed when Proceed is clicked after successful simulation', async () => {
     render(<TransactionSimulatorModal {...defaultProps} />);
     fireEvent.click(screen.getByText('Simulate Transaction'));
     await waitFor(() => screen.getByText('Simulation successful'));
-    fireEvent.click(screen.getByText('Approve'));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(defaultProps.onProceed).toHaveBeenCalledOnce());
   });
 
   it('hides Proceed button in simulateOnly mode', () => {
     render(<TransactionSimulatorModal {...defaultProps} simulateOnly />);
-    expect(screen.queryByText('Approve')).not.toBeInTheDocument();
+    // The action label is still shown in the summary, but there is no proceed button
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+  });
+
+  it('restores focus to triggering element when modal closes', async () => {
+    const triggerButton = document.createElement('button');
+    triggerButton.textContent = 'Open Modal';
+    document.body.appendChild(triggerButton);
+
+    const { rerender } = render(
+      <>
+        <button>Open Modal</button>
+        <TransactionSimulatorModal {...defaultProps} isOpen={false} />
+      </>
+    );
+
+    triggerButton.focus();
+    expect(document.activeElement).toBe(triggerButton);
+
+    rerender(
+      <>
+        <button>Open Modal</button>
+        <TransactionSimulatorModal {...defaultProps} isOpen={true} />
+      </>
+    );
+
+    rerender(
+      <>
+        <button>Open Modal</button>
+        <TransactionSimulatorModal {...defaultProps} isOpen={false} />
+      </>
+    );
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(triggerButton);
+    });
+
+    document.body.removeChild(triggerButton);
   });
 });

@@ -51,6 +51,12 @@ export interface AuditPage {
   offset: number;
   limit: number;
   verification?: AuditVerificationResult;
+  /** Opaque base64 cursor pointing to the next page. Null when no further pages. */
+  nextCursor?: string | null;
+  /** Opaque base64 cursor pointing to the previous page. Null when already at the start. */
+  prevCursor?: string | null;
+  /** Whether there are more items beyond this page, in the direction that produced it. */
+  hasMore?: boolean;
 }
 
 export interface MerkleProof {

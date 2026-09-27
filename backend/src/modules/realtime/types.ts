@@ -26,3 +26,12 @@ export interface RealtimeConnectionLifecycleHooks {
   onSubscribed?(connectionId: string, topic: RealtimeTopic): void;
   onUnsubscribed?(connectionId: string, topic: RealtimeTopic): void;
 }
+
+export interface RealtimeServerOptions extends RealtimeConnectionLifecycleHooks {
+  /**
+   * Maximum number of topics a single client may subscribe to simultaneously.
+   * Attempts beyond this limit receive an error envelope and are rejected.
+   * Default: 100.
+   */
+  maxSubscriptionsPerClient?: number;
+}

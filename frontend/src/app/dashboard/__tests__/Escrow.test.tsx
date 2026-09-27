@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import EscrowPage from '../Escrow';
 
@@ -95,6 +95,9 @@ vi.mock('../../../context/ToastContext', () => ({
   useToast: () => ({ notify: vi.fn() }),
 }));
 
+// Card subtitles read "Escrow #<id> · Created <date>".
+const escrowLabel = (id: string) => new RegExp(`^Escrow #${id} ·`);
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EscrowPage', () => {
@@ -106,14 +109,15 @@ describe('EscrowPage', () => {
     render(<EscrowPage />);
     expect(screen.getByText('Escrow Agreements')).toBeInTheDocument();
     // Both escrows should be visible (user is funder or recipient of both)
-    expect(screen.getByText('Escrow #1')).toBeInTheDocument();
-    expect(screen.getByText('Escrow #2')).toBeInTheDocument();
+    expect(screen.getByText(escrowLabel('1'))).toBeInTheDocument();
+    expect(screen.getByText(escrowLabel('2'))).toBeInTheDocument();
   });
 
   it('shows status badges correctly', () => {
     render(<EscrowPage />);
-    expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByText('Disputed')).toBeInTheDocument();
+    // Status badges are <span>s; the stat cards and filter tabs reuse the same words.
+    expect(screen.getByText('Active', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('Disputed', { selector: 'span' })).toBeInTheDocument();
   });
 
   it('shows dispute badge on disputed escrow', () => {
@@ -195,9 +199,10 @@ describe('EscrowPage', () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText(/describe why/i)).toBeInTheDocument();
     });
-    const textarea = screen.getByPlaceholderText(/describe why/i);
+    const dialog = screen.getByRole('dialog', { name: /raise dispute/i });
+    const textarea = within(dialog).getByPlaceholderText(/describe why/i);
     fireEvent.change(textarea, { target: { value: 'Deliverable not met' } });
-    const submitBtn = screen.getByRole('button', { name: /raise dispute/i });
+    const submitBtn = within(dialog).getByRole('button', { name: /raise dispute/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
@@ -210,8 +215,12 @@ describe('EscrowPage', () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText(/describe why/i)).toBeInTheDocument();
     });
-    const submitBtn = screen.getByRole('button', { name: /raise dispute/i });
-    fireEvent.click(submitBtn);
+    const dialog = screen.getByRole('dialog', { name: /raise dispute/i });
+    const submitBtn = within(dialog).getByRole('button', { name: /raise dispute/i });
+    // Submit is disabled until a reason is entered; submitting the form anyway
+    // (e.g. via Enter) must surface the validation message.
+    expect(submitBtn).toBeDisabled();
+    fireEvent.submit(submitBtn.closest('form')!);
     await waitFor(() => {
       expect(screen.getByText(/please provide a reason/i)).toBeInTheDocument();
     });
@@ -220,12 +229,13 @@ describe('EscrowPage', () => {
 
   it('filters escrows by status', async () => {
     render(<EscrowPage />);
-    const disputedFilter = screen.getByRole('button', { name: /disputed/i });
+    const disputedFilter = screen.getByRole('button', { name: /^disputed$/i });
     fireEvent.click(disputedFilter);
+    expect(disputedFilter).toHaveAttribute('aria-pressed', 'true');
     await waitFor(() => {
       // Only disputed escrow should show
-      expect(screen.queryByText('Escrow #1')).not.toBeInTheDocument();
-      expect(screen.getByText('Escrow #2')).toBeInTheDocument();
+      expect(screen.queryByText(escrowLabel('1'))).not.toBeInTheDocument();
+      expect(screen.getByText(escrowLabel('2'))).toBeInTheDocument();
     });
   });
 

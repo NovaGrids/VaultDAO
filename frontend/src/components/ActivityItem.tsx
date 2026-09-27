@@ -13,6 +13,8 @@ import {
     ChevronDown,
     ChevronUp,
     ExternalLink,
+    PauseCircle,
+    PlayCircle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { VaultActivity, VaultEventType } from '../types/activity';
@@ -34,6 +36,8 @@ const EVENT_CONFIG: Record<
     config_updated: { label: 'Config Updated', icon: Settings, color: 'text-gray-400 bg-gray-400/20' },
     initialized: { label: 'Vault Initialized', icon: Settings, color: 'text-gray-400 bg-gray-400/20' },
     role_assigned: { label: 'Role Assigned', icon: UserCog, color: 'text-gray-400 bg-gray-400/20' },
+    vault_paused: { label: 'Vault Paused', icon: PauseCircle, color: 'text-red-400 bg-red-400/20' },
+    vault_unpaused: { label: 'Vault Unpaused', icon: PlayCircle, color: 'text-green-400 bg-green-400/20' },
     unknown: { label: 'Event', icon: HelpCircle, color: 'text-gray-400 bg-gray-400/20' },
 };
 
@@ -63,6 +67,10 @@ function getActionDescription(activity: VaultActivity): string {
             return `${actor} updated config`;
         case 'role_assigned':
             return `Role assigned to ${actor}`;
+        case 'vault_paused':
+            return `${actor} paused the vault`;
+        case 'vault_unpaused':
+            return `${actor} unpaused the vault`;
         default:
             return `${config.label} by ${actor}`;
     }

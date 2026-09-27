@@ -13,6 +13,8 @@ export type VaultEventType =
   | 'config_updated'
   | 'initialized'
   | 'role_assigned'
+  | 'vault_paused'
+  | 'vault_unpaused'
   | 'unknown';
 
 export interface VaultActivity {

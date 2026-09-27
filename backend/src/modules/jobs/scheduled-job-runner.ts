@@ -2,6 +2,14 @@ import { createLogger } from "../../shared/logging/logger.js";
 import { requestIdStorage } from "../../shared/http/requestId.js";
 import { randomUUID } from "node:crypto";
 import type { NotificationPublisher } from "../notifications/notification.types.js";
+import type { MetricsRegistry } from "../health/metrics.registry.js";
+
+/** Default per-run execution budget; a hung run (e.g. a stuck RPC call) fails after this. */
+export const DEFAULT_JOB_TIMEOUT_MS = 30_000;
+/** Counter incremented when a tick is skipped because the previous run is still in flight. */
+export const JOB_SKIPPED_OVERLAP_COUNTER = "job_skipped_overlap";
+/** `lastRunError` recorded when a run exceeds its execution timeout. */
+export const EXECUTION_TIMEOUT_ERROR = "execution_timeout";
 
 export interface ScheduledJobContext {
   readonly now: () => Date;
@@ -11,6 +19,8 @@ export interface ScheduledJob {
   readonly name: string;
   readonly intervalMs: number;
   readonly runOnStart?: boolean;
+  /** Execution timeout for a single run. Defaults to {@link DEFAULT_JOB_TIMEOUT_MS}. */
+  readonly timeoutMs?: number;
   run(context: ScheduledJobContext): Promise<void> | void;
 }
 
@@ -30,6 +40,7 @@ export interface ScheduledJobStatus extends ScheduledJobStats {
 
 interface ScheduledJobRunnerOptions {
   notificationPublisher?: NotificationPublisher;
+  metricsRegistry?: MetricsRegistry;
 }
 
 export class ScheduledJobRunner {
@@ -37,10 +48,18 @@ export class ScheduledJobRunner {
   private readonly jobs = new Map<string, ScheduledJob>();
   private readonly stats = new Map<string, ScheduledJobStats>();
   private readonly handles = new Map<string, NodeJS.Timeout>();
+  /** Jobs with a run currently in flight; used to skip overlapping ticks. */
+  private readonly inFlight = new Set<string>();
   private heartbeatHandle?: NodeJS.Timeout;
   private started = false;
 
-  constructor(private readonly options: ScheduledJobRunnerOptions = {}) {}
+  constructor(private readonly options: ScheduledJobRunnerOptions = {}) {
+    options.metricsRegistry?.register(
+      JOB_SKIPPED_OVERLAP_COUNTER,
+      "Scheduled job ticks skipped because the previous run was still in flight",
+      "counter",
+    );
+  }
 
   public register(job: ScheduledJob): void {
     if (job.intervalMs < 1) {
@@ -154,6 +173,22 @@ export class ScheduledJobRunner {
   }
 
   private async runJobSafely(job: ScheduledJob): Promise<void> {
+    // Never run the same job twice concurrently (e.g. a slow RPC outlasting the
+    // interval), which could otherwise double-execute payments.
+    if (this.inFlight.has(job.name)) {
+      this.options.metricsRegistry?.incrementCounter(JOB_SKIPPED_OVERLAP_COUNTER, { job: job.name });
+      this.logger.warn("scheduled job run skipped: previous run still in flight", { job: job.name });
+      return;
+    }
+    this.inFlight.add(job.name);
+    try {
+      await this.executeJob(job);
+    } finally {
+      this.inFlight.delete(job.name);
+    }
+  }
+
+  private async executeJob(job: ScheduledJob): Promise<void> {
     const jobRunId = `job::${job.name}::${randomUUID()}`;
     const startedAt = Date.now();
     const stat = this.stats.get(job.name);
@@ -164,7 +199,10 @@ export class ScheduledJobRunner {
 
     await requestIdStorage.run(jobRunId, async () => {
       try {
-        await Promise.resolve(job.run({ now: () => new Date() }));
+        await this.withTimeout(
+          Promise.resolve(job.run({ now: () => new Date() })),
+          job.timeoutMs ?? DEFAULT_JOB_TIMEOUT_MS,
+        );
         if (stat) {
           stat.lastRunAt = new Date().toISOString();
           stat.lastRunDurationMs = Date.now() - startedAt;
@@ -196,6 +234,15 @@ export class ScheduledJobRunner {
         });
       }
     });
+  }
+
+  private withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(EXECUTION_TIMEOUT_ERROR)), timeoutMs);
+      timer.unref();
+    });
+    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
   }
 
   private async publishHeartbeat(): Promise<void> {

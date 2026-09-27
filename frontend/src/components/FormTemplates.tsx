@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Copy, Trash2, Download, Upload } from 'lucide-react';
 import type { FormTemplate } from '../types/formBuilder';
 import {
@@ -14,20 +15,21 @@ interface FormTemplatesProps {
 }
 
 const FormTemplates: React.FC<FormTemplatesProps> = ({ onSelectTemplate }: FormTemplatesProps) => {
+  const { t } = useTranslation();
   const [templates, setTemplates] = useState<FormTemplate[]>(getAllTemplates());
   const [filterCategory, setFilterCategory] = useState<'all' | 'standard' | 'payroll' | 'invoice' | 'custom'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredTemplates = useMemo(() => {
-    return templates.filter(t => {
-      const matchesCategory = filterCategory === 'all' || t.category === filterCategory;
-      const matchesSearch = !searchQuery || t.name.toLowerCase().includes(searchQuery.toLowerCase()) || t.description.toLowerCase().includes(searchQuery.toLowerCase());
+    return templates.filter(tpl => {
+      const matchesCategory = filterCategory === 'all' || tpl.category === filterCategory;
+      const matchesSearch = !searchQuery || tpl.name.toLowerCase().includes(searchQuery.toLowerCase()) || tpl.description.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesCategory && matchesSearch;
     });
   }, [templates, filterCategory, searchQuery]);
 
   const handleDeleteTemplate = (id: string) => {
-    if (confirm('Are you sure you want to delete this template?')) {
+    if (confirm(t('common.confirmDeleteTemplate'))) {
       deleteCustomTemplate(id);
       setTemplates(getAllTemplates());
     }
@@ -58,12 +60,12 @@ const FormTemplates: React.FC<FormTemplatesProps> = ({ onSelectTemplate }: FormT
           template.isPublic = false;
           saveCustomTemplate(template);
           setTemplates(getAllTemplates());
-          alert('Template imported successfully!');
+          alert(t('common.templateImportedSuccess'));
         } else {
-          alert('Invalid template format');
+          alert(t('common.invalidTemplateFormat'));
         }
       } catch {
-        alert('Failed to import template');
+        alert(t('common.failedToImportTemplate'));
       }
     };
     reader.readAsText(file);

@@ -28,6 +28,18 @@ export const env = {
 
   contractId: requireEnv('VITE_CONTRACT_ID'),
   sorobanRpcUrl: requireEnv('VITE_SOROBAN_RPC_URL'),
+  /**
+   * When true, the dashboard serves seeded treasury data so demos work
+   * without a live wallet or deployed contract.
+   */
+  demoMode: optionalEnv('VITE_DEMO_MODE', 'false') === 'true',
+  /**
+   * Optional WebSocket endpoint for ledger-close notifications. When unset,
+   * the ledger subscription falls back to polling `getLatestLedger`.
+   */
+  sorobanWebSocketUrl: optionalEnv('VITE_SOROBAN_WS_URL', ''),
+  /** Poll interval for the ledger-subscription fallback transport. */
+  ledgerPollIntervalMs: parseInt(optionalEnv('VITE_LEDGER_POLL_INTERVAL_MS', '5000'), 10),
   networkPassphrase: requireEnv('VITE_STELLAR_NETWORK_PASSPHRASE'),
   horizonUrl: optionalEnv('VITE_HORIZON_URL', 'https://horizon-testnet.stellar.org'),
   stellarNetwork: optionalEnv('VITE_STELLAR_NETWORK', 'TESTNET'),
@@ -42,4 +54,15 @@ export const env = {
     'VITE_PRICE_FEED_URL',
     'https://api.coingecko.com/api/v3/simple/price',
   ),
+  /** Multiplier applied to the network fee (from getFeeStats, or BASE_FEE as fallback). */
+  feeMultiplier: parseFloat(optionalEnv('VITE_FEE_MULTIPLIER', '1.5')),
+  /** Upper bound, in stroops, for the inclusion fee the app will offer. */
+  maxBaseFee: parseInt(optionalEnv('VITE_MAX_BASE_FEE', '100000'), 10),
+  /**
+   * JSON widget registry backing the Widget Marketplace (preview). Defaults to
+   * the repo-hosted registry in public/widgets/registry.json; point it at a
+   * backend endpoint once one exists.
+   */
+  widgetRegistryUrl: optionalEnv('VITE_WIDGET_REGISTRY_URL', '/widgets/registry.json'),
+  walletIdleTimeoutMs: parseInt(optionalEnv('VITE_WALLET_IDLE_TIMEOUT_MS', '900000'), 10),
 } as const;

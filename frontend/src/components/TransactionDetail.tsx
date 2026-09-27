@@ -22,6 +22,8 @@ const TYPE_LABELS: Record<VaultEventType, string> = {
   config_updated: 'Config Updated',
   initialized: 'Vault Initialized',
   role_assigned: 'Role Assigned',
+  vault_paused: 'Vault Paused',
+  vault_unpaused: 'Vault Unpaused',
   unknown: 'Unknown',
 };
 

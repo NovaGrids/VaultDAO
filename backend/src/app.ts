@@ -1,4 +1,9 @@
-import express, { Request, Response, NextFunction } from "express";
+import express, {
+  Request,
+  Response,
+  NextFunction,
+  RequestHandler,
+} from "express";
 import type { BackendEnv } from "./config/env.js";
 import type { BackendRuntime } from "./server.js";
 import {
@@ -13,10 +18,15 @@ import { createContractsRouter } from "./modules/contracts/contracts.controller.
 import { createSnapshotRouter } from "./modules/snapshots/snapshots.routes.js";
 import { getCorsOriginsController, addCorsOriginController, removeCorsOriginController } from "./modules/admin/cors.controller.js";
 import { triggerCursorMigrationController, rollbackCursorMigrationController } from "./modules/admin/cursor.controller.js";
+import { AdminAuditLogStore } from "./modules/admin-audit/admin-audit.store.js";
+import { createAdminAuditLogMiddleware } from "./modules/admin-audit/admin-audit.middleware.js";
+import { getAdminAuditLogController } from "./modules/admin-audit/admin-audit.controller.js";
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
 import { createAuditRouter } from "./modules/audit/audit.routes.js";
+import { createErrorsRouter } from "./modules/errors/errors.routes.js";
+import { ErrorsService } from "./modules/errors/errors.service.js";
 import { createNotificationsRouter } from "./modules/notifications/notifications.routes.js";
 import { createWebhookRouter } from "./modules/notifications/webhook.routes.js";
 import { createCacheRouter } from "./shared/cache/cache.routes.js";
@@ -28,25 +38,37 @@ import { error, success } from "./shared/http/response.js";
 import { createRateLimitMiddleware } from "./shared/http/rateLimit.js";
 import { createRateLimitMetricsMiddleware } from "./shared/http/token-bucket-metrics.js";
 import { createAuthMiddleware, requireApiKey } from "./shared/http/auth.js";
+import {
+  ApiKeyRotationState,
+  NoPendingRotationError,
+} from "./shared/http/api-key-rotation.js";
 import { createJsonWithRawBody, createHmacSigningMiddleware } from "./shared/http/hmac.js";
 import { ErrorCode } from "./shared/http/errorCodes.js";
 import {
   REQUEST_ID_HEADER,
-  generateRequestId,
   requestIdStorage,
+  resolveRequestId,
 } from "./shared/http/requestId.js";
 import { createRequestLogger } from "./shared/http/requestLogger.js";
+import { createRequestContextMiddleware } from "./shared/http/requestContext.js";
 import { createErrorMiddleware } from "./shared/errors/handleError.js";
 import { CorsAllowlist } from "./shared/http/corsAllowlist.js";
-import { initFeatureFlags, getFeatureFlags } from "./shared/feature-flags.js";
+import {
+  initFeatureFlags,
+  getFeatureFlags,
+  isKnownFlag,
+  KNOWN_FLAGS,
+} from "./shared/feature-flags.js";
 import { initRpcPool } from "./shared/rpc-pool.js";
+import { createDrainMiddleware } from "./shared/http/drain.js";
+import { createLogger } from "./shared/logging/logger.js";
+import { getSqlitePool, isPrivateDatabase } from "./shared/storage/sqlite-pool.js";
+
+const logger = createLogger("app");
 
 export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   const app = express();
-  const authKeyState = {
-    primary: env.apiKey,
-    next: env.apiKeyNext,
-  };
+  const authKeyState = new ApiKeyRotationState(env.apiKey, env.apiKeyNext);
   const corsAllowlist = new CorsAllowlist(env.nodeEnv, env.corsOrigin);
 
   // Initialize feature flags from env
@@ -60,6 +82,13 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   // Remove X-Powered-By header
   app.disable("x-powered-by");
+
+  // ── Drain middleware (must be first) ────────────────────────────────────────
+  // Increments the in-flight counter for every request and returns 503 once
+  // the server has begun shutting down, allowing active requests to complete.
+  if (runtime.lifecycleManager) {
+    app.use(createDrainMiddleware(runtime.lifecycleManager));
+  }
 
   // Security headers middleware
   app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -117,11 +146,15 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   // Request ID middleware
   app.use((req: Request, res: Response, next: NextFunction) => {
-    const id = req.get(REQUEST_ID_HEADER) ?? generateRequestId();
+    const id = resolveRequestId(req.get(REQUEST_ID_HEADER));
     res.set(REQUEST_ID_HEADER, id);
     (req as any).requestId = id;
     requestIdStorage.run(id, next);
   });
+
+  // Request context middleware — must follow the request-ID middleware so
+  // `req.requestId` is already populated when the context is built.
+  app.use(createRequestContextMiddleware());
 
   // Global rate limiter — catch-all DoS protection for all endpoints (1000 req/min per IP)
   // Token-bucket algorithm: smooth burst tolerance, no fixed-window double-spend.
@@ -160,16 +193,23 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   app.use(createRequestLogger());
 
   const authMiddleware = createAuthMiddleware(
-    () => ({ primaryKey: authKeyState.primary, nextKey: authKeyState.next }),
+    () => authKeyState.snapshot(),
     undefined,
     () => {
       // Never log key material; only emit rotation-stage usage warning.
-      console.warn(
-        "[auth] request authenticated with old API key while rotation is pending",
-      );
+      logger.warn("request authenticated with old API key while rotation is pending");
     },
   );
-  const adminAuthMiddleware = requireApiKey(() => authKeyState.primary);
+  // Admin routes accept only the current primary key, never the staged next
+  // key — so a rotation is always authorised by the key it retires.
+  const adminAuthMiddleware = requireApiKey(() => authKeyState.getPrimaryKey());
+
+  // Monitoring-friendly queue stats endpoint — intentionally registered before
+  // the /api/v1/notifications auth mount below so it requires no auth.
+  app.get("/api/v1/notifications/queue/stats", (_req, res) => {
+    const stats = runtime.notificationQueue?.getStats() ?? { total: 0 };
+    success(res, stats);
+  });
 
   // API key authentication for external integration endpoints (webhooks, notifications)
   app.use("/api/v1/webhooks", authMiddleware);
@@ -214,38 +254,86 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     () => env.hmacSecret,
   );
 
+  // ── Admin Audit Log ──────────────────────────────────────────────────────────
+  // Records every call under /admin — including rejected auth attempts — so a
+  // compromised Admin key leaves a trail of what was accessed or changed.
+  // The trail must outlive the process, so production refuses to fall back to
+  // a private in-memory database.
+  if (env.nodeEnv === "production" && isPrivateDatabase(env.databasePath ?? "")) {
+    throw new Error(
+      "DATABASE_PATH must point to a persistent SQLite file in production; the admin audit log cannot be kept in memory.",
+    );
+  }
+  const adminAuditLogStore = new AdminAuditLogStore(
+    getSqlitePool(env.databasePath ?? ":memory:", { size: env.sqlitePoolSize }),
+  );
+  v1Router.use("/admin", createAdminAuditLogMiddleware(adminAuditLogStore));
+
+  v1Router.get(
+    "/admin/audit-log",
+    adminAuthMiddleware,
+    hmacMiddleware,
+    getAdminAuditLogController(adminAuditLogStore),
+  );
+
   v1Router.get("/admin/key-status", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
-    const rotationPending = Boolean(authKeyState.next);
     res.status(200).json({
       success: true,
       data: {
-        rotationPending,
-        oldKeyActive: rotationPending && Boolean(authKeyState.primary),
+        rotationPending: authKeyState.isRotationPending(),
+        oldKeyActive: authKeyState.isOldKeyActive(),
+        lastRotatedAt: authKeyState.getLastRotatedAt() ?? null,
       },
     });
   });
 
-  v1Router.post("/admin/rotate-key", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
-    if (!authKeyState.next) {
-      error(res, {
-        message: "No pending API key rotation",
-        status: 409,
-        code: ErrorCode.BAD_REQUEST,
+  /**
+   * Promotes the staged `apiKeyNext` to `apiKey` and invalidates the key it
+   * replaces, without a config change or restart.
+   *
+   * Authorisation is deliberately the *old* key: `adminAuthMiddleware` accepts
+   * only the current primary, so whoever triggers the rotation must already
+   * hold the key being retired. The promotion itself is atomic — see
+   * `ApiKeyRotationState.rotate()`.
+   */
+  const rotateApiKeyHandler: RequestHandler = (_req, res) => {
+    try {
+      const result = authKeyState.rotate();
+
+      // Never log key material — only the fact and time of the rotation.
+      logger.warn("API key rotated; previous key invalidated", {
+        rotatedAt: result.rotatedAt,
       });
-      return;
+
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      if (err instanceof NoPendingRotationError) {
+        error(res, {
+          message:
+            "No pending API key rotation. Stage a replacement via VAULT_API_KEY_NEXT before rotating.",
+          status: 409,
+          code: ErrorCode.BAD_REQUEST,
+        });
+        return;
+      }
+      throw err;
     }
+  };
 
-    authKeyState.primary = authKeyState.next;
-    authKeyState.next = undefined;
+  v1Router.post(
+    "/admin/rotate-api-key",
+    adminAuthMiddleware,
+    hmacMiddleware,
+    rotateApiKeyHandler,
+  );
 
-    res.status(200).json({
-      success: true,
-      data: {
-        rotationPending: false,
-        oldKeyActive: false,
-      },
-    });
-  });
+  // Retained alias for callers written against the pre-existing path.
+  v1Router.post(
+    "/admin/rotate-key",
+    adminAuthMiddleware,
+    hmacMiddleware,
+    rotateApiKeyHandler,
+  );
 
   v1Router.get("/admin/cors/origins", adminAuthMiddleware, hmacMiddleware, getCorsOriginsController(corsAllowlist));
   v1Router.post("/admin/cors/origins", adminAuthMiddleware, hmacMiddleware, addCorsOriginController(corsAllowlist));
@@ -257,7 +345,12 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime, adminAuthMiddleware));
   v1Router.use("/health", createDetailedHealthRouter(env, runtime));
-  v1Router.use("/events", authMiddleware, hmacMiddleware, createEventsRouter());
+  v1Router.use(
+    "/events",
+    authMiddleware,
+    hmacMiddleware,
+    createEventsRouter(runtime.sseBroadcaster),
+  );
 
   // Contracts listing
   const registry = new (
@@ -296,6 +389,10 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       cursorCleanupJobEnabled: env.cursorCleanupJobEnabled,
       cursorCleanupJobIntervalMs: env.cursorCleanupJobIntervalMs,
       cursorRetentionDays: env.cursorRetentionDays,
+      proposalArchivalJobEnabled: env.proposalArchivalJobEnabled,
+      proposalArchivalJobIntervalMs: env.proposalArchivalJobIntervalMs,
+      proposalArchivalThresholdDays: env.proposalArchivalThresholdDays,
+      proposalHotStorageDays: env.proposalHotStorageDays,
       corsOrigin: env.corsOrigin,
       requestBodyLimit: env.requestBodyLimit,
       notificationsRequestBodyLimit: env.notificationsRequestBodyLimit,
@@ -326,14 +423,23 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     success(res, getFeatureFlags().list());
   });
 
+  const rejectUnknownFlag = (res: express.Response, flag: string) =>
+    error(res, {
+      message: `Unknown feature flag "${flag}". Known flags: ${KNOWN_FLAGS.join(", ")}`,
+      status: 404,
+      code: ErrorCode.NOT_FOUND,
+    });
+
   v1Router.post("/admin/features/:flag/enable", adminAuthMiddleware, hmacMiddleware, (req, res) => {
     const { flag } = req.params as { flag: string };
+    if (!isKnownFlag(flag)) return rejectUnknownFlag(res, flag);
     getFeatureFlags().enable(flag);
     success(res, { flag, enabled: true });
   });
 
   v1Router.post("/admin/features/:flag/disable", adminAuthMiddleware, hmacMiddleware, (req, res) => {
     const { flag } = req.params as { flag: string };
+    if (!isKnownFlag(flag)) return rejectUnknownFlag(res, flag);
     getFeatureFlags().disable(flag);
     success(res, { flag, enabled: false });
   });
@@ -345,6 +451,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   v1Router.use(
     "/contracts",
+    authMiddleware,
     hmacMiddleware,
     createContractsRouter(registry, adminAuthMiddleware, (runtime as any).contractStateValidator),
   );
@@ -353,6 +460,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   if (runtime.jobManager && runtime.scheduledJobRunner) {
     v1Router.use(
       "/jobs",
+      authMiddleware,
       hmacMiddleware,
       createJobsRouter(runtime.jobManager, runtime.scheduledJobRunner, adminAuthMiddleware),
     );
@@ -429,6 +537,12 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     hmacMiddleware,
     createAuditRouter(env.sorobanRpcUrl, adminAuthMiddleware),
   );
+
+  // Client-side error collection (ErrorBoundary reporting). POST is
+  // intentionally unauthenticated — the browser cannot hold an API key or
+  // HMAC secret — but is covered by the global/write rate limiters above.
+  // GET (listing) is admin-gated since it may surface sensitive stack traces.
+  v1Router.use("/errors", createErrorsRouter(new ErrorsService(), adminAuthMiddleware));
 
   if (runtime.cacheManager) {
     v1Router.use(

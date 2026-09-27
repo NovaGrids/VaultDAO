@@ -1,0 +1,136 @@
+{
+  "$comment": "VaultDAO widget registry (preview). Listings are curated in-repo until a backend registry exists. Stats such as downloads/rating/reviews are optional and only shown when a registry provides real values.",
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-25",
+  "widgets": [
+    {
+      "manifest": {
+        "metadata": {
+          "id": "treasury-visualizer",
+          "name": "Treasury Pro Visualizer",
+          "version": "2.4.0",
+          "author": "DefiInsights",
+          "description": "Advanced treasury tracking with multi-token visualization and historical yield analysis.",
+          "category": "finance",
+          "source": "third-party",
+          "icon": "💎",
+          "tags": [
+            "finance",
+            "treasury",
+            "charts"
+          ],
+          "createdAt": "2024-01-15",
+          "updatedAt": "2024-03-20"
+        },
+        "permissions": {
+          "network": true,
+          "storage": true
+        },
+        "entryPoint": "https://widgets.vaultdao.io/treasury-visualizer/index.html"
+      }
+    },
+    {
+      "manifest": {
+        "metadata": {
+          "id": "proposal-companion",
+          "name": "Governance Companion",
+          "version": "1.2.5",
+          "author": "GovTools",
+          "description": "AI-powered proposal summarization and voter sentiment analysis in real-time.",
+          "category": "governance",
+          "source": "third-party",
+          "icon": "⚖️",
+          "tags": [
+            "governance",
+            "AI",
+            "voting"
+          ],
+          "createdAt": "2024-02-10",
+          "updatedAt": "2024-03-25"
+        },
+        "permissions": {
+          "network": true
+        },
+        "entryPoint": "https://widgets.vaultdao.io/gov-companion/index.html"
+      }
+    },
+    {
+      "manifest": {
+        "metadata": {
+          "id": "social-activity-feed",
+          "name": "DAO Activity Stream",
+          "version": "3.0.1",
+          "author": "SocialLink",
+          "description": "Integrated social feed showing member discussions, Discord activity, and snapshot votes.",
+          "category": "social",
+          "source": "third-party",
+          "icon": "💬",
+          "tags": [
+            "social",
+            "community",
+            "feed"
+          ],
+          "createdAt": "2023-12-20",
+          "updatedAt": "2024-03-18"
+        },
+        "permissions": {
+          "network": true,
+          "notifications": true
+        },
+        "entryPoint": "https://widgets.vaultdao.io/social-feed/index.html"
+      }
+    },
+    {
+      "manifest": {
+        "metadata": {
+          "id": "gas-master",
+          "name": "Gas Master Plus",
+          "version": "1.0.2",
+          "author": "ChainOptim",
+          "description": "Ultra-precise gas price tracking across multiple networks with personalized alerts.",
+          "category": "utility",
+          "source": "third-party",
+          "icon": "⚡",
+          "tags": [
+            "utility",
+            "gas",
+            "alerts"
+          ],
+          "createdAt": "2024-03-01",
+          "updatedAt": "2024-03-28"
+        },
+        "permissions": {
+          "network": true,
+          "notifications": true
+        },
+        "entryPoint": "https://widgets.vaultdao.io/gas-master/index.html"
+      }
+    },
+    {
+      "manifest": {
+        "metadata": {
+          "id": "yield-optimizer",
+          "name": "Vault Yield Radar",
+          "version": "1.5.0",
+          "author": "StellarYield",
+          "description": "Identify best yield opportunities for your vault assets across verified Soroban protocols.",
+          "category": "finance",
+          "source": "third-party",
+          "icon": "🚀",
+          "tags": [
+            "finance",
+            "yield",
+            "soroban"
+          ],
+          "createdAt": "2024-02-15",
+          "updatedAt": "2024-03-22"
+        },
+        "permissions": {
+          "network": true,
+          "wallet": true
+        },
+        "entryPoint": "https://widgets.vaultdao.io/yield-radar/index.html"
+      }
+    }
+  ]
+}

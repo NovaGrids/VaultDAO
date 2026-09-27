@@ -11,6 +11,7 @@ import type {
 import { NotificationPriority, NotificationTarget, type DeliveryStatus } from "./notification.types.js";
 import { randomUUID } from "node:crypto";
 import { createHmac } from "node:crypto";
+import type { NotificationQueueStore, QueueStats } from "./notification-queue.store.js";
 
 const logger = createLogger("priority-notification-queue");
 
@@ -43,7 +44,7 @@ async function deliverWebhook(
   event: NotificationEvent,
   registration: WebhookRegistration,
   attempt = 1,
-): Promise<void> {
+): Promise<boolean> {
   const body = JSON.stringify(event);
   const sig = createHmac("sha256", registration.secret).update(body).digest("hex");
 
@@ -63,6 +64,7 @@ async function deliverWebhook(
 
     recordDelivery(event.id, NotificationTarget.WEBHOOK, "delivered", attempt);
     logger.info("webhook delivered", { url: registration.url, eventId: event.id });
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (attempt < 3) {
@@ -73,15 +75,17 @@ async function deliverWebhook(
     }
     recordDelivery(event.id, NotificationTarget.WEBHOOK, "failed", attempt, msg);
     logger.error("webhook delivery exhausted", { url: registration.url, eventId: event.id, error: msg });
+    return false;
   }
 }
 
 // ── Email delivery (stub — wire to SendGrid/Resend via env) ───────────────────
 
-async function deliverEmail(event: NotificationEvent): Promise<void> {
+async function deliverEmail(event: NotificationEvent): Promise<boolean> {
   // Stub: log and record. Replace with real provider call when EMAIL_API_KEY is set.
   logger.info("email delivery queued (stub)", { eventId: event.id, topic: event.topic });
   recordDelivery(event.id, NotificationTarget.EMAIL, "delivered", 1);
+  return true;
 }
 
 // ── Priority queue ────────────────────────────────────────────────────────────
@@ -96,6 +100,30 @@ export class PriorityNotificationQueue {
   // Four buckets: index = priority level (URGENT=3 processed first)
   private readonly buckets: QueuedItem[][] = [[], [], [], []];
   private processing = false;
+
+  constructor(private readonly store?: NotificationQueueStore) {}
+
+  /**
+   * Load notifications left pending/processing from a previous run (e.g.
+   * after a restart) back into the in-memory buckets. Critical/urgent
+   * priority items are restored first since `loadPending()` already orders
+   * by priority descending.
+   */
+  public restore(): void {
+    if (!this.store) return;
+    const rows = this.store.loadPending();
+    for (const row of rows) {
+      const event = JSON.parse(row.payload_json) as NotificationEvent;
+      this.buckets[row.priority as NotificationPriority].push({
+        event,
+        options: { priority: row.priority as NotificationPriority, targets: [NotificationTarget.WEBSOCKET] },
+      });
+    }
+    if (rows.length > 0) {
+      logger.info("restored pending notifications from store", { count: rows.length });
+      void this.drain();
+    }
+  }
 
   /** Register a webhook endpoint. Returns the registration id. */
   public registerWebhook(url: string, secret: string, topics: string[]): WebhookRegistration {
@@ -133,6 +161,8 @@ export class PriorityNotificationQueue {
       ? { ...event, correlationId }
       : event;
 
+    this.store?.enqueue(enrichedEvent.id, priority, JSON.stringify(enrichedEvent), enrichedEvent.createdAt);
+
     this.buckets[priority].push({ event: enrichedEvent, options: { priority, targets } });
     logger.debug("event queued", { eventId: event.id, priority, targets, correlationId });
     void this.drain();
@@ -145,6 +175,12 @@ export class PriorityNotificationQueue {
 
   public size(): number {
     return this.buckets.reduce((sum, b) => sum + b.length, 0);
+  }
+
+  /** Pending/failed counts sourced from the persistent store, when configured. */
+  public getStats(): QueueStats | { total: number } {
+    if (this.store) return this.store.getStats();
+    return { total: this.size() };
   }
 
   public shutdown(): void {
@@ -177,7 +213,9 @@ export class PriorityNotificationQueue {
   }
 
   private async dispatch({ event, options }: QueuedItem): Promise<void> {
-    const tasks: Promise<void>[] = [];
+    this.store?.markProcessing(event.id);
+
+    const tasks: Promise<boolean>[] = [];
 
     for (const target of options.targets) {
       switch (target) {
@@ -185,9 +223,12 @@ export class PriorityNotificationQueue {
           // Deliver to in-process subscribers (e.g. WebSocket broadcaster)
           for (const consumer of this.consumers) {
             tasks.push(
-              Promise.resolve(consumer(event)).catch((err) => {
-                logger.warn("ws consumer error", { eventId: event.id, error: String(err) });
-              }),
+              Promise.resolve(consumer(event))
+                .then(() => true)
+                .catch((err) => {
+                  logger.warn("ws consumer error", { eventId: event.id, error: String(err) });
+                  return false;
+                }),
             );
           }
           recordDelivery(event.id, NotificationTarget.WEBSOCKET, "delivered", 1);
@@ -207,6 +248,13 @@ export class PriorityNotificationQueue {
       }
     }
 
-    await Promise.allSettled(tasks);
+    const results = await Promise.allSettled(tasks);
+    const allSucceeded = results.every((r) => r.status === "fulfilled" && r.value === true);
+
+    if (allSucceeded) {
+      this.store?.markDelivered(event.id);
+    } else {
+      this.store?.markFailed(event.id);
+    }
   }
 }

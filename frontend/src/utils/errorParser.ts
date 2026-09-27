@@ -74,6 +74,11 @@ const CONTRACT_CODE_MAP: Record<number, string> = {
   231: 'TOO_MANY_ATTACHMENTS',
   232: 'TOO_MANY_TAGS',
   233: 'METADATA_VALUE_INVALID',
+  // Issue #1739 (contract error codes)
+  1160: 'STREAM_NOT_ACTIVE',
+  1161: 'VESTING_NOT_FOUND',
+  1162: 'LOCK_ALREADY_ACTIVE',
+  1163: 'VESTING_CAP_REACHED',
 };
 
 /** Parse `Error(Contract, #N)` patterns from Soroban simulation/RPC output. */

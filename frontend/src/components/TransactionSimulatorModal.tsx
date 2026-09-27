@@ -41,7 +41,8 @@ import { getDiffSegments } from '../utils/diffHighlighting';
 import { getUserFriendlyError } from '../utils/errorMapping';
 import { env } from '../config/env';
 import { useWallet } from '../hooks/useWallet';
-import { SorobanRpc, Address, Operation, TransactionBuilder, xdr as xdrModule } from 'stellar-sdk';
+import { SorobanRpc, Address, Operation, xdr as xdrModule } from 'stellar-sdk';
+import { newTransactionBuilder } from '../utils/transactionBuilder';
 
 const server = new SorobanRpc.Server(env.sorobanRpcUrl);
 
@@ -149,13 +150,20 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
   const [cpuInsns, setCpuInsns] = useState('0');
   const [memBytes, setMemBytes] = useState('0');
   const [showDetails, setShowDetails] = useState(false);
+  const triggeringElementRef = React.useRef<HTMLElement | null>(null);
 
-  // Reset state when modal opens
+  // Reset state when modal opens and manage focus
   useEffect(() => {
     if (isOpen) {
+      triggeringElementRef.current = document.activeElement as HTMLElement;
       setResult(null);
       setShowDetails(false);
       setProceeding(false);
+    } else {
+      // Restore focus when modal closes
+      if (triggeringElementRef.current) {
+        triggeringElementRef.current.focus();
+      }
     }
   }, [isOpen]);
 
@@ -172,9 +180,7 @@ const TransactionSimulatorModal: React.FC<TransactionSimulatorModalProps> = ({
 
       const source = address ?? env.feesAccount;
       const account = await server.getAccount(source);
-      const tx = new TransactionBuilder(account, { fee: '100' })
-        .setNetworkPassphrase(env.networkPassphrase)
-        .setTimeout(30)
+      const tx = (await newTransactionBuilder(account))
         .addOperation(
           Operation.invokeHostFunction({
             func: xdrModule.HostFunction.hostFunctionTypeInvokeContract(

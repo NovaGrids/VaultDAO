@@ -29,6 +29,7 @@ logStartupConfig(env);
 
 const logger = createLogger("vaultdao-backend");
 const realtimeServer = new RealtimeServer({
+  maxSubscriptionsPerClient: env.wsMaxSubscriptionsPerClient,
   onConnected: (connectionId) => {
     logger.info("realtime connection opened", { connectionId });
   },

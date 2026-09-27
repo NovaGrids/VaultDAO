@@ -19,6 +19,7 @@ export function useTokenPrices(tokens: TokenInfo[]) {
   const [prices, setPrices] = useState<Record<string, TokenPrice>>({});
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [priceError, setPriceError] = useState(false);
 
   const fetchPrices = useCallback(async () => {
     setLoading(true);
@@ -46,7 +47,7 @@ export function useTokenPrices(tokens: TokenInfo[]) {
       if (!response.ok) {
         throw new Error(`Price feed response status: ${response.status}`);
       }
-      
+
       const data = await response.json();
 
       tokens.forEach((t) => {
@@ -64,22 +65,17 @@ export function useTokenPrices(tokens: TokenInfo[]) {
         }
       });
 
-      setLastUpdated(Date.now());
-    } catch (error) {
-      console.warn('Price feed fetch failed, falling back to mock or default values:', error);
-      // Fallback: use hardcoded default prices for test coverage / graceful fallback
-      tokens.forEach((t) => {
-        if (t.isNative || t.symbol === 'XLM') {
-          nextPrices[t.address] = { usd: 0.12, change24h: 2.5 };
-        } else if (t.symbol === 'USDC') {
-          nextPrices[t.address] = { usd: 1.0, change24h: 0.05 };
-        } else {
-          nextPrices[t.address] = { usd: null, change24h: null };
-        }
-      });
-      setLastUpdated(Date.now());
-    } finally {
+      // Only commit prices and timestamp on success
       setPrices(nextPrices);
+      setLastUpdated(Date.now());
+      setPriceError(false);
+    } catch (error) {
+      // On failure: keep existing prices and lastUpdated as-is so the UI
+      // continues to show the last known real values with their original
+      // timestamp. Never overwrite with hardcoded fallbacks.
+      console.warn('Price feed fetch failed:', error);
+      setPriceError(true);
+    } finally {
       setLoading(false);
     }
   }, [tokens]);
@@ -88,5 +84,5 @@ export function useTokenPrices(tokens: TokenInfo[]) {
     fetchPrices();
   }, [fetchPrices]);
 
-  return { prices, loading, lastUpdated, refresh: fetchPrices };
+  return { prices, loading, lastUpdated, priceError, refresh: fetchPrices };
 }

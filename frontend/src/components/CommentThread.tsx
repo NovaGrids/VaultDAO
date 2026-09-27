@@ -83,7 +83,7 @@ const CommentThread: React.FC<CommentThreadProps> = ({
                   </div>
                 </div>
                 {isAuthor && !isEditing && (
-                  <button onClick={() => { setEditingId(comment.id); setEditText(comment.text); }} className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-purple-400 transition-colors">
+                  <button onClick={() => { setEditingId(comment.id); setEditText(comment.text); }} aria-label="Edit comment" className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-purple-400 transition-colors">
                     <Edit2 size={14} />
                   </button>
                 )}
@@ -95,7 +95,7 @@ const CommentThread: React.FC<CommentThreadProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">{editText.length}/{MAX_CHARS}</span>
                     <div className="flex gap-2">
-                      <button onClick={() => setEditingId(null)} disabled={submitting} className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs transition-colors"><X size={14} /></button>
+                      <button onClick={() => setEditingId(null)} disabled={submitting} aria-label="Cancel edit" className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs transition-colors"><X size={14} /></button>
                       <button onClick={() => handleEdit(comment.id)} disabled={!editText.trim() || submitting} className="px-3 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded text-xs transition-colors flex items-center gap-1"><Check size={14} />Save</button>
                     </div>
                   </div>

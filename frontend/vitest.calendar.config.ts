@@ -1,5 +1,5 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
@@ -15,6 +15,8 @@ export default defineConfig({
     environment: 'happy-dom',
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    // Playwright specs live in e2e/ and run via `npm run test:e2e`.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
     execArgv: [],
     fileParallelism: false,
   },

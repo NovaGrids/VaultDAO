@@ -29,7 +29,7 @@ pub struct VaultOracleConfig {
     pub address: Address,
     /// Asset symbol for the base currency (e.g., USD)
     pub base_symbol: Symbol,
-    /// Maximum ledgers before price is considered stale
+    /// Maximum age in seconds before price is considered stale
     pub max_staleness: u32,
 }
 
@@ -54,7 +54,9 @@ pub struct VaultPriceData {
 pub struct InitConfig {
     /// List of authorized signers
     pub signers: Vec<Address>,
-    /// Required number of approvals (M in M-of-N)
+    /// Required number of approvals (M in M-of-N). Must be >= 2: a threshold of 1
+    /// degrades the vault to a single-signer wallet, so `initialize` rejects it
+    /// with `VaultError::ThresholdTooLow`.
     pub threshold: u32,
     /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
     /// Set to 0 to disable quorum enforcement.
@@ -103,10 +105,6 @@ pub struct InitConfig {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
-    /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
-    pub arbitration_timeout_ledgers: u64,
-    /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
-    pub approval_timeout_ledgers: u64,
 }
 
 /// Vault configuration
@@ -182,10 +180,27 @@ pub struct Config {
     pub high_impact_threshold: u32,
     /// Minimum delay in ledgers before admin role can be rotated (≥ 1440 ≈ 24 h)
     pub admin_rotation_delay: u64,
+    /// Default amount for auto top-up before subscription renewal (0 = disabled)
+    pub auto_topup_amount: i128,
+    /// Whether subscription tier usage tracking is enabled
+    pub tier_usage_tracking: bool,
     /// Arbitration timeout in ledgers for escrow disputes (default: 30 days)
     pub arbitration_timeout_ledgers: u64,
     /// Timeout in ledgers for proposal approval (0 = disabled, issue #1425)
     pub approval_timeout_ledgers: u64,
+    /// Execution window in ledgers after approval before the proposal auto-expires (0 = no window).
+    pub exec_window_ledgers: u64,
+
+    // ---- Issue #1093: Signer Participation Scoring ----
+    /// Minimum acceptable participation rate (0-100). Below this for
+    /// `low_participation_streak_n` in a row triggers an alert.
+    pub min_participation_rate: u32,
+    /// Number of consecutive below-threshold proposals before a
+    /// `LowParticipationAlert` event is emitted.
+    pub low_participation_streak_n: u32,
+    /// Window size (in proposals, max 100) used when evaluating whether a
+    /// signer is currently below `min_participation_rate`.
+    pub participation_rate_window: u32,
 }
 
 /// Audit record for a cancelled proposal
@@ -212,6 +227,34 @@ pub struct ProposalAmendment {
     pub new_amount: i128,
     pub old_memo: Symbol,
     pub new_memo: Symbol,
+    /// Free-form reason/comment explaining why the amendment was made (empty symbol if none given)
+    pub reason: Symbol,
+}
+
+/// Diff between two points in a proposal's amendment history, highlighting
+/// which fields changed and, for the amount, by how much.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AmendmentDiff {
+    pub proposal_id: u64,
+    /// Index into amendment history used as the "before" side of the diff
+    pub from_index: u32,
+    /// Index into amendment history used as the "after" side of the diff
+    pub to_index: u32,
+    pub recipient_changed: bool,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub amount_changed: bool,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    /// new_amount - old_amount (signed delta)
+    pub amount_delta: i128,
+    pub memo_changed: bool,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
+    pub reason_changed: bool,
+    pub old_reason: Symbol,
+    pub new_reason: Symbol,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -327,6 +370,11 @@ impl Role {
             (Role::Treasurer, Role::DisputeArbitrator) => false,
             (Role::Member, Role::DisputeArbitrator) => false,
             (Role::Observer, Role::DisputeArbitrator) => false,
+            // Same-role and remaining DisputeArbitrator cross-checks
+            (Role::Admin, Role::Admin) => true,
+            (Role::DisputeArbitrator, Role::Observer) => false,
+            (Role::DisputeArbitrator, Role::Member) => false,
+            (Role::DisputeArbitrator, Role::Treasurer) => false,
         }
     }
 }
@@ -337,6 +385,50 @@ impl Role {
 pub struct RoleAssignment {
     pub addr: Address,
     pub role: Role,
+}
+
+// =========================================================
+// Issue #1093: Proposal Analytics Aggregator / Signer Participation Scoring
+// =========================================================
+
+/// Per-signer voting participation record. Scores are advisory only —
+/// they never block voting or proposal execution.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SignerParticipationScore {
+    pub signer: Address,
+    /// Total proposals this signer has explicitly approved or abstained on.
+    pub proposals_voted: u32,
+    /// Total proposals that expired while this signer was eligible but did not vote.
+    pub proposals_missed: u32,
+    /// Ledger sequence of this signer's most recent vote (0 = never voted).
+    pub last_active_ledger: u32,
+    /// Circular buffer of the last up-to-100 outcomes (true = voted, false = missed),
+    /// in insertion order, oldest-overwritten-first once full.
+    pub history: Vec<bool>,
+    /// Next write index into `history` once it reaches its 100-entry cap.
+    pub history_cursor: u32,
+    /// Number of consecutive proposals for which the rate over
+    /// `Config.participation_rate_window` has been below `Config.min_participation_rate`.
+    pub consecutive_low_periods: u32,
+    /// Ledger sequence when participation first dropped below the threshold in the
+    /// current low-participation streak (cleared once participation recovers).
+    /// Used to gate force-rotation eligibility (30-day sustained threshold).
+    pub low_participation_since_ledger: Option<u32>,
+}
+
+/// A pending force-rotation mini-proposal for an underperforming signer,
+/// requiring `Config.threshold` distinct signer approvals before it executes
+/// (Issue #1093: "Force-rotation requires separate governance vote").
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ForceRotationRequest {
+    pub id: u64,
+    pub target: Address,
+    pub replacement: Address,
+    pub approvals: Vec<Address>,
+    pub created_at: u32,
+    pub executed: bool,
 }
 
 /// Granular permissions for fine-grained access control
@@ -604,6 +696,16 @@ pub struct Proposal {
     pub fee_estimate_cache: Option<i128>,
     /// Ledger timestamp when fee cache was last computed (Issue #1428)
     pub fee_cache_timestamp: u64,
+    /// Day-number bucket where spending was reserved at creation (Issue #1345)
+    pub spend_day: u64,
+    /// Week-number bucket where spending was reserved at creation (Issue #1345)
+    pub spend_week: u64,
+    /// True once spend_day/spend_week were recorded at reservation time (Issue #1345).
+    /// False on legacy proposals that predate these fields (Soroban default).
+    pub has_spend_buckets: bool,
+    /// Ledger when the proposal was approved (0 = not yet approved).
+    /// Used to enforce the execution window (Issue #1349).
+    pub approved_at: u64,
 }
 
 /// Represents a grouped batch of proposals for atomic execution.
@@ -667,6 +769,8 @@ pub enum RecurringStatus {
     Paused = 1,
     /// Payment has been permanently stopped and cannot be resumed
     Stopped = 2,
+    /// Payment is in the process of stopping (within its grace period)
+    Stopping = 3,
 }
 
 /// How a recurring payment due on a non-business ledger is adjusted.
@@ -692,15 +796,24 @@ pub struct HolidayCalendar {
     pub holiday_ledgers: Vec<u64>,
 }
 
-/// Recurring payment schedule
+/// Recurring payment schedule.
+///
+/// Lifecycle is tracked by `status` ([`RecurringStatus`]); there is no
+/// separate `is_active` flag. Check `status == RecurringStatus::Active`.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RecurringPayment {
+    /// Unique recurring payment ID
     pub id: u64,
+    /// Address that created the schedule
     pub proposer: Address,
+    /// Address receiving each payment
     pub recipient: Address,
+    /// Token contract address
     pub token: Address,
+    /// Amount transferred per execution
     pub amount: i128,
+    /// Short memo attached to each payment
     pub memo: Symbol,
     /// Interval in ledgers (e.g., 172800 for ~1 week)
     pub interval: u64,
@@ -712,6 +825,8 @@ pub struct RecurringPayment {
     pub status: RecurringStatus,
     /// Maximum missed payments to catch up (0 = unlimited)
     pub max_missed_payments: u32,
+    /// Number of grace period executions allowed before Stopped
+    pub grace_executions: u32,
     /// Ledger at which the payment was paused (0 = not paused)
     pub paused_at_ledger: u64,
     /// Whether holiday/weekend adjustment is enabled.
@@ -773,7 +888,10 @@ pub enum StreamStatus {
     Completed = 3,
 }
 
-/// Continuous token transfer over time
+/// Continuous token transfer over time.
+///
+/// The committed amount is `total_amount` (not `amount_total`), and
+/// lifecycle is tracked by `status` ([`StreamStatus`]).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct StreamingPayment {
@@ -986,9 +1104,19 @@ pub struct StakingConfig {
     pub max_stake_amount: i128,
     pub reputation_discount_threshold: u32,
     pub reputation_discount_percentage: u32,
+    /// Issue #1360: percentage of the stake slashed when a proposal is **rejected**.
+    /// Executed proposals are never slashed (0%); see `cancellation_slash_percentage`
+    /// for the proposer-initiated cancellation rate.
     pub slash_percentage: u32,
+    /// Issue #1360: percentage of the stake slashed when a proposer **cancels** their
+    /// own proposal. Higher than the rejection rate because cancellation is the
+    /// cheapest way to spam the queue: propose, occupy signer attention, withdraw.
+    pub cancellation_slash_percentage: u32,
+    /// Issue #1360: route slashed stake to the insurance pool instead of the stake pool.
+    pub slash_to_insurance_pool: bool,
     pub compound_lock_period: u64,
     pub compound_epoch: u64,
+    pub reward_bps_per_execution: u32,
 }
 
 impl Default for StakingConfig {
@@ -1000,9 +1128,12 @@ impl Default for StakingConfig {
             max_stake_amount: i128::MAX,
             reputation_discount_threshold: 900,
             reputation_discount_percentage: 0,
-            slash_percentage: 50,
+            slash_percentage: 10,
+            cancellation_slash_percentage: 50,
+            slash_to_insurance_pool: false,
             compound_lock_period: 17280, // ~1 day at 5s/ledger
             compound_epoch: 17280,       // ~1 day at 5s/ledger
+            reward_bps_per_execution: 0,
         }
     }
 }
@@ -1022,6 +1153,8 @@ pub struct StakeRecord {
     pub auto_compound: bool,
     pub reinvestment_lock_until: u64,
     pub last_compounded: u64,
+    pub staking_tier: u32,
+    pub accumulated_rewards: i128,
 }
 
 impl Default for GasConfig {
@@ -1217,6 +1350,23 @@ pub enum AuditAction {
     UpdateThreshold = 9,
     AbstainProposal = 10,
     AmendProposal = 11,
+    /// Entire signer set replaced via governance-approved proposal (#1692)
+    SignersReplaced = 12,
+    // Issue #1738: fund-movement audit coverage
+    VestingCreated = 13,
+    VestingClaimed = 14,
+    VestingCancelled = 15,
+    TokensLocked = 16,
+    TokensUnlocked = 17,
+    TokensUnlockedEarly = 18,
+    EscrowCreated = 19,
+    EscrowReleased = 20,
+    FundingRoundCreated = 21,
+    FundingRoundApproved = 22,
+    FundingRoundReleased = 23,
+    FundingRoundCancelled = 24,
+    SubscriptionCreated = 25,
+    SubscriptionCancelled = 26,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -1415,6 +1565,10 @@ pub struct Subscription {
     pub grace_period_ledgers: u64,
     /// Ledger at which the subscription was paused (0 = not paused)
     pub paused_at_ledger: u64,
+    /// Source wallet for auto top-up before renewal
+    pub auto_topup_source: Option<Address>,
+    /// Amount to top-up if balance insufficient (0 = disabled)
+    pub auto_topup_amount: i128,
 }
 
 /// Payment record for subscription tracking
@@ -1663,6 +1817,27 @@ pub struct RecoveryProposal {
     /// Earliest ledger when this recovery can be executed
     pub execution_after: u64,
 }
+
+/// Recovery configuration change proposal (Issue #1702)
+/// Routes recovery config changes through multisig governance with timelock.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RecoveryConfigChangeProposal {
+    pub id: u64,
+    /// Address proposing the change
+    pub proposer: Address,
+    /// New recovery configuration
+    pub new_config: RecoveryConfig,
+    /// Signers who have approved this proposal
+    pub approvals: Vec<Address>,
+    /// Current status
+    pub status: ProposalStatus,
+    /// Ledger when the proposal was created
+    pub created_at: u64,
+    /// Expiration ledger for voting
+    pub expires_at: u64,
+}
+
 // ============================================================================
 // Escrow System (Issue: feature/escrow-system)
 // ============================================================================
@@ -1689,6 +1864,19 @@ pub enum EscrowStatus {
 /// Milestone tracking unit for progressive fund release
 #[contracttype]
 #[derive(Clone, Debug)]
+pub struct Milestone {
+    /// Unique milestone ID
+    pub id: u64,
+    /// Percentage of total escrow amount (0-100)
+    pub percentage: u32,
+    /// Ledger when this milestone can be marked complete
+    pub release_ledger: u64,
+    /// Whether this milestone has been verified as complete
+    pub is_completed: bool,
+    /// Ledger when milestone was completed (0 if not completed)
+    pub completion_ledger: u64,
+}
+
 /// Pause history record for streaming payments - Issue #1429
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -1721,21 +1909,6 @@ pub struct FanOutRecipient {
     pub address: Address,
     /// Percentage of stream (0-100)
     pub percentage: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct Milestone {
-    /// Unique milestone ID
-    pub id: u64,
-    /// Percentage of total escrow amount (0-100)
-    pub percentage: u32,
-    /// Ledger when this milestone can be marked complete
-    pub release_ledger: u64,
-    /// Whether this milestone has been verified as complete
-    pub is_completed: bool,
-    /// Ledger when milestone was completed (0 if not completed)
-    pub completion_ledger: u64,
 }
 
 /// Escrow agreement holding funds with milestone-based releases
@@ -1864,10 +2037,13 @@ pub struct TimeWeightedConfig {
     pub apply_decay: bool,
     /// Penalty for early unlock (basis points, e.g., 1000 = 10%)
     pub early_unlock_penalty_bps: u32,
+    /// The only token that may be locked for voting power (#1705).
+    /// `None` means no token is accepted.
+    pub governance_token: Option<Address>,
 }
 
-impl TimeWeightedConfig {
-    pub fn default() -> Self {
+impl Default for TimeWeightedConfig {
+    fn default() -> Self {
         const DAY_LEDGERS: u64 = 17_280;
         TimeWeightedConfig {
             enabled: false,
@@ -1875,6 +2051,7 @@ impl TimeWeightedConfig {
             max_lock_duration: 730 * DAY_LEDGERS, // 2 years maximum
             apply_decay: true,
             early_unlock_penalty_bps: 1000, // 10% penalty
+            governance_token: None,
         }
     }
 }
@@ -2125,6 +2302,70 @@ pub struct FeeStructure {
     pub enabled: bool,
 }
 
+/// A single fee tier within a [`VaultTemplate`]. The volume threshold is
+/// expressed as a percentage of the per-proposal spending limit rather than
+/// an absolute amount, so the tier ladder scales with the target vault's size.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TemplateFeeTier {
+    /// Cumulative volume threshold, as a percentage of the per-proposal spending limit
+    pub volume_threshold_ratio_percent: u32,
+    /// Fee rate in basis points (e.g., 100 = 1%)
+    pub fee_bps: u32,
+}
+
+/// Sanitized, serializable snapshot of a vault's configuration shape, suitable
+/// for cloning into a freshly-deployed vault via `initialize_from_template`.
+///
+/// Signer/veto/hook/treasury addresses and absolute amounts are never
+/// included — only ratios (relative to the per-proposal spending limit or
+/// signer count), structural settings, and a feature-enablement bitmask.
+/// Private configuration (e.g. oracle keys, recovery guardians) is excluded.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VaultTemplate {
+    /// Template format version, for forward compatibility as the shape evolves
+    pub version: u32,
+    /// Required approvals as a percentage of signer count (1-100, ceil-rounded)
+    pub threshold_ratio_percent: u32,
+    /// Quorum requirement as a percentage of signer count (0 = disabled)
+    pub quorum_percentage: u32,
+    /// Delay in ledgers for timelocked proposals
+    pub timelock_delay_ledgers: u64,
+    /// Timelock trigger threshold, as a percentage of the per-proposal spending limit (0 = disabled)
+    pub timelock_threshold_pct: u32,
+    /// Veto window in ledgers after proposal creation (0 = veto disabled)
+    pub veto_window_ledgers: u64,
+    /// Daily spending limit, as a percentage of the per-proposal spending limit
+    pub daily_limit_ratio_percent: u32,
+    /// Weekly spending limit, as a percentage of the per-proposal spending limit
+    pub weekly_limit_ratio_percent: u32,
+    /// Dynamic fee tier ladder (volume thresholds are relative, not absolute)
+    pub fee_tiers: Vec<TemplateFeeTier>,
+    /// Base fee rate in basis points (used if no tier matches)
+    pub base_fee_bps: u32,
+    /// Bitmask of enabled optional features — see `VaultTemplate::FEATURE_*` constants
+    pub enabled_features: u32,
+    /// Grace period in ledgers after voting deadline before auto-expiry
+    pub grace_period_ledgers: u64,
+    /// Vote weight model
+    pub vote_weight: VoteWeight,
+    /// High impact score threshold (0-100)
+    pub high_impact_threshold: u32,
+    /// Minimum delay in ledgers before admin role can be rotated
+    pub admin_rotation_delay: u64,
+}
+
+impl VaultTemplate {
+    /// Template format version produced by the current contract build.
+    pub const CURRENT_VERSION: u32 = 1;
+
+    pub const FEATURE_WHITELIST_MODE: u32 = 1 << 0;
+    pub const FEATURE_RETRY: u32 = 1 << 1;
+    pub const FEATURE_STAKING: u32 = 1 << 2;
+    pub const FEATURE_FEE_COLLECTION: u32 = 1 << 3;
+}
+
 impl FeeStructure {
     pub fn default(env: &Env) -> Self {
         // Use contract's own address as default treasury
@@ -2238,12 +2479,37 @@ pub struct WhitelistEntry {
 // Issue #1096: Multi-Phase Proposal Execution
 // ============================================================================
 
+/// Which direction a list-membership change applies.
+///
+/// Used by [`ProposalOperation::UpdateWhitelist`] so one operation variant
+/// covers both additions and removals.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ListAction {
+    /// Add the address to the list.
+    Add = 0,
+    /// Remove the address from the list.
+    Remove = 1,
+}
+
 /// Operation that can be performed in a proposal phase
 #[contracttype]
 #[derive(Clone, Debug)]
 pub enum ProposalOperation {
     /// Transfer tokens: (recipient, token, amount, memo)
     Transfer(Address, Address, i128, Symbol),
+    /// Remove a signer from the vault's signer set (Issue #1526). Requires
+    /// multisig approval via the proposal workflow rather than a direct
+    /// Admin call, so a single compromised Admin key cannot gut the signer set.
+    RemoveSigner(Address),
+    /// Add or remove a whitelist address.
+    ///
+    /// Routed through the proposal workflow so a high-value vault can require
+    /// M-of-N approval for whitelist changes instead of trusting a single
+    /// Admin key. The whitelist governs who may receive funds, so unilateral
+    /// edits amount to unilateral spending authority.
+    UpdateWhitelist(Address, ListAction),
 }
 
 /// Optional ProposalOperation wrapper (Soroban contracttype limitation)
@@ -2415,7 +2681,7 @@ pub struct GasPriceOracleConfig {
     /// Address of the gas-price oracle contract.
     /// The oracle must expose `lastprice(asset: Address) -> Option<VaultPriceData>`.
     pub address: Address,
-    /// Maximum number of ledgers since the oracle's recorded timestamp before
+    /// Maximum age in seconds since the oracle's recorded timestamp before
     /// the price is treated as stale and the local fallback is used.
     pub max_staleness: u32,
 }
@@ -2550,6 +2816,16 @@ pub struct ColdSignerConfig {
     pub cold_sig_threshold: u32,
     /// Ledgers after submission before a cold signature expires
     pub cold_sig_expiry: u32,
+    /// Maximum age, in ledgers, a cold signature may have when it is
+    /// submitted.
+    ///
+    /// `cold_sig_expiry` only bounds a signature's life *after* submission.
+    /// Without this bound a signature produced offline years ago and never
+    /// submitted stays valid forever, so a leaked or stale cold-storage
+    /// signature could approve a proposal that did not exist when it was
+    /// signed. A value of `0` disables the check, preserving the previous
+    /// behaviour for vaults that have not opted in.
+    pub max_cold_sig_age_ledgers: u64,
 }
 
 impl ColdSignerConfig {
@@ -2558,7 +2834,8 @@ impl ColdSignerConfig {
             cold_signers: Vec::new(env),
             cold_signer_addresses: Vec::new(env),
             cold_sig_threshold: 0,
-            cold_sig_expiry: 17280, // ~1 day at 5 s/ledger
+            cold_sig_expiry: 17280,            // ~1 day at 5 s/ledger
+            max_cold_sig_age_ledgers: 120_960, // ~7 days at 5 s/ledger
         }
     }
 }
@@ -2604,6 +2881,53 @@ pub struct InsuranceClaim {
     pub bond_settled: bool,
     pub status: InsuranceClaimStatus,
     pub created_at: u64,
+    /// Issue #1355: per-claim voting rules, snapshotted at submission so a later
+    /// config change cannot move the goalposts on an in-flight claim.
+    /// Share of *cast* weight that must approve, in basis points (5000 = >50%).
+    pub approval_threshold_bps: u32,
+    /// Share of eligible voters that must participate, in basis points.
+    pub quorum_bps: u32,
+    /// Minimum length of the voting window in ledgers.
+    pub voting_window: u64,
+    /// Number of signers eligible to vote, snapshotted at submission.
+    pub eligible_voters: u32,
+    /// Number of distinct voters that have cast a vote so far.
+    pub voter_count: u32,
+    /// Set once the voting period has been explicitly closed and tallied.
+    pub voting_closed: bool,
+}
+
+/// Issue #1355: governance parameters applied to insurance claim voting.
+///
+/// Claims at or above `large_claim_threshold` are escalated to the `large_claim_*`
+/// parameters: a higher approval threshold, a higher participation quorum, and a
+/// longer minimum voting window, so a small colluding subset cannot drain the pool.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsuranceVotingConfig {
+    pub approval_threshold_bps: u32,
+    pub quorum_bps: u32,
+    pub voting_window: u64,
+    /// Claim amount at or above which the escalated parameters apply. 0 disables escalation.
+    pub large_claim_threshold: i128,
+    pub large_approval_threshold_bps: u32,
+    pub large_claim_quorum_bps: u32,
+    pub large_claim_voting_window: u64,
+}
+
+impl Default for InsuranceVotingConfig {
+    fn default() -> Self {
+        Self {
+            // Simple majority of cast weight, half of the signers must show up.
+            approval_threshold_bps: 5_000,
+            quorum_bps: 5_000,
+            voting_window: 720, // ~1 hour at 5s/ledger
+            large_claim_threshold: 0,
+            large_approval_threshold_bps: 6_667, // ~2/3
+            large_claim_quorum_bps: 7_500,       // 75% of signers
+            large_claim_voting_window: 17_280,   // ~1 day at 5s/ledger
+        }
+    }
 }
 
 // ============================================================================
@@ -2631,6 +2955,19 @@ pub struct PauseState {
     pub paused_by: Option<soroban_sdk::Address>,
     pub paused_at_ledger: u32,
     pub cause: soroban_sdk::Symbol,
+}
+
+// ============================================================================
+// Issue #1350: Pause Circuit Breaker Cooldown
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PauseCooldownConfig {
+    /// Cooldown period in ledgers (minimum 1 day = 17,280 ledgers at 5s/ledger)
+    pub cooldown_ledgers: u64,
+    /// Ledger when the last pause/unpause action occurred
+    pub last_action_ledger: u64,
 }
 
 // ============================================================================
@@ -2694,6 +3031,11 @@ pub enum ConfigParam {
     WeeklyLimit = 3,
     TimelockDelay = 4,
     Quorum = 5,
+    /// Full-quorum threshold — amounts at or above this value require every
+    /// signer to approve. Must be routed through the governance proposal
+    /// workflow; direct admin updates via `set_full_quorum_threshold` are
+    /// rejected (issue #1634).
+    FullQuorumThreshold = 6,
 }
 
 #[contracttype]
@@ -2707,4 +3049,46 @@ pub struct GovernanceProposal {
     pub status: ProposalStatus,
     pub created_at: u64,
     pub expires_at: u64,
+}
+
+// ============================================================================
+// Issue #1091: Proposal Lifecycle Hooks for Keeper Network Integration
+// ============================================================================
+
+/// Events that keeper contracts can subscribe to via hook registration.
+///
+/// Each variant corresponds to a distinct lifecycle moment when a keeper bot
+/// should take action (e.g., execute a ready proposal, trigger a payment).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum HookEventType {
+    /// A proposal has gathered enough approvals and is ready to be executed.
+    ProposalReadyToExecute = 0,
+    /// A streaming payment window is due for the next withdrawal.
+    StreamDue = 1,
+    /// A recurring/scheduled payment interval has elapsed.
+    RecurringDue = 2,
+    /// An escrow agreement has reached its release condition.
+    EscrowReady = 3,
+}
+
+/// Registration record for a keeper-network callback hook.
+///
+/// Stored per-event-type. On the corresponding lifecycle event the vault will
+/// invoke `keeper_callback(payload: u64)` on `callback_contract` and, on
+/// success, transfer `max_fee` stroops to `keeper` from vault funds.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HookRegistration {
+    /// Address that receives the fee payment when the callback succeeds.
+    pub keeper: Address,
+    /// The lifecycle event this hook subscribes to.
+    pub event_type: HookEventType,
+    /// Contract to invoke when the event fires.
+    /// Must expose `fn keeper_callback(payload: u64)`.
+    pub callback_contract: Address,
+    /// Maximum fee in stroops the vault will pay the keeper per successful call.
+    /// Set to 0 to disable fee payment.
+    pub max_fee: i128,
 }

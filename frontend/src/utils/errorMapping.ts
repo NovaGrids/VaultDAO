@@ -522,6 +522,31 @@ const ERROR_MAP: Record<string, UserFriendlyError> = {
     recoverySuggestions: ['Try again or contact the vault administrator.'],
     canRetry: true,
   },
+  // ── Contract: Streams, vesting and locks (Issue #1739) ────────────────────
+  STREAM_NOT_ACTIVE: {
+    title: 'Stream not active',
+    message: 'This stream is paused, cancelled or completed, so payments cannot be triggered.',
+    recoverySuggestions: ['Check the stream status.', 'Ask the vault admin to resume the stream if it is paused.'],
+    canRetry: false,
+  },
+  VESTING_NOT_FOUND: {
+    title: 'Vesting schedule not found',
+    message: 'No vesting schedule exists with this ID.',
+    recoverySuggestions: ['Verify the schedule ID.'],
+    canRetry: false,
+  },
+  LOCK_ALREADY_ACTIVE: {
+    title: 'Tokens already locked',
+    message: 'You already have an active token lock.',
+    recoverySuggestions: ['Unlock or extend your existing lock instead.'],
+    canRetry: false,
+  },
+  VESTING_CAP_REACHED: {
+    title: 'Vesting limit reached',
+    message: 'The maximum number of active vesting schedules has been reached.',
+    recoverySuggestions: ['Wait for existing schedules to complete or be cancelled.'],
+    canRetry: false,
+  },
 };
 
 const DEFAULT_USER_ERROR: UserFriendlyError = ERROR_MAP.UNKNOWN;

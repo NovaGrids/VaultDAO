@@ -24,6 +24,10 @@ function makePayment(overrides: Partial<NormalizedRecurringPayment> = {}): Norma
     computedStatus: "active",
     ledgersUntilDue: 1000,
     missedPayments: 0,
+    retryCount: 0,
+    lastAttemptAt: 0,
+    nextRetryAt: 0,
+    totalMissedExecutions: 0,
     metadata: {
       id: "pay-1",
       contractId: "C1",

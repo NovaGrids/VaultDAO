@@ -145,18 +145,141 @@ export interface Subscription {
   status: number;
 }
 
-/** Escrow agreement. */
+/** On-chain status of an escrow (mirrors `EscrowStatus` in types.rs). */
+export enum EscrowStatus {
+  Pending = 0,
+  Active = 1,
+  MilestonesComplete = 2,
+  Released = 3,
+  Refunded = 4,
+  Disputed = 5,
+}
+
+/**
+ * Milestone definition supplied when creating an escrow.
+ * Percentages across all milestones must sum to exactly 100.
+ */
+export interface EscrowMilestoneInput {
+  /** Share of the escrow total released for this milestone (1–100). */
+  percentage: number;
+  /** Ledger from which this milestone may be marked complete. */
+  releaseLedger: bigint;
+}
+
+/** Escrow milestone as stored on-chain. */
+export interface EscrowMilestone {
+  id: bigint;
+  percentage: number;
+  releaseLedger: bigint;
+  isCompleted: boolean;
+  completionLedger: bigint;
+}
+
+/** Escrow agreement (mirrors `Escrow` in types.rs). */
 export interface Escrow {
   id: bigint;
   funder: string;
   recipient: string;
   token: string;
-  amount: bigint;
+  totalAmount: bigint;
   releasedAmount: bigint;
+  milestones: EscrowMilestone[];
+  status: EscrowStatus;
   arbitrator: string;
-  durationLedgers: bigint;
+  disputeReason: string;
   createdAt: bigint;
-  status: number;
+  expiresAt: bigint;
+  finalizedAt: bigint;
+  requiresSignerApproval: boolean;
+  approvalVotes: number;
+  rejectionVotes: number;
+}
+
+/** Token vesting schedule (mirrors `VestingSchedule` in types.rs). */
+export interface VestingSchedule {
+  id: bigint;
+  beneficiary: string;
+  token: string;
+  total: bigint;
+  cliffLedger: number;
+  startLedger: number;
+  endLedger: number;
+  claimed: bigint;
+  cancelled: boolean;
+}
+
+/** Time-locked token position (mirrors `TokenLock` in types.rs). */
+export interface TokenLock {
+  owner: string;
+  token: string;
+  amount: bigint;
+  lockedAt: bigint;
+  duration: bigint;
+  unlockAt: bigint;
+  isActive: boolean;
+  /** Voting power multiplier in basis points (10000 = 1x). */
+  powerMultiplierBps: number;
+}
+
+/** Lifecycle states of a funding round (mirrors `FundingRoundStatus`). */
+export enum FundingRoundStatus {
+  Pending = "Pending",
+  Approved = "Approved",
+  Active = "Active",
+  Completed = "Completed",
+  Cancelled = "Cancelled",
+}
+
+/** Lifecycle states of a funding milestone (mirrors `FundingMilestoneStatus`). */
+export enum FundingMilestoneStatus {
+  Pending = "Pending",
+  Submitted = "Submitted",
+  Verified = "Verified",
+  Rejected = "Rejected",
+}
+
+/**
+ * Milestone definition supplied when creating a funding round.
+ *
+ * Use either fixed `amount`s, or `releasePercentageBps` values that sum to
+ * exactly 10000 across all milestones.
+ */
+export interface FundingMilestoneInput {
+  description: string;
+  /** Fixed release amount (used when all `releasePercentageBps` are 0). */
+  amount: bigint;
+  /** Share of the round total in basis points (default 0). */
+  releasePercentageBps?: number;
+  /** Verifications required before funds can be released (default 1). */
+  requiredVerifiers?: number;
+}
+
+/** Funding milestone as stored on-chain. */
+export interface FundingMilestone {
+  description: string;
+  amount: bigint;
+  releasePercentageBps: number;
+  status: FundingMilestoneStatus;
+  submittedAt: bigint;
+  verifiedAt: bigint;
+  requiredVerifiers: number;
+  verifications: string[];
+  rejectionReason: string | null;
+}
+
+/** Milestone-gated funding round (mirrors `FundingRound` in types.rs). */
+export interface FundingRound {
+  id: bigint;
+  proposalId: bigint;
+  recipient: string;
+  token: string;
+  totalAmount: bigint;
+  releasedAmount: bigint;
+  milestones: FundingMilestone[];
+  status: FundingRoundStatus;
+  createdAt: bigint;
+  approvedAt: bigint;
+  finalizedAt: bigint;
 }
 
 /** Proposal template. */
@@ -251,16 +374,35 @@ export enum VaultErrorCode {
   // 6xx — Token
   TransferFailed = 600,
   InsufficientBalance = 601,
+
+  // 11xx — Streams, vesting and locks (contract codes, Issue #1739)
+  StreamNotActive = 1160,
+  VestingNotFound = 1161,
+  LockAlreadyActive = 1162,
+  VestingCapReached = 1163,
 }
 
 /** Thrown when the contract returns a known error code. */
 export class VaultError extends Error {
+  public readonly description?: string;
+
   constructor(
     public readonly code: VaultErrorCode,
     message?: string
   ) {
-    super(message ?? `VaultError(${code}): ${VaultErrorCode[code]}`);
+    const fallback = `VaultError(${code}): ${VaultErrorCode[code]}`;
+    super(message ?? fallback);
     this.name = "VaultError";
+    this.description = message ?? fallback;
+  }
+
+  public toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      code: this.code,
+      message: this.message,
+      description: this.description,
+    };
   }
 }
 
@@ -403,4 +545,39 @@ export interface SdkOptions {
    * ```
    */
   logger?: SdkLogger;
+  /** Maximum number of additional attempts after an HTTP 429 response. */
+  maxRetries?: number;
+  /** Base delay in milliseconds for exponential backoff after HTTP 429. */
+  retryDelayMs?: number;
+  /** Polling interval for `watchProposal`, in milliseconds. */
+  proposalWatchIntervalMs?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Transaction Simulation & State Diffing (#1456)
+// ---------------------------------------------------------------------------
+
+/** Before and after values for a modified key. */
+export interface StateChangeValue {
+  before: unknown | null;
+  after: unknown | null;
+}
+
+/** Individual key state change details. */
+export interface StateChangeEntry {
+  key: string;
+  before: unknown | null;
+  after: unknown | null;
+  isNew: boolean;
+}
+
+/** State diff result extracted from transaction simulation. */
+export interface StateDiff {
+  /** Record of modified existing keys showing before and after values. */
+  modifiedKeys: Record<string, StateChangeValue>;
+  /** List of brand new keys created during simulation. */
+  newKeys: string[];
+  /** Detailed list of all state changes. */
+  changes: StateChangeEntry[];
+}
+

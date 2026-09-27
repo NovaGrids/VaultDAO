@@ -1,93 +1,105 @@
 <!--
-  VaultDAO Security Advisory Report Template
+VaultDAO Security Advisory Report Template
 
-  HOW TO USE THIS:
-  Do not submit this as a public GitHub issue or pull request.
-  Copy the sections below into the description field of GitHub's
-  "Report a vulnerability" form (repository Security tab → Advisories →
-  Report a vulnerability), or attach it to an email per docs/reference/SECURITY.md
-  if private reporting isn't available.
+Do not submit this as a public issue or pull request.
+Use GitHub's private vulnerability reporting flow:
+Security -> Advisories -> Report a vulnerability.
 
-  Delete this comment block before submitting.
+Delete this comment block before submitting.
 -->
 
 ## Summary
 
-<!-- One or two sentences. What's wrong, and what's the worst-case impact? -->
+<!-- One or two sentences describing the vulnerability and worst-case impact. -->
 
 ## Affected Component
 
 <!-- Be specific. Examples:
-- Smart contract function: `contracts/vault/src/lib.rs` → `execute_proposal` (or specific line numbers if known)
-- Frontend: `frontend/src/hooks/useVaultContract.ts` → transaction-building logic for X
-- Backend: `backend/src/modules/events/normalizers/...` → event normalization for Y
+- Contract function: contracts/vault/src/lib.rs -> execute_proposal
+- Contract storage/accounting: spending limit buckets, proposal status, signer tiers
+- Frontend transaction path: frontend/... -> transaction construction for approvals
+- Backend/indexer path: backend/... -> event normalization or automation trigger
+- Deployment or dependency: script/package/crate and version
+-->
+
+## Affected Versions And Environments
+
+<!-- Include anything known:
+- Branch, tag, commit, or release
+- Deployed contract ID(s)
+- Network: local, Testnet, Mainnet
+- Browser/backend/runtime versions if relevant
+- Configuration required to trigger the issue
 -->
 
 ## Vulnerability Type
 
-<!-- Pick the closest fit, or describe if none fit:
-- [ ] Authentication / authorization bypass (acting as a role you don't hold)
-- [ ] Privilege escalation (a role doing more than it should)
+<!-- Check or keep the closest categories. -->
+
+- [ ] Authentication or authorization bypass
+- [ ] Privilege escalation
+- [ ] Governance bypass
 - [ ] Timelock bypass
-- [ ] Spending-limit bypass
-- [ ] Integer overflow / underflow
-- [ ] Cross-contract call risk / reentrancy
-- [ ] Double-execution / replay
-- [ ] Governance bypass (proposal executes without required approvals/conditions)
-- [ ] Fund theft, loss, or permanent lock
-- [ ] Other (describe)
--->
+- [ ] Spending-limit or signer-tier bypass
+- [ ] Double execution or replay
+- [ ] Cross-contract call or non-standard token risk
+- [ ] Integer overflow, underflow, rounding, or accounting error
+- [ ] Fund theft, fund loss, fund lock, or fund misdirection
+- [ ] Frontend/backend behavior with on-chain consequences
+- [ ] Dependency or supply-chain vulnerability
+- [ ] Other:
 
 ## Severity Assessment
 
-<!-- Your assessment, using the table in docs/reference/SECURITY.md. We may
-     reclassify after triage — this is a starting point, not a final answer. -->
+<!-- Use docs/reference/SECURITY.md as the severity guide. Maintainers may reclassify after triage. -->
 
-**Severity:** <!-- Critical / High / Medium / Low -->
+**Severity:** Critical / High / Medium / Low
 
-**Reasoning:** <!-- Why this severity? What's the impact, and how easy is it to trigger? -->
+**Reasoning:**
+
+<!-- Explain impact and likelihood. Note whether the attacker needs no access, signer access, Treasurer/Admin access, a malicious token contract, or a specific configuration. -->
 
 ## Reproduction Steps
 
-<!-- Be as concrete as possible. If this is a contract-level issue, a minimal
-     Rust test using the existing harness (see contracts/vault/src/test.rs for
-     the setup() pattern) is the gold standard — it lets us reproduce your
-     exact finding without guesswork. -->
+<!-- Be concrete enough for maintainers to reproduce without guessing. For contract-level issues, a minimal Rust test using the existing contracts/vault test harness is ideal. -->
 
 1.
 2.
 3.
 
 ```rust
-// Optional: a minimal #[test] reproducing the issue, if applicable.
-// See docs/reference/TESTING.md §2 for the test environment setup pattern
-// (Env::default(), env.mock_all_auths(), the setup() helper shape, etc.)
+// Optional minimal reproducer.
 ```
 
 ## Impact
 
 <!-- Answer concretely:
-- What can an attacker actually do?
-- Whose funds/access/data is affected?
-- What preconditions does the attacker need (e.g., must already be a Signer?
-  Admin? No special access at all)?
-- Is this exploitable today on Mainnet, Testnet only, or does it require a
-  specific, unusual configuration to be reachable?
+- What can an attacker do?
+- Whose funds, authority, proposals, limits, or records are affected?
+- Can this steal funds, lock funds, bypass approvals, bypass timelocks, corrupt accounting, or mislead downstream automation?
+- Is the issue exploitable today or only under a specific deployment/configuration?
 -->
 
-## Suggested Fix (optional)
+## Suggested Fix Or Mitigation
 
-<!-- A rough idea is fine — we'll independently verify and may take a
-     different approach. Not required, but speeds up triage if you have one. -->
+<!-- Optional. A rough mitigation is useful, but maintainers will independently verify the fix. -->
 
-## Additional Context
+## Active Exploitation
 
-<!-- Anything else: related findings in AUDIT_SCOPE.md, similar issues you've
-     seen in other Soroban contracts, links, etc. -->
+- [ ] I believe this is actively exploited.
+- [ ] I do not have evidence of active exploitation.
+- [ ] Unknown.
+
+<!-- If active exploitation is suspected, explain what you observed without revealing public exploit details. -->
 
 ## Disclosure Preferences
 
-- [ ] I'd like public credit (GitHub username / name): ____________
-- [ ] I'd prefer to remain anonymous
-- [ ] I am willing to collaborate on a fix in a temporary private fork
-- [ ] I am reporting this because I believe it is being actively exploited (if so, say so explicitly above — this changes our response timeline)
+- [ ] I would like public credit.
+- [ ] I prefer to remain anonymous.
+- [ ] I am willing to help validate a fix in a private advisory or private fork.
+
+**Credit name or GitHub handle:**
+
+## Additional Context
+
+<!-- Related code links, related AUDIT_SCOPE.md findings, screenshots, logs, transaction hashes, Soroban traces, or comparable vulnerabilities. -->

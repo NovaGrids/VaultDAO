@@ -29,6 +29,8 @@ export enum EventType {
 
   // ── Role / admin ──────────────────────────────────────────────────────────
   ROLE_ASSIGNED = "ROLE_ASSIGNED",
+  RECIPIENT_LIST_CHANGED = "RECIPIENT_LIST_CHANGED",
+  RECIPIENT_LIST_BULK_CHANGED = "RECIPIENT_LIST_BULK_CHANGED",
   CONFIG_UPDATED = "CONFIG_UPDATED",
   SIGNER_ADDED = "SIGNER_ADDED",
   SIGNER_REMOVED = "SIGNER_REMOVED",
@@ -76,11 +78,17 @@ export enum EventType {
   SUBSCRIPTION_CANCELLED = "SUBSCRIPTION_CANCELLED",
   SUBSCRIPTION_UPGRADED = "SUBSCRIPTION_UPGRADED",
   SUBSCRIPTION_EXPIRED = "SUBSCRIPTION_EXPIRED",
+  VESTING_CREATED = "VESTING_CREATED",
+  VESTING_CLAIMED = "VESTING_CLAIMED",
+  VESTING_CANCELLED = "VESTING_CANCELLED",
   /** Emitted when jitter shifts a recurring payment's next execution ledger.
    *  Present only when jitter_window > 0 and the payment is past its first cycle.
    *  Auditors: timing variance equal to the jitter_offset is expected behavior. */
   RECURRING_PAYMENT_EXECUTED = "RECURRING_PAYMENT_EXECUTED",
   RECURRING_PAYMENT_JITTERED = "RECURRING_PAYMENT_JITTERED",
+  RECURRING_PAUSED = "RECURRING_PAUSED",
+  RECURRING_RESUMED = "RECURRING_RESUMED",
+  RECURRING_STOPPED = "RECURRING_STOPPED",
 
   // ── Recovery ──────────────────────────────────────────────────────────────
   RECOVERY_PROPOSED = "RECOVERY_PROPOSED",
@@ -96,6 +104,7 @@ export enum EventType {
   RETRY_ATTEMPTED = "RETRY_ATTEMPTED",
   RETRIES_EXHAUSTED = "RETRIES_EXHAUSTED",
   PAYMENT_BACKOFF_INCREASED = "PAYMENT_BACKOFF_INCREASED",
+  CONSECUTIVE_MISS_RESET = "CONSECUTIVE_MISS_RESET",
   TOKENS_LOCKED = "TOKENS_LOCKED",
   LOCK_EXTENDED = "LOCK_EXTENDED",
   TOKENS_UNLOCKED = "TOKENS_UNLOCKED",
@@ -254,6 +263,18 @@ export interface QuorumReachedData {
 }
 
 // ── Role / admin data interfaces ──────────────────────────────────────────────
+
+export interface RecipientListChangedData {
+  readonly mode: string;
+  readonly address: string;
+  readonly added: boolean;
+}
+
+export interface RecipientListBulkChangedData {
+  readonly mode: string;
+  readonly addresses: string[];
+  readonly added: boolean;
+}
 
 export interface RoleAssignedData {
   readonly address: string;
@@ -447,6 +468,31 @@ export interface SubscriptionExpiredData {
   readonly subscriptionId: string;
 }
 
+// ── Vesting data interfaces ──────────────────────────────────────────────────
+
+export interface VestingCreatedData {
+  readonly scheduleId: string;
+  readonly beneficiary: string;
+  readonly token: string;
+  readonly total: string;
+  readonly cliffLedger: string;
+  readonly endLedger: string;
+}
+
+export interface VestingClaimedData {
+  readonly scheduleId: string;
+  readonly beneficiary: string;
+  readonly claimed: string;
+  readonly totalClaimed: string;
+}
+
+export interface VestingCancelledData {
+  readonly scheduleId: string;
+  readonly admin: string;
+  readonly vestedUnclaimedPaid: string;
+  readonly unvestedReturned: string;
+}
+
 // ── Recurring payment data interfaces ────────────────────────────────────────
 
 export interface RecurringPaymentExecutedData {
@@ -546,7 +592,7 @@ export interface RetriesExhaustedData {
 export interface PaymentBackoffIncreasedData {
   /** ID of the recurring payment that failed. */
   readonly paymentId: string;
-  /** Retry count after this failure. */
+  /** Consecutive retry count after this failure. */
   readonly retryCount: number;
   /** Clamped delay in seconds until the next allowed attempt. */
   readonly delaySeconds: number;
@@ -556,6 +602,36 @@ export interface PaymentBackoffIncreasedData {
   readonly strategy: string;
   /** Unix timestamp (seconds) of the next allowed retry. */
   readonly nextRetryAt: number;
+  /**
+   * Lifetime total of all failed execution attempts for this payment
+   * (including this one).  Provided for observer context; never reset.
+   */
+  readonly totalMissedExecutions: number;
+}
+
+/**
+ * Emitted when a recurring payment's consecutive-miss counter is reset to 0
+ * because a previously-failing payment executed successfully.
+ *
+ * Only emitted when the counter was greater than 0 before the reset (i.e. the
+ * payment is genuinely recovering from a missed-execution streak).  Payments
+ * that succeed without ever having missed are not eligible.
+ */
+export interface ConsecutiveMissResetData {
+  /** ID of the recurring payment that recovered. */
+  readonly paymentId: string;
+  /** Contract / vault identifier the payment belongs to. */
+  readonly contractId: string;
+  /**
+   * The consecutive-miss count that was just cleared (always ≥ 1).
+   * This is the value of `retryCount` immediately before the reset.
+   */
+  readonly clearedConsecutiveMisses: number;
+  /**
+   * Lifetime total of failed execution attempts for this payment.
+   * Preserved here for audit context; was not affected by this reset.
+   */
+  readonly totalMissedExecutions: number;
 }
 
 export interface TokensLockedData {
@@ -648,6 +724,8 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
 
   // Role / admin
   role_assigned: EventType.ROLE_ASSIGNED,
+  recipient_list_changed: EventType.RECIPIENT_LIST_CHANGED,
+  recipient_list_bulk_changed: EventType.RECIPIENT_LIST_BULK_CHANGED,
   config_updated: EventType.CONFIG_UPDATED,
   signer_added: EventType.SIGNER_ADDED,
   signer_removed: EventType.SIGNER_REMOVED,
@@ -695,8 +773,14 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   subscription_cancelled: EventType.SUBSCRIPTION_CANCELLED,
   subscription_upgraded: EventType.SUBSCRIPTION_UPGRADED,
   subscription_expired: EventType.SUBSCRIPTION_EXPIRED,
+  vesting_created: EventType.VESTING_CREATED,
+  vesting_claimed: EventType.VESTING_CLAIMED,
+  vesting_cancelled: EventType.VESTING_CANCELLED,
   recurring_payment_executed: EventType.RECURRING_PAYMENT_EXECUTED,
   recurring_pay_jittered: EventType.RECURRING_PAYMENT_JITTERED,
+  recurring_paused: EventType.RECURRING_PAUSED,
+  recurring_resumed: EventType.RECURRING_RESUMED,
+  recurring_stopped: EventType.RECURRING_STOPPED,
 
   // Recovery
   recovery_proposed: EventType.RECOVERY_PROPOSED,
@@ -712,6 +796,7 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   retry_attempted: EventType.RETRY_ATTEMPTED,
   retries_exhausted: EventType.RETRIES_EXHAUSTED,
   payment_backoff_increased: EventType.PAYMENT_BACKOFF_INCREASED,
+  consecutive_miss_reset: EventType.CONSECUTIVE_MISS_RESET,
   tokens_locked: EventType.TOKENS_LOCKED,
   lock_extended: EventType.LOCK_EXTENDED,
   tokens_unlocked: EventType.TOKENS_UNLOCKED,

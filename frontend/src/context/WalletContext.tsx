@@ -5,6 +5,8 @@ import { WalletContext } from './WalletContextProps';
 import type { WalletType } from './WalletContextProps';
 import { detectAvailableWallets, getAdapterById } from '../adapters';
 import type { WalletAdapter } from '../adapters';
+import { useIdleTimer } from '../hooks/useIdleTimer';
+import { env } from '../config/env';
 
 const PREFERRED_WALLET_KEY = 'vaultdao_preferred_wallet';
 const WALLET_CONNECTED_KEY = 'vaultdao_wallet_connected';
@@ -20,6 +22,8 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [accountRole, setAccountRole] = useState<string | null>(null);
   const activeAdapterRef = useRef<WalletAdapter | null>(null);
   const { showToast } = useToast();
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [countdown, setCountdown] = useState(60);
 
   const detectWallets = useCallback(async () => {
     const wallets = await detectAvailableWallets();
@@ -55,6 +59,9 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     async (adapter: WalletAdapter) => {
       try {
         const pubkey = await adapter.getPublicKey();
+        if (activeAdapterRef.current !== adapter) {
+          return false;
+        }
         if (pubkey) {
           setAddress(pubkey);
           setConnected(true);
@@ -112,7 +119,14 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       try {
         const available = await adapter.isAvailable();
         if (!cancelled && available) {
-          await updateWalletState(adapter);
+          activeAdapterRef.current = adapter;
+          const reconnected = await updateWalletState(adapter);
+          // updateWalletState swallows adapter errors; if the reconnect didn't
+          // take, drop the persisted flag so we don't retry on every load.
+          if (!reconnected && !cancelled && activeAdapterRef.current === adapter) {
+            activeAdapterRef.current = null;
+            localStorage.removeItem(WALLET_CONNECTED_KEY);
+          }
         } else if (!cancelled) {
           // Stored wallet no longer available — clear persisted state silently
           localStorage.removeItem(WALLET_CONNECTED_KEY);
@@ -177,44 +191,77 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
      
   }, [selectedWalletId, connected, updateWalletState]);
 
-  const connect = useCallback(async (walletType?: WalletType) => {
+  const connect = useCallback(async (walletType?: WalletType): Promise<boolean> => {
+    // Re-detect right before connect so a freshly installed / late-injected
+    // extension is visible (Freighter content scripts can load after first paint).
+    const wallets = await detectWallets();
     const targetWalletId = walletType ?? selectedWalletId;
-    const adapter = targetWalletId ? getAdapterById(targetWalletId) : availableWallets[0];
+    const adapter =
+      (targetWalletId ? getAdapterById(targetWalletId) : undefined) ??
+      wallets[0] ??
+      availableWallets[0];
+
     if (!adapter) {
       showToast('No wallet selected. Please install Freighter, Albedo, or Rabet.', 'error');
-      if (availableWallets.length === 0) {
-        window.open('https://www.freighter.app/', '_blank');
-      }
-      return;
+      window.open('https://www.freighter.app/', '_blank');
+      return false;
     }
     setSelectedWalletId(adapter.id as WalletType);
 
-    const isAvailable = await adapter.isAvailable();
+    let isAvailable = await adapter.isAvailable();
     if (!isAvailable) {
-      showToast(`${adapter.name} not found. Please install it.`, 'error');
+      await new Promise((r) => setTimeout(r, 400));
+      isAvailable = await adapter.isAvailable();
+    }
+    if (!isAvailable) {
+      showToast(`${adapter.name} not found. Install the extension, then refresh and try again.`, 'error');
       window.open(adapter.url, '_blank');
-      return;
+      return false;
     }
 
     try {
-      await adapter.connect();
+      const connectedAccount = await adapter.connect();
+      activeAdapterRef.current = adapter;
+      // Prefer the key returned by connect(); fall back to adapter state sync.
+      if (connectedAccount?.publicKey) {
+        setAddress(connectedAccount.publicKey);
+        setConnected(true);
+        if (connectedAccount.network) setNetwork(connectedAccount.network);
+        setAvailableAccounts([connectedAccount.publicKey]);
+        try { localStorage.setItem(LAST_ACCOUNT_KEY, connectedAccount.publicKey); } catch { /* ignore */ }
+        localStorage.setItem(WALLET_CONNECTED_KEY, 'true');
+        savePreferredWallet(adapter.id);
+        showToast('Wallet connected successfully!', 'success');
+        const net = connectedAccount.network ?? (await adapter.getNetwork());
+        if (net && net !== 'TESTNET' && net !== 'testnet' && net !== 'Test SDF Network ; September 2015') {
+          showToast('Application works best on Testnet — switch network in your wallet.', 'warning');
+        }
+        return true;
+      }
+
       const success = await updateWalletState(adapter);
       if (success) {
         localStorage.setItem(WALLET_CONNECTED_KEY, 'true');
         savePreferredWallet(adapter.id);
         showToast('Wallet connected successfully!', 'success');
-        const net = await adapter.getNetwork();
-        if (net && net !== 'TESTNET' && net !== 'testnet') {
-          showToast('Application works best on Testnet', 'warning');
-        }
+        return true;
       }
+      return false;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Connection failed';
       showToast(msg, 'error');
+      return false;
     }
-  }, [selectedWalletId, availableWallets, updateWalletState, savePreferredWallet, showToast]);
+  }, [selectedWalletId, availableWallets, detectWallets, updateWalletState, savePreferredWallet, showToast]);
 
   const disconnect = useCallback(async () => {
+    setConnected(false);
+    setAddress(null);
+    setNetwork(null);
+    localStorage.removeItem(WALLET_CONNECTED_KEY);
+    localStorage.removeItem(LAST_ACCOUNT_KEY);
+    localStorage.removeItem(PREFERRED_WALLET_KEY);
+
     const adapter = activeAdapterRef.current;
     if (adapter) {
       try {
@@ -224,12 +271,31 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
       activeAdapterRef.current = null;
     }
-    setConnected(false);
-    setAddress(null);
-    setNetwork(null);
-    localStorage.removeItem(WALLET_CONNECTED_KEY);
     showToast('Wallet disconnected', 'info');
   }, [showToast]);
+
+  const { resetTimer } = useIdleTimer({
+    timeoutMs: env.walletIdleTimeoutMs ?? 15 * 60 * 1000,
+    onIdle: () => {
+      setShowWarningModal(false);
+      disconnect();
+    },
+    onCountdown: (remainingSeconds) => {
+      if (remainingSeconds > 0) {
+        setShowWarningModal(true);
+        setCountdown(remainingSeconds);
+      } else {
+        setShowWarningModal(false);
+      }
+    },
+    warningSeconds: 60,
+    enabled: connected,
+  });
+
+  const keepSessionAlive = useCallback(() => {
+    setShowWarningModal(false);
+    resetTimer();
+  }, [resetTimer]);
 
   const switchWallet = useCallback((adapter: WalletAdapter) => {
     setSelectedWalletId(adapter.id as WalletType);
@@ -288,6 +354,23 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }}
     >
       {children}
+      {showWarningModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black bg-opacity-70" role="dialog" aria-modal="true" data-testid="idle-warning-modal">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-md p-6 space-y-6">
+            <h3 className="text-xl font-bold text-yellow-400">Session Warning</h3>
+            <p className="text-gray-300">Session expiring in {countdown}s</p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={keepSessionAlive}
+                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors"
+                data-testid="idle-keep-alive-btn"
+              >
+                Keep Active
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </WalletContext.Provider>
   );
 };

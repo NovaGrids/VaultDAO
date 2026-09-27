@@ -48,7 +48,6 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
             pre_execution_hooks: Vec::new(env),
             post_execution_hooks: Vec::new(env),
             quorum_percentage: 0,
-            arbitration_timeout_ledgers: 0,
         },
     );
 
@@ -57,37 +56,58 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
 
 #[test]
 fn test_role_hierarchy_admin_satisfies_treasurer() {
-    assert!(Role::role_satisfies(Role::Treasurer, Role::Admin), "Admin should satisfy Treasurer requirement");
+    assert!(
+        Role::role_satisfies(Role::Treasurer, Role::Admin),
+        "Admin should satisfy Treasurer requirement"
+    );
 }
 
 #[test]
 fn test_role_hierarchy_treasurer_not_satisfy_admin() {
-    assert!(!Role::role_satisfies(Role::Admin, Role::Treasurer), "Treasurer should not satisfy Admin requirement");
+    assert!(
+        !Role::role_satisfies(Role::Admin, Role::Treasurer),
+        "Treasurer should not satisfy Admin requirement"
+    );
 }
 
 #[test]
 fn test_role_hierarchy_member_not_satisfy_treasurer() {
-    assert!(!Role::role_satisfies(Role::Treasurer, Role::Member), "Member should not satisfy Treasurer requirement");
+    assert!(
+        !Role::role_satisfies(Role::Treasurer, Role::Member),
+        "Member should not satisfy Treasurer requirement"
+    );
 }
 
 #[test]
 fn test_dispute_arbitrator_can_resolve_disputes() {
-    assert!(Role::role_satisfies(Role::DisputeArbitrator, Role::DisputeArbitrator), "DisputeArbitrator should satisfy DisputeArbitrator requirement");
+    assert!(
+        Role::role_satisfies(Role::DisputeArbitrator, Role::DisputeArbitrator),
+        "DisputeArbitrator should satisfy DisputeArbitrator requirement"
+    );
 }
 
 #[test]
 fn test_admin_can_resolve_disputes() {
-    assert!(Role::role_satisfies(Role::DisputeArbitrator, Role::Admin), "Admin should satisfy DisputeArbitrator requirement");
+    assert!(
+        Role::role_satisfies(Role::DisputeArbitrator, Role::Admin),
+        "Admin should satisfy DisputeArbitrator requirement"
+    );
 }
 
 #[test]
 fn test_dispute_arbitrator_not_admin() {
-    assert!(!Role::role_satisfies(Role::Admin, Role::DisputeArbitrator), "DisputeArbitrator should NOT satisfy Admin requirement");
+    assert!(
+        !Role::role_satisfies(Role::Admin, Role::DisputeArbitrator),
+        "DisputeArbitrator should NOT satisfy Admin requirement"
+    );
 }
 
 #[test]
 fn test_dispute_arbitrator_not_treasurer() {
-    assert!(!Role::role_satisfies(Role::Treasurer, Role::DisputeArbitrator), "DisputeArbitrator should NOT satisfy Treasurer requirement");
+    assert!(
+        !Role::role_satisfies(Role::Treasurer, Role::DisputeArbitrator),
+        "DisputeArbitrator should NOT satisfy Treasurer requirement"
+    );
 }
 
 #[test]
@@ -102,25 +122,58 @@ fn test_admin_cannot_use_dispute_arbitrator_as_admin() {
     // DisputeArbitrator should not be able to perform admin operations
     let addr_to_veto = Address::generate(&env);
     let result = client.try_add_veto_address(&dispute_arbitrator, &addr_to_veto);
-    assert!(result.is_err(), "DisputeArbitrator should not be able to add veto address");
+    assert!(
+        result.is_err(),
+        "DisputeArbitrator should not be able to add veto address"
+    );
 }
 
 #[test]
 fn test_observer_hierarchy() {
-    assert!(Role::role_satisfies(Role::Observer, Role::Admin), "Admin should satisfy Observer requirement");
-    assert!(Role::role_satisfies(Role::Observer, Role::Treasurer), "Treasurer should satisfy Observer requirement");
-    assert!(Role::role_satisfies(Role::Observer, Role::Member), "Member should satisfy Observer requirement");
-    assert!(Role::role_satisfies(Role::Observer, Role::Observer), "Observer should satisfy Observer requirement");
-    assert!(!Role::role_satisfies(Role::Observer, Role::DisputeArbitrator), "DisputeArbitrator should not satisfy Observer requirement");
+    assert!(
+        Role::role_satisfies(Role::Observer, Role::Admin),
+        "Admin should satisfy Observer requirement"
+    );
+    assert!(
+        Role::role_satisfies(Role::Observer, Role::Treasurer),
+        "Treasurer should satisfy Observer requirement"
+    );
+    assert!(
+        Role::role_satisfies(Role::Observer, Role::Member),
+        "Member should satisfy Observer requirement"
+    );
+    assert!(
+        Role::role_satisfies(Role::Observer, Role::Observer),
+        "Observer should satisfy Observer requirement"
+    );
+    assert!(
+        !Role::role_satisfies(Role::Observer, Role::DisputeArbitrator),
+        "DisputeArbitrator should not satisfy Observer requirement"
+    );
 }
 
 #[test]
 fn test_role_satisfies_symmetric_for_same_role() {
-    assert!(Role::role_satisfies(Role::Admin, Role::Admin), "Admin should satisfy Admin");
-    assert!(Role::role_satisfies(Role::Treasurer, Role::Treasurer), "Treasurer should satisfy Treasurer");
-    assert!(Role::role_satisfies(Role::Member, Role::Member), "Member should satisfy Member");
-    assert!(Role::role_satisfies(Role::Observer, Role::Observer), "Observer should satisfy Observer");
-    assert!(Role::role_satisfies(Role::DisputeArbitrator, Role::DisputeArbitrator), "DisputeArbitrator should satisfy DisputeArbitrator");
+    assert!(
+        Role::role_satisfies(Role::Admin, Role::Admin),
+        "Admin should satisfy Admin"
+    );
+    assert!(
+        Role::role_satisfies(Role::Treasurer, Role::Treasurer),
+        "Treasurer should satisfy Treasurer"
+    );
+    assert!(
+        Role::role_satisfies(Role::Member, Role::Member),
+        "Member should satisfy Member"
+    );
+    assert!(
+        Role::role_satisfies(Role::Observer, Role::Observer),
+        "Observer should satisfy Observer"
+    );
+    assert!(
+        Role::role_satisfies(Role::DisputeArbitrator, Role::DisputeArbitrator),
+        "DisputeArbitrator should satisfy DisputeArbitrator"
+    );
 }
 
 #[test]
@@ -131,8 +184,14 @@ fn test_dispute_arbitrator_privilege_boundary() {
     let admin_discriminant = Role::Admin as u32;
 
     // The bug would be if discriminant > caused privilege escalation
-    assert!(dispute_arbitrator_discriminant > admin_discriminant, "DisputeArbitrator has higher discriminant");
+    assert!(
+        dispute_arbitrator_discriminant > admin_discriminant,
+        "DisputeArbitrator has higher discriminant"
+    );
 
     // But role_satisfies should handle this correctly
-    assert!(!Role::role_satisfies(Role::Admin, Role::DisputeArbitrator), "Higher discriminant should not grant Admin privileges");
+    assert!(
+        !Role::role_satisfies(Role::Admin, Role::DisputeArbitrator),
+        "Higher discriminant should not grant Admin privileges"
+    );
 }

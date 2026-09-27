@@ -3,10 +3,14 @@
  * In production (NODE_ENV=production): emits JSON lines only.
  * In development (default): emits human-readable lines only.
  *
- * Automatically includes requestId from AsyncLocalStorage when available.
+ * Automatically includes requestId (and optionally method/path) from the
+ * ambient RequestContext propagated via AsyncLocalStorage.  Falls back to
+ * the legacy requestIdStorage when no full context is available, so
+ * pre-existing code continues to work during the migration period.
  */
 
 import { requestIdStorage } from "../http/requestId.js";
+import { requestContextStorage } from "../http/requestContext.js";
 
 interface LogMeta {
   [key: string]: any;
@@ -38,16 +42,35 @@ export function createLogger(
   ): void {
     if (level === "debug" && isProduction) return;
 
-    const requestId = requestIdStorage.getStore();
-    const enriched = requestId ? { requestId, ...meta } : meta;
+    // Prefer the richer RequestContext; fall back to legacy requestIdStorage.
+    const ctx = requestContextStorage.getStore();
+    const requestId = ctx?.requestId ?? requestIdStorage.getStore();
+
+    const enriched: LogMeta = {};
+    if (requestId) enriched["requestId"] = requestId;
+    // Include method and path only in structured (production) output to avoid
+    // making development logs too noisy; they already appear in the access log.
+    if (isProduction && ctx) {
+      if (ctx.method) enriched["method"] = ctx.method;
+      if (ctx.path) enriched["path"] = ctx.path;
+    }
+
+    const merged = { ...enriched, ...meta };
+    const hasExtra = Object.keys(merged).length > 0;
 
     if (isProduction) {
       consoleFn(
-        JSON.stringify({ level, prefix, ts: timestamp(), msg, ...enriched }),
+        JSON.stringify({
+          level,
+          prefix,
+          ts: timestamp(),
+          msg,
+          ...(hasExtra ? merged : {}),
+        }),
       );
     } else {
       consoleFn(
-        `[${level.toUpperCase()}] [${prefix}] ${timestamp()} ${msg}${formatMeta(enriched)}`,
+        `[${level.toUpperCase()}] [${prefix}] ${timestamp()} ${msg}${hasExtra ? formatMeta(merged) : ""}`,
       );
     }
   }

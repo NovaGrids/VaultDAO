@@ -1,6 +1,9 @@
 import type { Response } from "express";
 import { ErrorCode } from "./errorCodes.js";
 import { requestIdStorage } from "./requestId.js";
+import { createLogger } from "../logging/logger.js";
+
+const logger = createLogger("http-response");
 
 export interface ApiSuccessResponse<T = any> {
   success: true;
@@ -63,7 +66,7 @@ export function error(
   
   // Log internal errors (status >= 500)
   if (status >= 500) {
-    console.error("[API Error]", err);
+    logger.error("API error", { message: err.message, code, status, details: err.details });
   }
 
   const body: ApiErrorResponse = { 

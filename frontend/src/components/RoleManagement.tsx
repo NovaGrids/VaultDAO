@@ -314,6 +314,7 @@ const RoleManagement: React.FC = () => {
                   key={id}
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, parseInt(id))}
+                  data-testid={`role-column-${id}`}
                   className={`bg-gray-900 rounded-lg p-4 border border-${color}-500/20 min-h-[400px]`}
                 >
                   <h4 className={`text-sm font-semibold text-${color}-400 mb-4`}>{label}</h4>

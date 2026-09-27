@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, Wallet } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, Wallet, AlertTriangle } from 'lucide-react';
 import { useTokenPrices } from '../hooks/useTokenPrices';
 import { formatTokenBalance, getTokenIcon } from '../constants/tokens';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -32,7 +32,7 @@ export function TokenPortfolioView({
   isLoadingBalances = false,
 }: TokenPortfolioViewProps) {
   const tokens = useMemo(() => tokenBalances.map((tb) => tb.token), [tokenBalances]);
-  const { prices, loading: isLoadingPrices, lastUpdated, refresh } = useTokenPrices(tokens);
+  const { prices, loading: isLoadingPrices, lastUpdated, priceError, refresh } = useTokenPrices(tokens);
 
   const handleRefresh = () => {
     refresh();
@@ -123,6 +123,20 @@ export function TokenPortfolioView({
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6 text-white">
+      {/* Price unavailable banner */}
+      {priceError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-xl bg-yellow-900/40 border border-yellow-700/60 px-4 py-2.5 text-yellow-300 text-sm"
+        >
+          <AlertTriangle size={15} className="shrink-0" />
+          <span>
+            Price data unavailable — showing last known values
+            {lastUpdated ? ` (as of ${new Date(lastUpdated).toLocaleTimeString()})` : ''}.
+          </span>
+        </div>
+      )}
+
       {/* Header section */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-gray-800 pb-5">
         <div>

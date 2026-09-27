@@ -276,7 +276,12 @@ const DisputeModal: React.FC<DisputeModalProps> = ({ escrow, onClose, onSubmit, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="raise-dispute-title"
+        className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 shadow-2xl"
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-700">
           <div className="flex items-center gap-3">
@@ -284,7 +289,7 @@ const DisputeModal: React.FC<DisputeModalProps> = ({ escrow, onClose, onSubmit, 
               <AlertTriangle className="w-5 h-5 text-red-400" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">Raise Dispute</h3>
+              <h3 id="raise-dispute-title" className="text-lg font-bold text-white">Raise Dispute</h3>
               <p className="text-xs text-gray-400">Escrow #{escrow.id}</p>
             </div>
           </div>
@@ -632,6 +637,7 @@ const EscrowPage: React.FC = () => {
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
+            aria-pressed={statusFilter === s}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               statusFilter === s
                 ? 'bg-purple-600 text-white'

@@ -7,7 +7,10 @@ import {
   DatabaseCursorAdapter,
   migrateFileCursorToDatabase,
 } from "./modules/events/index.js";
-import { MetricsRegistry } from "./modules/health/metrics.registry.js";
+import {
+  MetricsRegistry,
+  registerProposalThroughputMetrics,
+} from "./modules/health/metrics.registry.js";
 import {
   RecurringIndexerService,
   MemoryRecurringStorageAdapter,
@@ -24,12 +27,16 @@ import {
   createMemoryPersistence,
 } from "./modules/proposals/index.js";
 import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
+import { EventSseBroadcaster } from "./modules/events/sse/sse.broadcaster.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import { ScheduledJobRunner } from "./modules/jobs/scheduled-job-runner.js";
 import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
 import { registerDuePaymentsJob } from "./modules/jobs/recurring/due-payments-job.js";
+import { createProposalArchivalJob } from "./modules/jobs/recurring/proposal-archival.job.js";
 import type { NotificationQueue } from "./modules/notifications/notification.types.js";
 import { PriorityNotificationQueue } from "./modules/notifications/priority-queue.js";
+import { NotificationQueueStore } from "./modules/notifications/notification-queue.store.js";
+import { NotificationQueueCleanupJob } from "./modules/jobs/recurring/notification-queue-cleanup.job.js";
 import { WebhookDeliveryService } from "./modules/notifications/webhook.service.js";
 import { CacheManager } from "./shared/cache/cache-manager.js";
 import { createLogger } from "./shared/logging/logger.js";
@@ -46,6 +53,7 @@ import { VaultRegistry } from "./modules/vault/vault-registry.service.js";
 import { ContractStateValidator } from "./modules/contracts/contract-state-validator.js";
 import { VaultService } from "./modules/vault/vault.service.js";
 import { DatabaseSync } from "node:sqlite";
+import { configureWalMode } from "./shared/storage/sqlite-wal.js";
 
 export interface BackendRuntime {
   readonly startedAt: string;
@@ -62,8 +70,10 @@ export interface BackendRuntime {
   readonly jobManager: JobManager;
   readonly scheduledJobRunner: ScheduledJobRunner;
   readonly wsServer?: EventWebSocketServer;
+  readonly sseBroadcaster?: EventSseBroadcaster;
   readonly metricsRegistry: MetricsRegistry;
   readonly notificationQueue?: PriorityNotificationQueue;
+  readonly notificationQueueStore?: NotificationQueueStore;
   readonly cacheManager?: CacheManager;
   readonly dbCursorAdapter?: DatabaseCursorAdapter;
   readonly snapshotDiffService?: SnapshotDiffService;
@@ -162,11 +172,19 @@ export async function startServer(
     "Total rate-limit rejections (429) by exhausted dimension",
     "counter",
   );
+  registerProposalThroughputMetrics(metricsRegistry);
 
   const jobManager = new JobManager(metricsRegistry);
 
-  // Priority notification queue (replaces basic InMemoryNotificationQueue)
-  const priorityNotificationQueue = new PriorityNotificationQueue();
+  // Priority notification queue (replaces basic InMemoryNotificationQueue),
+  // backed by SQLite so pending/failed notifications survive a restart.
+  const notificationDbPath =
+    typeof env.notificationsDbPath === "string" && env.notificationsDbPath.length > 0
+      ? env.notificationsDbPath
+      : ":memory:";
+  const notificationQueueStore = new NotificationQueueStore(notificationDbPath);
+  const priorityNotificationQueue = new PriorityNotificationQueue(notificationQueueStore);
+  priorityNotificationQueue.restore();
   const jobNotificationPublisher =
     notificationQueue ?? priorityNotificationQueue;
   const scheduledJobRunner = new ScheduledJobRunner({
@@ -195,7 +213,27 @@ export async function startServer(
     env,
     new MemoryRecurringStorageAdapter(),
   );
-  const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
+  // Network passphrase lookup, shared by every service that reads on-chain state.
+  const serverNetworkPassphrases: Record<string, string> = {
+    testnet: "Test SDF Network ; September 2015",
+    mainnet: "Public Global Stellar Network ; October 2015",
+    futurenet: "Test SDF Future Network ; October 2022",
+    standalone: "Standalone Network ; Latitude 0",
+  };
+  const vaultService = new VaultService(
+    env.sorobanRpcUrl,
+    serverNetworkPassphrases[env.stellarNetwork?.toLowerCase() ?? "testnet"] ??
+      serverNetworkPassphrases["testnet"]!,
+  );
+
+  const snapshotService = new SnapshotService(
+    new MemorySnapshotAdapter(),
+    undefined,
+    {
+      onChainProvider: vaultService,
+      verificationEmitter: webhookDeliveryService,
+    },
+  );
   const snapshotDiffService = new SnapshotDiffService(
     new InMemorySnapshotDiffAdapter(),
   );
@@ -217,6 +255,7 @@ export async function startServer(
     scheduledJobRunner,
     metricsRegistry,
     notificationQueue: priorityNotificationQueue,
+    notificationQueueStore,
     webhookDeliveryService,
     cacheManager,
     lifecycleManager: lifecycleManager ?? null,
@@ -251,8 +290,24 @@ export async function startServer(
     runtime.lifecycleManager = lifecycleManager;
   }
 
-  const wsServer = new EventWebSocketServer(server);
+  const wsServer = new EventWebSocketServer(
+    server,
+    env.wsMaxSubscriptionsPerClient,
+    undefined,
+    {
+      authTimeoutMs: env.wsAuthTimeoutMs,
+      maxConnections: env.wsMaxConnections,
+      maxConnectionsPerIp: env.wsMaxConnectionsPerIp,
+    },
+  );
   runtime.wsServer = wsServer;
+
+  // SSE is a read-only alternative to the WebSocket channel — it piggybacks
+  // on the same contract-event stream via the "contract_event" emitter
+  // rather than EventPollingService pushing to it directly.
+  const sseBroadcaster = new EventSseBroadcaster();
+  wsServer.on("contract_event", (event) => sseBroadcaster.broadcast(event));
+  runtime.sseBroadcaster = sseBroadcaster;
 
   // Determine cursor storage and run one-time file→database migration if needed
   let dbCursorAdapter: DatabaseCursorAdapter | undefined;
@@ -290,6 +345,17 @@ export async function startServer(
     recurringIndexerService,
     jobNotificationPublisher,
   );
+
+  if (env.notificationsCleanupJobEnabled) {
+    scheduledJobRunner.register(
+      new NotificationQueueCleanupJob(
+        env.notificationsCleanupJobIntervalMs,
+        true,
+        notificationQueueStore,
+        env.notificationsRetentionDays,
+      ),
+    );
+  }
 
   // Multi-contract indexing: determine contract IDs to index
   const contractIds =
@@ -370,11 +436,24 @@ export async function startServer(
 
   // ── Governance Snapshot Job (Issue #1173) ─────────────────────────────────
   const governanceDb = new DatabaseSync(env.databasePath ?? ":memory:");
+  configureWalMode(governanceDb);
   const governanceSnapshotJob = new GovernanceSnapshotJob(governanceDb, {
     rpcUrl: env.sorobanRpcUrl,
   });
   jobManager.registerJob(governanceSnapshotJob, { replace: true });
   runtime.governanceSnapshotJob = governanceSnapshotJob;
+
+  // ── Proposal Archival Job (Issue #1366) ───────────────────────────────────
+  if (env.proposalArchivalJobEnabled) {
+    const proposalArchivalJob = createProposalArchivalJob({
+      intervalMs: env.proposalArchivalJobIntervalMs,
+      runOnStart: true,
+      aggregator: proposalActivityAggregator,
+      thresholdDays: env.proposalArchivalThresholdDays,
+      hotStorageDays: env.proposalHotStorageDays,
+    });
+    scheduledJobRunner.register(proposalArchivalJob);
+  }
 
   // ── Vault Registry (Issue #1164) ──────────────────────────────────────────
   const initialVaultAddresses = env.contractIds?.length
@@ -386,24 +465,13 @@ export async function startServer(
   runtime.vaultRegistry = vaultRegistry;
 
   // ── Contract State Validator (Issue #1171) ────────────────────────────────
-  const serverNetworkPassphrases: Record<string, string> = {
-    testnet: "Test SDF Network ; September 2015",
-    mainnet: "Public Global Stellar Network ; October 2015",
-    futurenet: "Test SDF Future Network ; October 2022",
-    standalone: "Standalone Network ; Latitude 0",
-  };
   const ContractRegistryClass = (
     await import("./modules/contracts/contract-registry.js")
   ).default;
   const contractRegistryForValidator = new ContractRegistryClass(env);
-  const vaultServiceForValidator = new VaultService(
-    env.sorobanRpcUrl,
-    serverNetworkPassphrases[env.stellarNetwork?.toLowerCase() ?? "testnet"] ??
-      serverNetworkPassphrases["testnet"]!,
-  );
   const contractStateValidator = new ContractStateValidator(
     contractRegistryForValidator,
-    vaultServiceForValidator,
+    vaultService,
     webhookDeliveryService,
   );
   contractStateValidator.start();

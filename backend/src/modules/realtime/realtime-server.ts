@@ -12,6 +12,7 @@ import type {
   RealtimeConnection,
   RealtimeConnectionLifecycleHooks,
   RealtimeEnvelope,
+  RealtimeServerOptions,
 } from "./types.js";
 
 const logger = createLogger("realtime-server");
@@ -40,12 +41,15 @@ export class RealtimeServer {
     (clientId, message) => this.deliver(clientId, message),
   );
   private readonly hooks: RealtimeConnectionLifecycleHooks;
+  private readonly maxSubscriptionsPerClient: number;
   private wss: WebSocketServer | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private started = false;
 
-  constructor(hooks: RealtimeConnectionLifecycleHooks = {}) {
+  constructor(options: RealtimeServerOptions = {}) {
+    const { maxSubscriptionsPerClient = 100, ...hooks } = options;
     this.hooks = hooks;
+    this.maxSubscriptionsPerClient = maxSubscriptionsPerClient;
   }
 
   // ---------------------------------------------------------------------------
@@ -195,6 +199,24 @@ export class RealtimeServer {
 
   public subscribe(connectionId: string, topic: RealtimeTopic): boolean {
     if (!this.connections.has(connectionId)) return false;
+
+    const currentCount = this.subscriptions.getTopics(connectionId).size;
+    if (currentCount >= this.maxSubscriptionsPerClient) {
+      const remaining = 0;
+      this.deliver(connectionId, {
+        type: "error",
+        topic,
+        ts: new Date().toISOString(),
+        payload: {
+          code: "SUBSCRIPTION_LIMIT_REACHED",
+          message: `Maximum ${this.maxSubscriptionsPerClient} subscriptions per connection`,
+          limit: this.maxSubscriptionsPerClient,
+          remaining,
+        },
+      });
+      return false;
+    }
+
     const added = this.subscriptions.subscribe(connectionId, topic);
     if (!added) return false;
 
@@ -209,15 +231,53 @@ export class RealtimeServer {
   }
 
   public unsubscribe(connectionId: string, topic: RealtimeTopic): boolean {
+    // Snapshot state before removal for verification
+    const beforeTopics = this.subscriptions.getTopics(connectionId);
+    const wasPresentBefore = beforeTopics.has(topic);
+
     const removed = this.subscriptions.unsubscribe(connectionId, topic);
-    if (!removed) return false;
+
+    if (!removed) {
+      // Cleanup did not happen — log whether the topic was never subscribed or
+      // the registry refused to remove it
+      if (!wasPresentBefore) {
+        logger.warn("unsubscribe noop: connection was not subscribed to topic", {
+          connectionId,
+          topic,
+        });
+      } else {
+        logger.error("unsubscribe cleanup failed: registry returned false for a known subscription", {
+          connectionId,
+          topic,
+        });
+      }
+      return false;
+    }
+
+    // Verify cleanup: topic must no longer appear in the registry
+    const afterTopics = this.subscriptions.getTopics(connectionId);
+    if (afterTopics.has(topic)) {
+      logger.error("unsubscribe cleanup failed: topic still present in registry after removal", {
+        connectionId,
+        topic,
+        remainingTopics: Array.from(afterTopics),
+      });
+    } else {
+      logger.info("unsubscribe verified: topic removed from registry", {
+        connectionId,
+        topic,
+        remainingTopics: Array.from(afterTopics),
+      });
+    }
 
     this.hooks.onUnsubscribed?.(connectionId, topic);
+
+    // Emit cleanup event with subscriber identity and affected topic
     this.deliver(connectionId, {
       type: "unsubscribed",
       topic,
       ts: new Date().toISOString(),
-      payload: { topic },
+      payload: { subscriber: connectionId, topic },
     });
     return true;
   }

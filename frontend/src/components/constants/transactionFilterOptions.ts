@@ -40,6 +40,8 @@ export const TYPE_OPTIONS: Array<{ value: VaultEventType; label: string }> = [
   { value: 'config_updated', label: 'Config Updated' },
   { value: 'initialized', label: 'Initialized' },
   { value: 'role_assigned', label: 'Role Assigned' },
+  { value: 'vault_paused', label: 'Vault Paused' },
+  { value: 'vault_unpaused', label: 'Vault Unpaused' },
   { value: 'unknown', label: 'Unknown' },
 ];
 

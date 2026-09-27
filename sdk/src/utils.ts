@@ -5,7 +5,9 @@
  */
 
 import {
+  Account,
   Contract,
+  Keypair,
   Networks,
   SorobanRpc,
   TransactionBuilder,
@@ -14,8 +16,9 @@ import {
   nativeToScVal,
   scValToNative,
 } from "stellar-sdk";
-import type { SdkOptions, Network, SdkLogger } from "./types";
+import type { SdkOptions, Network, SdkLogger, StateDiff, StateChangeValue, StateChangeEntry } from "./types";
 import { VaultError, VaultErrorCode, noopLogger } from "./types";
+import { getErrorDescription } from "./errors";
 
 // ---------------------------------------------------------------------------
 // Network helpers
@@ -40,7 +43,7 @@ export const DEFAULT_RPC_URLS: Record<Exclude<Network, "custom">, string> = {
  *
  * @param network    - One of the known network presets.
  * @param contractId - Deployed contract ID (Strkey Cxxx format).
- * @param overrides  - Optional overrides, including a custom {@link SdkLogger}.
+ * @param overrides  - Optional overrides, including retry settings and a custom {@link SdkLogger}.
  *
  * @example
  * const opts = buildOptions("testnet", "CXXXXXXXXX...");
@@ -58,13 +61,15 @@ export const DEFAULT_RPC_URLS: Record<Exclude<Network, "custom">, string> = {
 export function buildOptions(
   network: Exclude<Network, "custom">,
   contractId: string,
-  overrides?: Partial<Pick<SdkOptions, "rpcUrl" | "networkPassphrase" | "logger">>
+  overrides?: Partial<Pick<SdkOptions, "rpcUrl" | "networkPassphrase" | "logger" | "maxRetries" | "retryDelayMs">>
 ): SdkOptions {
   return {
     contractId,
     rpcUrl: overrides?.rpcUrl ?? DEFAULT_RPC_URLS[network],
     networkPassphrase: overrides?.networkPassphrase ?? NETWORK_PASSPHRASES[network],
     logger: overrides?.logger,
+    maxRetries: overrides?.maxRetries ?? 3,
+    retryDelayMs: overrides?.retryDelayMs ?? 500,
   };
 }
 
@@ -172,6 +177,50 @@ export async function buildTransaction(
   return preparedTx.toXDR();
 }
 
+/** Estimate the total fee for a Soroban contract invocation in stroops. */
+export async function estimateFee(
+  opts: SdkOptions,
+  contractFn: string,
+  args: any[]
+): Promise<number> {
+  if (!contractFn.trim()) {
+    throw new Error("Contract function name is required");
+  }
+  if (!Array.isArray(args)) {
+    throw new Error("Contract arguments must be an array");
+  }
+
+  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const sourceAccount = new Account(Keypair.random().publicKey(), "0");
+  const tx = new TransactionBuilder(sourceAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: opts.networkPassphrase,
+  })
+    .addOperation(
+      getContract(opts).call(
+        contractFn,
+        ...args.map((arg) =>
+          arg instanceof xdr.ScVal ? arg : nativeToScVal(arg)
+        )
+      )
+    )
+    .setTimeout(30)
+    .build();
+
+  const simResult = await server.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    throw parseSimulationError(simResult.error);
+  }
+
+  const fee = Number(BASE_FEE) + Number(simResult.minResourceFee);
+
+  if (!Number.isSafeInteger(fee) || fee < 0) {
+    throw new Error("RPC returned an invalid Soroban inclusion fee");
+  }
+
+  return fee;
+}
+
 // ---------------------------------------------------------------------------
 // Signing and submission
 // ---------------------------------------------------------------------------
@@ -216,7 +265,12 @@ export async function signAndSubmit(
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
   const { Transaction } = await import("stellar-sdk");
   const signedTx = new Transaction(signedXdr, opts.networkPassphrase);
-  const sendResult = await server.sendTransaction(signedTx);
+  const sendResult = await retryOnRateLimit(
+    () => server.sendTransaction(signedTx),
+    opts,
+    log,
+    "transaction submission"
+  );
 
   if (sendResult.status === "ERROR") {
     const errorMessage = `Transaction failed: ${sendResult.errorResult}`;
@@ -299,7 +353,8 @@ export function parseError(err: unknown): VaultError | Error {
   if (match) {
     const code = parseInt(match[1], 10) as VaultErrorCode;
     if (code in VaultErrorCode) {
-      return new VaultError(code);
+      const description = getErrorDescription(code);
+      return new VaultError(code, description);
     }
   }
 
@@ -352,6 +407,46 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Retry an RPC operation when the endpoint responds with HTTP 429. */
+export async function retryOnRateLimit<T>(
+  operation: () => Promise<T>,
+  opts: SdkOptions,
+  log: SdkLogger,
+  operationName: string
+): Promise<T> {
+  const maxRetries = Math.max(0, opts.maxRetries ?? 3);
+  const retryDelayMs = Math.max(0, opts.retryDelayMs ?? 500);
+
+  for (let retry = 0; ; retry++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isRateLimitError(error) || retry >= maxRetries) {
+        throw error;
+      }
+
+      const exponentialDelay = retryDelayMs * 2 ** retry;
+      const delayMs = Math.round(exponentialDelay * (0.5 + Math.random()));
+      log.warn(`Rate limited during ${operationName}; retrying`, {
+        retry: retry + 1,
+        maxRetries,
+        delayMs,
+      });
+      await sleep(delayMs);
+    }
+  }
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const responseStatus = (error as { response?: { status?: unknown } }).response?.status;
+  const status = (error as { status?: unknown }).status;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return responseStatus === 429 || status === 429 || statusCode === 429 ||
+    (error instanceof Error && /\b429\b|too many requests/i.test(error.message));
+}
+
 /**
  * Build an instance of the Stellar `Contract` class from SDK options.
  * @internal
@@ -359,3 +454,104 @@ function sleep(ms: number): Promise<void> {
 export function getContract(opts: SdkOptions): Contract {
   return new Contract(opts.contractId);
 }
+
+// ---------------------------------------------------------------------------
+// State Diff Extraction and Simulation (#1456)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract state changes from simulation result object.
+ */
+export function extractStateDiff(simResult: any): StateDiff {
+  const modifiedKeys: Record<string, StateChangeValue> = {};
+  const newKeys: string[] = [];
+  const changes: StateChangeEntry[] = [];
+
+  if (!simResult) {
+    return { modifiedKeys, newKeys, changes };
+  }
+
+  const rawChanges =
+    simResult.stateChanges ||
+    simResult.state_changes ||
+    simResult.changes ||
+    (simResult.result && simResult.result.stateChanges) ||
+    [];
+
+  if (Array.isArray(rawChanges)) {
+    for (const change of rawChanges) {
+      const key = change.key || change.ledgerKey || change.id || String(change);
+      const before = change.before !== undefined ? change.before : (change.previousValue ?? null);
+      const after = change.after !== undefined ? change.after : (change.newValue ?? null);
+      const isNew = before === null || before === undefined;
+
+      const changeEntry: StateChangeEntry = {
+        key,
+        before,
+        after,
+        isNew,
+      };
+      changes.push(changeEntry);
+
+      if (isNew) {
+        newKeys.push(key);
+      } else {
+        modifiedKeys[key] = { before, after };
+      }
+    }
+  } else if (typeof rawChanges === "object") {
+    for (const [key, val] of Object.entries(rawChanges as Record<string, any>)) {
+      const before = val.before !== undefined ? val.before : null;
+      const after = val.after !== undefined ? val.after : null;
+      const isNew = before === null || before === undefined;
+
+      changes.push({ key, before, after, isNew });
+      if (isNew) {
+        newKeys.push(key);
+      } else {
+        modifiedKeys[key] = { before, after };
+      }
+    }
+  }
+
+  return {
+    modifiedKeys,
+    newKeys,
+    changes,
+  };
+}
+
+/**
+ * Simulate a transaction and return state diffs showing created and modified keys.
+ */
+export async function simulateWithStateDiff(
+  tx: string | any,
+  opts?: SdkOptions
+): Promise<StateDiff> {
+  if (typeof tx === "object" && tx !== null && ("modifiedKeys" in tx || "stateChanges" in tx)) {
+    return extractStateDiff(tx);
+  }
+
+  if (!opts) {
+    return extractStateDiff(tx);
+  }
+
+  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  let transactionObj: any = tx;
+  if (typeof tx === "string") {
+    transactionObj = TransactionBuilder.fromXDR(tx, opts.networkPassphrase);
+  }
+
+  const simResult = await server.simulateTransaction(transactionObj);
+
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    const err = parseSimulationError(simResult.error);
+    throw err;
+  }
+
+  return extractStateDiff(simResult);
+}
+
+/** Alias for snake_case callers */
+export const simulate_with_state_diff = simulateWithStateDiff;
+

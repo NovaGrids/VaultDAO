@@ -7,6 +7,7 @@ const mockUpdateSpendingLimits = vi.fn().mockResolvedValue(true);
 const mockGetProposals = vi.fn().mockResolvedValue([]);
 const mockRejectProposal = vi.fn().mockResolvedValue(true);
 const mockShowToast = vi.fn();
+const mockGetVaultEvents = vi.fn().mockResolvedValue({ activities: [], latestLedger: '0', hasMore: false });
 
 vi.mock('../../hooks/useVaultContract', () => ({
   useVaultContract: () => ({
@@ -14,6 +15,7 @@ vi.mock('../../hooks/useVaultContract', () => ({
     updateSpendingLimits: mockUpdateSpendingLimits,
     getProposals: mockGetProposals,
     rejectProposal: mockRejectProposal,
+    getVaultEvents: mockGetVaultEvents,
   }),
 }));
 
@@ -28,6 +30,7 @@ describe('EmergencyControls and EmergencyConfirmationModal', () => {
     localStorage.clear();
     vi.clearAllMocks();
     mockGetVaultConfig.mockResolvedValue({ currentUserRole: 2 });
+    mockGetVaultEvents.mockResolvedValue({ activities: [], latestLedger: '0', hasMore: false });
   });
 
   afterEach(() => {
@@ -119,23 +122,53 @@ describe('EmergencyControls and EmergencyConfirmationModal', () => {
     mockRaf.mockRestore();
   });
 
-  it('renders existing emergency logs from localStorage inside the modal', async () => {
-    const mockLogs = [
-      {
-        timestamp: Date.now() - 3600000,
-        action: 'Pause Vault',
-        confirmedBy: ['GAIH...', 'GBIH...'],
-      },
-    ];
-    localStorage.setItem('vaultdao_emergency_activation_logs', JSON.stringify(mockLogs));
+  it('renders emergency history from on-chain vault_paused / vault_unpaused events', async () => {
+    const pauser = 'GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR';
+    mockGetVaultEvents.mockResolvedValue({
+      activities: [
+        {
+          id: 'evt-1',
+          eventId: 'evt-1',
+          type: 'vault_paused',
+          timestamp: new Date(Date.now() - 3600000).toISOString(),
+          ledger: '1234',
+          actor: pauser,
+          details: { cause: 'exploit' },
+        },
+        {
+          id: 'evt-2',
+          eventId: 'evt-2',
+          type: 'proposal_created',
+          timestamp: new Date().toISOString(),
+          ledger: '1235',
+          actor: pauser,
+          details: {},
+        },
+      ],
+      latestLedger: '1235',
+      hasMore: false,
+    });
 
     render(<EmergencyControls />);
     await screen.findByText(/emergency zone/i);
 
-    const pauseBtn = screen.getByRole('button', { name: /pause vault/i });
-    fireEvent.click(pauseBtn);
+    fireEvent.click(screen.getByRole('button', { name: /pause vault/i }));
 
-    // Confirm that the log entry is rendered
-    expect(screen.getByText('Confirmed by 2 signers')).toBeInTheDocument();
+    expect(await screen.findByText(/Vault Paused — exploit/)).toBeInTheDocument();
+    expect(screen.queryByText(/proposal created/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/ledger 1234/)).toBeInTheDocument();
+  });
+
+  it('does not write emergency activations to localStorage', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    render(<EmergencyControls />);
+    await screen.findByText(/emergency zone/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /pause vault/i }));
+    fireEvent.click(screen.getByText('Signer #2'));
+    fireEvent.click(screen.getByRole('button', { name: /execute pause/i }));
+
+    await waitFor(() => expect(mockUpdateSpendingLimits).toHaveBeenCalled());
+    expect(setItem).not.toHaveBeenCalledWith('vaultdao_emergency_activation_logs', expect.anything());
   });
 });

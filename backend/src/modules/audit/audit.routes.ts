@@ -1,5 +1,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import { z } from "zod";
+import { validate } from "../../shared/validate.middleware.js";
 import { AuditService, generateMerkleProof, generateMerkleRoot, archiveEntries } from "./audit.service.js";
 import {
   getAuditController,
@@ -8,6 +10,21 @@ import {
 } from "./audit.controller.js";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
+
+// Issue #1165: Zod query schemas, co-located with the routes that use them.
+
+const contractIdQuerySchema = z.object({
+  contractId: z.string().min(1, "contractId query parameter is required"),
+});
+
+const merkleProofParamsSchema = z.object({
+  index: z.coerce.number().int().min(0, "index must be a non-negative integer"),
+});
+
+const archiveQuerySchema = z.object({
+  contractId: z.string().min(1, "contractId query parameter is required"),
+  beforeEntry: z.coerce.number().int().min(0).optional(),
+});
 
 export function createAuditRouter(
   rpcUrl: string,
@@ -25,12 +42,8 @@ export function createAuditRouter(
     router.get("/verify", verifyAuditController(service));
   }
 
-  router.get("/merkle-root", async (req: Request, res: Response) => {
-    const contractId = req.query["contractId"] as string | undefined;
-    if (!contractId) {
-      error(res, { message: "contractId query parameter is required", status: 400, code: ErrorCode.VALIDATION_ERROR });
-      return;
-    }
+  router.get("/merkle-root", validate(contractIdQuerySchema, "query"), async (req: Request, res: Response) => {
+    const contractId = req.query["contractId"] as string;
     try {
       const page = await service.getAuditTrail(contractId, 0, 10000);
       const root = generateMerkleRoot(page.data);
@@ -40,37 +53,27 @@ export function createAuditRouter(
     }
   });
 
-  router.get("/merkle-proof/:index", async (req: Request, res: Response) => {
-    const contractId = req.query["contractId"] as string | undefined;
-    const indexParam = req.params["index"];
-    const index = parseInt(
-      Array.isArray(indexParam) ? (indexParam[0] ?? "") : (indexParam ?? ""),
-      10,
-    );
-    if (!contractId) {
-      error(res, { message: "contractId query parameter is required", status: 400, code: ErrorCode.VALIDATION_ERROR });
-      return;
-    }
-    if (isNaN(index) || index < 0) {
-      error(res, { message: "index must be a non-negative integer", status: 400, code: ErrorCode.VALIDATION_ERROR });
-      return;
-    }
-    try {
-      const page = await service.getAuditTrail(contractId, 0, 10000);
-      const proof = generateMerkleProof(page.data, index);
-      success(res, proof);
-    } catch (err) {
-      error(res, { message: String(err), status: 500, code: ErrorCode.INTERNAL_ERROR });
-    }
-  });
+  router.get(
+    "/merkle-proof/:index",
+    validate(contractIdQuerySchema, "query"),
+    validate(merkleProofParamsSchema, "params"),
+    async (req: Request, res: Response) => {
+      const contractId = req.query["contractId"] as string;
+      const index = Number(req.params["index"]);
+      try {
+        const page = await service.getAuditTrail(contractId, 0, 10000);
+        const proof = generateMerkleProof(page.data, index);
+        success(res, proof);
+      } catch (err) {
+        error(res, { message: String(err), status: 500, code: ErrorCode.INTERNAL_ERROR });
+      }
+    },
+  );
 
   const archiveHandler = async (req: Request, res: Response) => {
-    const contractId = req.query["contractId"] as string | undefined;
-    const beforeEntry = parseInt(req.query["beforeEntry"] as string ?? "0", 10);
-    if (!contractId) {
-      error(res, { message: "contractId query parameter is required", status: 400, code: ErrorCode.VALIDATION_ERROR });
-      return;
-    }
+    const contractId = req.query["contractId"] as string;
+    const beforeEntryRaw = req.query["beforeEntry"];
+    const beforeEntry = beforeEntryRaw !== undefined ? Number(beforeEntryRaw) : 0;
     try {
       const page = await service.getAuditTrail(contractId, 0, 10000);
       const toArchive = beforeEntry > 0 ? page.data.slice(0, beforeEntry) : page.data;
@@ -86,9 +89,9 @@ export function createAuditRouter(
   };
 
   if (adminAuthMiddleware) {
-    router.post("/archive", adminAuthMiddleware, archiveHandler);
+    router.post("/archive", adminAuthMiddleware, validate(archiveQuerySchema, "query"), archiveHandler);
   } else {
-    router.post("/archive", archiveHandler);
+    router.post("/archive", validate(archiveQuerySchema, "query"), archiveHandler);
   }
 
   return router;

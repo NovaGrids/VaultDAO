@@ -1,0 +1,53 @@
+# Unit tests for monitoring/prometheus-rules.yaml, run via:
+#   promtool test rules monitoring/prometheus-rules.test.yaml
+#
+# Covers the HighErrorRate alert against synthetic sample metrics: a spike
+# that should fire, and steady low-level errors that should stay quiet.
+rule_files:
+  - prometheus-rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # Sustained 5xx traffic on the vault endpoint at a constant rate of
+  # 10 requests/min (~0.167 req/s), comfortably over the 0.05 req/s
+  # threshold. The counter needs a full 5m of history before rate() has a
+  # complete window, so the alert becomes pending at t=5m and should be
+  # firing by t=10m (5m of `for:` duration later).
+  - interval: 1m
+    input_series:
+      - series: 'vaultdao_http_requests_total{service="backend", endpoint="/api/v1/vault", status="500"}'
+        values: "0 10 20 30 40 50 60 70 80 90 100"
+
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: HighErrorRate
+        exp_alerts: []
+
+      - eval_time: 10m
+        alertname: HighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: backend
+              service: backend
+              endpoint: /api/v1/vault
+              status: "500"
+            exp_annotations:
+              summary: "High error rate detected"
+              description: |
+                5xx responses for backend are arriving at 166.7m/s
+                Affected endpoint: /api/v1/vault
+              runbook_url: "https://github.com/rdj-savyy/VaultDAO/blob/main/docs/reference/PRODUCTION_RUNBOOK.md#7-high-error-rate-response"
+
+  # A trickle of 5xx errors — 1 every 5 minutes, i.e. ~0.003 req/s — stays
+  # well under the 0.05 req/s threshold and must never fire.
+  - interval: 1m
+    input_series:
+      - series: 'vaultdao_http_requests_total{service="backend", endpoint="/api/v1/proposals", status="500"}'
+        values: "0 0 0 0 0 1 1 1 1 1 1"
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighErrorRate
+        exp_alerts: []

@@ -214,7 +214,7 @@ describe('IPFSUploader component', () => {
     expect(onRemoveAttachment).toHaveBeenCalledWith(VALID_CID_V0);
   });
 
-  it('enforces MAX_ATTACHMENTS cap and shows error when full', async () => {
+  it('enforces MAX_ATTACHMENTS cap and ignores drops when full', async () => {
     const fullAttachments = Array.from({ length: MAX_ATTACHMENTS }, (_, i) => ({
       cid: `Qm${'a'.repeat(44 - String(i).length)}${i}`,
       name: `file-${i}.txt`,
@@ -232,16 +232,14 @@ describe('IPFSUploader component', () => {
     // Drop zone should be disabled (remaining = 0)
     expect(screen.getByText(`Maximum ${MAX_ATTACHMENTS} attachments reached`)).toBeInTheDocument();
 
-    // Attempting to drop should trigger error
+    // The drop zone is disabled, so an attempted drop is ignored and nothing is uploaded
+    expect(screen.getByLabelText('File upload area')).toHaveAttribute('aria-disabled', 'true');
     const input = screen.getByLabelText('Upload files');
     const file = new File(['x'], 'extra.txt', { type: 'text/plain' });
     fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith(
-        expect.stringContaining(`Maximum ${MAX_ATTACHMENTS}`),
-      );
-    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mockAdd).not.toHaveBeenCalled();
     expect(onUploadComplete).not.toHaveBeenCalled();
   });
 

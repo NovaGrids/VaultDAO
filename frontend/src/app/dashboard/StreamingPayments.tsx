@@ -14,6 +14,7 @@ import {
 import { useWallet } from '../../hooks/useWallet';
 import { useToast } from '../../context/ToastContext';
 import { env } from '../../config/env';
+import { newTransactionBuilder } from '../../utils/transactionBuilder';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -247,12 +248,10 @@ const StreamingPayments: React.FC = () => {
     setClaimingId(streamId);
     try {
       // Call the vault contract claimStream function via RPC
-      const { SorobanRpc, TransactionBuilder, Operation, Address, nativeToScVal, xdr } = await import('stellar-sdk');
+      const { SorobanRpc, Operation, Address, nativeToScVal, xdr } = await import('stellar-sdk');
       const server = new SorobanRpc.Server(env.sorobanRpcUrl);
       const account = await server.getAccount(address);
-      const tx = new TransactionBuilder(account, { fee: '100' })
-        .setNetworkPassphrase(env.networkPassphrase)
-        .setTimeout(30)
+      const tx = (await newTransactionBuilder(account))
         .addOperation(Operation.invokeHostFunction({
           func: xdr.HostFunction.hostFunctionTypeInvokeContract(
             new xdr.InvokeContractArgs({

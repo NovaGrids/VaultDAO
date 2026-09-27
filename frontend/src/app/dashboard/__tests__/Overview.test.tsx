@@ -21,7 +21,8 @@ vi.mock('../../../utils/localeFormatter', () => ({
 vi.mock('../../../utils/formatters', () => ({
   formatTokenAmount: (v: string) => v,
 }));
-vi.mock('../../../constants/tokens', () => ({
+vi.mock('../../../constants/tokens', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../constants/tokens')>()),
   isValidStellarAddress: (addr: string) => /^[CG][A-Z0-9]{55}$/.test(addr),
 }));
 vi.mock('../../../components/DashboardBuilder', () => ({

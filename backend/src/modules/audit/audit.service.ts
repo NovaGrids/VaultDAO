@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Response as ExpressResponse } from "express";
+import { decodeCursor, buildCursorWindow, type CursorDirection } from "../../shared/pagination.js";
 import type {
   AuditEntry,
   AuditPage,
@@ -227,7 +228,31 @@ export class AuditService {
     offset: number,
     limit: number,
     verify = false,
+    cursor?: string | null,
   ): Promise<AuditPage> {
+    // If a cursor is provided, decode it and use its offset/direction as the
+    // seek point. A cursor that fails to decode here (e.g. one hand-crafted
+    // by a caller bypassing the controller's validation) silently falls back
+    // to the supplied offset/"next" direction — the controller-level
+    // `validateCursorPagination` is what turns a malformed *client-supplied*
+    // cursor into a 400 before this method is ever reached.
+    let anchorOffset = offset;
+    let direction: CursorDirection = "next";
+    if (cursor) {
+      const decoded = decodeCursor(cursor);
+      if (decoded !== null) {
+        anchorOffset = decoded.offset;
+        direction = decoded.direction ?? "next";
+      }
+    }
+
+    // "next": fetch `limit` entries starting at the anchor offset.
+    // "prev": fetch the `limit` entries immediately *before* the anchor offset.
+    const fetchOffset =
+      direction === "prev" ? Math.max(0, anchorOffset - limit) : anchorOffset;
+    const fetchLimit =
+      direction === "prev" ? Math.max(0, anchorOffset - fetchOffset) : limit;
+
     let response: globalThis.Response;
     try {
       response = await this.fetchFn(this.rpcUrl, {
@@ -238,7 +263,7 @@ export class AuditService {
           id: 1,
           method: "simulateTransaction",
           params: {
-            transaction: this.buildInvocationXdr(contractId, offset, limit),
+            transaction: this.buildInvocationXdr(contractId, fetchOffset, fetchLimit),
           },
         }),
       });
@@ -268,11 +293,26 @@ export class AuditService {
 
     const { entries, total } = json.result;
 
-    const page: AuditPage = { data: entries, total, offset, limit };
+    const page: AuditPage = { data: entries, total, offset: fetchOffset, limit };
 
     if (verify) {
       page.verification = verifyAuditChain(entries);
     }
+
+    const startIndex = fetchOffset;
+    const endIndex = fetchOffset + entries.length;
+    const { nextCursor, prevCursor, hasMore } = buildCursorWindow({
+      startIndex,
+      endIndex,
+      total,
+      direction,
+      firstId: entries[0]?.id,
+      lastId: entries[entries.length - 1]?.id,
+    });
+
+    page.nextCursor = nextCursor;
+    page.prevCursor = prevCursor;
+    page.hasMore = hasMore;
 
     return page;
   }

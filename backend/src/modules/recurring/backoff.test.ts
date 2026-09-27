@@ -173,6 +173,8 @@ test("recordFailure: increments retryCount and returns correct event fields", ()
   assert.equal(state.lastAttemptAt, nowSeconds);
   // 2^1 * 60 = 120 s
   assert.equal(state.nextRetryAt, nowSeconds + 120);
+  // totalMissedExecutions increments from 0 → 1
+  assert.equal(state.totalMissedExecutions, 1);
 
   assert.equal(event.paymentId, "payment-1");
   assert.equal(event.retryCount, 1);
@@ -180,6 +182,7 @@ test("recordFailure: increments retryCount and returns correct event fields", ()
   assert.equal(event.capHit, false);
   assert.equal(event.strategy, BackoffStrategy.Exponential);
   assert.equal(event.nextRetryAt, nowSeconds + 120);
+  assert.equal(event.totalMissedExecutions, 1);
 });
 
 test("recordFailure: second consecutive failure doubles delay (Exponential)", () => {
@@ -202,7 +205,7 @@ test("recordFailure: second consecutive failure doubles delay (Exponential)", ()
 
 test("recordFailure: emits capHit=true when delay is clamped (Linear strategy, clearly over cap)", () => {
   // Use Linear strategy with a very high retryCount so raw = base * retryCount >> 7 days
-  const highState = { retryCount: 1_000_000, lastAttemptAt: 0, nextRetryAt: 0 };
+  const highState = { retryCount: 1_000_000, lastAttemptAt: 0, nextRetryAt: 0, totalMissedExecutions: 1_000_000 };
   const nowSeconds = 2_000_000;
 
   const { state, event } = recordFailure("p-cap", highState, nowSeconds, {
@@ -236,32 +239,42 @@ test("recordFailure: Linear progression at retryCount 1, 2, 3", () => {
 
 // ── resetRetryState ───────────────────────────────────────────────────────────
 
-test("resetRetryState: returns zeroed state (retryCount reset to 0 on success)", () => {
-  const dirty = { retryCount: 7, lastAttemptAt: 999_999, nextRetryAt: 1_604_800 };
+test("resetRetryState: returns zeroed consecutive state (retryCount reset to 0 on success)", () => {
+  const dirty = { retryCount: 7, lastAttemptAt: 999_999, nextRetryAt: 1_604_800, totalMissedExecutions: 12 };
 
-  // Simulate successful execution — consumer calls resetRetryState()
-  const fresh = resetRetryState();
+  // Simulate successful execution — consumer calls resetRetryState(current)
+  const fresh = resetRetryState(dirty);
 
   assert.equal(fresh.retryCount, 0);
   assert.equal(fresh.lastAttemptAt, 0);
   assert.equal(fresh.nextRetryAt, 0);
+  // Lifetime total must be preserved — never reset.
+  assert.equal(fresh.totalMissedExecutions, 12, "totalMissedExecutions must survive a reset");
 
   // The dirty state should be unchanged (pure function)
   assert.equal(dirty.retryCount, 7);
+});
+
+test("resetRetryState: called with no argument initialises totalMissedExecutions to 0", () => {
+  const fresh = resetRetryState();
+  assert.equal(fresh.retryCount, 0);
+  assert.equal(fresh.lastAttemptAt, 0);
+  assert.equal(fresh.nextRetryAt, 0);
+  assert.equal(fresh.totalMissedExecutions, 0);
 });
 
 // ── isInBackoff (scheduler guard) ────────────────────────────────────────────
 
 test("isInBackoff: returns true when nextRetryAt is in the future (scheduler must skip)", () => {
   const nowSeconds = 1_000_000;
-  const state = { retryCount: 1, lastAttemptAt: nowSeconds - 60, nextRetryAt: nowSeconds + 60 };
+  const state = { retryCount: 1, lastAttemptAt: nowSeconds - 60, nextRetryAt: nowSeconds + 60, totalMissedExecutions: 1 };
 
   assert.equal(isInBackoff(state, nowSeconds), true);
 });
 
 test("isInBackoff: returns false when nextRetryAt is in the past (scheduler may process)", () => {
   const nowSeconds = 1_000_000;
-  const state = { retryCount: 1, lastAttemptAt: nowSeconds - 200, nextRetryAt: nowSeconds - 1 };
+  const state = { retryCount: 1, lastAttemptAt: nowSeconds - 200, nextRetryAt: nowSeconds - 1, totalMissedExecutions: 1 };
 
   assert.equal(isInBackoff(state, nowSeconds), false);
 });
@@ -273,7 +286,7 @@ test("isInBackoff: returns false for fresh state (nextRetryAt === 0)", () => {
 
 test("isInBackoff: returns false when nextRetryAt exactly equals now (boundary)", () => {
   const nowSeconds = 1_000_000;
-  const state = { retryCount: 1, lastAttemptAt: nowSeconds - 120, nextRetryAt: nowSeconds };
+  const state = { retryCount: 1, lastAttemptAt: nowSeconds - 120, nextRetryAt: nowSeconds, totalMissedExecutions: 1 };
 
   // Strictly greater-than — equal means the window has elapsed
   assert.equal(isInBackoff(state, nowSeconds), false);

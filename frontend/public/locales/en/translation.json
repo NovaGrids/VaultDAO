@@ -22,7 +22,17 @@
     "previous": "Previous",
     "retry": "Retry",
     "notFound": "Not Found",
-    "loadingEllipsis": "Loading..."
+    "loadingEllipsis": "Loading...",
+    "detected": "Detected",
+    "installRequired": "Install Required",
+    "hide": "Hide",
+    "refresh": "Refresh",
+    "confirmDeleteTemplate": "Are you sure you want to delete this template?",
+    "templateImportedSuccess": "Template imported successfully!",
+    "invalidTemplateFormat": "Invalid template format",
+    "failedToImportTemplate": "Failed to import template",
+    "formSubmittedPreview": "Form submitted successfully (Preview Mode)",
+    "confirmClearErrorHistory": "Clear all error history?"
   },
   "navigation": {
     "dashboard": "Dashboard",
@@ -66,7 +76,8 @@
     "tokenContractAddress": "Token Contract Address",
     "adding": "Adding...",
     "failedToLoadBalance": "Failed to load balance",
-    "refreshBalance": "Refresh balance"
+    "refreshBalance": "Refresh balance",
+    "signers": "Signers"
   },
   "proposals": {
     "title": "Proposals",
@@ -78,7 +89,8 @@
     "reject": "Reject",
     "pending": "Pending",
     "approved": "Approved",
-    "rejected": "Rejected"
+    "rejected": "Rejected",
+    "submittedSuccess": "Proposal submitted successfully!"
   },
   "transactions": {
     "title": "Transactions",
@@ -107,7 +119,8 @@
     "amount": "Please enter a valid amount",
     "selectOption": "Please select an option",
     "submit": "Submit",
-    "reset": "Reset"
+    "reset": "Reset",
+    "circularDependencies": "Circular dependencies in logic!"
   },
   "language": {
     "selectLanguage": "Select Language",
@@ -145,5 +158,108 @@
     "approve": "Approve",
     "reject": "Reject",
     "create_payment": "Create Payment"
+  },
+  "nav": {
+    "overview": "Overview",
+    "proposals": "Proposals",
+    "recurringPayments": "Recurring Payments",
+    "escrow": "Escrow",
+    "governance": "Governance",
+    "activity": "Activity",
+    "templates": "Templates",
+    "analytics": "Analytics",
+    "errorAnalytics": "Error Analytics",
+    "settings": "Settings"
+  },
+  "onboarding": {
+    "tourDesc": "Take a quick tour to learn about all the features."
+  },
+  "portfolio": {
+    "title": "Portfolio Overview",
+    "totalValue": "Total Value",
+    "allocation": "Token Allocation",
+    "lowBalance": "Low Balance",
+    "estimate": "estimate"
+  },
+  "voice": {
+    "start": "Start Listening",
+    "stop": "Stop Listening",
+    "permissionRequired": "Microphone permission required",
+    "timedOut": "Listening timed out",
+    "timedOutHint": "Try again or say the wake word",
+    "settings": "Voice Settings",
+    "wakeWord": "Wake word",
+    "availableCommands": "Available commands",
+    "notSupported": "Voice input not supported in this browser"
+  },
+  "settings": {
+    "title": "Settings",
+    "vaultConfig": "Vault Configuration",
+    "vaultConfigDesc": "Signers, thresholds, and spending limits for this vault",
+    "yourRole": "Your Role",
+    "signerSetNote": "You are a signer on this vault",
+    "notSignerSetNote": "You are not a signer on this vault",
+    "threshold": "Approval Threshold",
+    "approvalsNeeded": "Number of signer approvals required to execute a proposal",
+    "timelock": "Timelock",
+    "timelockTrigger": "Triggers above",
+    "timelockDelay": "Delay",
+    "signers": "Signers",
+    "currentWallet": "Your wallet",
+    "signerListUnavailable": "Signer list is unavailable",
+    "spendingLimits": "Spending Limits",
+    "perProposal": "Per proposal",
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "supportedWallets": "Supported Wallets",
+    "supportedWalletsDesc": "Wallets you can use to connect to VaultDAO",
+    "roleManagement": "Role Management",
+    "exportHistory": "Export History",
+    "exportHistoryDesc": "Previously exported audit and signature files",
+    "reExport": "Re-export",
+    "clearHistory": "Clear History",
+    "noExportHistory": "No export history",
+    "noExportHistoryDesc": "Exported files will appear here",
+    "recipientLists": "Recipient Lists",
+    "manageLists": "Manage Lists",
+    "recipientListsDesc": "Whitelisted and blacklisted recipient addresses",
+    "onboarding": "Onboarding",
+    "restartTour": "Restart Tour",
+    "onboardingDesc": "Replay the guided product tour",
+    "wrongNetwork": "Wrong network",
+    "viewOnExplorer": "View on Explorer",
+    "loadingVaultConfig": "Loading vault configuration...",
+    "updateThreshold": "Update Threshold",
+    "readOnly": "Read-only",
+    "removeSignerTitle": "Remove signer",
+    "addSigner": "Add Signer",
+    "stellarAddressPlaceholder": "G... Stellar address",
+    "downloadAgain": "Download again",
+    "reDownloadUnavailable": "Re-download not available (no stored content)",
+    "reExportAria": "Re-export {{filename}}",
+    "reExportUnavailable": "Re-export not available",
+    "clearExportHistoryAria": "Clear export history",
+    "removeSignerModalTitle": "Remove Signer",
+    "removeSignerModalMessage": "Remove {{address}} from the vault signers? This cannot be undone without re-adding them.",
+    "removing": "Removing…",
+    "remove": "Remove",
+    "language": "Language",
+    "languageDesc": "Choose the display language for VaultDAO"
+  },
+  "performance": {
+    "title": "Performance",
+    "subtitle": "Core Web Vitals and resource metrics",
+    "thresholds": "Thresholds",
+    "good": "Good",
+    "warning": "Needs improvement",
+    "largestResources": "Largest Resources",
+    "allGood": "All metrics look good",
+    "lcp": "Largest Contentful Paint",
+    "fid": "First Input Delay",
+    "cls": "Cumulative Layout Shift",
+    "ttfb": "Time to First Byte",
+    "fcp": "First Contentful Paint",
+    "memoryUsage": "Memory Usage",
+    "heapUsage": "Heap Usage"
   }
 }

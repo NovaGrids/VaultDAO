@@ -142,45 +142,57 @@ Important: because TTL eviction is time-based, you must ensure:
 
 ## 4) Cost model: estimating storage rent impact
 
-### 4.1 Required constraint: use current Stellar fee parameters
+### 4.1 How Soroban actually computes rent (CAP-0066)
 
-This repository snapshot does not include the current network fee parameters required to compute exact rent costs.
+Soroban's rent fee formula is defined in [CAP-0066 (State Archival)](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0066.md):
 
-However, VaultDAO can still be modeled with a **parametric cost function**:
+```
+rent_fee_for_size_and_ledgers(is_persistent, S, L) = round_up(
+    S * L * rent_fee_per_1kb(BucketListSize) /
+    if (is_persistent, persistentRentRateDenominator, tempRentRateDenominator)
+)
+```
 
-- Rent is proportional to:
-  - number of stored entries
-  - size of entries (key + value)
-  - storage type
-  - time stored (TTL coverage)
+Where:
 
-Because TTL values in ledgers are explicit constants, you can compute a **rent multiplier** even without the fee base:
+- `S` = entry size in bytes (key + value, XDR-encoded)
+- `L` = number of ledgers the TTL is extended by
+- `rent_fee_per_1kb(BucketListSize)` = a rate that **grows with total Soroban state size on the network** — it is not a fixed constant. Below the network's target state size it grows linearly; above it, it grows faster via a configured growth factor. This is a deliberate economic lever to discourage unbounded state growth.
+- `persistentRentRateDenominator` / `tempRentRateDenominator` — persistent storage divides by the smaller denominator (i.e. costs more per byte-ledger) than temporary storage, which is why §2.3 recommends temporary storage for anything that doesn't need to survive long-term.
 
-- `rent_multiplier = entries * (ttl_ledgers / ledgers_per_month)`
+**Important:** because `rent_fee_per_1kb` is dynamic, there is no fixed "stroops per KB" constant that stays valid over time — it depends on current network-wide Soroban state size. Always pull the live rate from [Stellar Lab → Network Limits](https://lab.stellar.org/network-limits) (or `simulateTransaction`'s resource fee breakdown against your own RPC) before budgeting a real deployment. The cost estimator script below takes this rate as an input parameter for exactly that reason.
 
-Then multiply by a fee-per-ledger-storage unit from Stellar (cite version in your deployment notes).
+### 4.2 Estimated entry sizes per `DataKey` / `FeatureKey` variant
 
-> Cost numeric examples in this doc are intentionally parametric because the repo snapshot does not include the **current** Stellar rent/fee parameters.
->
-> When publishing, replace the coefficients in the cost model with current network values and include a citation such as:
->
-> - Stellar network fee parameter version (cite)
-> - Soroban storage rent formula / TTL semantics source (cite)
+Exact XDR-encoded sizes depend on field contents (e.g. how many tags or approvals a proposal has), so the table below gives **approximate, order-of-magnitude sizes** grouped by the underlying Rust type, derived from the struct definitions in `contracts/vault/src/types.rs` and `storage.rs`. Treat these as planning estimates — measure real sizes with `stellar contract read` / RPC ledger-entry footprints before finalizing a budget.
 
-### 4.2 Parametric storage cost formula
+| Group | Representative `DataKey` / `FeatureKey` variants | Storage type | Approx. size | Why |
+| --- | --- | --- | --- | --- |
+| Scalar counters/flags | `Initialized`, `NextProposalId`, `NextRecurringId`, `NextCommentId`, `NextAuditId`, `NextStreamId`, `NextInsuranceClaimId`, `NextDelegationId`, `NextHTagId`, `HTagCount`, `NextVarTemplateId`, `VarTemplateCount` | Instance | ~20–40 bytes | Single `u32`/`u64` value plus key discriminant overhead |
+| Hash/bytes values | `LastAuditHash`, `ColdSigUsed(BytesN<32>)` | Instance/Persistent | ~50–70 bytes | Fixed 32-byte hash plus XDR type/length overhead |
+| Small address-keyed records | `Role(Address)`, `Whitelist(Address)`, `Blacklist(Address)`, `TokenSpendingConfig(Address)`, `Reputation(Address)` | Instance/Persistent | ~60–120 bytes | One `Address` key (~36–40 bytes encoded) plus a small struct/enum value |
+| Time-windowed counters | `DailySpent(u64)`, `WeeklySpent(u64)`, `TokenDailySpent(Address, u64)`, `TokenWeeklySpent(Address, u64)`, `StreamRateWindow(u64)` | Temporary | ~40–90 bytes | `u64`/`Address` composite key plus one `i128` amount |
+| Large canonical records | `Proposal(u64)`, `Recurring(u64)` (`RecurringPayment`), `Stream(u64)` (`StreamingPayment`), `Escrow(u64)`, `AmendmentHistory(u64)`, `MultiPhaseProposal(u64)`, `CrossVaultProposal(u64)`, `BatchTransaction` | Persistent | **~0.5–2+ KB**, scaling with signer count | These structs hold `Vec<Address>` (approvals, snapshot_signers), `Map<Address, i128>` (`signer_snapshot`), `Map<Symbol, String>` (`metadata`), and `Vec<String>`/`Vec<Symbol>` (attachments, tags) — each additional signer or tag adds ~40–60 bytes. This is the dominant rent driver in most vaults. |
+| Indexes / collections | `RoleIndex`, `WhitelistIndex`, `BlacklistIndex`, `DelegatorsFor(Address)`, `ProposalComments(u64)`, `HTagChildren(u64)`, `CancellationHistory` | Instance/Persistent | `~20 bytes base + (N × ~36–40 bytes)` | A `Vec<Address>` or `Vec<u64>` — size scales linearly with the number of signers/comments/children indexed |
+| Small audit/comment entries | `Comment(u64)`, `AuditEntry(u64)`, `CancellationRecord(u64)` | Persistent | ~150–400 bytes | Fixed struct fields plus a variable-length `String` body |
 
-Define:
+### 4.3 Parametric storage cost formula (VaultDAO-level abstraction)
 
-- `N` = number of entries
-- `S` = average entry size in bytes (roughly)
-- `T` = average TTL coverage in ledgers
-- `c_instance`, `c_persistent`, `c_temporary` = rent coefficient per byte per ledger for each storage type
+Combining the CAP-0066 formula with the size table above, for a group of `N` similar entries:
 
-Then:
+```
+Cost(N, S, L, R, D) ≈ N * S_KB * L * R / D
+```
 
-- `Cost ≈ N * S * T * c_storage`
+- `N` = number of entries (e.g. 100 proposals)
+- `S_KB` = average entry size in KB (from §4.2)
+- `L` = TTL in ledgers (from §3.1's constants — `PROPOSAL_TTL`, `INSTANCE_TTL`, etc.)
+- `R` = live `rent_fee_per_1kb(BucketListSize)` from Stellar Lab (§4.1)
+- `D` = `persistentRentRateDenominator` or `tempRentRateDenominator` (live network parameter, §4.1)
 
-### 4.3 Example calculation: 100 proposals vs 100 spending-limit counters
+Because `extend_ttl(key, threshold, ttl)` re-extends TTL once remaining life drops below `threshold`, an **actively-used** entry pays this rent fee roughly `30 / (ttl_days / 2)` times per 30-day month (using VaultDAO's `threshold = ttl / 2` pattern, e.g. `PROPOSAL_TTL / 2`).
+
+### 4.4 Example calculation: 100 proposals vs 100 spending-limit counters
 
 #### Assumptions (explicit)
 
@@ -224,7 +236,7 @@ So ratio:
 
 **Interpretation:** Even with lower TTL, proposals can still dominate due to larger value sizes, while counters are smaller and temporary.
 
-### 4.4 Cost analysis table (parametric)
+### 4.5 Cost analysis table (parametric)
 
 | Scenario            | N entries | Storage type | TTL model | Relative cost            |
 | ------------------- | --------: | ------------ | --------: | ------------------------ |
@@ -233,6 +245,56 @@ So ratio:
 | 100 weekly counters |       100 | Temporary    |       14d | `100 * S_ctr * 14 * c_T` |
 
 > Replace coefficients using current Stellar rent parameters for exact numeric results.
+
+### 4.6 Worked example: a vault with 100 proposals and 10 signers
+
+> ⚠️ **The rate used below is an illustrative placeholder, not a current network value.** `rent_fee_per_1kb(BucketListSize)` is dynamic (§4.1) — look up the live figure at [Stellar Lab → Network Limits](https://lab.stellar.org/network-limits) and re-run `contracts/vault/scripts/estimate_rent.sh` with it before using this number for real budgeting.
+
+**Assumptions:**
+
+- 100 active `Proposal(u64)` entries, persistent storage, `PROPOSAL_TTL` = 7 days (§3.1).
+- 10 signers, meaning each proposal's `approvals`, `snapshot_signers`, and `signer_snapshot` fields carry up to 10 addresses — average encoded size ≈ **1 KB per proposal** (§4.2).
+- Proposals are actively read/written, so `extend_ttl(key, PROPOSAL_TTL/2, PROPOSAL_TTL)` refreshes each one roughly every 3.5 days → **~8.6 renewals per 30-day month** (§4.3).
+- 10 `Role(Address)` entries at ~0.05 KB each, `INSTANCE_TTL` = 30 days, refreshed roughly every 23 days (`INSTANCE_TTL_THRESHOLD` = 7 days) → **~1.3 renewals per month**.
+- Illustrative placeholder rent rate: `R / D = 1 stroop per KB per ledger` for persistent storage.
+
+**Calculation:**
+
+```
+proposal_rent_per_renewal = S_KB * L * (R/D)
+                           = 1 KB * 120,960 ledgers * 1 stroop/KB/ledger
+                           = 120,960 stroops ≈ 0.0121 XLM
+
+proposal_monthly_cost = 0.0121 XLM * 8.6 renewals * 100 proposals
+                       ≈ 10.4 XLM/month
+
+role_rent_per_renewal  = 0.05 KB * 518,400 ledgers * 1 stroop/KB/ledger
+                       = 25,920 stroops ≈ 0.0026 XLM
+
+role_monthly_cost      = 0.0026 XLM * 1.3 renewals * 10 signers
+                       ≈ 0.034 XLM/month
+
+total ≈ 10.4 XLM/month
+```
+
+**A vault with 100 proposals and 10 signers costs approximately 10.4 XLM/month in rent**, using the illustrative placeholder rate above — proposal storage dominates the cost because it's the largest and most frequently-renewed persistent entry type. Re-run the estimator script with the current live rate from Stellar Lab to get a real figure for your deployment; the true number could be an order of magnitude lower under normal (non-congested) network state, since Soroban rent is deliberately cheap until the network's total state size approaches its target.
+
+### 4.7 Cost estimator script
+
+`contracts/vault/scripts/estimate_rent.sh` implements the §4.3–4.6 calculation as a reusable CLI tool, so you can plug in the current live rent rate (and your vault's actual proposal/signer counts) instead of relying on the placeholder above:
+
+```bash
+# Uses the same defaults as the worked example above (illustrative rate)
+./contracts/vault/scripts/estimate_rent.sh
+
+# Override with your vault's real counts and the live rate from Stellar Lab
+./contracts/vault/scripts/estimate_rent.sh \
+  --proposals 250 \
+  --signers 5 \
+  --rate-stroops-per-kb-per-ledger 0.4
+```
+
+See the script's `--help` output for the full list of overridable assumptions (entry sizes, TTLs, rent rate).
 
 ## 5) Storage key design patterns
 

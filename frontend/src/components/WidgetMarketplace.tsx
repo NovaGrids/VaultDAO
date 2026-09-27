@@ -14,9 +14,12 @@ import {
   Zap, 
   Users, 
   Coins, 
-  Briefcase 
+  Briefcase,
+  FlaskConical,
+  RefreshCw,
 } from 'lucide-react';
 import type { MarketplaceWidget, WidgetManifest, InstalledWidget, WidgetCategory } from '../types/widget';
+import { fetchWidgetRegistry } from '../utils/widgetRegistry';
 
 interface WidgetMarketplaceProps {
   onInstall: (manifest: WidgetManifest) => void;
@@ -25,8 +28,10 @@ interface WidgetMarketplaceProps {
 }
 
 /**
- * WidgetMarketplace Component
- * A premium interface for discovering and installing third-party widgets.
+ * WidgetMarketplace Component (preview)
+ * Lists widgets from a JSON registry (repo-hosted by default, see
+ * VITE_WIDGET_REGISTRY_URL). Usage stats are only shown when the registry
+ * provides them; nothing here is fabricated client-side.
  */
 const WidgetMarketplace: React.FC<WidgetMarketplaceProps> = ({
   onInstall,
@@ -36,130 +41,29 @@ const WidgetMarketplace: React.FC<WidgetMarketplaceProps> = ({
   const [widgets, setWidgets] = useState<MarketplaceWidget[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<WidgetCategory | 'all'>('all');
-  const [sortBy, setSortBy] = useState<'popular' | 'rating' | 'recent'>('popular');
+  const [sortBy, setSortBy] = useState<'recent' | 'name'>('recent');
   const [selectedWidget, setSelectedWidget] = useState<MarketplaceWidget | null>(null);
 
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
-    // Simulated API fetch
-    const mockWidgets: MarketplaceWidget[] = [
-      {
-        manifest: {
-          metadata: {
-            id: 'treasury-visualizer',
-            name: 'Treasury Pro Visualizer',
-            version: '2.4.0',
-            author: 'DefiInsights',
-            description: 'Advanced treasury tracking with multi-token visualization and historical yield analysis.',
-            category: 'finance',
-            source: 'third-party',
-            icon: '💎',
-            tags: ['finance', 'treasury', 'charts'],
-            createdAt: '2024-01-15',
-            updatedAt: '2024-03-20',
-          },
-          permissions: { network: true, storage: true },
-          entryPoint: 'https://widgets.vaultdao.io/treasury-visualizer/index.html',
-        },
-        downloads: 12450,
-        rating: 4.9,
-        reviews: 215,
-        verified: true,
-      },
-      {
-        manifest: {
-          metadata: {
-            id: 'proposal-companion',
-            name: 'Governance Companion',
-            version: '1.2.5',
-            author: 'GovTools',
-            description: 'AI-powered proposal summarization and voter sentiment analysis in real-time.',
-            category: 'governance',
-            source: 'third-party',
-            icon: '⚖️',
-            tags: ['governance', 'AI', 'voting'],
-            createdAt: '2024-02-10',
-            updatedAt: '2024-03-25',
-          },
-          permissions: { network: true },
-          entryPoint: 'https://widgets.vaultdao.io/gov-companion/index.html',
-        },
-        downloads: 8900,
-        rating: 4.8,
-        reviews: 142,
-        verified: true,
-      },
-      {
-        manifest: {
-          metadata: {
-            id: 'social-activity-feed',
-            name: 'DAO Activity Stream',
-            version: '3.0.1',
-            author: 'SocialLink',
-            description: 'Integrated social feed showing member discussions, Discord activity, and snapshot votes.',
-            category: 'social',
-            source: 'third-party',
-            icon: '💬',
-            tags: ['social', 'community', 'feed'],
-            createdAt: '2023-12-20',
-            updatedAt: '2024-03-18',
-          },
-          permissions: { network: true, notifications: true },
-          entryPoint: 'https://widgets.vaultdao.io/social-feed/index.html',
-        },
-        downloads: 15600,
-        rating: 4.7,
-        reviews: 310,
-        verified: true,
-      },
-      {
-        manifest: {
-          metadata: {
-            id: 'gas-master',
-            name: 'Gas Master Plus',
-            version: '1.0.2',
-            author: 'ChainOptim',
-            description: 'Ultra-precise gas price tracking across multiple networks with personalized alerts.',
-            category: 'utility',
-            source: 'third-party',
-            icon: '⚡',
-            tags: ['utility', 'gas', 'alerts'],
-            createdAt: '2024-03-01',
-            updatedAt: '2024-03-28',
-          },
-          permissions: { network: true, notifications: true },
-          entryPoint: 'https://widgets.vaultdao.io/gas-master/index.html',
-        },
-        downloads: 3200,
-        rating: 4.5,
-        reviews: 45,
-        verified: false,
-      },
-      {
-        manifest: {
-          metadata: {
-            id: 'yield-optimizer',
-            name: 'Vault Yield Radar',
-            version: '1.5.0',
-            author: 'StellarYield',
-            description: 'Identify best yield opportunities for your vault assets across verified Soroban protocols.',
-            category: 'finance',
-            source: 'third-party',
-            icon: '🚀',
-            tags: ['finance', 'yield', 'soroban'],
-            createdAt: '2024-02-15',
-            updatedAt: '2024-03-22',
-          },
-          permissions: { network: true, wallet: true },
-          entryPoint: 'https://widgets.vaultdao.io/yield-radar/index.html',
-        },
-        downloads: 5400,
-        rating: 4.8,
-        reviews: 88,
-        verified: true,
-      }
-    ];
-    setWidgets(mockWidgets);
-  }, []);
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    fetchWidgetRegistry(undefined, controller.signal)
+      .then((registry) => setWidgets(registry.widgets))
+      .catch((e: unknown) => {
+        if (controller.signal.aborted) return;
+        setWidgets([]);
+        setError(e instanceof Error ? e.message : 'Failed to load widget registry');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
 
   const filteredWidgets = useMemo(() => {
     return widgets
@@ -170,8 +74,7 @@ const WidgetMarketplace: React.FC<WidgetMarketplaceProps> = ({
         return matchesSearch && matchesCategory;
       })
       .sort((a, b) => {
-        if (sortBy === 'popular') return b.downloads - a.downloads;
-        if (sortBy === 'rating') return b.rating - a.rating;
+        if (sortBy === 'name') return a.manifest.metadata.name.localeCompare(b.manifest.metadata.name);
         return new Date(b.manifest.metadata.updatedAt).getTime() - new Date(a.manifest.metadata.updatedAt).getTime();
       });
   }, [widgets, searchQuery, selectedCategory, sortBy]);
@@ -199,6 +102,10 @@ const WidgetMarketplace: React.FC<WidgetMarketplaceProps> = ({
                 <Shield className="h-6 w-6 text-purple-500" />
               </div>
               Widget Marketplace
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-400">
+                <FlaskConical className="h-3 w-3" aria-hidden="true" />
+                Preview
+              </span>
             </h2>
             <p className="text-gray-400 text-sm mt-1">Discover and extend your dashboard capabilities</p>
           </div>
@@ -248,29 +155,48 @@ const WidgetMarketplace: React.FC<WidgetMarketplaceProps> = ({
               </div>
               
               <div className="flex items-center gap-2 bg-gray-900 border border-white/10 rounded-2xl px-2 py-1">
-                <button 
-                  onClick={() => setSortBy('popular')}
-                  className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all ${sortBy === 'popular' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  Popular
-                </button>
-                <button 
-                  onClick={() => setSortBy('rating')}
-                  className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all ${sortBy === 'rating' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  Top Rated
-                </button>
-                <button 
+                <button
                   onClick={() => setSortBy('recent')}
                   className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all ${sortBy === 'recent' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}
                 >
-                  New
+                  Recently Updated
+                </button>
+                <button
+                  onClick={() => setSortBy('name')}
+                  className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all ${sortBy === 'name' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                >
+                  Name
                 </button>
               </div>
             </div>
 
+            {/* Preview notice */}
+            <div
+              role="note"
+              className="mx-6 mt-6 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-200/80"
+            >
+              The marketplace is a preview. Listings come from a curated JSON registry and have not been
+              audited; install counts and ratings are not tracked yet.
+            </div>
+
             {/* Grid */}
             <div className="flex-1 overflow-y-auto p-8">
+              {loading && (
+                <p className="text-sm text-gray-500" role="status">Loading widget registry…</p>
+              )}
+              {error && !loading && (
+                <div role="alert" className="flex flex-col items-center justify-center text-center p-12">
+                  <h4 className="text-lg font-semibold text-white mb-2">Couldn&apos;t load the widget registry</h4>
+                  <p className="text-gray-500 text-sm mb-4">{error}</p>
+                  <button
+                    onClick={() => setReloadKey((k) => k + 1)}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-800 text-sm text-white hover:bg-gray-700"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Retry
+                  </button>
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {filteredWidgets.map(widget => (
                   <div
@@ -296,17 +222,26 @@ const WidgetMarketplace: React.FC<WidgetMarketplaceProps> = ({
                       <p className="text-gray-400 text-sm line-clamp-2 leading-relaxed mb-4">{widget.manifest.metadata.description}</p>
                     </div>
 
-                    <div className="flex items-center gap-4 mb-6 text-xs font-medium">
-                      <div className="flex items-center gap-1 text-yellow-500">
-                        <Star className="h-3.5 w-3.5 fill-current" />
-                        <span>{widget.rating}</span>
-                        <span className="text-gray-600 font-normal">({widget.reviews})</span>
+                    {(widget.rating !== undefined || widget.downloads !== undefined) && (
+                      <div className="flex items-center gap-4 mb-6 text-xs font-medium">
+                        {widget.rating !== undefined && (
+                          <div className="flex items-center gap-1 text-yellow-500">
+                            <Star className="h-3.5 w-3.5 fill-current" />
+                            <span>{widget.rating}</span>
+                            {widget.reviews !== undefined && (
+                              <span className="text-gray-600 font-normal">({widget.reviews})</span>
+                            )}
+                          </div>
+                        )}
+                        {widget.downloads !== undefined && (
+                          <div className="flex items-center gap-1.5 text-gray-500">
+                            <Download className="h-3.5 w-3.5" />
+                            <span>{(widget.downloads / 1000).toFixed(1)}k</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-1.5 text-gray-500">
-                        <Download className="h-3.5 w-3.5" />
-                        <span>{(widget.downloads / 1000).toFixed(1)}k</span>
-                      </div>
-                    </div>
+                    )}
+                    <p className="text-[11px] text-gray-500 mb-4">by {widget.manifest.metadata.author}</p>
 
                     <button
                       onClick={() => onInstall(widget.manifest)}
@@ -333,7 +268,7 @@ const WidgetMarketplace: React.FC<WidgetMarketplaceProps> = ({
                 ))}
               </div>
 
-              {filteredWidgets.length === 0 && (
+              {!loading && !error && filteredWidgets.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center text-center p-12 opacity-50">
                   <div className="bg-gray-900 p-8 rounded-full mb-6">
                     <Search className="h-12 w-12 text-gray-600" />

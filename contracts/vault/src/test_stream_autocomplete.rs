@@ -25,7 +25,7 @@ fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         high_impact_threshold: 70,
         admin_rotation_delay: 1440,
         signers,
-        threshold: 1,
+        threshold: 2,
         quorum: 0,
         spending_limit: 100_000,
         daily_limit: 1_000_000,
@@ -73,6 +73,7 @@ fn setup(env: &Env) -> Fixture<'_> {
 
     let mut signers: Vec<Address> = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
     client.initialize(&admin, &make_config(env, signers));
 
     let token = env
@@ -167,7 +168,10 @@ fn test_claim_without_flag_does_not_auto_complete() {
 
     // Flag off: the claim fails and the stream is left Active, which is the
     // pre-#1359 behaviour and stays the default.
-    assert!(fx.client.try_claim_stream(&fx.recipient, &fx.stream_id).is_err());
+    assert!(fx
+        .client
+        .try_claim_stream(&fx.recipient, &fx.stream_id)
+        .is_err());
     assert_eq!(
         fx.client.get_stream(&fx.stream_id).status,
         StreamStatus::Active

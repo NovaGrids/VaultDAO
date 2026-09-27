@@ -43,17 +43,15 @@ export function registerContractController(
 
 export function createContractsRouter(
   registry: ContractRegistry,
-  adminAuthMiddleware?: RequestHandler,
+  adminAuthMiddleware: RequestHandler,
   validator?: ContractStateValidator,
 ): Router {
+  if (!adminAuthMiddleware) {
+    throw new Error("createContractsRouter requires adminAuthMiddleware");
+  }
   const router = express.Router();
   router.get("/", getContractsController(registry));
-
-  if (adminAuthMiddleware) {
-    router.post("/", adminAuthMiddleware, registerContractController(registry));
-  } else {
-    router.post("/", registerContractController(registry));
-  }
+  router.post("/", adminAuthMiddleware, registerContractController(registry));
 
   // GET /api/v1/contracts/drift — drift status for all contracts
   router.get("/drift", (_req, res) => {

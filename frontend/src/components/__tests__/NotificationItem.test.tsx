@@ -8,6 +8,10 @@ vi.mock('../../hooks/useWallet', () => ({
   useWallet: () => ({ address: 'GABCDE234567ABCDE234567ABCDE234567ABCDE234567ABCDE234567' }),
 }));
 
+vi.mock('../../context/NotificationContext', () => ({
+  useNotifications: () => ({ acknowledgeNotification: vi.fn() }),
+}));
+
 describe('NotificationItem', () => {
   const mockNotification: Notification = {
     id: '1',

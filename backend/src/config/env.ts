@@ -1,3 +1,8 @@
+import {
+  DEFAULT_SQLITE_POOL_SIZE,
+  isPrivateDatabase,
+} from "../shared/storage/sqlite-pool.js";
+
 export interface BackendEnv {
   readonly port: number;
   readonly host: string;
@@ -41,6 +46,19 @@ export interface BackendEnv {
   readonly hmacSecret?: string;
   readonly cursorStorageType: "file" | "database";
   readonly databasePath: string;
+  /**
+   * Maximum number of pooled SQLite connections per database file.
+   *
+   * The backend shares one bounded, WAL-mode connection pool per database
+   * path instead of opening a handle per request. Raising this caps file
+   * handle usage higher; lowering it queues callers sooner.
+   *
+   * In-memory databases ignore this and are pinned to a single connection,
+   * since every handle to `:memory:` would otherwise be a separate database.
+   *
+   * Default: 4. Env var: `SQLITE_POOL_SIZE`.
+   */
+  readonly sqlitePoolSize: number;
   readonly rateLimitEnabled: boolean;
   readonly rateLimitRedisUrl?: string;
   readonly redisTls: boolean;
@@ -49,12 +67,48 @@ export interface BackendEnv {
   readonly rateLimitDefaultPerMin: number;
   /** Maximum ledger jitter window for due-payment queries (default: 10 ledgers). */
   readonly jitterWindowMax: number;
+  /** Maximum number of topic subscriptions a single WebSocket client may hold (default: 100). */
+  readonly wsMaxSubscriptionsPerClient: number;
+  /** Close WebSocket connections that have not authenticated within this many ms (default: 10000). */
+  readonly wsAuthTimeoutMs: number;
+  /** Maximum concurrent WebSocket connections across all clients (default: 10000). */
+  readonly wsMaxConnections: number;
+  /** Maximum concurrent WebSocket connections from a single IP (default: 20). */
+  readonly wsMaxConnectionsPerIp: number;
+  /** Enable the daily proposal archival job (default: true). */
+  readonly proposalArchivalJobEnabled: boolean;
+  /** Interval in ms between archival runs (default: 86400000 = 24 h). */
+  readonly proposalArchivalJobIntervalMs: number;
+  /** Archive proposals whose last activity is older than this many days (default: 180). */
+  readonly proposalArchivalThresholdDays: number;
+  /** Always keep proposals created within the last N days in hot storage (default: 7). */
+  readonly proposalHotStorageDays: number;
   /**
    * Maximum number of entries held in the event normalizer LRU+TTL cache.
    * When the limit is reached the least-recently-used entry is evicted.
    * Default: 10,000.  Configure via `NORMALIZER_CACHE_MAX_SIZE`.
    */
   readonly normalizerCacheMaxSize: number;
+  /**
+   * Ledger window used by the proposal fingerprint deduplication store.
+   *
+   * A PROPOSAL_CREATED event is considered a duplicate only when an
+   * identical fingerprint was recorded within this many ledgers.
+   * Fingerprints older than the window are allowed through, enabling
+   * legitimate re-submissions after the cooling-off period.
+   *
+   * Default: 120,960 ledgers ≈ 7 days at ~5 s per ledger on Stellar.
+   * Env var: `PROPOSAL_FINGERPRINT_WINDOW_LEDGERS`
+   */
+  readonly proposalFingerprintWindowLedgers: number;
+  /** Path to the SQLite database backing the persistent notification queue. */
+  readonly notificationsDbPath: string;
+  /** Enable the recurring notification queue cleanup job (default: true). */
+  readonly notificationsCleanupJobEnabled: boolean;
+  /** Interval in ms between notification queue cleanup runs (default: 86400000 = 24h). */
+  readonly notificationsCleanupJobIntervalMs: number;
+  /** Delivered notifications older than this many days are purged (default: 7). */
+  readonly notificationsRetentionDays: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -255,13 +309,27 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     webhooksRequestBodyLimit: "32kb",
     cursorStorageType: "file",
     databasePath: ":memory:",
+    sqlitePoolSize: 4,
     rateLimitEnabled: false,
     redisTls: false,
     rateLimitProposalsPerMin: 100,
     rateLimitExecutePerMin: 10,
     rateLimitDefaultPerMin: 60,
     jitterWindowMax: 10,
+    wsMaxSubscriptionsPerClient: 100,
+    wsAuthTimeoutMs: 10_000,
+    wsMaxConnections: 10_000,
+    wsMaxConnectionsPerIp: 20,
+    proposalArchivalJobEnabled: false,
+    proposalArchivalJobIntervalMs: 86_400_000,
+    proposalArchivalThresholdDays: 180,
+    proposalHotStorageDays: 7,
     normalizerCacheMaxSize: 10_000,
+    proposalFingerprintWindowLedgers: 120_960,
+    notificationsDbPath: ":memory:",
+    notificationsCleanupJobEnabled: false,
+    notificationsCleanupJobIntervalMs: 86_400_000,
+    notificationsRetentionDays: 7,
     ...overrides,
   };
 }
@@ -331,6 +399,11 @@ export function loadEnv(): BackendEnv {
     | "file"
     | "database";
   const databasePath = readString("DATABASE_PATH", "./vaultdao.sqlite");
+  const sqlitePoolSize = readPort(
+    "SQLITE_POOL_SIZE",
+    DEFAULT_SQLITE_POOL_SIZE,
+    issues,
+  );
   const rateLimitEnabled = readString("RATE_LIMIT_ENABLED", "true") === "true";
   const rateLimitRedisUrl = readValue("RATE_LIMIT_REDIS_URL");
   const redisTls = readString("REDIS_TLS", "false") === "true";
@@ -350,9 +423,61 @@ export function loadEnv(): BackendEnv {
     issues,
   );
   const jitterWindowMax = readPort("JITTER_WINDOW_MAX", 10, issues);
+  const wsMaxSubscriptionsPerClient = readPort(
+    "WS_MAX_SUBSCRIPTIONS_PER_CLIENT",
+    100,
+    issues,
+  );
+  const wsAuthTimeoutMs = readPort("WS_AUTH_TIMEOUT_MS", 10_000, issues);
+  const wsMaxConnections = readPort("WS_MAX_CONNECTIONS", 10_000, issues);
+  const wsMaxConnectionsPerIp = readPort(
+    "WS_MAX_CONNECTIONS_PER_IP",
+    20,
+    issues,
+  );
   const normalizerCacheMaxSize = readPort(
     "NORMALIZER_CACHE_MAX_SIZE",
     10_000,
+    issues,
+  );
+  const proposalFingerprintWindowLedgers = readPort(
+    "PROPOSAL_FINGERPRINT_WINDOW_LEDGERS",
+    120_960,
+    issues,
+  );
+
+  const proposalArchivalJobEnabled =
+    readString("PROPOSAL_ARCHIVAL_JOB_ENABLED", "true") === "true";
+  const proposalArchivalJobIntervalMs = readPort(
+    "PROPOSAL_ARCHIVAL_JOB_INTERVAL_MS",
+    86_400_000,
+    issues,
+  );
+  const proposalArchivalThresholdDays = readPort(
+    "PROPOSAL_ARCHIVAL_THRESHOLD_DAYS",
+    180,
+    issues,
+  );
+  const proposalHotStorageDays = readPort(
+    "PROPOSAL_HOT_STORAGE_DAYS",
+    7,
+    issues,
+  );
+
+  const notificationsDbPath = readString(
+    "NOTIFICATIONS_DB_PATH",
+    "./notifications.sqlite",
+  );
+  const notificationsCleanupJobEnabled =
+    readString("NOTIFICATIONS_CLEANUP_JOB_ENABLED", "true") === "true";
+  const notificationsCleanupJobIntervalMs = readPort(
+    "NOTIFICATIONS_CLEANUP_JOB_INTERVAL_MS",
+    86_400_000,
+    issues,
+  );
+  const notificationsRetentionDays = readPort(
+    "NOTIFICATIONS_RETENTION_DAYS",
+    7,
     issues,
   );
 
@@ -390,6 +515,12 @@ export function loadEnv(): BackendEnv {
     ALLOWED_CURSOR_STORAGE_TYPES,
     issues,
   );
+
+  if (nodeEnv === "production" && isPrivateDatabase(databasePath)) {
+    issues.push(
+      `DATABASE_PATH must point to a persistent SQLite file in production. Received "${databasePath}".`,
+    );
+  }
 
   if (nodeEnv === "production" && corsOrigin.length === 0) {
     issues.push("CORS_ORIGIN is required in production environment.");
@@ -433,6 +564,7 @@ export function loadEnv(): BackendEnv {
     hmacSecret,
     cursorStorageType,
     databasePath,
+    sqlitePoolSize,
     rateLimitEnabled,
     rateLimitRedisUrl,
     redisTls,
@@ -440,6 +572,19 @@ export function loadEnv(): BackendEnv {
     rateLimitExecutePerMin,
     rateLimitDefaultPerMin,
     jitterWindowMax,
+    wsMaxSubscriptionsPerClient,
+    wsAuthTimeoutMs,
+    wsMaxConnections,
+    wsMaxConnectionsPerIp,
+    proposalArchivalJobEnabled,
+    proposalArchivalJobIntervalMs,
+    proposalArchivalThresholdDays,
+    proposalHotStorageDays,
     normalizerCacheMaxSize,
+    proposalFingerprintWindowLedgers,
+    notificationsDbPath,
+    notificationsCleanupJobEnabled,
+    notificationsCleanupJobIntervalMs,
+    notificationsRetentionDays,
   };
 }

@@ -9,7 +9,7 @@ export interface WalletContextType {
   address: string | null;
   network: string | null;
   walletType: WalletType | null;
-  connect: (walletType?: WalletType) => Promise<void>;
+  connect: (walletType?: WalletType) => Promise<boolean>;
   disconnect: () => Promise<void>;
   availableWallets: WalletAdapter[];
   selectedWalletId: string | null;

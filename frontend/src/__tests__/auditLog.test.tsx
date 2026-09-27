@@ -10,7 +10,7 @@
 import React from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -134,6 +134,26 @@ function mockFetchBrokenChain() {
   });
 }
 
+// Capture the real createElement once. Re-binding document.createElement inside
+// each test would bind to the previous test's spy and recurse without bound.
+const nativeCreateElement = Document.prototype.createElement;
+function spyOnAnchorClicks(onClick: () => void = vi.fn()) {
+  return vi.spyOn(document, 'createElement').mockImplementation(((tag: string, options?: ElementCreationOptions) => {
+    const el = nativeCreateElement.call(document, tag, options);
+    if (tag === 'a') (el as HTMLAnchorElement).click = onClick;
+    return el;
+  }) as typeof document.createElement);
+}
+
+// Action names also appear on the filter chips; match only inside entry rows.
+const getEntryAction = (action: string) =>
+  screen.getByText(action, { selector: '[data-testid$="-entry"] *' });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
 // ─── Import component (after mocks) ──────────────────────────────────────────
 
 import AuditLog from '../components/AuditLog';
@@ -147,15 +167,7 @@ describe('AuditLog — chain verification', () => {
     global.URL.createObjectURL = vi.fn(() => 'blob:mock-url');
     global.URL.revokeObjectURL = vi.fn();
     // Mock document.createElement for download link
-    const originalCreate = document.createElement.bind(document);
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      if (tag === 'a') {
-        const el = originalCreate('a');
-        el.click = vi.fn();
-        return el;
-      }
-      return originalCreate(tag);
-    });
+    spyOnAnchorClicks();
   });
 
   it('renders audit entries from API', async () => {
@@ -164,11 +176,11 @@ describe('AuditLog — chain verification', () => {
     render(<AuditLog />);
 
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('proposal_approved')).toBeInTheDocument();
-    expect(screen.getByText('proposal_executed')).toBeInTheDocument();
+    expect(getEntryAction('proposal_approved')).toBeInTheDocument();
+    expect(getEntryAction('proposal_executed')).toBeInTheDocument();
   });
 
   it('shows "Chain Verified ✓" banner when verification succeeds', async () => {
@@ -178,7 +190,7 @@ describe('AuditLog — chain verification', () => {
 
     // Wait for entries to load
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
     // Click Verify Chain
@@ -201,7 +213,7 @@ describe('AuditLog — chain verification', () => {
     render(<AuditLog />);
 
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
     const verifyBtn = screen.getByTestId('verify-chain-button');
@@ -252,7 +264,7 @@ describe('AuditLog — chain verification', () => {
     render(<AuditLog />);
 
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
     const verifyBtn = screen.getByTestId('verify-chain-button');
@@ -285,20 +297,12 @@ describe('AuditLog — CSV export', () => {
     vi.stubGlobal('fetch', mockFetchAudit());
 
     const clickSpy = vi.fn();
-    const originalCreate = document.createElement.bind(document);
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      if (tag === 'a') {
-        const el = originalCreate('a');
-        el.click = clickSpy;
-        return el;
-      }
-      return originalCreate(tag);
-    });
+    spyOnAnchorClicks(clickSpy);
 
     render(<AuditLog />);
 
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
     // The export button shows entry count
@@ -323,7 +327,7 @@ describe('AuditLog — CSV export', () => {
     render(<AuditLog />);
 
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
     const exportBtn = screen.getByTestId('export-button');
@@ -346,11 +350,12 @@ describe('AuditLog — CSV export', () => {
     render(<AuditLog />);
 
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
     // Actor should be truncated
-    expect(screen.getByText('GABC12…90AB')).toBeInTheDocument();
+    // truncate() keeps the first and last 6 characters; this actor has two entries
+    expect(screen.getAllByText('GABC12…7890AB')).toHaveLength(2);
 
     // Copy button should be present
     const copyButtons = screen.getAllByTitle(/copy full address/i);
@@ -363,7 +368,7 @@ describe('AuditLog — CSV export', () => {
     render(<AuditLog />);
 
     await waitFor(() => {
-      expect(screen.getByText('proposal_created')).toBeInTheDocument();
+      expect(getEntryAction('proposal_created')).toBeInTheDocument();
     });
 
     // Relative time should be shown (e.g. "1m ago")

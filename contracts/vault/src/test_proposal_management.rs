@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::VaultError;
 use crate::types::{ConditionLogic, Priority, Role};
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
@@ -80,42 +81,27 @@ fn make_proposal(
     )
 }
 
-/// Issue #1424: Test improved error message when signer snapshot is empty
+/// Issue #1424 / #1692: update_config_signers rejects an empty signer list.
+///
+/// The old behavior silently wrote an empty list, then proposal creation blew
+/// up with EmptySignerSnapshot.  After the fix, the rejection happens earlier,
+/// at validation time inside update_config_signers, returning NoSigners.
 #[test]
 fn test_empty_signer_snapshot_error_on_proposal_creation() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, _signer1, _signer2, _contract_id) = setup(&env);
 
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let recipient = Address::generate(&env);
-
     client.set_role(&admin, &admin, &Role::Treasurer);
 
-    // Remove all signers to trigger EmptySignerSnapshot error
+    // Attempting to pass an empty signer list must now be rejected immediately.
     let new_signers: Vec<Address> = Vec::new(&env);
-    client.update_config_signers(&admin, &new_signers);
-
-    // Attempt to create a proposal should fail with EmptySignerSnapshot
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.propose_transfer(
-            &admin,
-            &recipient,
-            &token,
-            &100i128,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-    }));
-
-    // The error should indicate that no signers are available
-    assert!(result.is_err());
+    let result = client.try_update_config_signers(&admin, &new_signers);
+    assert_eq!(
+        result,
+        Err(Ok(VaultError::NoSigners)),
+        "update_config_signers must reject an empty signer list"
+    );
 }
 
 /// Issue #1424: Test get_signer_snapshot function for debugging
@@ -187,7 +173,10 @@ fn test_supersede_proposal_basic() {
 
     // Verify proposal 1 is now Cancelled with supersession reason
     let proposal_1_cancelled = client.get_proposal(&proposal_id_1);
-    assert_eq!(proposal_1_cancelled.status, crate::types::ProposalStatus::Cancelled);
+    assert_eq!(
+        proposal_1_cancelled.status,
+        crate::types::ProposalStatus::Cancelled
+    );
 
     // Verify metadata contains supersession link
     let metadata_str = proposal_1_cancelled
@@ -239,7 +228,10 @@ fn test_supersede_proposal_authorization_check() {
         )
     }));
 
-    assert!(result.is_err(), "Non-proposer should not be able to supersede");
+    assert!(
+        result.is_err(),
+        "Non-proposer should not be able to supersede"
+    );
 }
 
 /// Issue #1423: Test supersession chains
@@ -364,7 +356,10 @@ fn test_auto_expire_proposals_basic() {
 
     // Verify the proposal status changed
     let expired_proposal = client.get_proposal(&proposal_id);
-    assert_eq!(expired_proposal.status, crate::types::ProposalStatus::Expired);
+    assert_eq!(
+        expired_proposal.status,
+        crate::types::ProposalStatus::Expired
+    );
 }
 
 /// Issue #1425: Test timeout rejection at proposal creation
@@ -418,7 +413,14 @@ fn test_auto_expire_proposals_respects_max_count() {
     let mut proposal_ids = Vec::new(&env);
     for i in 0..5 {
         let recipient_i = Address::generate(&env);
-        let proposal_id = make_proposal(&env, &client, &admin, &token, &recipient_i, 100 + (i as i128) * 10);
+        let proposal_id = make_proposal(
+            &env,
+            &client,
+            &admin,
+            &token,
+            &recipient_i,
+            100 + (i as i128) * 10,
+        );
         proposal_ids.push_back(proposal_id);
     }
 
@@ -434,46 +436,21 @@ fn test_auto_expire_proposals_respects_max_count() {
     assert!(expired_count <= 2);
 }
 
-/// Issue #1424: Test that signer snapshot error provides actionable guidance
+/// Issue #1424 / #1692: update_config_signers rejects an empty list;
+/// the old bypass path that produced EmptySignerSnapshot downstream no longer works.
 #[test]
 fn test_empty_signer_snapshot_error_message_guidance() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, signer1, signer2, _contract_id) = setup(&env);
+    let (client, admin, _signer1, _signer2, _contract_id) = setup(&env);
 
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-    let recipient = Address::generate(&env);
-
-    // Remove all signers one by one
-    let mut signers = Vec::new(&env);
-    signers.push_back(admin.clone());
-    signers.push_back(signer1.clone());
-    signers.push_back(signer2.clone());
-
-    // First, update to an empty list
+    // Attempting to pass an empty signer list must be rejected with NoSigners
+    // before any state mutation occurs.
     let empty_signers: Vec<Address> = Vec::new(&env);
-    client.update_config_signers(&admin, &empty_signers);
-
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    // Attempting to create proposal should fail with clear error
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.propose_transfer(
-            &admin,
-            &recipient,
-            &token,
-            &100i128,
-            &Symbol::new(&env, "test"),
-            &Priority::Normal,
-            &Vec::new(&env),
-            &ConditionLogic::And,
-            &0i128,
-        )
-    }));
-
-    // Error should be caught indicating signer snapshot issue
-    assert!(result.is_err());
+    let result = client.try_update_config_signers(&admin, &empty_signers);
+    assert_eq!(
+        result,
+        Err(Ok(VaultError::NoSigners)),
+        "update_config_signers must reject empty list with NoSigners"
+    );
 }

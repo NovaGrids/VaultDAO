@@ -56,6 +56,14 @@ export function createSnapshotRouter(
     ctrl.rebuildSnapshot,
   );
 
+  // Admin-only: Verify the event-built snapshot against current on-chain state.
+  router.post(
+    "/:contractId/verify",
+    adminAuthMiddleware,
+    validateContract,
+    ctrl.verifyConsistency,
+  );
+
   // ── Incremental diff endpoints ────────────────────────────────────────────
 
   if (diffService) {

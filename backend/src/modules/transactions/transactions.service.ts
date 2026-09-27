@@ -13,6 +13,7 @@ import type {
   Transaction,
 } from "./transactions.types.js";
 import { decodeMemo } from "../../shared/utils/memo.js";
+import { resolveIndexCursorWindow, buildCursorWindow } from "../../shared/pagination.js";
 
 interface IndexedEntry {
   tx: Transaction;
@@ -183,27 +184,32 @@ export class TransactionsService {
       .sort((a, b) => b.timestampMs - a.timestampMs)
       .map((e) => e.tx);
 
-    let startIndex = 0;
-    let endIndex = executed.length;
+    const limit = Math.min(params.limit ?? 20, 200);
+    const total = executed.length;
 
-    if (params.cursor) {
-      const cursorIndex = executed.findIndex(tx => tx.transactionHash === params.cursor);
-      if (cursorIndex !== -1) {
-        startIndex = cursorIndex + 1;
-      }
-    }
-
-    const limit = params.limit ?? 20;
-    const maxLimit = Math.min(limit, 200);
-    endIndex = Math.min(startIndex + maxLimit, executed.length);
+    const { startIndex, endIndex, direction } = resolveIndexCursorWindow({
+      items: executed,
+      cursor: params.cursor ?? null,
+      limit,
+      getId: (tx) => tx.transactionHash,
+    });
 
     const data = executed.slice(startIndex, endIndex);
-    const nextCursor = endIndex < executed.length ? executed[endIndex]?.transactionHash : null;
+
+    const { nextCursor, prevCursor, hasMore } = buildCursorWindow({
+      startIndex,
+      endIndex,
+      total,
+      direction,
+      firstId: data[0]?.transactionHash,
+      lastId: data[data.length - 1]?.transactionHash,
+    });
 
     return {
       data,
       nextCursor,
-      hasMore: endIndex < executed.length,
+      prevCursor,
+      hasMore,
     };
   }
 

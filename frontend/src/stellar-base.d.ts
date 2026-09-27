@@ -2,11 +2,29 @@
 // stellar-sdk re-exports everything from this package via `export * from '@stellar/stellar-base'`
 declare module '@stellar/stellar-base' {
   export namespace xdr {
+    class ScValType {
+      readonly name: string;
+      readonly value: number;
+      static scvMap(): ScValType;
+      static scvVec(): ScValType;
+      static scvSymbol(): ScValType;
+    }
     class ScVal {
       static fromXDR(data: string, encoding: 'base64' | 'hex'): ScVal;
       static scvSymbol(value: string): ScVal;
       static scvString(value: string): ScVal;
+      static scvVec(value: ScVal[]): ScVal;
+      static scvMap(value: ScMapEntry[]): ScVal;
+      switch(): ScValType;
+      sym(): string | Uint8Array;
+      vec(): ScVal[] | null;
+      map(): ScMapEntry[] | null;
       toXDR(encoding?: 'base64' | 'hex'): string;
+    }
+    class ScMapEntry {
+      constructor(args: { key: ScVal; val: ScVal });
+      key(): ScVal;
+      val(): ScVal;
     }
     class HostFunction {
       static hostFunctionTypeInvokeContract(args: InvokeContractArgs): HostFunction;

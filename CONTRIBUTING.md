@@ -170,21 +170,21 @@ git checkout -b docs/update-deployment-guide
 
 ### 3. Test Your Changes
 
-**Smart Contract:**
+**Required by CI:**
 
 ```bash
-cd contracts/vault
-cargo test
-cargo clippy
-cargo fmt --check
+# Frontend
+cd frontend && npm run typecheck
+
+# Contract
+cd contracts/vault && cargo check --lib
 ```
 
-**Frontend:**
+**Optional (recommended locally):**
 
 ```bash
-cd frontend
-npm run build  # Ensure it builds
-npm run lint   # Check for linting errors
+cd frontend && npm test
+cd contracts/vault && cargo test
 ```
 
 ### 4. Commit Your Changes
@@ -228,6 +228,10 @@ For the full testing guide — including how to run tests, write new ones, set u
 
 For frontend-specific design system + widget development conventions, see **[docs/guides/FRONTEND_CONTRIBUTION.md](docs/guides/FRONTEND_CONTRIBUTION.md)**.
 
+## 🎯 SDK contribution guide
+
+For SDK-specific setup, running tests, adding a new contract binding, versioning, and publishing, see **[sdk/CONTRIBUTING.md](sdk/CONTRIBUTING.md)**.
+
 ## 🎯 First contribution walkthrough
 
 New contributors should start with the hands-on guide: **[docs/guides/FIRST_CONTRIBUTION.md](docs/guides/FIRST_CONTRIBUTION.md)**.
@@ -243,35 +247,32 @@ It includes:
 
 ### For Smart Contract Changes
 
-- All existing tests must pass (`cargo test`)
-- Add new tests for new functionality in `contracts/vault/src/test.rs`
-- Aim for comprehensive coverage of edge cases
-- Test both success and failure scenarios
-- Use `try_*` variants to assert on error types
+- Contract library must compile (`cargo check --lib`)
+- Add or update tests in `contracts/vault/src/test*.rs` when changing behavior
+- Prefer `try_*` helpers when asserting error paths
 
 ### For Frontend Changes
 
-- Ensure the app builds without errors (`npm run build`)
-- Write or update Vitest tests for new components/hooks (see [TESTING.md](docs/reference/TESTING.md#4-writing-component-tests))
-- Test manually in the browser
-- Verify wallet integration works (if applicable)
-- Check responsive design on mobile
+- Typecheck must pass (`npm run typecheck`)
+- Write or update Vitest tests for new components/hooks when practical
+- Spot-check wallet flows in the browser when relevant
 
 ## 📋 Pull Request Checklist
 
 Before submitting your PR, ensure:
 
-- [ ] Code follows style guidelines (`cargo fmt`, `npm run lint`)
-- [ ] All tests pass (`cargo test`, `npm run build`)
+- [ ] Code follows style guidelines
+- [ ] CI checks pass (`npm run typecheck`, `cargo check --lib`)
 - [ ] New functionality includes tests
 - [ ] Documentation is updated (if needed)
+- [ ] Updated `sdk/CHANGELOG.md` if this PR changes SDK behaviour or API
 - [ ] Commit messages are clear and descriptive
 - [ ] PR description explains the changes
 - [ ] No merge conflicts with `main`
 
 ## 🔍 Code Review Process
 
-1. **Automated Checks**: CI will run tests and linting
+1. **Automated Checks**: CI runs frontend typecheck and contract `cargo check --lib`
 2. **Maintainer Review**: A maintainer will review your code
 3. **Feedback**: Address any requested changes
 4. **Approval**: Once approved, your PR will be merged

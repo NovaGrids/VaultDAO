@@ -109,7 +109,6 @@ export function createDuePaymentsScheduledJob(
   const jitterWindowMax = options.jitterWindowMax ?? 10;
   const metricsRegistry = options.metricsRegistry;
   const idempotencySet = options.idempotencySet ?? new IdempotencySet();
-  const backoffOptions = options.backoffOptions ?? {};
 
   // Register metrics if a registry was provided
   if (metricsRegistry) {

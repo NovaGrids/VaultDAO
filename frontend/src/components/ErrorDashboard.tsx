@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertCircle, BarChart3, RefreshCw, Trash2, Download, ChevronDown, ChevronUp, ExternalLink, Copy } from 'lucide-react';
 import {
   getErrorEvents,
@@ -31,6 +32,7 @@ interface GroupedError {
 }
 
 export default function ErrorDashboard() {
+  const { t } = useTranslation();
   const [events, setEvents] = useState<ErrorEvent[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [total, setTotal] = useState(0);
@@ -53,7 +55,7 @@ export default function ErrorDashboard() {
     for (const ev of events) {
       const existing = groups.get(ev.message);
       if (existing) {
-        existing.count += 1;
+        existing.count += ev.occurrences ?? 1;
         existing.events.push(ev);
         if (ev.timestamp > existing.latestEvent.timestamp) {
           existing.latestEvent = ev;
@@ -61,7 +63,7 @@ export default function ErrorDashboard() {
       } else {
         groups.set(ev.message, {
           message: ev.message,
-          count: 1,
+          count: ev.occurrences ?? 1,
           latestEvent: ev,
           events: [ev],
         });
@@ -73,7 +75,7 @@ export default function ErrorDashboard() {
   }, [events]);
 
   const handleClear = () => {
-    if (window.confirm('Clear all error history?')) {
+    if (window.confirm(t('common.confirmClearErrorHistory'))) {
       clearErrorAnalytics();
       refresh();
     }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Address, Operation, SorobanRpc, TransactionBuilder, xdr } from 'stellar-sdk';
+import { Address, Operation, SorobanRpc, xdr } from 'stellar-sdk';
 import { env } from '../config/env';
+import { newTransactionBuilder } from '../utils/transactionBuilder';
 import { useWallet } from '../hooks/useWallet';
 import type { SimulationResult } from '../utils/simulation';
 import { cacheSimulation, extractStateChanges, formatFeeBreakdown, generateCacheKey, getCachedSimulation, parseSimulationError } from '../utils/simulation';
@@ -30,7 +31,7 @@ export default function TransactionSimulator(props: TransactionSimulatorProps) {
         const cached = getCachedSimulation(cacheKey);
         if (cached) return cached;
         const account = await server.getAccount(address ?? env.feesAccount);
-        const tx = new TransactionBuilder(account, { fee: '100' }).setNetworkPassphrase(env.networkPassphrase).setTimeout(30).addOperation(Operation.invokeHostFunction({
+        const tx = (await newTransactionBuilder(account)).addOperation(Operation.invokeHostFunction({
             func: xdr.HostFunction.hostFunctionTypeInvokeContract(new xdr.InvokeContractArgs({ contractAddress: Address.fromString(env.contractId).toScAddress(), functionName, args })),
             auth: [],
         })).build();

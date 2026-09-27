@@ -1,17 +1,38 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Copy, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
-import { recordError } from '../utils/errorAnalytics';
+import { reportError } from './ErrorReporting';
 
 export type ErrorBoundaryContext = 'payment' | 'proposal' | 'dashboard' | 'generic';
 
 export const ERROR_DETAIL_KEY = 'vaultdao_last_error_detail';
+const LAST_ACCOUNT_KEY = 'vaultdao_last_account';
 
 export interface ErrorDetail {
   message: string;
   stack?: string;
   componentStack?: string;
   context: ErrorBoundaryContext;
+  user?: string;
+  page?: string;
   timestamp: string;
+}
+
+/**
+ * Best-effort current-user lookup for error metadata. ErrorBoundary is a
+ * class component mounted above the router/wallet providers, so it can't use
+ * the WalletContext hook — WalletContext persists the last-connected address
+ * to localStorage under this key on every connect, which we read directly.
+ */
+function getCurrentUserForErrorReport(): string | undefined {
+  try {
+    return localStorage.getItem(LAST_ACCOUNT_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getCurrentPageForErrorReport(): string | undefined {
+  return typeof window !== 'undefined' ? window.location.pathname : undefined;
 }
 
 export function storeErrorDetail(detail: ErrorDetail): void {
@@ -94,13 +115,13 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    const isReportingEnabled = import.meta.env.VITE_ERROR_REPORTING_ENABLED;
-
     const redactedMessage = redactWalletAddresses(error.message || 'Unknown error');
     const redactedStack = error.stack ? redactWalletAddresses(error.stack) : undefined;
     const redactedContext = errorInfo.componentStack
       ? redactWalletAddresses(errorInfo.componentStack)
       : undefined;
+    const user = getCurrentUserForErrorReport();
+    const page = getCurrentPageForErrorReport();
 
     this.setState({ componentStack: redactedContext || null });
 
@@ -110,22 +131,27 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       stack: redactedStack,
       componentStack: redactedContext,
       context: this.props.context ?? 'generic',
+      user,
+      page,
       timestamp: new Date().toISOString(),
     });
 
-    if (isReportingEnabled) {
-      let errorId = '';
-      try {
-        errorId = recordError({
-          code: 'REACT_ERROR_BOUNDARY',
-          message: redactedMessage,
-          stack: redactedStack,
-          context: redactedContext,
-        });
-        this.setState({ errorId });
-      } catch (reportingError) {
-        console.error('Failed to report error to analytics:', reportingError);
-      }
+    // Always record locally (for the error ID shown below) and attempt to
+    // forward to the backend error-collection API — reportError() handles
+    // dedup, offline queueing, and silently no-ops the backend call when
+    // VITE_ERROR_REPORT_ENDPOINT isn't configured.
+    try {
+      const errorId = reportError({
+        code: 'REACT_ERROR_BOUNDARY',
+        message: redactedMessage,
+        stack: redactedStack,
+        context: redactedContext,
+        user,
+        page,
+      });
+      this.setState({ errorId });
+    } catch (reportingError) {
+      console.error('Failed to report error to analytics:', reportingError);
     }
 
     if (import.meta.env.DEV) {

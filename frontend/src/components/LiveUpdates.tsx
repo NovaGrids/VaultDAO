@@ -122,8 +122,13 @@ export function LiveUpdates() {
           </button>
         </div>
 
-        {/* Updates List */}
-        <div className="divide-y divide-gray-700">
+        {/* Updates List: announced politely to screen readers as items arrive */}
+        <div
+          className="divide-y divide-gray-700"
+          role="log"
+          aria-live="polite"
+          aria-label="Live updates"
+        >
           {updates.map((update, index) => (
             <div
               key={`${update.type}-${update.timestamp}-${index}`}

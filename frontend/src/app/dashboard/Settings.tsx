@@ -38,6 +38,8 @@ import { useOnboarding } from '../../context/OnboardingProvider';
 import { Play } from 'lucide-react';
 import PerformanceDashboard from '../../components/PerformanceDashboard';
 import { AccessibilitySettings } from '../../components/AccessibilitySettings';
+import { LanguageSwitcher } from '../../components/LanguageSwitcher';
+import { Globe } from 'lucide-react';
 
 /** Item with stored content for re-download (when ExportModal saves it) */
 interface ExportItemWithContent extends ExportHistoryItem {
@@ -250,14 +252,14 @@ const Settings: React.FC = () => {
             className="min-h-[44px] px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-60 disabled:cursor-not-allowed text-sm flex items-center justify-center gap-2 touch-manipulation"
           >
             {configLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-            Refresh
+            {t('common.refresh')}
           </button>
         </div>
 
         {configLoading && !vaultConfig ? (
           <div className="flex items-center gap-2 text-gray-300 py-4">
             <Loader2 size={16} className="animate-spin" />
-            Loading vault configuration...
+            {t('settings.loadingVaultConfig')}
           </div>
         ) : null}
 
@@ -308,7 +310,7 @@ const Settings: React.FC = () => {
                     className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium py-2 rounded-lg transition-colors"
                   >
                     {thresholdLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                    Update Threshold
+                    {t('settings.updateThreshold')}
                   </button>
                 </div>
               )}
@@ -336,7 +338,7 @@ const Settings: React.FC = () => {
                 </p>
                 {!isAdmin && (
                   <span className="text-xs text-gray-500 italic flex items-center gap-1">
-                    <Shield size={12} /> Read-only
+                    <Shield size={12} /> {t('settings.readOnly')}
                   </span>
                 )}
               </div>
@@ -365,7 +367,7 @@ const Settings: React.FC = () => {
                           <button
                             onClick={() => setRemoveConfirmAddress(signer)}
                             className="p-1.5 rounded text-red-400 hover:bg-red-500/10 transition-colors"
-                            title="Remove signer"
+                            title={t('settings.removeSignerTitle')}
                           >
                             <X size={14} />
                           </button>
@@ -379,13 +381,13 @@ const Settings: React.FC = () => {
               )}
               {isAdmin && (
                 <div className="mt-4 space-y-2 pt-4 border-t border-gray-700">
-                  <p className="text-xs text-gray-400 font-medium">Add Signer</p>
+                  <p className="text-xs text-gray-400 font-medium">{t('settings.addSigner')}</p>
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={newSignerAddress}
                       onChange={(e) => { setNewSignerAddress(e.target.value); setAddSignerError(null); }}
-                      placeholder="G... Stellar address"
+                      placeholder={t('settings.stellarAddressPlaceholder')}
                       className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:ring-2 focus:ring-purple-500 outline-none"
                     />
                     <button
@@ -394,7 +396,7 @@ const Settings: React.FC = () => {
                       className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
                     >
                       {addSignerLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                      Add
+                      {t('common.add')}
                     </button>
                   </div>
                   {addSignerError && <p className="text-xs text-red-400">{addSignerError}</p>}
@@ -467,11 +469,15 @@ const Settings: React.FC = () => {
                       disabled={!hasStoredContent(item)}
                       title={
                         hasStoredContent(item)
-                          ? 'Download again'
-                          : 'Re-download not available (no stored content)'
+                          ? t('settings.downloadAgain')
+                          : t('settings.reDownloadUnavailable')
                       }
                       className="min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      aria-label={hasStoredContent(item) ? `Re-export ${item.filename}` : 'Re-export not available'}
+                      aria-label={
+                        hasStoredContent(item)
+                          ? t('settings.reExportAria', { filename: item.filename })
+                          : t('settings.reExportUnavailable')
+                      }
                     >
                       <Download size={18} aria-hidden="true" />
                       <span className="hidden sm:inline">{t('settings.reExport')}</span>
@@ -486,7 +492,7 @@ const Settings: React.FC = () => {
                 type="button"
                 onClick={handleClearHistory}
                 className="min-h-[44px] flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gray-700 hover:bg-red-600/80 text-white text-sm touch-manipulation focus:outline-none focus:ring-2 focus:ring-purple-500"
-                aria-label="Clear export history"
+                aria-label={t('settings.clearExportHistoryAria')}
               >
                 <Trash2 size={18} aria-hidden="true" />
                 {t('settings.clearHistory')}
@@ -540,6 +546,20 @@ const Settings: React.FC = () => {
         <p className="text-gray-400 text-sm">{t('settings.onboardingDesc')}</p>
       </div>
 
+      {/* Language Settings */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Globe className="text-blue-400" size={24} aria-hidden="true" />
+            <div>
+              <h3 className="text-lg font-semibold">{t('settings.language')}</h3>
+              <p className="text-gray-400 text-sm mt-1">{t('settings.languageDesc')}</p>
+            </div>
+          </div>
+          <LanguageSwitcher />
+        </div>
+      </div>
+
       {/* Accessibility Settings */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
         <AccessibilitySettings />
@@ -556,9 +576,11 @@ const Settings: React.FC = () => {
 
       <ConfirmationModal
         isOpen={!!removeConfirmAddress}
-        title="Remove Signer"
-        message={`Remove ${removeConfirmAddress ? truncateAddress(removeConfirmAddress, 8, 6) : ''} from the vault signers? This cannot be undone without re-adding them.`}
-        confirmText={removeSignerLoading ? 'Removing…' : 'Remove'}
+        title={t('settings.removeSignerModalTitle')}
+        message={t('settings.removeSignerModalMessage', {
+          address: removeConfirmAddress ? truncateAddress(removeConfirmAddress, 8, 6) : '',
+        })}
+        confirmText={removeSignerLoading ? t('settings.removing') : t('settings.remove')}
         onConfirm={handleRemoveSigner}
         onCancel={() => setRemoveConfirmAddress(null)}
         isDestructive={true}

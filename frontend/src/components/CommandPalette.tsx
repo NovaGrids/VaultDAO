@@ -269,10 +269,14 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
       }
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setActiveIndex((i) => Math.min(i + 1, results.length - 1));
+        if (results.length === 0) return;
+        // Wrap from the last item back to the first
+        setActiveIndex((i) => (i + 1) % results.length);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setActiveIndex((i) => Math.max(i - 1, 0));
+        if (results.length === 0) return;
+        // Wrap from the first item to the last
+        setActiveIndex((i) => (i - 1 + results.length) % results.length);
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const item = results[activeIndex];

@@ -243,3 +243,115 @@ test("LifecycleManager: second initialize() call does not duplicate signal handl
     "SIGINT listener count must not increase on second initialize()",
   );
 });
+
+// ============================================================================
+// In-flight request counter tests
+// ============================================================================
+
+test("LifecycleManager: incrementInFlight / decrementInFlight update counter", () => {
+  const manager = new LifecycleManager(null, 30_000);
+
+  assert.equal(manager.getInFlightCount(), 0, "starts at 0");
+
+  manager.incrementInFlight();
+  manager.incrementInFlight();
+  manager.incrementInFlight();
+  assert.equal(manager.getInFlightCount(), 3);
+
+  manager.decrementInFlight();
+  assert.equal(manager.getInFlightCount(), 2);
+
+  manager.decrementInFlight();
+  manager.decrementInFlight();
+  assert.equal(manager.getInFlightCount(), 0, "back to 0 after all decrements");
+});
+
+test("LifecycleManager: decrementInFlight does not go below 0", () => {
+  const manager = new LifecycleManager(null, 30_000);
+
+  manager.decrementInFlight();
+  manager.decrementInFlight();
+
+  assert.equal(manager.getInFlightCount(), 0, "must clamp at 0, never negative");
+});
+
+test("LifecycleManager: isShuttingDown returns false before shutdown", () => {
+  const manager = new LifecycleManager(null, 30_000);
+  assert.equal(manager.isShuttingDown(), false);
+});
+
+test("LifecycleManager: isShuttingDown returns true once shutdown() is called", async () => {
+  const originalExit = process.exit;
+  process.exit = (() => {}) as typeof process.exit;
+
+  try {
+    const manager = new LifecycleManager(null, 30_000);
+    assert.equal(manager.isShuttingDown(), false);
+
+    // Fire shutdown — don't await, just let it proceed in background
+    manager.shutdown().catch(() => {});
+    // Yield one microtask tick so the synchronous part of shutdown() runs
+    await Promise.resolve();
+
+    assert.equal(manager.isShuttingDown(), true, "must be true immediately after shutdown() starts");
+
+    // Let remaining timers clear
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  } finally {
+    process.exit = originalExit;
+  }
+});
+
+test("LifecycleManager: waitForInFlightRequests resolves when counter reaches 0", async () => {
+  const originalExit = process.exit;
+  process.exit = (() => {}) as typeof process.exit;
+
+  try {
+    const manager = new LifecycleManager(null, 5_000);
+
+    // Simulate two in-flight requests
+    manager.incrementInFlight();
+    manager.incrementInFlight();
+
+    // Start shutdown in the background — it will wait for in-flight to drain
+    let shutdownResolved = false;
+    manager.shutdown().then(() => {
+      shutdownResolved = true;
+    }).catch(() => {});
+
+    // Give shutdown a moment to enter the wait loop
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    // Requests haven't finished yet
+    assert.equal(shutdownResolved, false, "shutdown must not complete while requests are in-flight");
+
+    // First request finishes
+    manager.decrementInFlight();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    assert.equal(shutdownResolved, false, "still one request in-flight");
+
+    // Last request finishes — shutdown should now complete
+    manager.decrementInFlight();
+    await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    assert.equal(shutdownResolved, true, "shutdown must complete once all requests drain");
+  } finally {
+    process.exit = originalExit;
+  }
+});
+
+test("LifecycleManager: shutdown does not wait when no requests are in-flight", async () => {
+  const originalExit = process.exit;
+  process.exit = (() => {}) as typeof process.exit;
+
+  try {
+    const manager = new LifecycleManager(null, 5_000);
+
+    const start = Date.now();
+    await manager.shutdown();
+    const elapsed = Date.now() - start;
+
+    assert.ok(elapsed < 500, `shutdown with no in-flight requests took ${elapsed}ms, expected < 500ms`);
+  } finally {
+    process.exit = originalExit;
+  }
+});

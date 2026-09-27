@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { voiceService } from '../utils/voiceRecognition';
@@ -19,6 +19,10 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
   const [timedOut, setTimedOut] = useState(false);
   const [commandMatched, setCommandMatched] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  // Voice command handlers are registered once per effect run, so they read the
+  // pending action through a ref rather than a stale closure.
+  const pendingActionRef = useRef<(() => void) | null>(null);
+  pendingActionRef.current = pendingAction;
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -99,10 +103,12 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
     
     voiceService.registerCommand('confirm action', {
         command: 'Confirmed',
-        action: () => { 
-            if (pendingAction) {
-                pendingAction();
+        action: () => {
+            const action = pendingActionRef.current;
+            if (action) {
+                pendingActionRef.current = null;
                 setPendingAction(null);
+                action();
                 flashMatch();
             }
         },
@@ -111,7 +117,7 @@ export default function VoiceCommands({ onCreateProposal, onApprove, onReject }:
 
     voiceService.registerCommand('cancel action', {
         command: 'Cancelled',
-        action: () => { setPendingAction(null); flashMatch(); },
+        action: () => { pendingActionRef.current = null; setPendingAction(null); flashMatch(); },
         aliases: ['no', 'cancel', 'stop'],
     });
 

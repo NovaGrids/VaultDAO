@@ -27,7 +27,8 @@ import { env } from '../config/env';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const IPFS_API_URL = import.meta.env.VITE_IPFS_API_URL as string | undefined ?? '';
+// Read lazily so the value reflects the current environment (and can be stubbed in tests).
+const getIpfsApiUrl = (): string => (import.meta.env.VITE_IPFS_API_URL as string | undefined) ?? '';
 export const MAX_ATTACHMENTS = 10;
 
 // CIDv0: starts with "Qm" and is 46 chars; CIDv1: starts with "bafy" and is 59+ chars
@@ -68,9 +69,10 @@ interface IPFSUploaderProps {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getClient() {
-  if (!IPFS_API_URL) return null;
+  const url = getIpfsApiUrl();
+  if (!url) return null;
   try {
-    return create({ url: IPFS_API_URL });
+    return create({ url });
   } catch {
     return null;
   }
@@ -157,7 +159,7 @@ export async function uploadMultipleToIPFS(
 
 /** Returns true when VITE_IPFS_API_URL is set. */
 export function isIPFSConfigured(): boolean {
-  return Boolean(IPFS_API_URL);
+  return Boolean(getIpfsApiUrl());
 }
 
 /** Build a gateway URL for a CID. */
@@ -338,6 +340,7 @@ export default function IPFSUploader({
           .filter(Boolean)
           .join(' ')}
         aria-label="File upload area"
+        aria-disabled={uploading || remaining <= 0}
       >
         <input {...getInputProps()} aria-label="Upload files" />
         {uploading ? (

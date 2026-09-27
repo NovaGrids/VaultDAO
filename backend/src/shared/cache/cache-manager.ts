@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { createLogger } from "../logging/logger.js";
 import type {
   CacheAdapter,
@@ -12,25 +13,40 @@ const logger = createLogger("cache-manager");
 // ── Well-known cache tags ─────────────────────────────────────────────────────
 
 export const CacheTags = {
-  proposal: (id: string) => `proposal:${id}`,
+  contractSnapshots: (contractId?: string) =>
+    contractId ? `contract-snapshots:${contractId}` : "contract-snapshots",
+  contractSnapshotsTag: "contract-snapshots",
+  proposal: (id: string | number) => `proposal-${id}`,
+  role: (address: string) => `role-${address}`,
+
+  // Legacy / convenience helpers
   contractProposals: (contractId: string) => `contract:${contractId}:proposals`,
   config: (contractId: string) => `config:${contractId}`,
   signers: (contractId: string) => `signers:${contractId}`,
 } as const;
 
+export interface CacheInvalidationPayload {
+  tag: string;
+  source: string;
+  deletedCount: number;
+  timestamp: number;
+}
+
 // ── CacheManager ──────────────────────────────────────────────────────────────
 
 /**
  * Facade over a TaggedCacheAdapter that adds:
- * - Convenience tag-keyed helpers
+ * - Tagged cache management (contract-snapshots, proposal-{id}, role-{address})
+ * - EventEmitter capability emitting 'cache_invalidated' events
  * - Event-driven invalidation hooks
  * - Graceful fallback to InMemoryCacheAdapter when primary is unavailable
  */
-export class CacheManager implements CacheAdapter<unknown> {
+export class CacheManager extends EventEmitter implements CacheAdapter<unknown> {
   private readonly primary: TaggedCacheAdapter;
   private readonly fallback: InMemoryCacheAdapter<unknown>;
 
   constructor(primary?: TaggedCacheAdapter, lruOptions?: LRUCacheOptions) {
+    super();
     this.fallback = new InMemoryCacheAdapter();
     this.primary = primary ?? new LRUCacheManager(lruOptions);
   }
@@ -39,8 +55,8 @@ export class CacheManager implements CacheAdapter<unknown> {
     return this.primary.get(key) as T | null;
   }
 
-  set<T>(key: string, value: T, ttlMs?: number): void {
-    (this.primary as TaggedCacheAdapter<T>).set(key, value, ttlMs);
+  set<T>(key: string, value: T, ttlMs?: number, tags?: string[]): void {
+    (this.primary as TaggedCacheAdapter<T>).set(key, value, ttlMs, tags);
   }
 
   delete(key: string): void {
@@ -97,16 +113,28 @@ export class CacheManager implements CacheAdapter<unknown> {
 
   // ── Invalidation ────────────────────────────────────────────────────────────
 
-  invalidateByTag(tag: string): void {
+  invalidateByTag(tag: string, source: string = "manual"): number {
+    let deleted = 0;
     try {
-      this.primary.invalidateByTag(tag);
+      deleted = this.primary.invalidateByTag(tag);
     } catch (err) {
       logger.warn("tag invalidation error", { tag, error: String(err) });
     }
-    this.fallback.deleteByPrefix(tag);
+    deleted += this.fallback.deleteByPrefix(tag);
+
+    // Emit cache invalidation event
+    const payload: CacheInvalidationPayload = {
+      tag,
+      source,
+      deletedCount: deleted,
+      timestamp: Date.now(),
+    };
+    this.emit("cache_invalidated", payload);
+
+    return deleted;
   }
 
-  invalidatePattern(pattern: string): number {
+  invalidatePattern(pattern: string, source: string = "manual"): number {
     let deleted = 0;
     try {
       deleted = this.primary.invalidatePattern(pattern);
@@ -116,21 +144,58 @@ export class CacheManager implements CacheAdapter<unknown> {
         error: String(err),
       });
     }
-    this.fallback.deleteByPrefix(pattern.replace(/\*/g, ""));
+    deleted += this.fallback.deleteByPrefix(pattern.replace(/\*/g, ""));
+
+    // Emit cache invalidation event
+    this.emit("cache_invalidated", {
+      tag: pattern,
+      source,
+      deletedCount: deleted,
+      timestamp: Date.now(),
+    });
+
     return deleted;
+  }
+
+  // ── Helper Tag Invalidators ──────────────────────────────────────────────────
+
+  invalidateProposal(id: string | number, source: string = "proposal_event"): number {
+    const count1 = this.invalidateByTag(CacheTags.proposal(id), source);
+    const count2 = this.invalidateByTag(CacheTags.contractSnapshotsTag, source);
+    return count1 + count2;
+  }
+
+  invalidateRole(address: string, source: string = "role_event"): number {
+    return this.invalidateByTag(CacheTags.role(address), source);
+  }
+
+  invalidateSnapshots(contractId?: string, source: string = "snapshot_event"): number {
+    const count1 = this.invalidateByTag(CacheTags.contractSnapshotsTag, source);
+    const count2 = contractId ? this.invalidateByTag(CacheTags.contractSnapshots(contractId), source) : 0;
+    return count1 + count2;
   }
 
   // ── Event-driven invalidation hooks ─────────────────────────────────────────
 
-  onProposalCreated(contractId: string): void {
-    this.invalidateByTag(CacheTags.contractProposals(contractId));
-    logger.debug("invalidated proposals cache", { contractId });
+  onProposalCreated(contractId: string, proposalId?: string | number): void {
+    this.invalidateSnapshots(contractId, "proposal_created");
+    if (proposalId !== undefined) {
+      this.invalidateProposal(proposalId, "proposal_created");
+    }
+    this.invalidateByTag(CacheTags.contractProposals(contractId), "proposal_created");
+    logger.debug("invalidated proposals cache", { contractId, proposalId });
   }
 
   onConfigUpdated(contractId: string): void {
-    this.invalidateByTag(CacheTags.config(contractId));
-    this.invalidateByTag(CacheTags.signers(contractId));
+    this.invalidateSnapshots(contractId, "config_updated");
+    this.invalidateByTag(CacheTags.config(contractId), "config_updated");
+    this.invalidateByTag(CacheTags.signers(contractId), "config_updated");
     logger.debug("invalidated config/signers cache", { contractId });
+  }
+
+  onRoleChanged(address: string): void {
+    this.invalidateRole(address, "role_changed");
+    logger.debug("invalidated role cache", { address });
   }
 
   // ── Stats ────────────────────────────────────────────────────────────────────
@@ -148,6 +213,7 @@ export class CacheManager implements CacheAdapter<unknown> {
   }
 
   destroy(): void {
+    this.removeAllListeners();
     if (
       "destroy" in this.primary &&
       typeof this.primary.destroy === "function"

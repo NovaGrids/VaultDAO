@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
-import { getFeatureFlags } from "./feature-flags.js";
+import { getFeatureFlags, type FlagName } from "./feature-flags.js";
 import { error } from "./http/response.js";
 import { ErrorCode } from "./http/errorCodes.js";
 
@@ -7,7 +7,7 @@ import { ErrorCode } from "./http/errorCodes.js";
  * Middleware that returns 501 Not Implemented if a feature flag is disabled.
  * Usage: router.get('/sse', requireFeature('sse'), sseHandler)
  */
-export function requireFeature(flag: string): RequestHandler {
+export function requireFeature(flag: FlagName): RequestHandler {
   return (_req: Request, res: Response, next: NextFunction) => {
     if (!getFeatureFlags().isEnabled(flag)) {
       error(res, {

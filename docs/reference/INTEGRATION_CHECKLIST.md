@@ -1,277 +1,415 @@
-# Contract Integration Checklist
+# VaultDAO Enterprise Integration Checklist
 
-Maps every public contract method to its frontend (`useVaultContract`) and SDK consumer status. Use this to find gaps, plan integration work, and avoid drift between the contract and its consumers.
+**Document type:** Go-live / integration sign-off  
+**Applies to:** Production and production-like staging vaults  
+**References:** `contracts/vault`, `frontend`, `backend`, `sdk`, `docs/reference/DEPLOYMENT.md`, `docs/reference/PRODUCTION_RUNBOOK.md`, `docs/guides/TREASURY_RISK_MANAGEMENT.md`
 
-**References:**
-- Contract: `contracts/vault/src/lib.rs`
-- Frontend hook: `frontend/src/hooks/useVaultContract.ts`
+This checklist replaces the prior developer gap-analysis format. It is an **enterprise sign-off** artifact: every item has a description, a verification method, an accountable role, and a checkbox. Complete phases in order. Do not declare production Go until the [Go/No-Go decision matrix](#go--no-go-decision-matrix) is entirely Go (or formally waived with Security Officer approval).
 
-## Legend
+**Roles**
 
-| Symbol | Meaning |
-| :----- | :------ |
-| ✅ | Wired — contract method called directly |
-| 🔄 | Partial — called but with workarounds or missing args |
-| 🟡 | Client-side only — implemented locally, not on-chain |
-| ❌ | Missing — contract method exists but not called |
-| 🚧 | Contract incomplete — method not safe to wire yet |
+| Role | Accountability |
+| ---- | -------------- |
+| **Admin** | On-chain configuration, signers, roles, pause/unpause, limit changes |
+| **Treasurer** | Proposal workflows, spending policy fit, recurring schedules, day-2 treasury ops |
+| **DevOps** | Deployments, RPC, keepers, webhooks, monitoring, secrets, uptime |
+| **Security Officer** | Threat review, breaker thresholds, emergency contacts, final security sign-off |
 
----
-
-## Config & Initialization
-
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `initialize` | — | ❌ | Deployment-time only; not needed in the hook |
-| `get_config` | `getVaultConfig` | ✅ | Tries `get_config` then falls back to `get_vault_config` |
-| `get_signers` | `getVaultConfig` (via config) | 🔄 | Signers parsed from `get_config` response, not called directly |
-| `is_signer` | `getVaultConfig` | ✅ | Called in parallel during config fetch |
-| `update_threshold` | `updateThreshold` | ✅ | Direct call, correct args |
-| `update_limits` | `updateSpendingLimits` | ✅ | Direct call, correct args |
-| `update_quorum` | — | ❌ | No frontend UI or hook method |
-| `update_voting_strategy` | — | ❌ | No frontend UI or hook method |
-| `get_voting_strategy` | — | ❌ | Not fetched; dashboard doesn't display it |
-| `get_today_spent` | — | ❌ | Not surfaced in dashboard |
-| `get_daily_spent` | — | ❌ | Not surfaced in dashboard |
-
-**Gaps to close:**
-- [ ] Add `updateQuorum(quorum: number)` to hook → calls `update_quorum`
-- [ ] Add `getVotingStrategy()` to hook → calls `get_voting_strategy`
-- [ ] Surface today's spending in the Overview stats card
+Legend: ☐ = incomplete · ☑ = complete (mark in your copy when verified)
 
 ---
 
-## Proposals — Write
+## Phase 1 — Pre-Deployment
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `propose_transfer` | `proposeTransfer` | 🔄 | Missing `priority`, `conditions`, `condition_logic`, `insurance_amount` args — all hardcoded/omitted |
-| `propose_scheduled_transfer` | — | ❌ | No hook method; frontend can't schedule proposals |
-| `propose_transfer_with_deps` | — | ❌ | No hook method; dependency proposals not supported |
-| `batch_propose_transfers` | — | ❌ | No hook method |
-| `approve_proposal` | `approveProposal` | ✅ | Correct |
-| `abstain_proposal` | — | ❌ | No hook method; abstention not available in UI |
-| `execute_proposal` | `executeProposal` | ✅ | Correct |
-| `cancel_proposal` | — | ❌ | Hook has `rejectProposal` which calls `reject_proposal` — this is the wrong method; cancel is separate |
-| `amend_proposal` | — | ❌ | No hook method |
-| `veto_proposal` | — | ❌ | No hook method |
+### 1.1 Business and policy readiness
 
-**Critical gaps:**
-- [ ] `proposeTransfer` is missing `priority`, `conditions`, `condition_logic`, `insurance_amount` — contract will reject calls that don't pass all required args. Fix the hook to pass defaults (`Priority::Normal`, empty conditions, `ConditionLogic::And`, `0` insurance).
-- [ ] `rejectProposal` calls `reject_proposal` — **this method does not exist in the contract**. The contract has `cancel_proposal`. Rename and fix args (`canceller`, `proposal_id`, `reason`).
-- [ ] Add `cancelProposal(proposalId, reason)` → calls `cancel_proposal`
-- [ ] Add `abstainProposal(proposalId)` → calls `abstain_proposal`
-- [ ] Add `scheduleProposal(...)` → calls `propose_scheduled_transfer`
+- [ ] **Board / charter approval for VaultDAO custody model**  
+  **Description:** Confirm legal/ops authority to hold treasury in a Soroban multi-sig vault with timelocks and spending limits.  
+  **How to verify:** Signed board minute or policy exhibit attached to this checklist packet.  
+  **Who:** Admin
 
----
+- [ ] **Spending policy drafted (limits as % of treasury)**  
+  **Description:** Document target `spending_limit`, `daily_limit`, `weekly_limit`, and per-token caps. Treat published percentage bands as guidelines until the board adopts them as mandates.  
+  **How to verify:** Policy doc exists; absolute amounts computed for current balances (see Treasury Risk Management calculator).  
+  **Who:** Treasurer
 
-## Proposals — Read
+- [ ] **Signer roster and role matrix finalized**  
+  **Description:** Named humans ↔ Stellar addresses ↔ roles (`Admin`, `Treasurer`, `Member`) ↔ backup coverage.  
+  **How to verify:** Roster spreadsheet matches intended on-chain signers; at least one backup Admin path documented.  
+  **Who:** Admin
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `get_proposal` | — | ❌ | Not called directly; proposals reconstructed from events |
-| `list_proposal_ids` | — | ❌ | Not used; event replay used instead |
-| `list_proposals` | — | ❌ | Not used; event replay used instead |
-| `get_executable_proposals` | — | ❌ | Not surfaced; dashboard doesn't show executable queue |
-| `get_quorum_status` | — | ❌ | Not fetched; quorum not shown in proposal detail |
-| `get_cancellation_record` | — | ❌ | Not fetched |
-| `get_cancellation_history` | — | ❌ | Not fetched |
-| `get_proposal_amendments` | — | ❌ | Not fetched |
-| `get_retry_state` | — | ❌ | Not fetched |
+- [ ] **Delegation policy agreed**  
+  **Description:** When voting power may be delegated, max duration, and revocation SLA.  
+  **How to verify:** Written policy; Security Officer acknowledges.  
+  **Who:** Admin
 
-**Note on event-replay approach:** `getProposals` reconstructs state from `getEvents` (Soroban RPC). This works for basic status but loses fields like `memo`, `token`, `amount`, `threshold`, `conditions`, and `expires_at` that are only in the on-chain `Proposal` struct. The correct approach is to call `get_proposal(id)` for each ID returned by `list_proposal_ids`.
+### 1.2 Multi-token readiness
 
-**Gaps to close:**
-- [ ] Replace event-replay in `getProposals` with `list_proposal_ids` + `get_proposal` calls for accurate data
-- [ ] Add `getExecutableProposals()` → calls `get_executable_proposals`
-- [ ] Add `getQuorumStatus(proposalId)` → calls `get_quorum_status`
+- [ ] **Supported token list approved**  
+  **Description:** Enumerate SAC/token contract addresses for `Config.supported_tokens` (max per contract rules; first entry is default and non-removable).  
+  **How to verify:** Token addresses verified on the target network explorer; decimals and issuer documented.  
+  **Who:** Treasurer
 
----
+- [ ] **Per-token daily/weekly limits designed**  
+  **Description:** Map `token_daily_limits` / `token_weekly_limits` to each supported asset’s liquid balance policy.  
+  **How to verify:** Table of token → daily → weekly reviewed by Treasurer and Admin.  
+  **Who:** Treasurer
 
-## Roles & Signers
+- [ ] **Trustlines / contract allowances planned**  
+  **Description:** Ensure the vault account can hold and transfer each asset (trustlines, SAC setup, funding plan).  
+  **How to verify:** Testnet rehearsal successfully transfers each token through a proposal path.  
+  **Who:** DevOps
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `set_role` | `setRole` / `assignRole` | 🔄 | Both `setRole` and `assignRole` exist and do the same thing — duplicate |
-| `get_role` | `getUserRole` | ✅ | Correct |
-| `get_role_assignments` | `getAllRoles` | ✅ | Correct |
-| `add_signer` | `addSigner` | ✅ | Correct |
-| `remove_signer` | `removeSigner` | ✅ | Correct |
-| `delegate_voting_power` | — | ❌ | No hook method |
-| `revoke_delegation` | — | ❌ | No hook method |
+### 1.3 Compliance baseline
 
-**Gaps to close:**
-- [ ] Remove duplicate `assignRole` — keep only `setRole`
-- [ ] Add `delegateVotingPower(delegate, expiryLedger)` → calls `delegate_voting_power`
-- [ ] Add `revokeDelegation()` → calls `revoke_delegation`
+- [ ] **Compliance baseline defined**  
+  **Description:** Target Governance Health **compliance score** band (recommend sustain ≥ 80 / green `% Compliant`), attachment verification rules, and audit export cadence.  
+  **How to verify:** Baseline written; monitoring will alert below threshold (e.g., < 50 red).  
+  **Who:** Treasurer
 
----
+- [ ] **Recipient policy chosen**  
+  **Description:** Decide whitelist mode (`whitelist_mode`) and initial allow/deny lists if used.  
+  **How to verify:** Policy + initial address lists attached; Testnet enforcement observed.  
+  **Who:** Admin
 
-## Recurring Payments
+- [ ] **Audit / reporting requirements mapped**  
+  **Description:** Who receives monthly exports, webhook alerts, and evidence packs.  
+  **How to verify:** Named mailbox / ticket queue; sample report generated on staging.  
+  **Who:** Treasurer
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `schedule_payment` | `schedulePayment` | 🔄 | Hardcodes XLM SAC address for native token; interval conversion may be off |
-| `execute_recurring_payment` | `executeRecurringPayment` | ✅ | Correct; history stored in localStorage |
-| `get_recurring_payment` | `getRecurringPayments` (loop) | 🔄 | Probes IDs 1..N via `get_next_recurring_id` — that method doesn't exist in the contract |
-| `list_recurring_payment_ids` | — | ❌ | Not used; should replace the ID-probing loop |
-| `list_recurring_payments` | — | ❌ | Not used |
-| `cancel_recurring_payment` | `cancelRecurringPayment` | 🟡 | **Client-side only** — persists to localStorage, no on-chain call |
-| `pause_recurring_payment` | — | ❌ | No hook method |
-| `resume_recurring_payment` | — | ❌ | No hook method |
-| `get_recurring_payment_history` | `getRecurringPaymentHistory` | 🟡 | **Client-side only** — reads from localStorage, not on-chain |
+### 1.4 Circuit breaker and pause design
 
-**Critical gaps:**
-- [ ] `getRecurringPayments` calls `get_next_recurring_id` which does not exist — replace with `list_recurring_payment_ids(0, 50)` + `get_recurring_payment` per ID
-- [ ] `cancelRecurringPayment` is localStorage-only — wire to `cancel_recurring_payment` on-chain
-- [ ] Add `pauseRecurringPayment(paymentId)` → calls `pause_recurring_payment`
-- [ ] Add `resumeRecurringPayment(paymentId)` → calls `resume_recurring_payment`
-- [ ] `getRecurringPaymentHistory` is localStorage-only — no on-chain equivalent exists yet (contract emits events but no history query method)
+- [ ] **`circuit_breaker_threshold` selected**  
+  **Description:** Set on-chain hourly outflow threshold used by `storage::get_circuit_breaker_threshold` / execute-path pause (`cause = circuit_breaker`). `0` disables—production should not disable without waiver.  
+  **How to verify:** Absolute threshold documented vs treasury %; Security Officer approves.  
+  **Who:** Security Officer
 
----
+- [ ] **Pause / unpause authority documented**  
+  **Description:** Who may pause manually, who may unpause after breaker trip, dual-control expectations.  
+  **How to verify:** Runbook section exists with names and Freighter accounts.  
+  **Who:** Admin
 
-## Recipient Lists
+### 1.5 Infrastructure design
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `set_list_mode` | `setListMode` | 🟡 | **Client-side only** — stored in localStorage, not on-chain |
-| `get_list_mode` | `getListMode` | 🟡 | **Client-side only** — reads from localStorage |
-| `add_to_whitelist` | `addToWhitelist` | 🟡 | **Client-side only** |
-| `remove_from_whitelist` | `removeFromWhitelist` | 🟡 | **Client-side only** |
-| `add_to_blacklist` | `addToBlacklist` | 🟡 | **Client-side only** |
-| `remove_from_blacklist` | `removeFromBlacklist` | 🟡 | **Client-side only** |
-| `is_whitelisted` | `isWhitelisted` | 🟡 | **Client-side only** |
-| `is_blacklisted` | `isBlacklisted` | 🟡 | **Client-side only** |
+- [ ] **Network and RPC topology chosen**  
+  **Description:** Mainnet vs testnet; primary + fallback Soroban RPC; Horizon endpoints.  
+  **How to verify:** Architecture note in deployment packet; failover tested on staging.  
+  **Who:** DevOps
 
-**Note:** The entire recipient list feature is implemented client-side in localStorage. The contract has on-chain list management. This means lists are per-browser and not shared across signers — a significant functional gap.
+- [ ] **Keeper network designed**  
+  **Description:** Recurring payment / expiration / due-work keepers: hosting, keys, polling cadence, backoff, alerting (see Recurring Payments guide).  
+  **How to verify:** Diagram of keeper instances (≥1 redundant for production); failure Slack/Pager channel named.  
+  **Who:** DevOps
 
-**Gaps to close:**
-- [ ] Wire `setListMode` → `set_list_mode` on-chain
-- [ ] Wire `addToWhitelist` / `removeFromWhitelist` → `add_to_whitelist` / `remove_from_whitelist`
-- [ ] Wire `addToBlacklist` / `removeFromBlacklist` → `add_to_blacklist` / `remove_from_blacklist`
-- [ ] Wire `isWhitelisted` / `isBlacklisted` → `is_whitelisted` / `is_blacklisted`
+- [ ] **Notification webhooks designed**  
+  **Description:** Backend `/webhooks` registrations for proposal, pause, execution, and keeper failure events; signing secrets; retry/circuit-breaker behavior for outbound HTTP.  
+  **How to verify:** Webhook matrix (event → URL → owner) reviewed; staging delivery proof attached.  
+  **Who:** DevOps
+
+- [ ] **Secrets management ready**  
+  **Description:** No secrets in git; deployer keys, webhook HMAC secrets, IPFS credentials in vault/KMS.  
+  **How to verify:** Secret inventory checklist signed by DevOps.  
+  **Who:** DevOps
+
+- [ ] **Frontend env baseline prepared**  
+  **Description:** `VITE_*` contract IDs, RPC URLs, `VITE_IPFS_GATEWAY` / API, `VITE_API_BASE_URL`.  
+  **How to verify:** Staging build points at staging contracts only; config review screenshots.  
+  **Who:** DevOps
 
 ---
 
-## Comments
+## Phase 2 — Deployment
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `add_comment` | `addComment` | 🟡 | **Client-side only** — stored in React state, not on-chain |
-| `edit_comment` | `editComment` | 🟡 | **Client-side only** |
-| `get_proposal_comments` | `getProposalComments` | 🟡 | **Client-side only** — reads from React state |
-| `get_comment` | — | ❌ | Not used |
+### 2.1 Contract deployment
 
-**Note:** Comments are in-memory only and lost on page refresh. The contract has on-chain comment storage.
+- [ ] **Vault WASM built from release commit**  
+  **Description:** Build `contracts/vault` for `wasm32-unknown-unknown` from a tagged/commit-pinned revision.  
+  **How to verify:** CI artifact hash recorded; `cargo test` green on that commit.  
+  **Who:** DevOps
 
-**Gaps to close (lower priority — experimental feature):**
-- [ ] Wire `addComment` → `add_comment` on-chain
-- [ ] Wire `getProposalComments` → `get_proposal_comments` on-chain
+- [ ] **Contract deployed and initialized**  
+  **Description:** Deploy and call `initialize` with signers, threshold, quorum, spending limits, timelock params, supported tokens, high-impact threshold, etc.  
+  **How to verify:** Explorer shows contract; `get_config` returns expected struct fields.  
+  **Who:** Admin
 
----
+- [ ] **Multi-token config applied on-chain**  
+  **Description:** `supported_tokens`, `token_daily_limits`, `token_weekly_limits` match the approved matrix.  
+  **How to verify:** Config readback diff’d against Pre-Deployment tables.  
+  **Who:** Admin
 
-## Audit Trail
+- [ ] **`circuit_breaker_threshold` set on-chain**  
+  **Description:** Persist non-zero production threshold via `set_circuit_breaker_threshold` (or deployment script equivalent).  
+  **How to verify:** `get_circuit_breaker_threshold` returns the approved value (not `0` unless waived).  
+  **Who:** Admin
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `get_audit_entry` | — | ❌ | Not fetched directly |
-| `get_audit_entry_count` | — | ❌ | Not fetched |
-| `verify_audit_trail` | — | ❌ | Not called; frontend does client-side hash verification via `auditVerification.ts` |
+- [ ] **Roles assigned**  
+  **Description:** `set_role` for Admin/Treasurer addresses per roster.  
+  **How to verify:** `get_role` / dashboard Role Management matches roster.  
+  **Who:** Admin
 
-**Note:** The frontend has `getAllVaultEventsForAudit` which fetches raw Soroban events and does client-side digest verification. This is a reasonable approach but doesn't use the contract's own `verify_audit_trail` method.
+### 2.2 Application deployment
 
-**Gaps to close:**
-- [ ] Add `verifyAuditTrail(startId, endId)` → calls `verify_audit_trail` for on-chain verification
+- [ ] **Backend deployed with notifications enabled**  
+  **Description:** Express service live; notification routes and webhook registry reachable.  
+  **How to verify:** Health endpoint OK; `GET/POST` webhooks authorized path tested.  
+  **Who:** DevOps
 
----
+- [ ] **Frontend deployed against production contract IDs**  
+  **Description:** Dashboard build serves correct network and contract address.  
+  **How to verify:** Connect Freighter on Public/Testnet as planned; config panel shows expected vault.  
+  **Who:** DevOps
 
-## Metadata, Tags & Attachments
+- [ ] **SDK consumers pointed at production**  
+  **Description:** Internal scripts/bots use production RPC + contract ID.  
+  **How to verify:** Dry-run read methods succeed; write methods gated.  
+  **Who:** DevOps
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `set_proposal_metadata` | — | ❌ | No hook method |
-| `get_proposal_metadata` | — | ❌ | Not fetched |
-| `add_proposal_tag` | — | ❌ | No hook method |
-| `get_proposal_tags` | — | ❌ | Not fetched |
-| `add_attachment` | — | ❌ | No hook method |
-| `get_proposal_amendments` | — | ❌ | Not fetched |
+### 2.3 Keeper network go-live
 
-**Gaps to close (medium priority):**
-- [ ] Add `addProposalTag(proposalId, tag)` → calls `add_proposal_tag`
-- [ ] Add `addAttachment(proposalId, cid)` → calls `add_attachment`
-- [ ] Fetch tags and attachments in `getProposals` / proposal detail view
+- [ ] **Keeper identities funded and restricted**  
+  **Description:** Keeper keys can execute recurring/maintenance calls but are not unnecessary Admins.  
+  **How to verify:** Balance sufficient; role review; key ceremony notes stored.  
+  **Who:** DevOps
 
----
+- [ ] **Keeper schedules active**  
+  **Description:** Cron/systemd/k8s CronJobs invoking due recurring payments and any expiration jobs.  
+  **How to verify:** Successful dry execution on staging clone; production logs show poll cycles.  
+  **Who:** DevOps
 
-## Admin Actions
+- [ ] **Keeper alerting wired**  
+  **Description:** Metrics/alerts for failed executions, backoff storms, missed payments.  
+  **How to verify:** Forced failure on staging pages an on-call; runbook link in alert.  
+  **Who:** DevOps
 
-| Contract Method | Frontend Hook | Status | Notes |
-| :-------------- | :------------ | :----- | :---- |
-| `extend_voting_deadline` | — | ❌ | No hook method |
-| `withdraw_insurance_pool` | — | ❌ | No hook method |
-| `withdraw_stake_pool` | — | ❌ | No hook method |
-| `update_staking_config` | — | ❌ | No hook method |
-| `set_insurance_config` | — | ❌ | No hook method |
-| `get_insurance_config` | — | ❌ | Not fetched |
-| `get_insurance_pool` | — | ❌ | Not fetched |
-| `batch_execute_proposals` | — | ❌ | No hook method |
+### 2.4 Notification webhooks go-live
 
-**Gaps to close:**
-- [ ] Add `extendVotingDeadline(proposalId, newDeadline)` → calls `extend_voting_deadline`
-- [ ] Add `batchExecuteProposals(ids[])` → calls `batch_execute_proposals`
+- [ ] **Production webhooks registered**  
+  **Description:** Register endpoints for pause, execution, proposal lifecycle, and critical errors.  
+  **How to verify:** `list` webhooks; send test event; receiver acknowledges.  
+  **Who:** DevOps
 
----
+- [ ] **Webhook authenticity configured**  
+  **Description:** HMAC or shared-secret validation on receiver; secrets rotated into store.  
+  **How to verify:** Request with bad signature rejected; good signature accepted.  
+  **Who:** DevOps
 
-## Dashboard Stats
-
-The `getDashboardStats` function in the hook reconstructs stats entirely from Soroban events rather than contract read methods. This causes several issues:
-
-| Data Point | Current Source | Correct Source | Gap |
-| :--------- | :------------- | :------------- | :-- |
-| Vault balance | Horizon account API | Horizon account API | ✅ OK |
-| Signer count / threshold | `get_config` | `get_config` | ✅ OK |
-| Total proposals | Event replay | `list_proposal_ids` count | 🔄 Approximate |
-| Pending approvals | Event replay | `list_proposals` + status filter | 🔄 Approximate |
-| Ready to execute | Event replay | `get_executable_proposals` | 🔄 Approximate |
-| Today's spending | Not shown | `get_today_spent` | ❌ Missing |
-
-**Gaps to close:**
-- [ ] Replace event-based proposal counts with `list_proposal_ids` + status from `get_proposal`
-- [ ] Add today's spending to stats via `get_today_spent`
-- [ ] Use `get_executable_proposals` for the "ready to execute" count
+- [ ] **Outbound webhook circuit breakers understood**  
+  **Description:** Backend breaker opens on repeated sink failures; ops knows how to reset.  
+  **How to verify:** Runbook cites breaker reset; staging test performed.  
+  **Who:** DevOps
 
 ---
 
-## Summary: Priority Fix List
+## Phase 3 — Post-Deployment
 
-These are the highest-impact gaps — fixing them will unblock the most user-facing functionality.
+### 3.1 Functional acceptance
 
-### P0 — Broken (will cause errors or wrong behavior)
+- [ ] **Wallet connect + role badge verified**  
+  **Description:** Freighter **Connect Wallet**; address and Admin/Treasurer badge correct.  
+  **How to verify:** Each production signer completes a connect screenshot or attested check.  
+  **Who:** Treasurer
 
-1. **`rejectProposal` calls non-existent `reject_proposal`** — rename to `cancelProposal` and call `cancel_proposal` with correct args
-2. **`getRecurringPayments` calls non-existent `get_next_recurring_id`** — replace with `list_recurring_payment_ids`
-3. **`proposeTransfer` missing required args** — add `priority`, `conditions`, `condition_logic`, `insurance_amount` with safe defaults
+- [ ] **End-to-end proposal on small amount**  
+  **Description:** Propose → approve to threshold → timelock (if applicable) → execute.  
+  **How to verify:** On-chain executed proposal; dashboard status **Executed**; funds received.  
+  **Who:** Treasurer
 
-### P1 — Functional gaps (features silently don't work)
+- [ ] **Reject / cancel path verified**  
+  **Description:** Ensure unwanted proposals can be stopped per contract methods exposed in UI/runbook.  
+  **How to verify:** Test proposal cancelled/rejected; spending buckets behave as expected.  
+  **Who:** Treasurer
 
-4. **Recipient lists are localStorage-only** — wire all list methods to on-chain contract calls
-5. **`cancelRecurringPayment` is localStorage-only** — wire to `cancel_recurring_payment`
-6. **Comments are in-memory only** — wire to on-chain `add_comment` / `get_proposal_comments`
-7. **Proposals missing fields** — replace event-replay with `list_proposal_ids` + `get_proposal`
+- [ ] **IPFS attachment verify path checked**  
+  **Description:** Upload/view attachment; status reaches **✓ Verified** (not **Integrity Failed**).  
+  **How to verify:** Sample CID opens in attachment viewer with green verified badge.  
+  **Who:** Treasurer
 
-### P2 — Missing features (contract supports them, frontend doesn't)
+- [ ] **Spending limit enforcement proven**  
+  **Description:** Intentional over-limit proposal fails with daily/weekly/per-proposal error.  
+  **How to verify:** Error toast / contract error captured; no funds moved.  
+  **Who:** Treasurer
 
-8. Add `abstainProposal` → `abstain_proposal`
-9. Add `pauseRecurringPayment` / `resumeRecurringPayment`
-10. Add `updateQuorum` → `update_quorum`
-11. Add `getExecutableProposals` → `get_executable_proposals`
-12. Add `batchExecuteProposals` → `batch_execute_proposals`
-13. Remove duplicate `assignRole` (same as `setRole`)
+- [ ] **Multi-token transfer proven**  
+  **Description:** At least one non-default supported token transferred via proposal.  
+  **How to verify:** Recipient balance increased; token limits decremented appropriately.  
+  **Who:** Treasurer
 
-### P3 — Nice to have
+### 3.2 Safety acceptance
 
-14. Add `delegateVotingPower` / `revokeDelegation`
-15. Add `extendVotingDeadline`
-16. Add `verifyAuditTrail`
-17. Add metadata/tag/attachment hook methods
-18. Surface `get_today_spent` in dashboard stats
+- [ ] **Circuit breaker drill (staging or controlled prod micro-threshold)**  
+  **Description:** Demonstrate pause when hourly outflow would exceed `circuit_breaker_threshold`.  
+  **How to verify:** Pause event with cause `circuit_breaker`; `VaultPaused` on execute; recovery documented.  
+  **Who:** Security Officer
+
+- [ ] **Compliance baseline visible**  
+  **Description:** Governance Health widget shows participation, active proposals, `% Compliant`.  
+  **How to verify:** Screenshot after first week of activity or seeded snapshot API.  
+  **Who:** Treasurer
+
+- [ ] **Emergency controls reachable**  
+  **Description:** Admin can access emergency/pause UI or documented CLI/SDK path.  
+  **How to verify:** Dry-run on staging; production access ACLs confirmed.  
+  **Who:** Admin
+
+### 3.3 Operations acceptance
+
+- [ ] **Monitoring dashboards live**  
+  **Description:** RPC health, keeper metrics, webhook success rate, pause alerts.  
+  **How to verify:** Dashboard URLs listed; on-call can open without shared personal logins.  
+  **Who:** DevOps
+
+- [ ] **Backup and restore of off-chain config**  
+  **Description:** Webhook registry, env templates, keeper configs backed up.  
+  **How to verify:** Restore test on staging within RTO target.  
+  **Who:** DevOps
+
+- [ ] **Production runbook linked**  
+  **Description:** Team knows `docs/reference/PRODUCTION_RUNBOOK.md` and treasury risk guide.  
+  **How to verify:** On-call quiz: where is breaker threshold, how to unpause, who to call.  
+  **Who:** DevOps
+
+---
+
+## Phase 4 — Ongoing Operations
+
+### 4.1 Cadence
+
+- [ ] **Monthly risk review scheduled**  
+  **Description:** Execute Treasury Risk Management monthly checklist (< 1 hour).  
+  **How to verify:** Calendar series + last meeting notes attached to packet.  
+  **Who:** Treasurer
+
+- [ ] **Quarterly signer attestation**  
+  **Description:** Each signer confirms Freighter address control and device hygiene.  
+  **How to verify:** Signed attestation forms.  
+  **Who:** Admin
+
+- [ ] **Dependency and RPC review**  
+  **Description:** Revisit RPC providers, keeper images, and contract upgrade path.  
+  **How to verify:** Quarterly DevOps note filed.  
+  **Who:** DevOps
+
+### 4.2 Continuous controls
+
+- [ ] **Compliance score watched**  
+  **Description:** Sustain baseline; escalate on yellow/red bands.  
+  **How to verify:** Alerts configured; last 30 days trend reviewed monthly.  
+  **Who:** Treasurer
+
+- [ ] **Temporary limit raises tracked to reset**  
+  **Description:** No orphaned elevated `daily_limit` / `weekly_limit` / `spending_limit`.  
+  **How to verify:** Config diff vs policy targets each month.  
+  **Who:** Admin
+
+- [ ] **Keeper SLA reviewed**  
+  **Description:** Missed recurring payments within policy; backoff not masking systemic failure.  
+  **How to verify:** Keeper metrics + incident tickets closed with RCA.  
+  **Who:** DevOps
+
+- [ ] **Webhook sink health reviewed**  
+  **Description:** No prolonged open breaker on critical notification channels.  
+  **How to verify:** Webhook delivery success rate ≥ agreed SLO.  
+  **Who:** DevOps
+
+- [ ] **Access reviews**  
+  **Description:** Remove departed signers promptly; rotate secrets on role change.  
+  **How to verify:** HR offboarding ticket ↔ on-chain remove_signer evidence.  
+  **Who:** Admin
+
+---
+
+## Go / No-Go decision matrix
+
+Mark each row **GO** or **NO-GO**. **Any NO-GO blocks production launch** unless a dated waiver is signed by Security Officer + Admin with compensating controls.
+
+| # | Gate | GO criteria (unambiguous) | NO-GO if… | Decision |
+| - | ---- | ------------------------- | --------- | -------- |
+| G1 | Contract init | `get_config` matches approved signer set, threshold, limits, tokens | Any mismatch or uninitialized vault | ☐ GO ☐ NO-GO |
+| G2 | Multi-token | Every approved token transferred successfully in acceptance test | Any approved token untested or failing | ☐ GO ☐ NO-GO |
+| G3 | Compliance baseline | Baseline documented; Health widget/API reachable; alert threshold set | No baseline or no visibility into `complianceScore` | ☐ GO ☐ NO-GO |
+| G4 | Circuit breaker | `circuit_breaker_threshold` **> 0** and equals approved value; drill evidence attached | Threshold `0`/unknown **or** no drill/waiver | ☐ GO ☐ NO-GO |
+| G5 | Keeper network | ≥1 production keeper + alert path; successful due-payment poll proven | Single unmonitored laptop cron only, or no alerts | ☐ GO ☐ NO-GO |
+| G6 | Notification webhooks | ≥1 critical sink receiving signed events in prod | No webhooks **or** secrets in plaintext repo | ☐ GO ☐ NO-GO |
+| G7 | E2E proposal | One real small-value propose→approve→execute completed by Treasurers | Path unproven on production contract | ☐ GO ☐ NO-GO |
+| G8 | Limit enforcement | Over-limit attempt failed closed | Over-limit succeeded or untested | ☐ GO ☐ NO-GO |
+| G9 | Emergency contacts | Template below completed with 24/7 reachable primary | Blank or untested contacts | ☐ GO ☐ NO-GO |
+| G10 | Sign-off | Admin, Treasurer, Security Officer all signed | Any signature missing | ☐ GO ☐ NO-GO |
+
+**Launch rule:** Proceed to production traffic **only if G1–G10 are all GO** (or waived per row with written compensating control).  
+**Rollback rule:** If any gate flips to NO-GO after launch (e.g., breaker disabled accidentally), pause vault and re-enter Phase 3 safety acceptance.
+
+**Overall recommendation:** ☐ **GO**  ☐ **NO-GO**  
+**Date:** ______________  **Facilitator:** ______________
+
+---
+
+## Emergency contact template
+
+Copy into your password manager / incident channel topic. Test reachability before go-live (G9).
+
+| Function | Name | Role | Primary phone | Secondary phone | Email | Backup person | Notes |
+| -------- | ---- | ---- | ------------- | --------------- | ----- | ------------- | ----- |
+| Incident commander | | Admin | | | | | Authorizes pause/unpause |
+| Treasury lead | | Treasurer | | | | | Payment triage |
+| Security Officer | | Security Officer | | | | | Key compromise / breaker |
+| DevOps on-call | | DevOps | | | | | RPC, keepers, webhooks |
+| Legal / compliance | | (external) | | | | | Regulatory notifications |
+| Stellar / infra vendor | | Vendor TAM | | | | | RPC outages |
+| Status page URL | — | — | — | — | | | |
+| War-room channel | — | — | — | — | | Slack/Discord link |
+| Break-glass key ceremony location | — | Admin | — | — | | Offline procedure |
+
+**After-hours escalation order:** (1) DevOps on-call → (2) Incident commander (Admin) → (3) Security Officer → (4) Treasurer (if funds movement decisions required).
+
+**Lost signer device protocol (summary):** Revoke delegations → pause if needed → `remove_signer` / rotate → notify contacts above → post-incident review.
+
+---
+
+## Sign-off
+
+By signing, each party affirms that checklist items under their role are complete (or explicitly waived with references), that the Go/No-Go matrix reflects reality as of the date below, and that they approve production operation of this VaultDAO deployment.
+
+### Admin
+
+| Field | Value |
+| ----- | ----- |
+| Name | |
+| Stellar address | |
+| Date | |
+| Signature | |
+| Exceptions / waivers referenced | |
+
+☐ I affirm Phase 1–4 Admin items are complete and G-gates under my control are GO.
+
+### Treasurer
+
+| Field | Value |
+| ----- | ----- |
+| Name | |
+| Stellar address | |
+| Date | |
+| Signature | |
+| Exceptions / waivers referenced | |
+
+☐ I affirm treasury policy, multi-token acceptance, compliance baseline, and Treasurer operational items are complete.
+
+### Security Officer
+
+| Field | Value |
+| ----- | ----- |
+| Name | |
+| Date | |
+| Signature | |
+| Exceptions / waivers referenced | |
+
+☐ I affirm `circuit_breaker_threshold`, emergency contacts, pause authority, and security gates are GO (or waived with compensating controls).
+
+---
+
+## Document control
+
+| Version | Date | Author | Changes |
+| ------- | ---- | ------ | ------- |
+| 2.0 | 2026-07-27 | VaultDAO ops docs | Full enterprise rewrite (Issue #1199); replaces contract↔frontend gap matrix |
+
+**Retention:** File completed checklists with deployment records for at least 12 months (or per your compliance policy).

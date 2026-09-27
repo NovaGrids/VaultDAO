@@ -83,6 +83,7 @@ export interface CacheStats {
  * Extended cache adapter with tag-based invalidation and cache-aside helpers.
  */
 export interface TaggedCacheAdapter<T = unknown> extends CacheAdapter<T> {
+  set(key: string, value: T, ttlMs?: number, tags?: readonly string[]): void;
   /** Cache-aside: return cached value or call fetchFn, store result, return it. */
   getOrSet(key: string, ttlMs: number, fetchFn: () => Promise<T>, tags?: string[]): Promise<T>;
   /** Invalidate all keys associated with a tag. */

@@ -1,6 +1,6 @@
 /**
  * Simple MetricsRegistry for Prometheus-compatible metrics.
- * Supports basic counters and gauges with labels.
+ * Supports counters, gauges and histograms, all with optional labels.
  */
 
 import { PrometheusFormatter } from "./metrics.formatter.js";
@@ -24,8 +24,27 @@ interface HistogramState {
 export interface MetricsSnapshot {
   readonly metadata: Map<string, MetricMetadata>;
   readonly values: Map<string, number>;
+  /** Keyed like `values`: the metric name, plus `{label="value",...}` when labelled. */
   readonly histograms: Map<string, HistogramState>;
 }
+
+export interface HistogramOptions {
+  help: string;
+  labelNames?: string[];
+  buckets?: number[];
+}
+
+/** Handle returned by {@link MetricsRegistry.histogram}. */
+export interface Histogram {
+  observe(value: number): void;
+  /** Label values, in the order of `labelNames`. */
+  labels(...values: string[]): { observe(value: number): void };
+}
+
+/** Default buckets for millisecond latency histograms. */
+export const DEFAULT_LATENCY_BUCKETS_MS = [
+  5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000,
+];
 
 export class MetricsRegistry {
   private values = new Map<string, number>();
@@ -58,6 +77,37 @@ export class MetricsRegistry {
   }
 
   /**
+   * Register (or fetch) a histogram and return a handle for observing it,
+   * optionally per label set: `histogram(name, opts).labels("x").observe(12)`.
+   */
+  public histogram(name: string, options: HistogramOptions): Histogram {
+    const labelNames = options.labelNames ?? [];
+    if (!this.metadata.has(name)) {
+      if (labelNames.length === 0) {
+        this.registerHistogram(name, options.help, options.buckets ?? DEFAULT_LATENCY_BUCKETS_MS);
+      } else {
+        // Labelled series are created on first observation.
+        this.metadata.set(name, {
+          help: options.help,
+          type: "histogram",
+          buckets: [...(options.buckets ?? DEFAULT_LATENCY_BUCKETS_MS)].sort((a, b) => a - b),
+        });
+      }
+    }
+
+    return {
+      observe: (value) => this.observeHistogram(name, value),
+      labels: (...values) => {
+        const labels: Record<string, string> = {};
+        labelNames.forEach((labelName, i) => {
+          labels[labelName] = values[i] ?? "";
+        });
+        return { observe: (value) => this.observeHistogram(name, value, labels) };
+      },
+    };
+  }
+
+  /**
    * Increment a counter by 1.
    */
   public incrementCounter(name: string, labels?: Record<string, string>): void {
@@ -76,10 +126,16 @@ export class MetricsRegistry {
   /**
    * Observe a histogram value.
    */
-  public observeHistogram(name: string, value: number): void {
-    const histogram = this.histograms.get(name);
+  public observeHistogram(name: string, value: number, labels?: Record<string, string>): void {
+    const key = this.formatKey(name, labels);
+    let histogram = this.histograms.get(key);
     if (!histogram) {
-      return;
+      const buckets = this.metadata.get(name)?.buckets;
+      if (!buckets) {
+        return;
+      }
+      histogram = { buckets, counts: new Array(buckets.length).fill(0), sum: 0, count: 0 };
+      this.histograms.set(key, histogram);
     }
 
     histogram.count += 1;
@@ -194,5 +250,37 @@ export function registerDuePaymentMetrics(registry: MetricsRegistry): void {
     DUE_PAYMENT_BATCH_SIZE_GAUGE,
     "Number of due payments processed in the most recent keeper invocation",
     "gauge",
+  );
+}
+
+// ── Proposal Throughput Metric Names ─────────────────────────────────────────
+
+/** Counter: proposals created (PROPOSAL_CREATED activities indexed). */
+export const PROPOSALS_CREATED_COUNTER = "proposals_created_total";
+/** Counter: proposals executed (PROPOSAL_EXECUTED activities indexed). */
+export const PROPOSALS_EXECUTED_COUNTER = "proposals_executed_total";
+
+/**
+ * Register the proposal throughput counters on the given registry.
+ *
+ * These two counters back the "Proposal Throughput (created/executed per hour)"
+ * Grafana panel, which capacity planning relies on. They are deliberately
+ * unlabelled so `rate()` over them stays cheap and cardinality stays flat —
+ * per-status breakdowns are already available from `vaultdao_proposals_total`.
+ *
+ * Call once at startup (idempotent — re-registration overwrites metadata).
+ */
+export function registerProposalThroughputMetrics(
+  registry: MetricsRegistry,
+): void {
+  registry.register(
+    PROPOSALS_CREATED_COUNTER,
+    "Total proposals created (PROPOSAL_CREATED events indexed)",
+    "counter",
+  );
+  registry.register(
+    PROPOSALS_EXECUTED_COUNTER,
+    "Total proposals executed (PROPOSAL_EXECUTED events indexed)",
+    "counter",
   );
 }

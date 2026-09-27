@@ -53,6 +53,7 @@ describe('TokenPortfolioView', () => {
       prices: {},
       loading: false,
       lastUpdated: null,
+      priceError: false,
       refresh: vi.fn(),
     });
 
@@ -64,14 +65,15 @@ describe('TokenPortfolioView', () => {
     // XLM price: $0.10, USDC price: $1.00
     // Total value: 1000 * 0.10 + 200 * 1.00 = $100 + $200 = $300
     mockUseTokenPrices.mockReturnValue({
-      prices: {
-        NATIVE: { usd: 0.10, change24h: 5.2 },
-        CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: 1.00, change24h: -0.1 },
-      },
-      loading: false,
-      lastUpdated: Date.now(),
-      refresh: vi.fn(),
-    });
+          prices: {
+            NATIVE: { usd: 0.10, change24h: 5.2 },
+            CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: 1.00, change24h: -0.1 },
+          },
+          loading: false,
+          lastUpdated: Date.now(),
+          priceError: false,
+          refresh: vi.fn(),
+        });
 
     render(<TokenPortfolioView tokenBalances={sampleBalances} />);
 
@@ -93,14 +95,15 @@ describe('TokenPortfolioView', () => {
 
   it('applies correct color classes for positive and negative 24h change', () => {
     mockUseTokenPrices.mockReturnValue({
-      prices: {
-        NATIVE: { usd: 0.10, change24h: 5.2 }, // positive
-        CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: 1.00, change24h: -0.1 }, // negative
-      },
-      loading: false,
-      lastUpdated: Date.now(),
-      refresh: vi.fn(),
-    });
+          prices: {
+            NATIVE: { usd: 0.10, change24h: 5.2 }, // positive
+            CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: 1.00, change24h: -0.1 }, // negative
+          },
+          loading: false,
+          lastUpdated: Date.now(),
+          priceError: false,
+          refresh: vi.fn(),
+        });
 
     render(<TokenPortfolioView tokenBalances={sampleBalances} />);
 
@@ -132,11 +135,12 @@ describe('TokenPortfolioView', () => {
     const mockRefresh = vi.fn();
     const mockOnRefresh = vi.fn();
     mockUseTokenPrices.mockReturnValue({
-      prices: {},
-      loading: false,
-      lastUpdated: Date.now(),
-      refresh: mockRefresh,
-    });
+          prices: {},
+          loading: false,
+          lastUpdated: Date.now(),
+          priceError: false,
+          refresh: mockRefresh,
+        });
 
     render(<TokenPortfolioView tokenBalances={sampleBalances} onRefresh={mockOnRefresh} />);
 
@@ -145,5 +149,250 @@ describe('TokenPortfolioView', () => {
 
     expect(mockRefresh).toHaveBeenCalledTimes(1);
     expect(mockOnRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  describe('empty state rendering', () => {
+    it('should render empty state message when tokenBalances array is empty', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.getByText('No assets found in this vault portfolio.')).toBeInTheDocument();
+    });
+
+    it('should render "Portfolio View" heading in empty state', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.getByText('Portfolio View')).toBeInTheDocument();
+    });
+
+    it('should display wallet icon in empty state', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      const { container } = render(<TokenPortfolioView tokenBalances={[]} />);
+      // Wallet icon should be rendered
+      const emptyStateDiv = container.querySelector('.text-center');
+      expect(emptyStateDiv).toBeInTheDocument();
+    });
+
+    it('should not render table when tokenBalances is empty', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    });
+
+    it('should not render chart when tokenBalances is empty', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      const { container } = render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(container.querySelector('[data-testid="pie-chart"]')).not.toBeInTheDocument();
+    });
+
+    it('should render CTA to deposit tokens in empty state', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      render(<TokenPortfolioView tokenBalances={[]} />);
+      // The component should have some text guidance for users
+      expect(screen.getByText('Portfolio View')).toBeInTheDocument();
+      expect(screen.getByText('No assets found in this vault portfolio.')).toBeInTheDocument();
+    });
+
+    it('should show proper empty state styling', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      const { container } = render(<TokenPortfolioView tokenBalances={[]} />);
+      const emptyState = container.querySelector('.text-center');
+      expect(emptyState).toHaveClass('bg-gray-900');
+      expect(emptyState).toHaveClass('border');
+      expect(emptyState).toHaveClass('border-gray-800');
+      expect(emptyState).toHaveClass('rounded-2xl');
+    });
+
+    it('should differentiate empty state from loaded state', () => {
+      mockUseTokenPrices.mockReturnValue({
+            prices: {},
+            loading: false,
+            lastUpdated: null,
+            priceError: false,
+            refresh: vi.fn(),
+          });
+
+      const emptyRender = render(<TokenPortfolioView tokenBalances={[]} />);
+      expect(screen.getByText('No assets found in this vault portfolio.')).toBeInTheDocument();
+
+      emptyRender.unmount();
+
+      mockUseTokenPrices.mockReturnValue({
+        prices: {
+          NATIVE: { usd: 0.10, change24h: 5.2 },
+        },
+        loading: false,
+        lastUpdated: Date.now(),
+        priceError: false,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+      expect(screen.queryByText('No assets found in this vault portfolio.')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('price feed failure path', () => {
+    it('shows the price unavailable banner when priceError is true', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        priceError: true,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByText(/price data unavailable/i)).toBeInTheDocument();
+    });
+
+    it('does not show the banner when priceError is false', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {
+          NATIVE: { usd: 0.10, change24h: 1.0 },
+          CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: 1.0, change24h: 0 },
+        },
+        loading: false,
+        lastUpdated: Date.now(),
+        priceError: false,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByText(/price data unavailable/i)).not.toBeInTheDocument();
+    });
+
+    it('preserves the last real prices when priceError is true', () => {
+      // Simulate: a successful fetch gave us real prices, then the next
+      // fetch failed — the hook keeps the old prices and sets priceError=true.
+      const lastGoodUpdate = Date.now() - 60_000; // 1 minute ago
+      mockUseTokenPrices.mockReturnValue({
+        prices: {
+          NATIVE: { usd: 0.11, change24h: 3.1 },
+          CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: 1.0, change24h: 0.02 },
+        },
+        loading: false,
+        lastUpdated: lastGoodUpdate,
+        priceError: true,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+
+      // Real prices should still be visible (not replaced with hardcoded fallbacks)
+      expect(screen.getByText('$0.11')).toBeInTheDocument();
+      // Total portfolio value: 1000 * 0.11 + 200 * 1.00 = $310
+      expect(screen.getByText('$310.00')).toBeInTheDocument();
+
+      // Warning banner must also be present
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+
+    it('shows the last-known timestamp in the banner when available', () => {
+      const knownTimestamp = new Date('2026-09-24T23:00:00Z').getTime();
+      mockUseTokenPrices.mockReturnValue({
+        prices: {
+          NATIVE: { usd: 0.11, change24h: 1.0 },
+          CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: 1.0, change24h: 0 },
+        },
+        loading: false,
+        lastUpdated: knownTimestamp,
+        priceError: true,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent(/as of/i);
+    });
+
+    it('omits the timestamp qualifier in the banner when no successful fetch occurred', () => {
+      mockUseTokenPrices.mockReturnValue({
+        prices: {},
+        loading: false,
+        lastUpdated: null,
+        priceError: true,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+
+      const alert = screen.getByRole('alert');
+      expect(alert).not.toHaveTextContent(/as of/i);
+    });
+
+    it('does not display the hardcoded fallback XLM price of $0.12 on failure', () => {
+      // The old bug set XLM to exactly $0.12 on failure — ensure it never appears
+      // as a price when priceError is true and no prior real price exists.
+      mockUseTokenPrices.mockReturnValue({
+        prices: {
+          NATIVE: { usd: null, change24h: null },
+          CCW67TSZV3SUUJZYHWVPQWJ7B5BODJHYKJRC5QK7L5HHQFJGVY7H3LRL: { usd: null, change24h: null },
+        },
+        loading: false,
+        lastUpdated: null,
+        priceError: true,
+        refresh: vi.fn(),
+      });
+
+      render(<TokenPortfolioView tokenBalances={sampleBalances} />);
+
+      // $0.12 must never appear as a price cell
+      expect(screen.queryByText('$0.12')).not.toBeInTheDocument();
+      // Total portfolio should be N/A, not a fabricated dollar figure
+      const heading = screen.getByText('Total Portfolio Balance').closest('div');
+      expect(heading).toHaveTextContent('N/A');
+    });
   });
 });

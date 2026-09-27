@@ -51,12 +51,20 @@ export interface InstalledWidget extends WidgetConfig {
 
 export interface MarketplaceWidget {
   manifest: WidgetManifest;
-  downloads: number;
-  rating: number;
-  reviews: number;
-  verified: boolean;
+  /** Usage stats are optional: only shown when the registry reports real values. */
+  downloads?: number;
+  rating?: number;
+  reviews?: number;
+  verified?: boolean;
   price?: number;
   screenshots?: string[];
+}
+
+/** Shape of the JSON widget registry (see public/widgets/registry.json). */
+export interface WidgetRegistry {
+  schemaVersion: number;
+  updatedAt?: string;
+  widgets: MarketplaceWidget[];
 }
 
 export interface WidgetMessage {

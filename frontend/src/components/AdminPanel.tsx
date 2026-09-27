@@ -128,7 +128,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ vaultConfig, onConfigUpdated })
     try {
       if (pendingAction.type === 'add') {
         await addSigner(pendingAction.signerAddress);
-        notify('config_updated', `Signer ${truncateAddress(pendingAction.signerAddress, 8, 6)} added successfully.`, 'success');
+        notify('config_updated', `Proposal to add signer ${truncateAddress(pendingAction.signerAddress, 8, 6)} submitted. It takes effect once approved and executed.`, 'success');
         setNewSignerAddress('');
       }
 

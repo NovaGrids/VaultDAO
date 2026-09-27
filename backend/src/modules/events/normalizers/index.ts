@@ -8,10 +8,14 @@ import { RecurringNormalizer } from "./recurring.normalizer.js";
 import { InsuranceNormalizer } from "./insurance.normalizer.js";
 import { RecoveryNormalizer } from "./recovery.normalizer.js";
 import { SubscriptionNormalizer } from "./subscription.normalizer.js";
+import { VestingNormalizer } from "./vesting.normalizer.js";
 import { MiscNormalizer } from "./misc.normalizer.js";
 import { GenericEventNormalizer } from "./generic.normalizer.js";
 import { UnknownEventNormalizer } from "./unknown.normalizer.js";
 import { SnapshotNormalizer } from "../../snapshots/normalizer.js";
+import { createLogger } from "../../../shared/logging/logger.js";
+
+const logger = createLogger("event-normalizer");
 
 export class EventNormalizer {
   public static normalize(event: ContractEvent): NormalizedEvent {
@@ -23,10 +27,7 @@ export class EventNormalizer {
     try {
       return EventNormalizer.dispatch(event, type);
     } catch (error) {
-      console.error(
-        `[event-normalizer] normalization failed for "${topic}":`,
-        error,
-      );
+      logger.error("normalization failed", { topic, error: String(error) });
       return EventNormalizer.unknown(
         event,
         `Normalization error: ${String(error)}`,
@@ -76,6 +77,10 @@ export class EventNormalizer {
       // ── Role / admin ────────────────────────────────────────────────────
       case EventType.INITIALIZED:
         return SnapshotNormalizer.normalizeInitialized(event);
+      case EventType.RECIPIENT_LIST_CHANGED:
+        return RoleNormalizer.normalizeRecipientListChanged(event);
+      case EventType.RECIPIENT_LIST_BULK_CHANGED:
+        return RoleNormalizer.normalizeRecipientListBulkChanged(event);
       case EventType.ROLE_ASSIGNED:
         return RoleNormalizer.normalizeRoleAssigned(event);
       case EventType.SIGNER_ADDED:
@@ -164,6 +169,14 @@ export class EventNormalizer {
         return SubscriptionNormalizer.normalizeSubscriptionUpgraded(event);
       case EventType.SUBSCRIPTION_EXPIRED:
         return SubscriptionNormalizer.normalizeSubscriptionExpired(event);
+
+      // ── Vesting ─────────────────────────────────────────────────────────
+      case EventType.VESTING_CREATED:
+        return VestingNormalizer.normalizeVestingCreated(event);
+      case EventType.VESTING_CLAIMED:
+        return VestingNormalizer.normalizeVestingClaimed(event);
+      case EventType.VESTING_CANCELLED:
+        return VestingNormalizer.normalizeVestingCancelled(event);
 
       // ── Recovery ────────────────────────────────────────────────────────
       case EventType.RECOVERY_PROPOSED:

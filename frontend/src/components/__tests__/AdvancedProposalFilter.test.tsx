@@ -7,7 +7,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import AdvancedProposalFilter from '../AdvancedProposalFilter';
 
-vi.useFakeTimers();
+// Real timers: the 300 ms debounce is well inside waitFor's default timeout,
+// and RTL's waitFor does not advance Vitest fake timers (it would hang).
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -60,7 +61,6 @@ describe('AdvancedProposalFilter', () => {
     renderFilter(onChange);
     fireEvent.click(screen.getByRole('button', { name: /filters/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Approved' }));
-    vi.runAllTimers();
     await waitFor(() => {
       expect(onChange).toHaveBeenCalledWith(
         expect.objectContaining({ statuses: ['Approved'] })
@@ -73,10 +73,11 @@ describe('AdvancedProposalFilter', () => {
     renderFilter(onChange);
     fireEvent.click(screen.getByRole('button', { name: /filters/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Pending' }));
-    vi.runAllTimers();
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ statuses: ['Pending'] }))
+    );
     // Now clear
     fireEvent.click(screen.getByRole('button', { name: /clear all/i }));
-    vi.runAllTimers();
     await waitFor(() => {
       const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0];
       expect(lastCall.statuses).toEqual([]);
@@ -87,7 +88,6 @@ describe('AdvancedProposalFilter', () => {
     renderFilter();
     fireEvent.click(screen.getByRole('button', { name: /filters/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Pending' }));
-    vi.runAllTimers();
     await waitFor(() => expect(screen.getByRole('button', { name: /save search/i })).toBeInTheDocument());
   });
 
@@ -95,7 +95,6 @@ describe('AdvancedProposalFilter', () => {
     renderFilter();
     fireEvent.click(screen.getByRole('button', { name: /filters/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Pending' }));
-    vi.runAllTimers();
     await waitFor(() => screen.getByRole('button', { name: /save search/i }));
     fireEvent.click(screen.getByRole('button', { name: /save search/i }));
     const input = screen.getByPlaceholderText(/search name/i);

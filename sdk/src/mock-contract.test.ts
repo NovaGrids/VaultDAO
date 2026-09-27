@@ -338,6 +338,27 @@ describe("MockVaultContract", () => {
       expect(executed.nextPaymentLedger).toBe(payment.nextPaymentLedger + 1000n);
     });
 
+    it("should retrieve a recurring payment by ID", () => {
+      const created = mock.schedulePayment(
+        treasurerKey,
+        "GRECIPIENT",
+        "CTOKEN",
+        100n,
+        "Monthly",
+        1000n
+      );
+
+      const fetched = mock.getRecurringPayment(created.id);
+
+      expect(fetched.id).toBe(created.id);
+      expect(fetched.recipient).toBe("GRECIPIENT");
+      expect(fetched.amount).toBe(100n);
+    });
+
+    it("should throw NotFound for a non-existent recurring payment", () => {
+      expect(() => mock.getRecurringPayment(999n)).toThrow();
+    });
+
     it("should reject execution before payment is due", () => {
       const payment = mock.schedulePayment(
         treasurerKey,

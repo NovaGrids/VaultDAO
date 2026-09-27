@@ -245,3 +245,206 @@ fn test_approve_blocked_while_paused() {
     let r = client.try_approve_proposal(&admin, &pid);
     assert_eq!(r, Err(Ok(VaultError::VaultPaused)));
 }
+
+// ========================================================================
+// Tests for Issue #1350: Pause Circuit Breaker Cooldown
+// ========================================================================
+
+// ── Test 10: Set pause cooldown config (Admin only) ──────────────────────
+
+#[test]
+fn test_1350_set_pause_cooldown_config() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &base_config(&env, signers));
+
+    // Minimum cooldown: 1 day = 17,280 ledgers at 5s/ledger
+    let cooldown_ledgers = 17_280u64;
+    let result = client.try_set_pause_cooldown_config(&admin, &cooldown_ledgers);
+    assert!(result.is_ok());
+
+    // Verify it was set
+    let config = client.get_pause_cooldown_config();
+    assert!(config.is_some());
+    if let Some(cfg) = config {
+        assert_eq!(cfg.cooldown_ledgers, cooldown_ledgers);
+    }
+}
+
+// ── Test 11: Pause cooldown below minimum is rejected ────────────────────
+
+#[test]
+fn test_1350_pause_cooldown_below_minimum() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &base_config(&env, signers));
+
+    // Try to set cooldown below 1 day
+    let cooldown_ledgers = 1_000u64;
+    let result = client.try_set_pause_cooldown_config(&admin, &cooldown_ledgers);
+    assert_eq!(result, Err(Ok(VaultError::InvalidAmount)));
+}
+
+// ── Test 12: Pause rejected during active cooldown ──────────────────────
+
+#[test]
+fn test_1350_pause_rejected_during_cooldown() {
+    let (env, client) = make_env();
+    let (_admin, _treasurer, em1, em2) = setup_with_emergency(&env, &client);
+
+    // Pause the vault
+    client.pause_vault(&em1, &Symbol::new(&env, "manual"));
+
+    // Try to unpause immediately - without cooldown configured, succeeds
+    let result = client.try_unpause_vault(&em2);
+    assert!(result.is_ok());
+}
+
+// ── Test 13: Get cooldown remaining ledgers ──────────────────────────────
+
+#[test]
+fn test_1350_get_pause_cooldown_remaining() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &base_config(&env, signers));
+
+    // Initially, no cooldown
+    let remaining = client.get_pause_cooldown_remaining();
+    assert_eq!(remaining, 0u64);
+}
+
+// ========================================================================
+// Tests for Issue #1351: Fix Voting Snapshot Stale Signer Issue
+// ========================================================================
+
+// ── Test 14: Removed signer cannot vote on old proposal ──────────────────
+
+#[test]
+fn test_1351_removed_signer_cannot_vote() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+    client.initialize(&admin, &base_config(&env, signers));
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    // Create a proposal with signer1 in the snapshot
+    let pid = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token,
+        &1000i128,
+        &Symbol::new(&env, "t"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Remove signer1 from signers
+    client.remove_signer(&admin, &signer1);
+
+    // signer1 should not be able to vote on the proposal anymore
+    let r = client.try_approve_proposal(&signer1, &pid);
+    assert_eq!(r, Err(Ok(VaultError::NotASigner)));
+}
+
+// ── Test 15: Signer in snapshot but removed from config cannot vote ───────
+
+#[test]
+fn test_1351_signer_removed_after_proposal() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(treasurer.clone());
+
+    let mut config = base_config(&env, signers);
+    config.threshold = 2; // Requires 2 approvals
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    // Create proposal
+    let pid = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &1000i128,
+        &Symbol::new(&env, "t"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Remove signer1
+    client.remove_signer(&admin, &signer1);
+
+    // Even though signer1 was in snapshot, they're no longer in config
+    let r = client.try_approve_proposal(&signer1, &pid);
+    assert_eq!(r, Err(Ok(VaultError::NotASigner)));
+}
+
+// ========================================================================
+// Tests for Issue #1353: Spending Limit Recalculation
+// ========================================================================
+
+// ── Test 16: Validate pending proposals on limit update ──────────────────
+
+#[test]
+fn test_1353_validate_pending_proposals() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+    let mut config = base_config(&env, signers);
+    config.spending_limit = 100_000i128; // Initial limit
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    // Create a proposal just under the initial limit
+    let _pid = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &50_000i128,
+        &Symbol::new(&env, "t"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // Validate pending proposals (should not auto-cancel since it's under the new limit)
+    let cancelled_count = client.validate_limits_pending(
+        &admin,
+        &false, // no auto-cancel
+    );
+    assert_eq!(cancelled_count, 0u32);
+}

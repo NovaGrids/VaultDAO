@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { InputHTMLAttributes } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Mic, MicOff } from 'lucide-react';
 
 interface VoiceToTextProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
@@ -10,6 +11,7 @@ interface VoiceToTextProps extends Omit<InputHTMLAttributes<HTMLInputElement>, '
 }
 
 export default function VoiceToText({ value, onChange, placeholder, className = '', ...inputProps }: VoiceToTextProps) {
+  const { t } = useTranslation();
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
@@ -46,7 +48,7 @@ export default function VoiceToText({ value, onChange, placeholder, className = 
 
   const toggleListening = async () => {
     if (!recognitionRef.current) {
-      alert('Voice input not supported in this browser');
+      alert(t('voice.notSupported'));
       return;
     }
 
@@ -60,7 +62,7 @@ export default function VoiceToText({ value, onChange, placeholder, className = 
         recognitionRef.current.start();
         setIsListening(true);
       } catch {
-        alert('Microphone permission required');
+        alert(t('voice.permissionRequired'));
       }
     }
   };

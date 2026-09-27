@@ -14,14 +14,15 @@ use crate::errors::VaultError;
 use crate::types::{RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, Role, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token::StellarAssetClient,
-    Address, Env, Symbol, Vec,
+    Address, Env, Symbol, TryFromVal, Val, Vec,
 };
 
 fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
 
     InitConfig {
         veto_window_ledgers: 0,
@@ -31,7 +32,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
         high_impact_threshold: 70,
         admin_rotation_delay: 1440,
         signers,
-        threshold: 1,
+        threshold: 2,
         quorum: 0,
         quorum_percentage: 0,
         default_voting_deadline: 0,
@@ -97,6 +98,7 @@ fn test_schedule_payment_interval_too_short() {
         &719u64, // one below minimum
         &0u32,   // max_missed_payments
         &0u32,   // jitter_window
+        &0u32,   // grace_executions
     );
 
     assert_eq!(result.err(), Some(Ok(VaultError::IntervalTooShort)));
@@ -123,6 +125,7 @@ fn test_schedule_payment_valid_interval_sets_next_ledger() {
         &interval,
         &0u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -151,6 +154,7 @@ fn test_execute_recurring_payment_too_early_fails() {
         &1000u64,
         &0u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     // Ledger is still at creation time — payment is not due yet
@@ -179,6 +183,7 @@ fn test_execute_recurring_payment_at_due_ledger_succeeds() {
         &interval,
         &0u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -216,6 +221,7 @@ fn test_execute_recurring_payment_twice_in_same_window_fails() {
         &interval,
         &0u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -251,6 +257,7 @@ fn test_stop_recurring_payment_sets_inactive() {
         &720u64,
         &0u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     assert_eq!(
@@ -286,6 +293,7 @@ fn test_execute_stopped_recurring_payment_fails() {
         &interval,
         &0u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     client.stop_recurring_payment(&admin, &payment_id);
@@ -335,6 +343,7 @@ fn test_execute_recurring_payment_transfers_tokens() {
         &interval,
         &0u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -385,6 +394,7 @@ fn test_execute_recurring_payment_schedules_retry_on_transfer_failure() {
         &interval,
         &0u32,
         &0u32,
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -423,6 +433,7 @@ fn test_execute_recurring_payment_no_missed_payments() {
         &interval,
         &3u32, // max_missed_payments
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -457,6 +468,7 @@ fn test_execute_recurring_payment_three_missed_within_cap() {
         &interval,
         &5u32, // max_missed_payments - allow up to 5 missed
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -498,6 +510,7 @@ fn test_execute_recurring_payment_three_missed_exceeding_cap() {
         &interval,
         &2u32, // max_missed_payments - only allow 2 missed
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let payment = client.get_recurring_payment(&payment_id);
@@ -533,6 +546,7 @@ fn test_execute_while_paused_fails() {
         &720u64,
         &0u32,
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     // Advance past next_payment_ledger
@@ -558,6 +572,7 @@ fn test_resume_recurring_payment_advances_schedule() {
         &720u64,
         &0u32,
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     let before_pause = client
@@ -590,6 +605,7 @@ fn test_stop_then_resume_fails() {
         &720u64,
         &0u32,
         &0u32, // jitter_window
+        &0u32, // grace_executions
     );
 
     client.stop_recurring_payment(&admin, &payment_id);
@@ -619,6 +635,7 @@ fn test_jitter_window_zero_no_jitter() {
         &interval,
         &0u32, // max_missed_payments
         &0u32, // jitter_window = 0 → no jitter
+        &0u32, // grace_executions
     );
 
     let p = client.get_recurring_payment(&payment_id);
@@ -647,6 +664,7 @@ fn test_jitter_applied_within_window() {
         &interval,
         &0u32, // max_missed_payments
         &jitter_window,
+        &0u32, // grace_executions
     );
 
     let p = client.get_recurring_payment(&payment_id);
@@ -674,6 +692,7 @@ fn test_jitter_constant_per_payment() {
         &interval,
         &0u32,
         &jitter_window,
+        &0u32, // grace_executions
     );
 
     // Jitter offset is computed at creation and remains fixed
@@ -711,6 +730,7 @@ fn test_jitter_window_capped_at_10_percent_of_interval() {
         &interval,
         &0u32,
         &requested_jitter,
+        &0u32, // grace_executions
     );
 
     let p = client.get_recurring_payment(&payment_id);
@@ -740,6 +760,7 @@ fn test_two_payments_same_interval_different_jitter() {
         &interval,
         &0u32,
         &jitter_window,
+        &0u32, // grace_executions
     );
     let id2 = client.schedule_payment(
         &admin,
@@ -750,6 +771,7 @@ fn test_two_payments_same_interval_different_jitter() {
         &interval,
         &0u32,
         &jitter_window,
+        &0u32, // grace_executions
     );
 
     let p1 = client.get_recurring_payment(&id1);
@@ -815,6 +837,7 @@ fn test_jitter_disabled_regression_first_and_second_cycle() {
         &interval,
         &0u32, // max_missed_payments
         &0u32, // jitter_window = 0 → no jitter
+        &0u32, // grace_executions
     );
 
     // ── First cycle ──────────────────────────────────────────────────────────
@@ -863,6 +886,7 @@ fn test_jitter_enabled_deterministic_exact_offset_applied_second_cycle() {
         &interval,
         &0u32,
         &jitter_window,
+        &0u32, // grace_executions
     );
 
     let p = client.get_recurring_payment(&payment_id);
@@ -886,23 +910,23 @@ fn test_jitter_enabled_deterministic_exact_offset_applied_second_cycle() {
     client.execute_recurring_payment(&payment_id);
 
     let after_first = client.get_recurring_payment(&payment_id);
-    // After first payment: next_payment_ledger = creation + 2*interval + fixed_offset
-    let expected_second = creation_ledger + 2 * interval + fixed_offset as u64;
+    // The first execution advances without jitter: creation + 2*interval
+    let expected_second = creation_ledger + 2 * interval;
     assert_eq!(
         after_first.next_payment_ledger, expected_second,
-        "second cycle next_payment_ledger must be nominal + fixed_offset exactly"
+        "second cycle next_payment_ledger must be nominal (no jitter yet)"
     );
 
-    // Execute second cycle to confirm jitter is also applied to the third cycle
+    // Execute second cycle: jitter is applied from this advancement onwards
     env.ledger()
         .with_mut(|l| l.sequence_number = after_first.next_payment_ledger as u32);
     client.execute_recurring_payment(&payment_id);
 
     let after_second = client.get_recurring_payment(&payment_id);
-    let expected_third = creation_ledger + 3 * interval + 2 * fixed_offset as u64;
+    let expected_third = creation_ledger + 3 * interval + fixed_offset as u64;
     assert_eq!(
         after_second.next_payment_ledger, expected_third,
-        "third cycle next_payment_ledger must be nominal + 2*fixed_offset exactly"
+        "third cycle next_payment_ledger must be nominal + fixed_offset exactly"
     );
 }
 
@@ -928,6 +952,7 @@ fn test_jitter_offsets_always_within_window_statistical() {
             &interval,
             &0u32,
             &jitter_window,
+            &0u32, // grace_executions
         );
         // Advance ledger so each payment gets a unique creation_ledger hash
         env.ledger().with_mut(|l| l.sequence_number += 3);
@@ -965,6 +990,7 @@ fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
         &interval,
         &0u32,
         &jitter_window,
+        &0u32, // grace_executions
     );
 
     let p = client.get_recurring_payment(&payment_id);
@@ -974,17 +1000,16 @@ fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
     env.ledger()
         .with_mut(|l| l.sequence_number = p.next_payment_ledger as u32);
 
-    let events_before_first_exec = env.events().all();
     client.execute_recurring_payment(&payment_id);
     let events_after_first_exec = env.events().all();
 
     // Count recurring_pay_jittered events emitted during first execution
-    let jitter_events_first: Vec<_> = events_after_first_exec
+    let jitter_events_first: std::vec::Vec<_> = events_after_first_exec
         .iter()
-        .skip(events_before_first_exec.len())
         .filter(|e| {
-            e.0.get(0)
-                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+            e.1.get(0)
+                .and_then(|t| Symbol::try_from_val(&env, &t).ok())
+                .map(|t| t == Symbol::new(&env, "recurring_pay_jittered"))
                 .unwrap_or(false)
         })
         .collect();
@@ -1000,16 +1025,15 @@ fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
     env.ledger()
         .with_mut(|l| l.sequence_number = after_first.next_payment_ledger as u32);
 
-    let events_before_second_exec = env.events().all();
     client.execute_recurring_payment(&payment_id);
     let events_after_second_exec = env.events().all();
 
-    let jitter_events_second: Vec<_> = events_after_second_exec
+    let jitter_events_second: std::vec::Vec<_> = events_after_second_exec
         .iter()
-        .skip(events_before_second_exec.len())
         .filter(|e| {
-            e.0.get(0)
-                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+            e.1.get(0)
+                .and_then(|t| Symbol::try_from_val(&env, &t).ok())
+                .map(|t| t == Symbol::new(&env, "recurring_pay_jittered"))
                 .unwrap_or(false)
         })
         .collect();
@@ -1021,20 +1045,28 @@ fn test_jitter_event_emitted_on_second_cycle_not_on_first() {
     );
 
     // Verify event data: (nominal_next_ledger, jittered_next_ledger, jitter_offset)
-    let event_data = &jitter_events_second[0].1;
-    // nominal = creation_ledger + 2*interval (before jitter)
-    let expected_nominal = creation_ledger + 2 * interval;
+    let event_data = &jitter_events_second[0].2;
+    // nominal = second-cycle ledger (creation + 2*interval) + interval, before jitter
+    let expected_nominal = creation_ledger + 3 * interval;
     let expected_jittered = expected_nominal + fixed_offset as u64;
 
-    let data_vec = soroban_sdk::Vec::<soroban_sdk::Val>::try_from(event_data.clone())
-        .expect("event data should be a vec");
+    let data_vec = Vec::<Val>::try_from_val(&env, event_data).expect("event data should be a vec");
 
-    let nominal_val = u64::try_from(data_vec.get(0).unwrap()).expect("nominal should be u64");
-    let jittered_val = u64::try_from(data_vec.get(1).unwrap()).expect("jittered should be u64");
-    let offset_val = u32::try_from(data_vec.get(2).unwrap()).expect("offset should be u32");
+    let nominal_val =
+        u64::try_from_val(&env, &data_vec.get(0).unwrap()).expect("nominal should be u64");
+    let jittered_val =
+        u64::try_from_val(&env, &data_vec.get(1).unwrap()).expect("jittered should be u64");
+    let offset_val =
+        u32::try_from_val(&env, &data_vec.get(2).unwrap()).expect("offset should be u32");
 
-    assert_eq!(nominal_val, expected_nominal, "event nominal_next_ledger mismatch");
-    assert_eq!(jittered_val, expected_jittered, "event jittered_next_ledger mismatch");
+    assert_eq!(
+        nominal_val, expected_nominal,
+        "event nominal_next_ledger mismatch"
+    );
+    assert_eq!(
+        jittered_val, expected_jittered,
+        "event jittered_next_ledger mismatch"
+    );
     assert_eq!(offset_val, fixed_offset, "event jitter_offset mismatch");
 }
 
@@ -1054,6 +1086,7 @@ fn test_jitter_event_not_emitted_when_window_is_zero() {
         &interval,
         &0u32,
         &0u32, // jitter_window = 0
+        &0u32, // grace_executions
     );
 
     // Execute first cycle
@@ -1067,16 +1100,15 @@ fn test_jitter_event_not_emitted_when_window_is_zero() {
     env.ledger()
         .with_mut(|l| l.sequence_number = p2.next_payment_ledger as u32);
 
-    let events_before = env.events().all();
     client.execute_recurring_payment(&payment_id);
     let events_after = env.events().all();
 
-    let jitter_events: Vec<_> = events_after
+    let jitter_events: std::vec::Vec<_> = events_after
         .iter()
-        .skip(events_before.len())
         .filter(|e| {
-            e.0.get(0)
-                .map(|t| t == soroban_sdk::Val::from(soroban_sdk::Symbol::new(&env, "recurring_pay_jittered")))
+            e.1.get(0)
+                .and_then(|t| Symbol::try_from_val(&env, &t).ok())
+                .map(|t| t == Symbol::new(&env, "recurring_pay_jittered"))
                 .unwrap_or(false)
         })
         .collect();
@@ -1110,6 +1142,7 @@ fn test_jitter_window_zero_identical_to_no_jitter_multi_cycle() {
         &interval,
         &0u32,
         &0u32, // window = 0
+        &0u32, // grace_executions
     );
 
     // Both created at same ledger so their schedules must stay in lock-step
@@ -1122,6 +1155,7 @@ fn test_jitter_window_zero_identical_to_no_jitter_multi_cycle() {
         &interval,
         &0u32,
         &0u32, // also window = 0
+        &0u32, // grace_executions
     );
 
     for cycle in 1u64..=4 {

@@ -117,7 +117,11 @@ fn test_reentrancy_guard_cleared_after_execution() {
 
     // Verify that the reentrancy guard is cleared by checking that the proposal is executed
     let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Executed, "Proposal should be executed");
+    assert_eq!(
+        proposal.status,
+        ProposalStatus::Executed,
+        "Proposal should be executed"
+    );
 }
 
 #[test]

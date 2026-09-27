@@ -21,8 +21,11 @@ Complete reference for the VaultDAO Soroban smart contract public surface.
 - [Metadata & Tags](#metadata--tags)
 - [Attachments](#attachments)
 - [Insurance & Staking](#insurance--staking)
+- [Token Vesting](#token-vesting)
 - [Dynamic Fees](#dynamic-fees)
 - [View Functions](#view-functions)
+- [Multi-Phase Proposals](#multi-phase-proposals)
+- [Balance Snapshots](#balance-snapshots)
 - [Error Codes](#error-codes)
 
 ---
@@ -762,6 +765,62 @@ Withdraw slashed stake funds (admin only).
 
 ---
 
+## Token Vesting
+
+Linear token vesting with an optional cliff. All ledger arguments are **absolute ledger sequence numbers** (~5 s per ledger). See the [Vesting guide](../guides/VESTING.md) for the lifecycle, math and worked examples.
+
+### `create_vesting_schedule(admin: Address, beneficiary: Address, token_addr: Address, total: i128, cliff_ledger: u32, start_ledger: u32, end_ledger: u32) -> Result<u64, VaultError>`
+
+Reserve `total` of the vault's `token_addr` balance for `beneficiary`, vesting linearly from `start_ledger` to `end_ledger`, with nothing claimable before `cliff_ledger` (Admin only — role must be exactly `Admin`).
+
+**Constraints:**
+- `total > 0`
+- `start_ledger ≤ cliff_ledger < end_ledger`
+- At most **100 active schedules** vault-wide (active = not fully claimed and not cancelled)
+- Unreserved vault balance of `token_addr` (balance − amount reserved by other schedules) ≥ `total`
+
+**Returns:** New schedule ID (IDs start at 1)
+
+**Events:** `vesting_created`
+
+**Errors:** `Unauthorized`, `InvalidAmount`, `BatchTooLarge` (cap reached), `InsufficientBalance`
+
+---
+
+### `claim_vested_tokens(beneficiary: Address, schedule_id: u64) -> Result<i128, VaultError>`
+
+Transfer everything vested but not yet claimed to the beneficiary.
+
+**Vested amount:** `0` before `cliff_ledger`; `total` at/after `end_ledger`; otherwise `total × (now − start_ledger) / (end_ledger − start_ledger)` (truncating).
+
+**Returns:** Amount transferred. Returns `0` (and emits no event) when nothing is claimable.
+
+**Events:** `vesting_claimed`
+
+**Errors:** `ProposalNotFound` (unknown schedule), `Unauthorized` (caller is not the beneficiary, or schedule cancelled), `InvalidAmount` (arithmetic overflow)
+
+---
+
+### `cancel_vesting(admin: Address, schedule_id: u64) -> Result<i128, VaultError>`
+
+Stop a schedule (Admin only — role must be exactly `Admin`). Any vested-but-unclaimed amount is paid to the beneficiary immediately; the unvested remainder is released back to the treasury.
+
+**Returns:** Unvested amount released. Returns `0` (no event) if the schedule was already cancelled or fully claimed.
+
+**Events:** `vesting_cancelled`
+
+**Errors:** `Unauthorized`, `ProposalNotFound`, `InvalidAmount`
+
+---
+
+### `get_vesting_schedule(schedule_id: u64) -> Option<VestingSchedule>`
+
+Fetch a vesting schedule by ID (read-only).
+
+**Returns:** `VestingSchedule { id, beneficiary, token, total, cliff_ledger, start_ledger, end_ledger, claimed, cancelled }`, or `None`
+
+---
+
 ## Dynamic Fees
 
 ### `set_fee_structure(admin: Address, fee_structure: FeeStructure) -> Result<(), VaultError>`
@@ -847,6 +906,242 @@ Get proposal IDs filtered by priority (read-only).
 
 ---
 
+## Multi-Phase Proposals
+
+Multi-phase proposals bundle up to five ordered operations under a single
+multisig approval. Phases run sequentially in one invocation; if any phase
+fails, previously executed phases are compensated (in reverse order) using
+their optional rollback operations. See the
+[Phased Treasury Disbursements guide](../guides/PHASED_DISBURSEMENTS.md) for an
+end-to-end walkthrough.
+
+**Types:**
+
+```rust
+pub enum ProposalOperation {
+    Transfer(Address /* recipient */, Address /* token */, i128 /* amount */, Symbol /* memo */),
+    RemoveSigner(Address),
+    UpdateWhitelist(Address, ListAction /* Add | Remove */),
+}
+
+pub enum OptionalProposalOperation { None, Some(ProposalOperation) }
+
+pub enum ProposalPhaseStatus { Pending = 0, Executed = 1, RolledBack = 2, Failed = 3 }
+
+pub struct ProposalPhase {
+    pub operation: ProposalOperation,
+    pub rollback_operation: OptionalProposalOperation,
+    pub status: ProposalPhaseStatus, // pass Pending when creating
+}
+
+pub struct MultiPhaseProposal {
+    pub proposal_id: u64,
+    pub phases: Vec<ProposalPhase>,
+    pub last_executed_phase: i32, // -1 until a phase executes
+}
+```
+
+### `create_multi_phase_proposal(proposer: Address, phases: Vec<ProposalPhase>) -> Result<u64, VaultError>`
+
+Create a base proposal plus its ordered phase list. Returns the new proposal ID.
+
+**Parameters:**
+- `proposer` - Must authorize the call and hold at least the `Treasurer` role
+- `phases` - 1–5 phases, executed in list order. Each phase should be created with `status: ProposalPhaseStatus::Pending`
+
+**Behavior:**
+- Creates a base `Proposal` in `Pending` status with `amount = 0`, `memo = "multi_phase"`, recipient/token set to the vault contract itself, and an expiry of `current_ledger + 120_960` (~7 days)
+- Snapshots the current signer set onto the proposal (same as regular proposals)
+- Stores the `MultiPhaseProposal` record keyed by the returned proposal ID with `last_executed_phase = -1`
+- The base proposal is approved through the normal voting flow (`approve_proposal`); nothing is moved until `execute_multi_phase_proposal` is called
+
+**Errors:**
+- `InsufficientRole` (12) - Proposer is below `Treasurer`
+- `TooManyPhases` (620) - `phases` is empty or has more than 5 entries
+- `EmptySignerSnapshot` (610) - The vault has no signers configured
+- `NotInitialized` (2) - Vault config not found
+
+**Example:**
+```rust
+let phases = vec![
+    &env,
+    ProposalPhase {
+        operation: ProposalOperation::Transfer(
+            contractor.clone(), usdc.clone(), 5_000_0000000, Symbol::new(&env, "milestone1"),
+        ),
+        rollback_operation: OptionalProposalOperation::None,
+        status: ProposalPhaseStatus::Pending,
+    },
+    ProposalPhase {
+        operation: ProposalOperation::UpdateWhitelist(auditor.clone(), ListAction::Add),
+        rollback_operation: OptionalProposalOperation::Some(
+            ProposalOperation::UpdateWhitelist(auditor.clone(), ListAction::Remove),
+        ),
+        status: ProposalPhaseStatus::Pending,
+    },
+];
+let proposal_id = vault.create_multi_phase_proposal(&treasurer, &phases);
+```
+
+---
+
+### `execute_multi_phase_proposal(executor: Address, proposal_id: u64) -> Result<(), VaultError>`
+
+Execute every phase of an approved multi-phase proposal, in order.
+
+**Parameters:**
+- `executor` - Must authorize the call and hold at least the `Treasurer` role
+- `proposal_id` - ID returned by `create_multi_phase_proposal`
+
+**Behavior:**
+- Requires the base proposal to be in `Approved` status
+- Runs phases `0..n` in order. `Transfer` moves tokens from the vault; `RemoveSigner` and `UpdateWhitelist` apply the same checks as their standalone counterparts (threshold floor, list membership)
+- On success: each phase is marked `Executed`, `last_executed_phase = n - 1`, and the base proposal moves to `Executed` with `execution_ledger` set
+- On failure at phase `k`: phase `k` is marked `Failed`, then phases `k-1 … 0` are compensated in reverse order (a phase whose rollback operation succeeds becomes `RolledBack`; a phase with no rollback operation is left as-is), the base proposal is marked `Rejected`, and the call returns `PhaseExecutionFailed`
+
+> **Note:** Because the invocation returns an error, the Soroban host discards
+> every storage write and token transfer made during it — including the
+> phase statuses and the `Rejected` status above. In practice a
+> `PhaseExecutionFailed` result means **nothing was committed** and the base
+> proposal remains `Approved`. Fix the cause (e.g. top up the vault) and call
+> `execute_multi_phase_proposal` again, or cancel the proposal.
+
+**Errors:**
+- `InsufficientRole` (12) - Executor is below `Treasurer`
+- `ProposalNotFound` - No base proposal with this ID
+- `ProposalNotApproved` (22) - Base proposal is not `Approved`
+- `MultiPhaseProposalNotFound` (622) - The proposal ID is not a multi-phase proposal
+- `PhaseExecutionFailed` (621) - A phase operation failed (insufficient balance, signer removal would break threshold, whitelist entry already present/absent, …)
+
+**Example:**
+```rust
+// After signers have approved the base proposal:
+vault.approve_proposal(&signer_a, &proposal_id);
+vault.approve_proposal(&signer_b, &proposal_id);
+
+match vault.try_execute_multi_phase_proposal(&treasurer, &proposal_id) {
+    Ok(_) => println!("all phases executed"),
+    Err(Ok(VaultError::PhaseExecutionFailed)) => println!("a phase failed; nothing committed"),
+    Err(e) => println!("execution rejected: {:?}", e),
+}
+```
+
+> Use `execute_multi_phase_proposal`, not `execute_proposal`, for these IDs —
+> the base proposal is a zero-amount placeholder and does not carry the phases.
+
+---
+
+## Balance Snapshots
+
+Balance snapshots record point-in-time treasury state so off-chain tooling
+(reporting, governance weight lookups, audits) can query historical values by
+ledger. The contract keeps a rolling window of the **90 most recent**
+snapshots; older ones are evicted first-in, first-out.
+
+**Type:**
+
+```rust
+pub struct BalanceSnapshot {
+    pub ledger: u64,                     // ledger sequence when taken
+    pub timestamp: u64,                  // ledger timestamp (seconds)
+    pub balances: Vec<(Address, i128)>,  // (token, balance) pairs
+    pub total_staked: i128,
+    pub pending_releases: i128,
+}
+```
+
+> **Current limitation:** `take_manual_snapshot` records the ledger and
+> timestamp but currently stores an empty `balances` list and zero
+> `total_staked` / `pending_releases`. Treat snapshots as ledger checkpoints
+> until balance capture is implemented.
+
+### `set_snapshot_interval(admin: Address, interval: u32) -> Result<(), VaultError>`
+
+Configure the desired number of ledgers between snapshots.
+
+**Parameters:**
+- `admin` - Must authorize, be a current signer, and hold the `Admin` role
+- `interval` - Ledgers between snapshots; minimum `100` (~8 minutes at 5s/ledger). `17_280` ≈ 1 day
+
+**Behavior:**
+- Stores the interval in instance storage. The value is advisory for keepers/automation that call `take_manual_snapshot`; the contract does not take snapshots on its own
+
+**Errors:**
+- `Unauthorized` (10) - `admin` is not a signer
+- `InsufficientRole` (12) - `admin` does not hold the `Admin` role
+- `InvalidAmount` (40) - `interval < 100`
+- `NotInitialized` (2) - Vault config not found
+
+**Example:**
+```rust
+vault.set_snapshot_interval(&admin, &17_280); // roughly daily
+```
+
+---
+
+### `take_manual_snapshot(admin: Address) -> Result<BalanceSnapshot, VaultError>`
+
+Record a snapshot at the current ledger and return it.
+
+**Parameters:**
+- `admin` - Must authorize and hold the `Admin` role
+
+**Behavior:**
+- Enforces a minimum gap of 100 ledgers since the previous snapshot
+- Appends the snapshot (evicting the oldest when 90 are stored) and updates the last-snapshot ledger
+- Emits `snapshot_taken` with data `(ledger: u64, token_count: u32)`
+
+**Errors:**
+- `InsufficientRole` (12) - `admin` does not hold the `Admin` role
+- `InvalidAmount` (40) - Fewer than 100 ledgers since the last snapshot
+- `NotInitialized` (2) - Vault config not found
+
+**Example:**
+```rust
+let snap = vault.take_manual_snapshot(&admin);
+println!("snapshot at ledger {}", snap.ledger);
+```
+
+---
+
+### `get_snapshot_at(target_ledger: u32) -> Option<BalanceSnapshot>`
+
+Return the most recent snapshot taken **at or before** `target_ledger`
+(binary search over the stored window).
+
+**Returns:**
+- `Some(snapshot)` - Nearest snapshot with `ledger <= target_ledger`
+- `None` - No snapshots exist, or every stored snapshot is newer than `target_ledger` (including when the relevant snapshot has been evicted from the 90-entry window)
+
+**Errors:** None (read-only)
+
+**Example:**
+```rust
+if let Some(snap) = vault.get_snapshot_at(&proposal_created_ledger) {
+    println!("state as of ledger {}", snap.ledger);
+}
+```
+
+---
+
+### `get_latest_snapshot() -> Option<BalanceSnapshot>`
+
+Return the newest stored snapshot, or `None` when no snapshots exist.
+
+**Errors:** None (read-only)
+
+**Example (TypeScript, stellar-sdk):**
+```ts
+const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
+  .addOperation(contract.call("get_latest_snapshot"))
+  .setTimeout(30)
+  .build();
+const sim = await server.simulateTransaction(tx);
+const latest = scValToNative(sim.result!.retval); // null | { ledger, timestamp, balances, ... }
+```
+
+---
+
 ## Error Codes
 
 | Code | Name | Description |
@@ -890,6 +1185,8 @@ Get proposal IDs filtered by priority (read-only).
 | 613 | `QuorumTooHigh` | Quorum > signers.len() |
 | 614 | `ConditionsNotSatisfied` | Execution conditions failed |
 | 615 | `DependenciesNotExecuted` | Prerequisites not complete |
+
+> Codes for multi-phase proposals (defined in `contracts/vault/src/errors.rs`): `EmptySignerSnapshot` = 610, `TooManyPhases` = 620, `PhaseExecutionFailed` = 621, `MultiPhaseProposalNotFound` = 622. Numeric values in the Multi-Phase Proposals and Balance Snapshots sections follow `errors.rs`.
 
 ---
 

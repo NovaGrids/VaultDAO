@@ -2,11 +2,13 @@ import type { BackendEnv } from "../../config/env.js";
 import { createLogger } from "../../shared/logging/logger.js";
 import {
   NormalizedRecurringPayment,
+  PredictedDue,
   RawRecurringPayment,
   RecurringCursor,
   RecurringEvent,
   RecurringFilter,
   RecurringIndexerState,
+  RecurringPredictionEvent,
   RecurringStatus,
 } from "./types.js";
 import {
@@ -15,6 +17,8 @@ import {
   type BackoffOptions,
   type PaymentBackoffEvent,
 } from "./backoff.js";
+import type { ConsecutiveMissResetData } from "../events/types.js";
+import { EventType } from "../events/types.js";
 
 /**
  * A due payment enriched with the reason it was triggered.
@@ -25,6 +29,16 @@ import {
 export interface DuePaymentResult {
   readonly payment: NormalizedRecurringPayment;
   readonly trigger_reason: "exact" | "jitter_early" | "jitter_late";
+}
+
+/**
+ * Returned by `transformRawRecurringPayment` alongside the normalized payment
+ * when a consecutive-miss reset occurred.  Callers that have an event bus
+ * should emit this as a `CONSECUTIVE_MISS_RESET` event.
+ */
+export interface ConsecutiveMissResetEvent {
+  readonly type: typeof EventType.CONSECUTIVE_MISS_RESET;
+  readonly data: ConsecutiveMissResetData;
 }
 
 const logger = createLogger("recurring-indexer");
@@ -117,13 +131,17 @@ export class MemoryRecurringStorageAdapter implements RecurringStorageAdapter {
 
 /**
  * Transform raw contract data to normalized recurring payment.
+ *
+ * Returns the normalized payment plus an optional `ConsecutiveMissResetEvent`
+ * that callers should emit when the consecutive-miss counter transitions from
+ * a non-zero streak back to 0 (i.e. the payment is recovering after failures).
  */
 export function transformRawRecurringPayment(
   raw: RawRecurringPayment,
   contractId: string,
   ledger: number,
   existingPayment?: NormalizedRecurringPayment,
-): NormalizedRecurringPayment {
+): { payment: NormalizedRecurringPayment; resetEvent: ConsecutiveMissResetEvent | null } {
   const now = new Date().toISOString();
   const events: RecurringEvent[] = existingPayment?.events ?? [];
 
@@ -159,7 +177,7 @@ export function transformRawRecurringPayment(
   ) {
     if (!events.includes(RecurringEvent.EXECUTED)) {
       events.push(RecurringEvent.EXECUTED);
-    events.push(RecurringEvent.EXECUTED);
+    }
     // If jitter is configured and this payment is past its first cycle, the
     // contract will have emitted a recurring_pay_jittered event on-chain.
     // Mirror that in the local event log for audit-trail completeness.
@@ -203,17 +221,39 @@ export function transformRawRecurringPayment(
     existingPayment !== undefined &&
     Number(raw.payment_count) > existingPayment.paymentCount;
 
-  if (wasExecuted) {
-    events.push(RecurringEvent.EXECUTED);
-  }
+  // ── Retry / backoff state ────────────────────────────────────────────────
+  //
+  // `retryCount`           — consecutive failures since last success.
+  //                          Reset to 0 on every successful execution.
+  //                          This gates backoff and scheduling behaviour.
+  //
+  // `totalMissedExecutions` — lifetime audit total; never decremented or
+  //                          reset.  Does NOT affect backoff or scheduling.
 
-  // Preserve existing retry state; reset to zero on successful execution.
+  const priorRetryCount = existingPayment?.retryCount ?? 0;
+  const priorTotalMissed = existingPayment?.totalMissedExecutions ?? 0;
 
-  const retryCount = wasExecuted ? 0 : (existingPayment?.retryCount ?? 0);
+  // On successful execution: reset consecutive counter, carry forward total.
+  const retryCount = wasExecuted ? 0 : priorRetryCount;
   const lastAttemptAt = wasExecuted ? 0 : (existingPayment?.lastAttemptAt ?? 0);
   const nextRetryAt = wasExecuted ? 0 : (existingPayment?.nextRetryAt ?? 0);
+  const totalMissedExecutions = priorTotalMissed; // never reset
 
-  return {
+  // Emit a reset event only when recovering from a non-zero streak.
+  let resetEvent: ConsecutiveMissResetEvent | null = null;
+  if (wasExecuted && priorRetryCount > 0) {
+    resetEvent = {
+      type: EventType.CONSECUTIVE_MISS_RESET,
+      data: {
+        paymentId: raw.id,
+        contractId,
+        clearedConsecutiveMisses: priorRetryCount,
+        totalMissedExecutions,
+      },
+    };
+  }
+
+  const payment: NormalizedRecurringPayment = {
     paymentId: raw.id,
     proposer: raw.proposer,
     recipient: raw.recipient,
@@ -223,7 +263,7 @@ export function transformRawRecurringPayment(
     intervalLedgers: Number(raw.interval),
     nextPaymentLedger: nextPaymentLedger,
     retryStrategy,
-    retryCount: Number(raw.retry_count || "0"),
+    retryCount,
     retryNextLedger: retryNextLedger,
     paymentCount: Number(raw.payment_count),
     status,
@@ -238,14 +278,16 @@ export function transformRawRecurringPayment(
     computedStatus,
     ledgersUntilDue,
     missedPayments,
-    retryCount,
     lastAttemptAt,
     nextRetryAt,
+    totalMissedExecutions,
     // Jitter fields — default to 0 for payments created before jitter support
     // or when not returned by the RPC (optional in RawRecurringPayment).
     jitterWindow: Number(raw.jitter_window ?? "0"),
     jitterOffset: Number(raw.jitter_offset ?? "0"),
   };
+
+  return { payment, resetEvent };
 }
 
 /**
@@ -289,7 +331,7 @@ export class RecurringIndexerService {
   public async start(): Promise<void> {
     if (this.isRunning) return;
     if (!this.env.eventPollingEnabled) {
-      console.log("[recurring-indexer] disabled in config");
+      logger.info("disabled in config");
       return;
     }
 
@@ -298,19 +340,18 @@ export class RecurringIndexerService {
     if (lastCursor) {
       this.lastLedgerProcessed = lastCursor.lastLedger;
       this.totalPaymentsIndexed = (await this.storage.getAll()).length;
-      console.log(
-        `[recurring-indexer] resuming from cursor: ledger ${this.lastLedgerProcessed}`,
-      );
+      logger.info("resuming from cursor", { ledger: this.lastLedgerProcessed });
     } else {
       this.lastLedgerProcessed = 0;
-      console.log("[recurring-indexer] no cursor found, starting fresh");
+      logger.info("no cursor found, starting fresh");
     }
 
     this.isRunning = true;
-    console.log("[recurring-indexer] starting indexer loop");
-    console.log(`- rpc: ${this.env.sorobanRpcUrl}`);
-    console.log(`- contract: ${this.env.contractId}`);
-    console.log(`- interval: ${this.env.eventPollingIntervalMs}ms`);
+    logger.info("starting indexer loop", {
+      rpc: this.env.sorobanRpcUrl,
+      contract: this.env.contractId,
+      intervalMs: this.env.eventPollingIntervalMs,
+    });
 
     // Seed alerted IDs so pre-existing DUE payments don't re-trigger alerts.
     await this.seedAlertedIds();
@@ -329,7 +370,7 @@ export class RecurringIndexerService {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    console.log("[recurring-indexer] stopped indexer loop");
+    logger.info("stopped indexer loop");
   }
 
   private scheduleNextSync(): void {
@@ -340,7 +381,7 @@ export class RecurringIndexerService {
       const MAX_BACKOFF_MS = 5 * 60 * 1000;
       const backoff = delayMs * Math.pow(2, this.consecutiveErrors);
       delayMs = Math.min(backoff, MAX_BACKOFF_MS);
-      console.log(`[recurring-indexer] backing off for ${delayMs}ms`);
+      logger.info("backing off", { delayMs });
     }
 
     this.timer = setTimeout(async () => {
@@ -351,10 +392,10 @@ export class RecurringIndexerService {
         this.consecutiveErrors = 0;
       } catch (error) {
         this.consecutiveErrors++;
-        console.error(
-          `[recurring-indexer] sync error (attempt ${this.consecutiveErrors}):`,
-          error,
-        );
+        logger.error("sync error", {
+          attempt: this.consecutiveErrors,
+          error: String(error),
+        });
       } finally {
         this.scheduleNextSync();
       }
@@ -402,11 +443,11 @@ export class RecurringIndexerService {
    * Indexes a batch of recurring payments.
    */
   private async indexPayments(payments: RawRecurringPayment[]): Promise<void> {
-    console.log(`[recurring-indexer] indexing ${payments.length} payments`);
+    logger.info("indexing payments", { count: payments.length });
 
     for (const raw of payments) {
       const existing = await this.storage.getById(raw.id);
-      const normalized = transformRawRecurringPayment(
+      const { payment: normalized, resetEvent } = transformRawRecurringPayment(
         raw,
         this.env.contractId,
         this.lastLedgerProcessed,
@@ -414,6 +455,15 @@ export class RecurringIndexerService {
       );
       await this.storage.save(normalized);
       this.totalPaymentsIndexed++;
+
+      // Log the consecutive-miss reset when a payment recovers from a streak.
+      if (resetEvent) {
+        logger.info("recurring payment consecutive-miss counter reset", {
+          paymentId: resetEvent.data.paymentId,
+          clearedConsecutiveMisses: resetEvent.data.clearedConsecutiveMisses,
+          totalMissedExecutions: resetEvent.data.totalMissedExecutions,
+        });
+      }
 
       // Emit alert on first transition to DUE — not on every sync.
       if (
@@ -473,7 +523,6 @@ export class RecurringIndexerService {
     if (currentLedger !== undefined) {
       all = all.map((payment) => {
         // Calculate computed fields based on current ledger
-        const nextPaymentLedger = payment.nextPaymentLedger;
         const interval = payment.intervalLedgers;
 
         const effectiveLedger = Math.max(payment.nextPaymentLedger, payment.retryNextLedger);
@@ -577,25 +626,22 @@ export class RecurringIndexerService {
         payment.nextPaymentLedger,
         payment.retryNextLedger ?? 0,
       );
-      return effectiveLedger >= windowStart && effectiveLedger <= windowEnd;
+      if (effectiveLedger < windowStart || effectiveLedger > windowEnd) {
+        return false;
+      }
+      // Skip payments that are still within their backoff window.
+      // This is the guard that eliminates the tight-polling loop when
+      // a vault balance issue causes repeated failures.
+      return !isInBackoff(
+        {
+          retryCount: payment.retryCount,
+          lastAttemptAt: payment.lastAttemptAt,
+          nextRetryAt: payment.nextRetryAt,
+          totalMissedExecutions: payment.totalMissedExecutions,
+        },
+        nowSeconds,
+      );
     });
-    const inWindow = all.filter(
-      (payment) =>
-        payment.status !== RecurringStatus.CANCELLED &&
-        payment.nextPaymentLedger >= windowStart &&
-        payment.nextPaymentLedger <= windowEnd &&
-        // Skip payments that are still within their backoff window.
-        // This is the guard that eliminates the tight-polling loop when
-        // a vault balance issue causes repeated failures.
-        !isInBackoff(
-          {
-            retryCount: payment.retryCount,
-            lastAttemptAt: payment.lastAttemptAt,
-            nextRetryAt: payment.nextRetryAt,
-          },
-          nowSeconds,
-        ),
-    );
 
     return inWindow.map((payment) => {
       const effectiveLedger = Math.max(payment.nextPaymentLedger, payment.retryNextLedger);
@@ -699,6 +745,7 @@ export class RecurringIndexerService {
         retryCount: payment.retryCount,
         lastAttemptAt: payment.lastAttemptAt,
         nextRetryAt: payment.nextRetryAt,
+        totalMissedExecutions: payment.totalMissedExecutions,
       },
       nowSeconds,
       options,
@@ -709,9 +756,131 @@ export class RecurringIndexerService {
       retryCount: state.retryCount,
       lastAttemptAt: state.lastAttemptAt,
       nextRetryAt: state.nextRetryAt,
+      totalMissedExecutions: state.totalMissedExecutions,
     });
 
     return event;
+  }
+
+  /**
+   * Project the next N due dates for every active/due recurring payment that
+   * falls within `windowLedgers` ledgers of `currentLedger`.
+   *
+   * Algorithm
+   * ---------
+   * For each non-cancelled payment whose first upcoming cycle lands at or
+   * before `currentLedger + windowLedgers`:
+   *   1. Walk forward through successive cycles (nextPaymentLedger + n *
+   *      intervalLedgers) until we exceed the window.
+   *   2. Assign a confidence score:
+   *      - `"high"`   – clean history (retryCount = 0, not overdue).
+   *      - `"medium"` – has had at least one failure (retryCount > 0) but is
+   *                     not currently overdue.
+   *      - `"low"`    – currently overdue or in active backoff.
+   *   3. Sort results by ascending ledger.
+   *
+   * At query time the method emits a `RECURRING_PREDICTION_QUERIED` log entry
+   * so the prediction is always visible in the audit trail.
+   *
+   * @param windowLedgers  – How many ledgers ahead to project (must be > 0).
+   * @param currentLedger  – The ledger to project from.  Defaults to the
+   *                         indexer's `lastLedgerProcessed`.
+   * @returns Sorted array of PredictedDue entries (empty when no payments
+   *          are due within the window).
+   */
+  public async predictRecurringDues(
+    windowLedgers: number,
+    currentLedger?: number,
+  ): Promise<PredictedDue[]> {
+    if (windowLedgers <= 0) {
+      throw new Error("windowLedgers must be a positive integer");
+    }
+
+    const effectiveLedger = currentLedger ?? this.lastLedgerProcessed;
+    const windowEnd = effectiveLedger + windowLedgers;
+
+    // Fetch all non-cancelled payments.
+    const all = await this.storage.getAll();
+    const active = all.filter(
+      (p) => p.status !== RecurringStatus.CANCELLED,
+    );
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const predictions: PredictedDue[] = [];
+
+    for (const payment of active) {
+      const interval = payment.intervalLedgers;
+      if (interval <= 0) continue; // defensive: skip degenerate payments
+
+      // Determine the first upcoming execution ledger.
+      // For overdue payments the first occurrence is already past — we still
+      // include it (occurrenceIndex 1) to surface it as a planning signal.
+      const firstDue = Math.max(
+        payment.nextPaymentLedger,
+        payment.retryNextLedger ?? 0,
+      );
+
+      if (firstDue > windowEnd) continue; // entirely outside window
+
+      // Confidence scoring.
+      const isOverdue = firstDue < effectiveLedger;
+      const inBackoff = isInBackoff(
+        {
+          retryCount: payment.retryCount,
+          lastAttemptAt: payment.lastAttemptAt,
+          nextRetryAt: payment.nextRetryAt,
+          totalMissedExecutions: payment.totalMissedExecutions,
+        },
+        nowSeconds,
+      );
+      let confidence: PredictedDue["confidence"];
+      if (isOverdue || inBackoff) {
+        confidence = "low";
+      } else if (payment.retryCount > 0 || payment.missedPayments > 0) {
+        confidence = "medium";
+      } else {
+        confidence = "high";
+      }
+
+      // Emit every cycle within the window.
+      let occurrenceIndex = 1;
+      let ledger = firstDue;
+      while (ledger <= windowEnd) {
+        predictions.push({
+          paymentId: payment.paymentId,
+          proposer: payment.proposer,
+          recipient: payment.recipient,
+          token: payment.token,
+          amount: payment.amount,
+          ledger,
+          ledgersFromNow: ledger - effectiveLedger,
+          occurrenceIndex,
+          confidence,
+        });
+        occurrenceIndex++;
+        ledger += interval;
+      }
+    }
+
+    // Sort by ascending ledger, then by paymentId for stability.
+    predictions.sort((a, b) => a.ledger - b.ledger || a.paymentId.localeCompare(b.paymentId));
+
+    // Emit prediction event to the audit trail.
+    const predictionEvent: RecurringPredictionEvent = {
+      type: "RECURRING_PREDICTION_QUERIED",
+      windowLedgers,
+      currentLedger: effectiveLedger,
+      resultCount: predictions.length,
+      queriedAt: new Date().toISOString(),
+    };
+
+    logger.info("recurring prediction queried", {
+      windowLedgers: predictionEvent.windowLedgers,
+      currentLedger: predictionEvent.currentLedger,
+      resultCount: predictionEvent.resultCount,
+    });
+
+    return predictions;
   }
 
   /**

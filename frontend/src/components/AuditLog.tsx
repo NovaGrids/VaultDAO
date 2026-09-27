@@ -332,30 +332,6 @@ const AuditLog: React.FC = () => {
           ))}
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            onClick={() => void handleVerifyChain()}
-            disabled={verifying || entries.length === 0}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 rounded-lg text-sm transition-colors"
-            aria-label="Verify audit chain integrity"
-            data-testid="verify-chain-button"
-          >
-            {verifying ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                Verifying…
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="w-4 h-4" aria-hidden="true" />
-                Verify Chain
-              </>
-            )}
-          </button>
-
-          <AuditExporter entries={entries} />
-        </div>
       </div>
 
       {/* Verification banner */}

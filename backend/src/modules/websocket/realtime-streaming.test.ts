@@ -188,6 +188,152 @@ test("RealtimeServer", async (t) => {
     server.unregisterConnection("cnt-1");
     assert.equal(server.getConnectionCount(), 1);
   });
+
+  // ---------------------------------------------------------------------------
+  // Unsubscribe cleanup verification (#1373)
+  // ---------------------------------------------------------------------------
+
+  await t.test(
+    "no events delivered after unsubscribe — subscription fully cleaned up",
+    () => {
+      const server = new RealtimeServer();
+      const recv: any[] = [];
+      registerMockConnection(server, "cleanup-1", recv);
+
+      const topic = server.createTopic("proposal", "cleanup");
+      server.subscribe("cleanup-1", topic);
+
+      // Sanity: broadcast reaches the subscriber before unsubscribe
+      const beforeCount = server.broadcast(topic, { before: true });
+      assert.equal(beforeCount, 1, "should deliver before unsubscribe");
+
+      // Unsubscribe
+      const removed = server.unsubscribe("cleanup-1", topic);
+      assert.equal(removed, true, "unsubscribe should return true");
+
+      // Verify subscription is gone from registry
+      assert.equal(
+        server.getSubscriptions("cleanup-1").has(topic),
+        false,
+        "topic must not remain in subscriptions after unsubscribe",
+      );
+
+      // Clear received messages, then broadcast again
+      recv.length = 0;
+      const afterCount = server.broadcast(topic, { after: true });
+      assert.equal(afterCount, 0, "no events should be delivered after unsubscribe");
+
+      const events = recv.filter((m) => m.type === "event");
+      assert.equal(events.length, 0, "recv buffer must contain no events after unsubscribe");
+    },
+  );
+
+  await t.test(
+    "unsubscribed envelope carries subscriber identity and topic",
+    () => {
+      const server = new RealtimeServer();
+      const recv: any[] = [];
+      registerMockConnection(server, "payload-check", recv);
+
+      const topic = server.createTopic("proposal", "payload-check");
+      server.subscribe("payload-check", topic);
+
+      // Clear hello/subscribed messages
+      recv.length = 0;
+
+      server.unsubscribe("payload-check", topic);
+
+      const envelope = recv.find((m) => m.type === "unsubscribed");
+      assert.ok(envelope, "unsubscribed envelope must be delivered");
+      assert.equal(
+        (envelope.payload as any).subscriber,
+        "payload-check",
+        "envelope payload must include subscriber identity",
+      );
+      assert.equal(
+        (envelope.payload as any).topic,
+        topic,
+        "envelope payload must include the unsubscribed topic",
+      );
+    },
+  );
+
+  await t.test(
+    "unsubscribe returns false and emits no event for unknown topic",
+    () => {
+      const server = new RealtimeServer();
+      const recv: any[] = [];
+      registerMockConnection(server, "noop-check", recv);
+
+      const topic = server.createTopic("proposal", "never-subscribed");
+
+      // Clear hello message
+      recv.length = 0;
+
+      const removed = server.unsubscribe("noop-check", topic);
+      assert.equal(removed, false, "unsubscribe of unknown topic must return false");
+
+      const envelope = recv.find((m) => m.type === "unsubscribed");
+      assert.equal(envelope, undefined, "no unsubscribed envelope when topic was not subscribed");
+    },
+  );
+
+  await t.test(
+    "unsubscribe one topic does not affect other subscriptions",
+    () => {
+      const server = new RealtimeServer();
+      const recv: any[] = [];
+      registerMockConnection(server, "partial-unsub", recv);
+
+      const topicA = server.createTopic("proposal", "keep");
+      const topicB = server.createTopic("proposal", "remove");
+
+      server.subscribe("partial-unsub", topicA);
+      server.subscribe("partial-unsub", topicB);
+
+      server.unsubscribe("partial-unsub", topicB);
+
+      // topicA must still be active
+      assert.equal(
+        server.getSubscriptions("partial-unsub").has(topicA),
+        true,
+        "retained topic must still be in subscriptions",
+      );
+      assert.equal(
+        server.getSubscriptions("partial-unsub").has(topicB),
+        false,
+        "removed topic must not be in subscriptions",
+      );
+
+      // Broadcast to topicA still reaches the client; topicB does not
+      recv.length = 0;
+      assert.equal(server.broadcast(topicA, { t: "A" }), 1);
+      assert.equal(server.broadcast(topicB, { t: "B" }), 0);
+
+      const events = recv.filter((m) => m.type === "event");
+      assert.equal(events.length, 1);
+      assert.equal((events[0].payload as any).t, "A");
+    },
+  );
+
+  await t.test(
+    "onUnsubscribed lifecycle hook fires after successful unsubscribe",
+    () => {
+      const fired: Array<{ id: string; topic: string }> = [];
+      const server = new RealtimeServer({
+        onUnsubscribed: (id, topic) => fired.push({ id, topic }),
+      });
+
+      registerMockConnection(server, "hook-unsub", []);
+      const topic = server.createTopic("activity", "hook-test");
+      server.subscribe("hook-unsub", topic);
+      server.unsubscribe("hook-unsub", topic);
+
+      assert.equal(fired.length, 1);
+      assert.equal(fired[0].id, "hook-unsub");
+      assert.equal(fired[0].topic, topic);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

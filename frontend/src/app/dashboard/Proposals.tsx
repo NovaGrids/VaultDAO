@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare, FileText, Plus } from 'lucide-react';
+import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare, FileText, Plus, Activity } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
 import NewProposalModal from '../../components/modals/NewProposalModal';
@@ -10,6 +10,7 @@ import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
 import ProposalComparison from '../../components/ProposalComparison';
 import TransactionSimulatorModal from '../../components/TransactionSimulatorModal';
+import { VaultSimulatorModal } from '../../components/VaultSimulatorModal';
 import { useToast } from '../../hooks/useToast';
 import { useOptimisticUpdate } from '../../hooks/useOptimisticUpdate';
 import { useVaultContract } from '../../hooks/useVaultContract';
@@ -25,6 +26,7 @@ import { DEFAULT_TOKENS } from '../../constants/tokens';
 import VoiceCommands from '../../components/VoiceCommands';
 import ReadinessWarning from '../../components/ReadinessWarning';
 import { nativeToScVal, Address, xdr } from 'stellar-sdk';
+import { env } from '../../config/env';
 
 const CopyButton = ({ text }: { text: string }) => (
   <button
@@ -92,6 +94,10 @@ const Proposals: React.FC = () => {
   const [proposalSpendingLimit, setProposalSpendingLimit] = useState<string | undefined>(undefined);
   const [showComparison, setShowComparison] = useState(false);
   const [selectedForComparison, setSelectedForComparison] = useState<Set<string>>(new Set());
+
+  // Vault Simulator modal state
+  const [vaultSimulatorOpen, setVaultSimulatorOpen] = useState(false);
+  const [simulatorSelectedProposalId, setSimulatorSelectedProposalId] = useState<string | undefined>(undefined);
 
   // Simulator modal state
   const [simulatorOpen, setSimulatorOpen] = useState(false);
@@ -374,7 +380,7 @@ const Proposals: React.FC = () => {
             }
             return p;
           }),
-          performAction: () => approveProposal(Number(proposalId)),
+          performAction: async () => { await approveProposal(Number(proposalId)); },
           onSuccess: () => {
             notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
           },
@@ -482,7 +488,7 @@ const Proposals: React.FC = () => {
           }
           return p;
         }),
-        performAction: () => approveProposal(Number(proposalId)),
+        performAction: async () => { await approveProposal(Number(proposalId)); },
         onSuccess: () => {
           notify('proposal_approved', `Proposal #${proposalId} approved successfully`, 'success');
         },
@@ -502,7 +508,13 @@ const Proposals: React.FC = () => {
   return (
     <div className="space-y-6 pb-10">
       <div className="max-w-7xl mx-auto">
-        <ReadinessWarning />
+        {env.demoMode ? (
+          <div className="mb-4 rounded-lg bg-purple-500/10 border border-purple-500/30 px-4 py-2 text-sm text-purple-300">
+            Demo mode — exploring seeded treasury data. Connect a wallet anytime to use live testnet actions.
+          </div>
+        ) : (
+          <ReadinessWarning />
+        )}
         {connectionStatus === 'connecting' && (
           <div className="mb-4 flex items-center gap-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 px-4 py-2 text-sm text-yellow-400">
             <Loader2 size={14} className="animate-spin" />
@@ -526,6 +538,16 @@ const Proposals: React.FC = () => {
                 <span>Compare ({selectedForComparison.size})</span>
               </button>
             )}
+            <button
+              onClick={() => {
+                setSimulatorSelectedProposalId(undefined);
+                setVaultSimulatorOpen(true);
+              }}
+              className="bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 px-4 py-2 rounded-lg transition flex items-center gap-2"
+            >
+              <Activity size={18} />
+              <span>Scenario Simulator</span>
+            </button>
             <button
               onClick={() => {
                 const { ready, message } = checkReady();
@@ -620,7 +642,7 @@ const Proposals: React.FC = () => {
                           <p className="text-sm text-gray-400 truncate max-w-[200px] sm:max-w-md">{prop.memo}</p>
                           <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
                             <span className="flex items-center gap-1"><Clock size={12} /> {new Date(prop.createdAt).toLocaleDateString()}</span>
-                            <span>• {prop.amount} {prop.token}</span>
+                            <span>• {stroopsToDecimal(prop.amount).toLocaleString()} {prop.tokenSymbol || (prop.token === 'NATIVE' ? 'XLM' : prop.token)}</span>
                           </div>
                         </div>
                       </div>
@@ -689,6 +711,18 @@ const Proposals: React.FC = () => {
                                 Approved
                               </div>
                             )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSimulatorSelectedProposalId(prop.id);
+                                setVaultSimulatorOpen(true);
+                              }}
+                              className="flex-1 sm:flex-initial bg-purple-500/10 hover:bg-purple-500 text-purple-400 hover:text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1.5 border border-purple-500/20"
+                              title="Simulate proposal scenario effect"
+                            >
+                              <Activity size={16} />
+                              Simulate
+                            </button>
                             {isSigner && (
                             <button
                               onClick={(e) => { e.stopPropagation(); setRejectingId(prop.id); setShowRejectModal(true); }}
@@ -789,6 +823,14 @@ const Proposals: React.FC = () => {
           onCreateProposal={() => setShowNewProposalModal(true)}
           onApprove={() => selectedProposal && handleApprove(selectedProposal.id, {} as React.MouseEvent)}
           onReject={() => selectedProposal && setShowRejectModal(true)}
+        />
+
+        <VaultSimulatorModal
+          isOpen={vaultSimulatorOpen}
+          onClose={() => setVaultSimulatorOpen(false)}
+          proposals={localProposals}
+          tokenBalances={tokenBalances}
+          selectedProposalId={simulatorSelectedProposalId}
         />
 
       </div>

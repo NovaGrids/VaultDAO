@@ -7,6 +7,7 @@ import type {
   NotificationState,
 } from '../types/notification';
 import { createWebSocketClient } from '../utils/websocket';
+import { newTransactionBuilder } from '../utils/transactionBuilder';
 import { loadNotificationPreferences, type NotificationEventKey } from '../utils/notifications';
 
 const STORAGE_KEY = 'vaultdao_notifications';
@@ -309,11 +310,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       try {
         if (!address) throw new Error('Wallet not connected');
         const sdk = (await import('stellar-sdk')) as any;
-        const { TransactionBuilder, Account, Networks, Operation, Asset } = sdk;
+        const { Account, Networks, Operation, Asset } = sdk;
         const account = new Account(address, '0');
-        const tx = new TransactionBuilder(account, { fee: '100' })
-          .setNetworkPassphrase(Networks.TESTNET)
-          .setTimeout(30)
+        const tx = (await newTransactionBuilder(account, { networkPassphrase: Networks.TESTNET }))
           .addOperation(Operation.payment({
             destination: address,
             asset: Asset.native(),

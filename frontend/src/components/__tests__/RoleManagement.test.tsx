@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import RoleManagement from '../RoleManagement';
 import { makeVaultContractMock, makeActionReadinessMock } from '../../test/mocks';
@@ -9,7 +9,10 @@ import { makeVaultContractMock, makeActionReadinessMock } from '../../test/mocks
 // ---------------------------------------------------------------------------
 vi.mock('../../hooks/useVaultContract');
 vi.mock('../../hooks/useActionReadiness');
-vi.mock('../../hooks/useToast', () => ({ useToast: () => ({ notify: vi.fn() }) }));
+// notify must be referentially stable (like the real memoized one), otherwise
+// RoleManagement's loadData effect re-runs on every render.
+const mockNotify = vi.hoisted(() => vi.fn());
+vi.mock('../../hooks/useToast', () => ({ useToast: () => ({ notify: mockNotify }) }));
 vi.mock('../modals/ConfirmationModal', () => ({ default: () => null }));
 vi.mock('../ReadinessWarning', () => ({ default: () => null }));
 
@@ -18,6 +21,18 @@ import { useActionReadiness } from '../../hooks/useActionReadiness';
 
 const mockUseVaultContract = vi.mocked(useVaultContract);
 const mockUseActionReadiness = vi.mocked(useActionReadiness);
+
+// Stellar public keys are 56 characters: 'G' + 55 base32 characters.
+const NEW_SIGNER = 'GNEW' + 'A'.repeat(52);
+
+/** Type a new signer address and click "Add Signer" once the admin form is ready. */
+async function addSigner(address: string) {
+  const addressInput = await screen.findByPlaceholderText(/Stellar Address/i);
+  // "Add Signer" is disabled while existing roles are still loading
+  await waitFor(() => expect(screen.queryByText('Loading signers...')).not.toBeInTheDocument());
+  fireEvent.change(addressInput, { target: { value: address } });
+  fireEvent.click(screen.getByRole('button', { name: /Add Signer/i }));
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -116,14 +131,11 @@ describe('RoleManagement component', () => {
     const input = screen.getByPlaceholderText(/stellar address/i);
     fireEvent.change(input, { target: { value: 'not-a-valid-address' } });
 
-    const assignBtn = screen.getByRole('button', { name: /assign/i });
+    const assignBtn = screen.getByRole('button', { name: /add signer/i });
     fireEvent.click(assignBtn);
 
-    await waitFor(() => {
-      // The notify mock is called with an error — we can't easily assert on toast,
-      // but the setRole should NOT have been called
-      expect(mockUseVaultContract.mock.results[0]?.value?.setRole).not.toHaveBeenCalled();
-    });
+    expect(mockNotify).toHaveBeenCalledWith('config_updated', 'Invalid Stellar address format', 'error');
+    expect(screen.queryByTestId(/^signer-card-/)).not.toBeInTheDocument();
   });
 
   it('displays role names correctly', async () => {
@@ -152,22 +164,20 @@ describe('RoleManagement component', () => {
       makeVaultContractMock({
         loading: false,
         getUserRole: vi.fn().mockResolvedValue(2),
-        getAllRoles: vi.fn().mockResolvedValue([]),
+        // Columns render once there is at least one signer
+        getAllRoles: vi.fn().mockResolvedValue([
+          { address: 'GABC' + 'A'.repeat(52), role: 2 },
+        ]),
       }) as ReturnType<typeof useVaultContract>
     );
 
     render(<RoleManagement />);
 
-    await waitFor(() => {
-      expect(screen.getByText('Drag to Assign Roles')).toBeInTheDocument();
-      // Columns should be present (Admin, Treasurer, Member)
-      const adminColumn = screen.getByText('Admin');
-      const treasurerColumn = screen.getByText('Treasurer');
-      const memberColumn = screen.getByText('Member');
-      expect(adminColumn).toBeInTheDocument();
-      expect(treasurerColumn).toBeInTheDocument();
-      expect(memberColumn).toBeInTheDocument();
-    });
+    expect(await screen.findByText('Drag to Assign Roles')).toBeInTheDocument();
+    // Column headings: Admin (2), Treasurer (1), Member (0)
+    expect(within(await screen.findByTestId('role-column-2')).getByText('Admin')).toBeInTheDocument();
+    expect(within(screen.getByTestId('role-column-1')).getByText('Treasurer')).toBeInTheDocument();
+    expect(within(screen.getByTestId('role-column-0')).getByText('Member')).toBeInTheDocument();
   });
 
   it('displays signer cards in their assigned role columns', async () => {
@@ -252,16 +262,8 @@ describe('RoleManagement component', () => {
 
     render(<RoleManagement />);
 
-    await waitFor(() => {
-      // Add a new signer to trigger pending change
-      const addressInput = screen.getByPlaceholderText(/Stellar Address/i) as HTMLInputElement;
-      fireEvent.change(addressInput, {
-        target: { value: 'GNEW1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB' },
-      });
-
-      const addBtn = screen.getByRole('button', { name: /Add Signer/i });
-      fireEvent.click(addBtn);
-    });
+    // Add a new signer to trigger a pending change
+    await addSigner(NEW_SIGNER);
 
     await waitFor(() => {
       const applyBtn = screen.getByRole('button', { name: /Apply Changes/i });
@@ -282,16 +284,8 @@ describe('RoleManagement component', () => {
 
     render(<RoleManagement />);
 
-    await waitFor(() => {
-      // Add a signer to create a pending change
-      const addressInput = screen.getByPlaceholderText(/Stellar Address/i) as HTMLInputElement;
-      fireEvent.change(addressInput, {
-        target: { value: 'GNEW1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB' },
-      });
-
-      const addBtn = screen.getByRole('button', { name: /Add Signer/i });
-      fireEvent.click(addBtn);
-    });
+    // Add a signer to create a pending change
+    await addSigner(NEW_SIGNER);
 
     await waitFor(() => {
       // Pending changes should be displayed

@@ -71,3 +71,25 @@ test("loadEnv - CORS_ORIGIN validation", () => {
     process.env = originalEnv;
   }
 });
+
+test("loadEnv - DATABASE_PATH must be persistent in production", () => {
+  const originalEnv = { ...process.env };
+
+  try {
+    process.env.NODE_ENV = "production";
+    process.env.DATABASE_PATH = ":memory:";
+    assert.throws(() => loadEnv(), (err: Error) => {
+      return err.message.includes("DATABASE_PATH must point to a persistent SQLite file in production");
+    });
+
+    process.env.NODE_ENV = "development";
+    process.env.HOST = "localhost";
+    process.env.SOROBAN_RPC_URL = "http://localhost:8000";
+    process.env.HORIZON_URL = "http://localhost:8000";
+    process.env.VITE_WS_URL = "ws://localhost:8080";
+    const env = loadEnv();
+    assert.equal(env.databasePath, ":memory:");
+  } finally {
+    process.env = originalEnv;
+  }
+});

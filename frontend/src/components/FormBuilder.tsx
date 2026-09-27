@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { FormField, FormConfig, FieldType } from '../types/formBuilder';
@@ -12,6 +13,7 @@ import FormPreview from './FormPreview';
 interface FormBuilderProps { initialConfig?: FormConfig; onSave?: (config: FormConfig) => void; onCancel?: () => void; }
 
 const FormBuilder: React.FC<FormBuilderProps> = ({ initialConfig, onSave, onCancel }) => {
+  const { t } = useTranslation();
   const [fields, setFields] = useState<FormField[]>(initialConfig?.fields ?? []);
   const [selectedFieldId, setSelectedFieldId] = useState<string | undefined>();
   const [previewMode, setPreviewMode] = useState(false);
@@ -42,7 +44,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({ initialConfig, onSave, onCanc
   const duplicateField = (id: string) => { const f = fields.find(x => x.id === id); if (f) addField(f.type); };
 
   const onSaveClick = () => {
-    if (!validateConditionalLogic(fields).valid) return alert('Circular dependencies in logic!');
+    if (!validateConditionalLogic(fields).valid) return alert(t('forms.circularDependencies'));
     onSave?.({ id: initialConfig?.id ?? `form-${Date.now()}`, name: formName || 'Untitled', description: formDescription, fields, createdAt: initialConfig?.createdAt ?? Date.now(), updatedAt: Date.now(), version: (initialConfig?.version ?? 0) + 1 });
   };
 

@@ -17,5 +17,12 @@
     "types": ["node", "ws", "express"]
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/**/*.test.ts",
+    "src/integration.test.ts",
+    "src/e2e.test.ts",
+    "src/shared/tracing/**"
+  ]
 }

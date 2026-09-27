@@ -2,13 +2,17 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useCollaboration } from '../useCollaboration';
 import * as Y from 'yjs';
-import { WebsocketProvider } from 'y-websocket';
+
+// The hook constructs the provider with `new`, so the mock implementation must
+// be a regular function (arrow functions are not constructible). The most
+// recent instance is captured for tests to drive awareness events.
+const providers = vi.hoisted(() => ({ last: null as null | { _triggerAwarenessChange: () => void } }));
 
 // Mock y-websocket
 vi.mock('y-websocket', () => ({
-  WebsocketProvider: vi.fn().mockImplementation(() => {
+  WebsocketProvider: vi.fn().mockImplementation(function () {
     let awarenessChangeCb: any = null;
-    return {
+    const provider = {
       awareness: {
         setLocalStateField: vi.fn(),
         getStates: vi.fn().mockReturnValue(new Map([
@@ -28,6 +32,8 @@ vi.mock('y-websocket', () => ({
         if (awarenessChangeCb) awarenessChangeCb();
       }
     };
+    providers.last = provider;
+    return provider;
   }),
 }));
 
@@ -35,6 +41,7 @@ describe('useCollaboration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    providers.last = null;
   });
 
   it('should initialize and connect when enabled', () => {
@@ -80,8 +87,8 @@ describe('useCollaboration', () => {
 
     // Trigger the mock awareness change
     act(() => {
-      const providerInstance = vi.mocked(WebsocketProvider).mock.results[0]?.value;
-      providerInstance._triggerAwarenessChange();
+      expect(providers.last).not.toBeNull();
+      providers.last!._triggerAwarenessChange();
     });
 
     expect(result.current.collaborators.length).toBe(1);

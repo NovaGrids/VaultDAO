@@ -26,6 +26,11 @@ export type {
   SnapshotDiff,
   SnapshotFieldChange,
   SnapshotDiffStorageAdapter,
+  SnapshotConsistencyResult,
+  SnapshotConsistencyMismatch,
+  OnChainConfigProvider,
+  SnapshotVerificationEvent,
+  SnapshotVerificationEmitter,
 } from "./types.js";
 
 export { Role as RoleEnum } from "./types.js";

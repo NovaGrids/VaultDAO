@@ -1,0 +1,38 @@
+[package]
+name = "vault_dao_fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+vault_dao = { path = ".." }
+soroban-sdk = { version = "22.0.8", features = ["testutils"] }
+arbitrary = { version = "1.3", features = ["derive"] }
+libfuzzer-sys = "0.4"
+
+# Keep the fuzz crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_spending_limit"
+path = "fuzz_targets/fuzz_spending_limit.rs"
+
+[[bin]]
+name = "fuzz_vote_threshold"
+path = "fuzz_targets/fuzz_vote_threshold.rs"
+
+[[bin]]
+name = "fuzz_arithmetic"
+path = "fuzz_targets/fuzz_arithmetic.rs"
+
+[[bin]]
+name = "fuzz_execute_proposal"
+path = "fuzz_targets/fuzz_execute_proposal.rs"
+
+[[bin]]
+name = "fuzz_create_proposal"
+path = "fuzz_targets/fuzz_create_proposal.rs"

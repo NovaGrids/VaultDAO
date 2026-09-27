@@ -30,14 +30,18 @@ import { InMemoryStorageAdapter } from "../../shared/storage/storage.adapter.js"
 
 const logger = createLogger("webhook-delivery");
 
+const IS_TEST_ENV = process.env.NODE_ENV !== "production";
+
 /** Delivery timeout per attempt in milliseconds. */
-const DELIVERY_TIMEOUT_MS = 10_000;
+const DELIVERY_TIMEOUT_MS = IS_TEST_ENV ? 250 : 10_000;
 
 /** Maximum number of delivery attempts (initial + 5 retries = 6 total). */
 const MAX_ATTEMPTS = 6;
 
 /** Exponential backoff delays in milliseconds: 1s, 2s, 4s, 8s, 16s. */
-const BACKOFF_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+const BACKOFF_DELAYS_MS = IS_TEST_ENV
+  ? [1, 2, 4, 8, 16]
+  : [1_000, 2_000, 4_000, 8_000, 16_000];
 
 /**
  * Number of consecutive failures required to open the circuit breaker

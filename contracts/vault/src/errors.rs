@@ -12,6 +12,8 @@ pub enum VaultError {
     NotInitialized = 2,
     /// No signers provided during initialization
     NoSigners = 3,
+    /// Threshold is below the required minimum of 2 (prevents single-signer wallets)
+    ThresholdTooLow = 4,
     /// Threshold exceeds the number of signers
     ThresholdTooHigh = 5,
     /// Quorum exceeds the number of signers
@@ -91,6 +93,9 @@ pub enum VaultError {
     // Issue #1064: Streaming Rate Limiter
     StreamRateLimitExceeded = 230,
     StreamDustRejected = 231,
+    // Issue #1694: trigger_stream_payment accrual check
+    /// Requested withdrawal exceeds the amount accrued by the stream so far
+    StreamClaimExceedsAccrued = 233,
     // Issue #1075: Insurance Claim Governance
     ClaimNotFound = 240,
     ClaimNotPending = 241,
@@ -98,6 +103,15 @@ pub enum VaultError {
     ClaimSelfVote = 243,
     ClaimVoteDeadlineTooShort = 244,
     ClaimBondInsufficient = 245,
+    // Issue #1355: quorum + explicit voting window closure
+    /// Vote cast after the claim's voting window has passed
+    ClaimVotingWindowClosed = 246,
+    /// Voting cannot be closed yet: the window has not elapsed and not everyone has voted
+    ClaimVotingStillOpen = 247,
+    /// Participation fell short of the claim's quorum requirement
+    ClaimQuorumNotMet = 248,
+    /// Voting for this claim has already been closed and tallied
+    ClaimAlreadyClosed = 249,
     // Issue #1081: Multi-Token Vault
     TokenAlreadySupported = 250,
     TokenNotSupported = 251,
@@ -200,6 +214,16 @@ pub enum VaultError {
     RevealDeadlineNotPassed = 1106,
     /// This proposal does not use private (commit-reveal) voting
     PrivateVotingNotEnabled = 1107,
+
+    /// Cold signature was created more ledgers ago than
+    /// `ColdSignerConfig::max_cold_sig_age_ledgers` permits. Guards against a
+    /// signature produced offline long ago being submitted to approve a
+    /// proposal that did not exist when it was signed.
+    ColdSignatureTooOld = 1110,
+
+    /// Cold signature claims a creation ledger in the future, which cannot be
+    /// honest and would otherwise sidestep the maximum-age check.
+    ColdSignatureFutureDated = 1111,
 
     // =========================================================
     // Dependency graph errors (Issue #1066)
@@ -304,6 +328,7 @@ pub enum VaultError {
     // Emergency pause / circuit breaker (#1084)
     // =========================================================
     VaultPaused = 1020,
+    VaultNotPaused = 1021,
 
     // =========================================================
     // Dependency graph depth (#1066)
@@ -354,6 +379,8 @@ pub enum VaultError {
     CannotRemoveSigner = 85,
     DuplicateProposal = 26,
     ExecutionWindowExpired = 27,
+    /// Approved proposal's execution window has passed (issue #1349)
+    ProposalExecutionWindowExpired = 28,
     GasLimitExceeded = 161,
     InsurancePoolInsufficient = 111,
     InvalidDeadline = 44,
@@ -368,6 +395,112 @@ pub enum VaultError {
     // =========================================================
     /// Gas-price oracle contract returned a zero or negative price
     GasPriceOracleInvalidPrice = 723,
+
+    // =========================================================
+    // Issue #1361: Atomic Batch Rollback
+    // =========================================================
+    /// A transfer failed during batch commit despite passing pre-commit simulation
+    BatchCommitFailed = 1120,
+
+    // =========================================================
+    // Issue #1091: Keeper Network Lifecycle Hooks
+    // =========================================================
+    /// Maximum hooks per event type (5) or total hooks (20) exceeded
+    HookLimitExceeded = 1200,
+    /// Hook registration not found for the specified keeper/event pair
+    HookNotFound = 1201,
+    /// A hook for this keeper+event_type combination already exists
+    HookAlreadyRegistered = 1202,
+    // Amendment diff viewer
+    // =========================================================
+    /// compare_amendments was called with an index outside the amendment history bounds
+    AmendmentIndexOutOfBounds = 1121,
+
+    // =========================================================
+    // Issue #23: Proposal supersession chain traversal
+    // =========================================================
+    /// Supersession chain traversal detected a cycle (defensive; should not occur in normal operation)
+    SupersessionCycleDetected = 1122,
+    /// Supersession chain exceeds the maximum traversal depth
+    SupersessionChainTooLong = 1123,
+
+    // =========================================================
+    // Vault template export/clone
+    // =========================================================
+    /// VaultTemplate failed validation (e.g. invalid threshold ratio)
+    InvalidTemplate = 1124,
+
+    // =========================================================
+    // Issue #1356: Proposal amendment limits
+    // =========================================================
+    /// The proposal has already been amended the maximum number of times
+    AmendmentLimitExceeded = 1125,
+
+    // =========================================================
+    // Issue #1363: Batch dependency validation
+    // =========================================================
+    /// A batched proposal depends on something that is neither in the batch nor already executed
+    BatchDependencyMissing = 1126,
+
+    // =========================================================
+    // Issue #1350: Pause Circuit Breaker Cooldown
+    // =========================================================
+    /// Pause/unpause action is in cooldown period
+    PauseCooldownActive = 1127,
+    /// Caller is not an emergency signer
+    NotEmergencySigner = 1128,
+
+    // =========================================================
+    // Issue #1093: Signer Participation Scoring
+    // =========================================================
+    /// get_participation_rate was called with a window exceeding the 100-proposal cap
+    InvalidParticipationWindow = 1129,
+    /// Target signer is not currently in a sustained (>= 30 day) low-participation streak
+    SignerNotEligibleForForceRotation = 1130,
+    /// This signer has already approved this force-rotation request
+    ForceRotationAlreadyApprovedBySigner = 1131,
+    /// This force-rotation request has already been executed
+    ForceRotationAlreadyExecuted = 1132,
+    /// The proposed replacement address is already a signer
+    ForceRotationReplacementAlreadySigner = 1133,
+    /// No force-rotation request exists for the given ID
+    ForceRotationRequestNotFound = 1134,
+
+    // =========================================================
+    // Issue #1092: Spending Limit Reset Audit
+    // =========================================================
+    /// This signer has already approved this manual spending-limit reset request
+    SpendingLimitResetAlreadyApprovedBySigner = 1135,
+    // Issue #1527: Veto config validation
+    // =========================================================
+    /// veto_addresses is non-empty but veto_window_ledgers is 0 (veto would be silently disabled)
+    InvalidVetoConfig = 1136,
+    // Issue #1708: Swap price-impact arithmetic
+    // =========================================================
+    /// Checked arithmetic overflowed
+    ArithmeticOverflow = 1137,
+    /// Oracle returned an unusable (zero or negative) price
+    OracleError = 1138,
+    // Issue #1704: Bounded notification index
+    // =========================================================
+    /// Notification subscriber index has reached its hard cap
+    NotificationIndexFull = 1139,
+
+    // =========================================================
+    // Issue #1739: Dedicated stream / vesting / lock errors
+    // (numbered 1160+ to leave headroom for concurrently added variants)
+    // =========================================================
+    /// Streaming payment exists but is not in the Active state
+    StreamNotActive = 1160,
+    /// No vesting schedule exists with the given ID
+    VestingNotFound = 1161,
+    /// Owner already has an active token lock
+    LockAlreadyActive = 1162,
+    /// Active vesting schedule cap has been reached
+    VestingCapReached = 1163,
+    // Issue #1748: Storage schema versioning
+    /// Stored schema version does not match this contract build; call `migrate`
+    SchemaVersionMismatch = 1140,
 }
 
 // Compatibility markers for CI source checks:

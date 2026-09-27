@@ -209,6 +209,36 @@ For each event:
   1. `proposal_id: u64`
   2. `vetoer: Address`
 
+#### `veto_addr_added`
+
+- **Contract topic**: `veto_addr_added`
+- **Published data**:
+  1. `admin: Address`
+  2. `addr: Address`
+
+#### `veto_addr_removed`
+
+- **Contract topic**: `veto_addr_removed`
+- **Published data**:
+  1. `admin: Address`
+  2. `addr: Address`
+
+#### `recipient_list_changed`
+
+- **Contract topic**: `recipient_list_changed`
+- **Published data**:
+  1. `mode: Symbol` (`whitelist`, `blacklist`, `wl_entry`, or `list_mode`)
+  2. `address: Address` (the affected address; the acting admin for `list_mode`)
+  3. `added: bool` (for `list_mode`: true when a list is enabled)
+
+#### `recipient_list_bulk_changed`
+
+- **Contract topic**: `recipient_list_bulk_changed`
+- **Published data**:
+  1. `mode: Symbol` (`whitelist` or `blacklist`)
+  2. `addresses: Vec<Address>` (only addresses actually changed)
+  3. `added: bool`
+
 #### `proposal_amended`
 
 - **Contract topic**: `proposal_amended`
@@ -768,6 +798,41 @@ For each event:
   1. `stream_id: u64`
   2. `recipient: Address`
   3. `amount: i128`
+
+### Vesting
+
+Vesting events use a two-element topic: the event symbol followed by the schedule id. See the [Vesting guide](../guides/VESTING.md).
+
+#### `vesting_created`
+
+- **Contract topic**: `vesting_created`, `schedule_id: u64`
+- **Emitted by**: `create_vesting_schedule`
+- **Published data**:
+  1. `beneficiary: Address`
+  2. `token: Address`
+  3. `total: i128`
+  4. `cliff_ledger: u32`
+  5. `end_ledger: u32`
+
+> `start_ledger` is not part of the payload; read it with `get_vesting_schedule(schedule_id)`.
+
+#### `vesting_claimed`
+
+- **Contract topic**: `vesting_claimed`, `schedule_id: u64`
+- **Emitted by**: `claim_vested_tokens` (only when the claimable amount is non-zero)
+- **Published data**:
+  1. `beneficiary: Address`
+  2. `amount: i128` — amount transferred by this claim
+  3. `total_claimed: i128` — cumulative amount claimed on the schedule
+
+#### `vesting_cancelled`
+
+- **Contract topic**: `vesting_cancelled`, `schedule_id: u64`
+- **Emitted by**: `cancel_vesting` (not emitted when the schedule was already cancelled or fully claimed)
+- **Published data**:
+  1. `admin: Address`
+  2. `vested_unclaimed: i128` — paid to the beneficiary on cancellation
+  3. `unvested: i128` — released back to the treasury
 
 ### Cross-vault, bridge, permissions, disputes, DEX
 
@@ -1511,6 +1576,40 @@ Mapped via misc normalizer.
 
 > Reminder: for a strict field-by-field guarantee, always validate against runtime payloads from your deployment, because some event types share normalizer paths and/or rely on generic normalization.
 
+### Variable templates (Issue #1736)
+
+#### `var_template_created`
+
+- **Contract topic**: `var_template_created` (second topic: `template_id: u64`)
+- **Published data**: `(name: Symbol, creator: Address)`
+
+#### `var_template_updated`
+
+- **Contract topic**: `var_template_updated` (second topic: `template_id: u64`)
+- **Published data**: `(name: Symbol, version: u32, updater: Address)`
+
+#### `var_template_deactivated`
+
+- **Contract topic**: `var_template_deactivated` (second topic: `template_id: u64`)
+- **Published data**: `(name: Symbol, admin: Address)`
+
+### Vesting (Issue #1737)
+
+#### `vesting_created`
+
+- **Contract topic**: `vesting_created` (second topic: `schedule_id: u64`)
+- **Published data**: `(beneficiary: Address, token: Address, total: i128, cliff_ledger: u32, end_ledger: u32)`
+
+#### `vesting_claimed`
+
+- **Contract topic**: `vesting_claimed` (second topic: `schedule_id: u64`)
+- **Published data**: `(beneficiary: Address, claimed_now: i128, total_claimed: i128)`
+
+#### `vesting_cancelled`
+
+- **Contract topic**: `vesting_cancelled` (second topic: `schedule_id: u64`)
+- **Published data**: `(admin: Address, vested_unclaimed_paid: i128, unvested_returned: i128)`
+
 ## WebSocket realtime subscription guide
 
 WebSocket realtime streaming is implemented in `backend/src/modules/realtime/realtime-server.ts`.
@@ -1704,3 +1803,36 @@ The backend exposes:
 - `GET /events/types`
 
 It returns registered event type mappings (`EventNormalizer.registeredTypes()`). Use it to verify topic strings and the corresponding `EventType` values in your deployment.
+
+## Recurring payment status events (Issue #1732)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `recurring_paused` | `(symbol, payment_id: u64)` | `(caller: Address, paused_at_ledger: u64)` |
+| `recurring_resumed` | `(symbol, payment_id: u64)` | `(caller: Address, next_payment_ledger: u64)` |
+| `recurring_stopped` | `(symbol, payment_id: u64)` | `(caller: Address, stopping: bool)` |
+
+## Capability token events (Issue #1733)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `capability_granted` | `(symbol, token_id: BytesN<32>)` | `(admin, holder, capability_count: u32, expires_at: u32, max_uses: u32)` |
+| `capability_revoked` | `(symbol, token_id: BytesN<32>)` | `(admin, holder)` |
+
+## Tag taxonomy events (Issue #1734)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `tag_created` | `(symbol, tag_id: u64)` | `(caller, name: Symbol, parent_id: Option<u64>)` |
+| `tag_deleted` | `(symbol, tag_id: u64)` | `caller` |
+| `proposal_tags_changed` | `(symbol, proposal_id: u64)` | `(caller, tag_count: u32)` |
+
+`proposal_tags_changed` is emitted by `add_proposal_tag`, `remove_proposal_tag`, `bulk_add_tags` and `assign_tags` (only when something changed for add/bulk).
+
+## Config parameter change event (Issue #1735)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `config_param_changed` | `(symbol, param: Symbol)` | `admin: Address` |
+
+`param` is one of: `time_weighted`, `gov_threshold`, `cold_signer`, `max_amendments`, `insurance_vote`, `stream_rate`, `snapshot_intvl`, `cost_model`.

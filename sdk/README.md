@@ -12,17 +12,21 @@ The official TypeScript SDK for building on VaultDAO — a decentralized treasur
 4. [Core Concepts](#core-concepts)
 5. [Creating Your First Proposal](#creating-your-first-proposal)
 6. [Voting and Execution](#voting-and-execution)
-7. [Setting Up Recurring Payments](#setting-up-recurring-payments)
-8. [Reading Audit Logs](#reading-audit-logs)
-9. [Event Subscription (WebSocket)](#event-subscription-websocket)
-10. [Streaming Payments](#streaming-payments)
-11. [Escrow Operations](#escrow-operations)
-12. [Proposal Templates](#proposal-templates)
-13. [Recovery Operations](#recovery-operations)
-14. [Error Handling](#error-handling)
-15. [TypeScript Types Reference](#typescript-types-reference)
-16. [Common Mistakes](#common-mistakes)
-17. [Examples](#examples)
+7. [Batch Transaction Orchestration](#batch-transaction-orchestration)
+8. [Setting Up Recurring Payments](#setting-up-recurring-payments)
+9. [Reading Audit Logs](#reading-audit-logs)
+10. [Event Subscription (WebSocket)](#event-subscription-websocket)
+11. [Streaming Payments](#streaming-payments)
+12. [Escrow Operations](#escrow-operations)
+13. [Vesting Schedules](#vesting-schedules)
+14. [Token Locks](#token-locks)
+15. [Funding Rounds](#funding-rounds)
+16. [Proposal Templates](#proposal-templates)
+17. [Recovery Operations](#recovery-operations)
+18. [Error Handling](#error-handling)
+19. [TypeScript Types Reference](#typescript-types-reference)
+20. [Common Mistakes](#common-mistakes)
+21. [Examples](#examples)
 
 ---
 
@@ -352,6 +356,164 @@ See [sdk/examples/vote-proposal.ts](./examples/vote-proposal.ts) for a complete 
 
 ---
 
+## Batch Transaction Orchestration
+
+For applications that need to create, approve, and execute multiple proposals in a controlled workflow, the SDK provides `BatchProposalOrchestrator` — a fluent builder that simplifies batch operations with state tracking and retry logic.
+
+### Use Cases
+
+- **Payroll automation**: Create multiple salary proposals in one batch
+- **Bulk payments**: Process vendor payments, refunds, or rewards
+- **Multi-signer workflows**: Track approvals from different signers
+- **Resilient operations**: Automatic retry with exponential backoff for transient failures
+
+### Basic Batch Workflow
+
+```typescript
+import { createBatchOrchestrator } from "@vaultdao/sdk";
+
+const opts = buildOptions("testnet", "CCONTRACTID...");
+
+// Create orchestrator
+const orchestrator = createBatchOrchestrator(opts);
+
+// Builder pattern: fluently add transfers
+orchestrator
+  .addTransfer({
+    recipientPublicKey: "GSALARY1...",
+    tokenAddress: "CDLZFC3...", // XLM SAC
+    amount: BigInt(10_000_000), // 1 XLM
+    description: "Alice salary",
+  })
+  .addTransfer({
+    recipientPublicKey: "GSALARY2...",
+    tokenAddress: "CDLZFC3...",
+    amount: BigInt(15_000_000), // 1.5 XLM
+    description: "Bob salary",
+  })
+  .addTransfer({
+    recipientPublicKey: "GVENDOR...",
+    tokenAddress: "CDLZFC3...",
+    amount: BigInt(50_000_000), // 5 XLM
+    description: "Q4 vendor payment",
+  });
+
+// Get transfers before submission
+const transfers = orchestrator.getTransfers();
+console.log(`Ready to propose ${transfers.length} transfers`);
+```
+
+### Creating Proposals in Batch
+
+```typescript
+// Propose all transfers
+const createdTxHashes = await orchestrator.createProposals(wallet.publicKey);
+console.log(`Created ${createdTxHashes.length} proposals`);
+
+// After on-chain indexing, manually register proposal IDs from events
+orchestrator.addCreatedProposalIds(["proposal-1", "proposal-2", "proposal-3"]);
+```
+
+### Approving Proposals with Retry Logic
+
+The orchestrator automatically retries failed approvals with exponential backoff:
+
+```typescript
+// Custom retry configuration (optional)
+const orchestrator = createBatchOrchestrator(opts, {
+  maxAttempts: 3,              // Retry up to 3 times
+  initialBackoffMs: 1000,      // Start with 1 second delay
+  maxBackoffMs: 10000,         // Cap backoff at 10 seconds
+});
+
+// Approve all proposals from a signer
+const approvedCount = await orchestrator.approveAllProposals(wallet.publicKey);
+console.log(`Approved ${approvedCount} proposals`);
+
+// Or approve specific proposals
+await orchestrator.approveProposal(wallet.publicKey, "proposal-1");
+```
+
+### Executing Proposals
+
+```typescript
+// Execute all proposals
+const executedIds = await orchestrator.executeAllProposals(wallet.publicKey);
+console.log(`Executed ${executedIds.length} proposals`);
+
+// Or execute specific proposals
+await orchestrator.executeProposal(wallet.publicKey, "proposal-1");
+```
+
+### Full Orchestration Workflow
+
+For complete automation, use `executeFullOrchestration()`:
+
+```typescript
+const result = await orchestrator.executeFullOrchestration(
+  proposerPublicKey,    // Creates proposals
+  approverPublicKey,    // Approves proposals
+  executorPublicKey,    // Executes proposals
+);
+
+console.log(`Orchestration Results:`);
+console.log(`  Created: ${result.created}`);
+console.log(`  Approved: ${result.approved}`);
+console.log(`  Executed: ${result.executed}`);
+console.log(`  Failed: ${result.failed}`);
+
+if (result.errors.length > 0) {
+  console.log(`Errors:`);
+  for (const error of result.errors) {
+    console.log(`  ${error.step}: ${error.error}`);
+  }
+}
+```
+
+### State Tracking and Diagnostics
+
+The orchestrator tracks state throughout the workflow for debugging:
+
+```typescript
+// Get all created proposal IDs
+const createdIds = orchestrator.getCreatedProposalIds();
+
+// Get executed proposal IDs
+const executedIds = orchestrator.getExecutedProposalIds();
+
+// Retrieve all errors encountered
+const errors = orchestrator.getErrors();
+
+// Inspect full state
+const state = orchestrator.getState();
+console.log(`Transfers: ${state.transfers.length}`);
+console.log(`Created: ${state.createdProposalIds.length}`);
+console.log(`Executed: ${state.executedProposalIds.length}`);
+console.log(`Approvals: ${state.approvalCounts.size} unique proposals`);
+```
+
+### Resetting and Reusing
+
+Reset the orchestrator to start a new batch:
+
+```typescript
+orchestrator.reset();
+
+// Now add new transfers
+orchestrator.addTransfer({
+  recipientPublicKey: "GNEWRECIPIENT...",
+  tokenAddress: "CDLZFC3...",
+  amount: BigInt(20_000_000),
+  description: "New payment batch",
+});
+```
+
+### Complete Example
+
+See [sdk/examples/batch-orchestration.ts](./examples/batch-orchestration.ts) for a full working example with all features.
+
+---
+
 ## Setting Up Recurring Payments
 
 Recurring payments allow vaults to schedule automatic transfers on a fixed schedule (e.g., monthly payroll, subscription payments).
@@ -599,7 +761,13 @@ const txXdr = await createEscrow(
   "GCONTRACTOR...",      // Contractor receiving funds
   "CDLZFC3...",          // Token
   BigInt(500_000_000),   // 50 XLM total
-  3,                     // 3 milestones
+  [
+    // Milestones are numbered 1..n in this order; percentages must sum to 100
+    { percentage: 30, releaseLedger: currentLedger + 120_960n },
+    { percentage: 70, releaseLedger: currentLedger + 518_400n },
+  ],
+  1_036_800n,            // Expires (full refund) after ~60 days
+  "GARBITRATOR...",      // Resolves disputes
   opts,
 );
 
@@ -609,25 +777,136 @@ const txHash = await signAndSubmit(txXdr, opts);
 ### Completing Milestones and Releasing Funds
 
 ```typescript
-import { completeMilestone, releaseEscrow, signAndSubmit } from "@vaultdao/sdk";
+import { completeMilestone, releaseEscrow, getEscrowInfo, signAndSubmit } from "@vaultdao/sdk";
 
 // Mark milestone 1 as complete
-const milestoneXdr = await completeMilestone(wallet.publicKey, escrowId, 1, opts);
+const milestoneXdr = await completeMilestone(wallet.publicKey, escrowId, 1n, opts);
 await signAndSubmit(milestoneXdr, opts);
 
 // Release funds for completed milestones
 const releaseXdr = await releaseEscrow(wallet.publicKey, escrowId, opts);
 await signAndSubmit(releaseXdr, opts);
+
+const escrow = await getEscrowInfo(escrowId, wallet.publicKey, opts);
+console.log(escrow.releasedAmount, escrow.milestones);
 ```
 
 ### Disputes
 
 ```typescript
-import { disputeEscrow, signAndSubmit } from "@vaultdao/sdk";
+import { disputeEscrow, resolveEscrowDispute, signAndSubmit } from "@vaultdao/sdk";
 
-const disputeXdr = await disputeEscrow(wallet.publicKey, escrowId, "Work not delivered", opts);
+// Reason is a Soroban Symbol (≤ 32 chars, letters/digits/underscore)
+const disputeXdr = await disputeEscrow(wallet.publicKey, escrowId, "not_delivered", opts);
 await signAndSubmit(disputeXdr, opts);
+
+// Arbitrator: true releases to the recipient, false refunds the funder
+const resolveXdr = await resolveEscrowDispute(arbitrator.publicKey, escrowId, false, opts);
 ```
+
+See [sdk/examples/create-escrow.ts](./examples/create-escrow.ts) for a full working example.
+
+---
+
+## Vesting Schedules
+
+Admins can reserve vault funds for a beneficiary that vest linearly between `startLedger` and `endLedger`, with nothing claimable before `cliffLedger` (`start <= cliff < end`).
+
+```typescript
+import {
+  createVestingSchedule,
+  claimVestedTokens,
+  cancelVesting,
+  getVestingSchedule,
+  signAndSubmit,
+} from "@vaultdao/sdk";
+
+const xdr = await createVestingSchedule(
+  admin.publicKey,
+  "GBENEFICIARY...",
+  "CDLZFC3...",           // Token
+  BigInt(10_000_000_000), // 1,000 XLM
+  cliffLedger,
+  startLedger,
+  endLedger,
+  opts,
+);
+await signAndSubmit(xdr, opts);
+
+// Beneficiary claims whatever has vested so far
+await signAndSubmit(await claimVestedTokens(beneficiary.publicKey, scheduleId, opts), opts);
+
+const schedule = await getVestingSchedule(scheduleId, beneficiary.publicKey, opts); // null if missing
+
+// Admin cancels; unvested tokens return to the vault
+await signAndSubmit(await cancelVesting(admin.publicKey, scheduleId, opts), opts);
+```
+
+See [sdk/examples/create-vesting.ts](./examples/create-vesting.ts).
+
+---
+
+## Token Locks
+
+Lock tokens for a number of ledgers to earn a voting-power multiplier.
+
+```typescript
+import { lockTokens, extendLock, unlockTokens, unlockEarly, getTokenLock } from "@vaultdao/sdk";
+
+await signAndSubmit(await lockTokens(wallet.publicKey, token, BigInt(1_000_000_000), 518_400n, opts), opts);
+await signAndSubmit(await extendLock(wallet.publicKey, 120_960n, opts), opts);
+
+const lock = await getTokenLock(wallet.publicKey, wallet.publicKey, opts); // null if none
+console.log(lock?.unlockAt, lock?.powerMultiplierBps);
+
+// After expiry:
+await signAndSubmit(await unlockTokens(wallet.publicKey, opts), opts);
+// Or exit early with a penalty:
+await signAndSubmit(await unlockEarly(wallet.publicKey, opts), opts);
+```
+
+See [sdk/examples/lock-tokens.ts](./examples/lock-tokens.ts).
+
+---
+
+## Funding Rounds
+
+Milestone-gated grants: a round is proposed, approved, and funds are released per milestone once it is submitted and verified. Milestones are addressed by **zero-based index**.
+
+```typescript
+import {
+  createFundingRound,
+  approveFundingRound,
+  submitMilestone,
+  verifyMilestone,
+  releaseRoundFunds,
+  cancelFundingRound,
+  getFundingRound,
+} from "@vaultdao/sdk";
+
+const xdr = await createFundingRound(
+  proposer.publicKey,
+  "GPROJECT...",
+  token,
+  BigInt(100_000_000_000),
+  [
+    // Either fixed amounts, or basis points that sum to exactly 10000
+    { description: "Testnet MVP", amount: 0n, releasePercentageBps: 4_000 },
+    { description: "Mainnet", amount: 0n, releasePercentageBps: 6_000, requiredVerifiers: 2 },
+  ],
+  opts,
+);
+
+await signAndSubmit(await approveFundingRound(admin.publicKey, roundId, opts), opts);
+await signAndSubmit(await submitMilestone(project.publicKey, roundId, 0, opts), opts);
+await signAndSubmit(await verifyMilestone(signer.publicKey, roundId, 0, opts), opts);
+await signAndSubmit(await releaseRoundFunds(signer.publicKey, roundId, 0, opts), opts);
+
+const round = await getFundingRound(roundId, wallet.publicKey, opts);
+console.log(round.status, round.milestones.map((m) => m.status));
+```
+
+See [sdk/examples/funding-round.ts](./examples/funding-round.ts).
 
 ---
 
@@ -746,6 +1025,18 @@ try {
 }
 ```
 
+### Error Registry
+
+You can inspect the full SDK error registry directly or lookup a single description by code:
+
+```typescript
+import { ERROR_REGISTRY, getErrorDescription, VaultErrorCode } from "@vaultdao/sdk";
+
+const entry = ERROR_REGISTRY[VaultErrorCode.ProposalExpired];
+console.log(entry?.description);
+console.log(getErrorDescription(VaultErrorCode.ProposalExpired));
+```
+
 ### Error Codes Reference
 
 | Code | Name | Meaning |
@@ -781,6 +1072,11 @@ import type {
   StreamingPayment,  // Continuous streaming payment
   Subscription,      // Subscription record
   Escrow,            // Milestone-based escrow
+  EscrowMilestoneInput, // Milestone definition for createEscrow
+  VestingSchedule,   // Linear vesting schedule
+  TokenLock,         // Time-locked token position
+  FundingRound,      // Milestone-gated funding round
+  FundingMilestoneInput, // Milestone definition for createFundingRound
   ProposalTemplate,  // Reusable proposal template
   Comment,           // Proposal comment
 
@@ -797,6 +1093,9 @@ import type {
 import {
   Role,              // Member, Treasurer, Admin
   ProposalStatus,    // Pending, Approved, Executed, Rejected, Expired
+  EscrowStatus,      // Pending, Active, MilestonesComplete, Released, Refunded, Disputed
+  FundingRoundStatus,     // Pending, Approved, Active, Completed, Cancelled
+  FundingMilestoneStatus, // Pending, Submitted, Verified, Rejected
   VaultErrorCode,    // Contract error codes
 } from "@vaultdao/sdk";
 ```
@@ -949,6 +1248,10 @@ Working example scripts are in the [`examples/`](./examples/) directory:
 | [`vote-proposal.ts`](./examples/vote-proposal.ts) | Full voting workflow: check, approve, execute |
 | [`create-recurring.ts`](./examples/create-recurring.ts) | Set up a recurring payment schedule |
 | [`listen-events.ts`](./examples/listen-events.ts) | Subscribe to real-time vault events via WebSocket |
+| [`create-vesting.ts`](./examples/create-vesting.ts) | Create a vesting schedule and claim vested tokens |
+| [`lock-tokens.ts`](./examples/lock-tokens.ts) | Lock, extend and unlock tokens for voting power |
+| [`create-escrow.ts`](./examples/create-escrow.ts) | Milestone escrow: fund, complete, release, dispute |
+| [`funding-round.ts`](./examples/funding-round.ts) | Funding round lifecycle: propose, approve, verify, release |
 
 Run any example:
 

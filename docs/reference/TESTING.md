@@ -26,7 +26,7 @@ As of this writing the project has **749 contract tests** (across 35 `test_*.rs`
 
 ### Recommended split
 
-VaultDAO doesn't currently have end-to-end (e2e) tests — there's no Playwright or Cypress setup in the repo today. Given that, the realistic, evidence-based pyramid for this project is:
+VaultDAO has a small Playwright end-to-end suite in `frontend/e2e/` (run with `npm run test:e2e`; it is excluded from Vitest). The realistic, evidence-based pyramid for this project is:
 
 | Layer | Style | Approximate share | Why |
 |---|---|---|---|
@@ -34,7 +34,7 @@ VaultDAO doesn't currently have end-to-end (e2e) tests — there's no Playwright
 | Frontend component/hook tests | Unit + light integration | ~30% of all tests | `@testing-library/react` tests render real components with mocked wallet/SDK boundaries — closer to integration than pure unit, but still fast and isolated |
 | Backend unit + property tests | Unit + property-based | ~10% of all tests | Pure functions (normalizers, calculators) are perfect property-test candidates |
 | Backend integration tests (`supertest`) | Integration | ~5% of all tests | Spin up an in-memory Express app per test — no real server, no real network |
-| End-to-end | — | **0% — not yet set up** | If/when this is added, keep it the smallest slice; e2e is the slowest and flakiest layer by nature |
+| End-to-end (Playwright, `frontend/e2e/`) | E2E | smallest slice | Keep it the smallest slice; e2e is the slowest and flakiest layer by nature |
 
 This roughly mirrors the actual test counts in the repo today (749 contract / 571 frontend / 464 backend). If you're adding a new feature, default to a contract or backend **unit** test first; reach for an integration-style test only when you need to verify how multiple pieces interact (an HTTP route end-to-end, a component plus real DOM events).
 
@@ -672,128 +672,31 @@ test('processes a transaction once it succeeds', async () => {
 Node's built-in `mock` module (`node:test`'s `mock.fn()`) is usually enough — reach for a separate mocking library only if you need something it doesn't support (partial module mocking is more limited than Vitest's `vi.mock`).
 ## 5. CI Pipeline
 
-Every push to `main`, `feature/**`, or `fix/**`, and every PR targeting `main`, triggers the **CI** workflow (`.github/workflows/test.yml`). It currently runs two jobs:
+Every push and PR to `main` runs `.github/workflows/ci.yml` with these jobs:
 
-| Job (internal id) | Display name | What it does |
-|---|---|---|
-| `contract-tests` | Smart Contract Tests | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, then builds the release WASM |
-| `backend-checks` | Backend Checks | Installs deps, copies `.env.example` → `.env`, `npm run backend:typecheck`, `npm run backend:test` |
+| Job | What it does |
+| --- | --- |
+| **Frontend** | `npm ci --legacy-peer-deps` + `npm run typecheck` + `npm test` (Vitest) in `frontend/` |
+| **Frontend E2E (Playwright)** | Installs Chromium and runs `npm run test:e2e -- --project=chromium` against the dev server in demo mode |
+| **Contract** | `cargo check --lib` in `contracts/vault/` |
 
-**There is currently no frontend job in CI.** Frontend tests exist (47 files, 571 tests) and can be run locally with `npm test`, but nothing runs them automatically on push or PR today. If you're adding frontend tests as part of a feature PR, your tests will pass locally but **CI will not catch a frontend regression** until a `test-frontend` job is added.
-
-### 5.1 The Real Workflow
-
-```yaml
-name: CI
-
-on:
-  push:
-    branches: [main, "feature/**", "fix/**"]
-  pull_request:
-    branches: [main]
-
-jobs:
-  contract-tests:
-    name: Smart Contract Tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: contracts/vault
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            contracts/vault/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/vault/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Lint (clippy)
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Run tests
-        run: cargo test
-      - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
-
-  backend-checks:
-    name: Backend Checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: backend/package-lock.json
-      - name: Install root dependencies
-        run: npm install
-      - name: Install backend dependencies
-        run: npm --prefix backend install
-      - name: Copy backend env
-        run: cp backend/.env.example backend/.env
-      - name: Typecheck backend
-        run: npm run backend:typecheck
-      - name: Test backend
-        run: npm run backend:test
-```
-
-### 5.2 Running the Same Checks Locally Before You Push
+### Running the same checks locally
 
 ```bash
-# Smart contract — exactly what contract-tests runs
-cd contracts/vault
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-cargo build --target wasm32-unknown-unknown --release
-
-# Backend — exactly what backend-checks runs
-cp backend/.env.example backend/.env
-npm run backend:typecheck
-npm run backend:test
-
-# Frontend — not yet in CI, but run it anyway before opening a PR
+# Frontend
 cd frontend
+npm install --legacy-peer-deps
 npm run typecheck
 npm test
+npx playwright install chromium   # first time only
+npm run test:e2e -- --project=chromium
+
+# Contract
+cd contracts/vault
+cargo check --lib
 ```
 
-### 5.3 Adding a Frontend Job (proposed, not yet merged)
-
-If you're picking up the gap above, this job follows the same shape as `backend-checks` and would slot in as a third job in `test.yml`:
-
-```yaml
-  frontend-checks:
-    name: Frontend Checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend dependencies
-        run: npm --prefix frontend install
-      - name: Typecheck frontend
-        run: npm run typecheck
-        working-directory: frontend
-      - name: Run frontend tests
-        run: npm test
-        working-directory: frontend
-```
-
-This is a proposal, not something currently in `test.yml` — if you add it, double check the Node version matches what `backend-checks` uses (`20`) unless you have a specific reason to diverge.
+Optional (not required by CI): `cargo test`, backend/SDK scripts.
 
 ---
 

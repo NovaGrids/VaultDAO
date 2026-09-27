@@ -6,6 +6,8 @@ import {
   validatePagination,
   validateOptionalString,
   validateOptionalInteger,
+  validateCursorPagination,
+  encodeCursor,
 } from "../../shared/http/validateQuery.js";
 import type { RecurringIndexerService } from "./recurring.service.js";
 import { RecurringStatus } from "./types.js";
@@ -20,9 +22,6 @@ export function getAllRecurringController(
   cache?: CacheAdapter<unknown>,
 ): RequestHandler {
   return async (request, response) => {
-    const pagination = validatePagination(request, response);
-    if (!pagination) return;
-
     const status = validateEnum(
       request,
       response,
@@ -35,8 +34,83 @@ export function getAllRecurringController(
     const proposer = validateOptionalString(request, "proposer");
     const recipient = validateOptionalString(request, "recipient");
 
-    // Create cache key
-    const cacheKey = `recurring:${contractId || 'all'}:${status || 'all'}:${pagination.offset}:${pagination.limit}`;
+    // Cursor mode when `cursor` param is present or `offset` is absent
+    const isCursorMode =
+      typeof request.query.cursor === "string" ||
+      request.query.offset === undefined;
+
+    if (isCursorMode) {
+      const cursorQuery = validateCursorPagination(request, response);
+      if (!cursorQuery) return;
+
+      const cursorRaw =
+        typeof request.query.cursor === "string" ? request.query.cursor : null;
+      const cacheKey = `recurring:cursor:${contractId ?? "all"}:${status ?? "all"}:${cursorRaw ?? ""}:${cursorQuery.limit}`;
+
+      try {
+        if (cache) {
+          const cached = cache.get(cacheKey);
+          if (cached !== null) {
+            success(response, cached);
+            return;
+          }
+        }
+
+        // Fetch all filtered items — pass a high limit so we can cursor-slice ourselves.
+        // MAX_PAGINATION_LIMIT is for per-request pages; internally we want the full set.
+        const result = await service.getPayments(
+          { contractId, status: status as RecurringStatus | undefined, proposer, recipient },
+          { offset: 0, limit: Number.MAX_SAFE_INTEGER },
+        );
+        const all = result.items;
+        const total = result.total;
+
+        let startIndex = 0;
+        if (cursorQuery.cursor) {
+          const { lastId, offset: fallbackOffset } = cursorQuery.cursor;
+          const foundIdx = all.findIndex((p) => p.paymentId === lastId);
+          startIndex = foundIdx !== -1 ? foundIdx + 1 : fallbackOffset;
+        }
+
+        const endIndex = Math.min(startIndex + cursorQuery.limit, total);
+        const data = all.slice(startIndex, endIndex);
+
+        let nextCursor: string | null = null;
+        if (endIndex < total) {
+          const lastItem = data[data.length - 1];
+          if (lastItem) {
+            nextCursor = encodeCursor({ lastId: lastItem.paymentId, offset: endIndex });
+          }
+        }
+
+        const payload = {
+          data,
+          total,
+          limit: cursorQuery.limit,
+          nextCursor,
+        };
+
+        if (cache) {
+          cache.set(cacheKey, payload, 30_000);
+        }
+
+        success(response, payload);
+      } catch (err) {
+        error(response, {
+          message: "Failed to fetch recurring payments",
+          status: 500,
+          code: ErrorCode.INTERNAL_ERROR,
+          details: err instanceof Error ? err.message : undefined,
+        });
+      }
+      return;
+    }
+
+    // Legacy offset pagination path (backward compatible)
+    const pagination = validatePagination(request, response);
+    if (!pagination) return;
+
+    const cacheKey = `recurring:${contractId ?? "all"}:${status ?? "all"}:${pagination.offset}:${pagination.limit}`;
 
     try {
       if (cache) {
@@ -65,7 +139,7 @@ export function getAllRecurringController(
       };
 
       if (cache) {
-        cache.set(cacheKey, payload, 30_000); // 30 seconds TTL
+        cache.set(cacheKey, payload, 30_000);
       }
 
       success(response, payload);
@@ -400,6 +474,73 @@ export function triggerSyncController(
     } catch (err) {
       error(response, {
         message: "Sync failed",
+        status: 500,
+        code: ErrorCode.INTERNAL_ERROR,
+        details: err instanceof Error ? err.message : undefined,
+      });
+    }
+  };
+}
+
+/**
+ * GET /api/v1/recurring/predict?windowLedgers=<n>[&currentLedger=<n>]
+ *
+ * Projects the next due dates for all active/due recurring payments within
+ * `windowLedgers` ledgers of `currentLedger` (defaults to the indexer's last
+ * processed ledger).
+ *
+ * Query parameters
+ * - windowLedgers  (required) – projection horizon, integer 1–1 048 576.
+ * - currentLedger  (optional) – ledger to project from; defaults to the
+ *                               indexer's lastLedgerProcessed.
+ *
+ * Response: { data: PredictedDue[], total: number, windowLedgers: number, currentLedger: number }
+ */
+export function predictRecurringDuesController(
+  service: RecurringIndexerService,
+): RequestHandler {
+  return async (request, response) => {
+    const rawWindow = validateOptionalInteger(request, response, "windowLedgers");
+    // null means validateOptionalInteger already sent a 400 (invalid type).
+    if (rawWindow === null) return;
+    // undefined means the param was absent — windowLedgers is required.
+    if (rawWindow === undefined) {
+      error(response, {
+        message: "windowLedgers is required and must be a positive integer (1–1048576)",
+        status: 400,
+        code: ErrorCode.BAD_REQUEST,
+      });
+      return;
+    }
+    if (rawWindow <= 0 || rawWindow > 1_048_576) {
+      error(response, {
+        message: "windowLedgers must be between 1 and 1048576",
+        status: 400,
+        code: ErrorCode.BAD_REQUEST,
+      });
+      return;
+    }
+
+    const rawCurrent = validateOptionalInteger(request, response, "currentLedger");
+    // null means validateOptionalInteger already sent a 400.
+    if (rawCurrent === null) return;
+    // undefined means the param was absent — that is fine (optional).
+    const currentLedger = rawCurrent !== undefined ? rawCurrent : undefined;
+
+    try {
+      const predictions = await service.predictRecurringDues(rawWindow, currentLedger);
+      const effectiveLedger =
+        currentLedger ?? service.getStatus().lastLedgerProcessed;
+
+      success(response, {
+        data: predictions,
+        total: predictions.length,
+        windowLedgers: rawWindow,
+        currentLedger: effectiveLedger,
+      });
+    } catch (err) {
+      error(response, {
+        message: "Failed to predict recurring dues",
         status: 500,
         code: ErrorCode.INTERNAL_ERROR,
         details: err instanceof Error ? err.message : undefined,
