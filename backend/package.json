@@ -1,6 +1,7 @@
 {
   "name": "@vaultdao/backend",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "VaultDAO backend service exposing version and build metadata",
   "private": true,
   "type": "module",
