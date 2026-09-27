@@ -89,8 +89,10 @@ export function createRecurringRouter(
 
   /**
    * POST /api/v1/recurring
-   * Creates a new recurring payment; sets X-Conflict-Warning header if duplicates found.
-   * Use ?force=true to bypass.
+   * Builds an unsigned `schedule_payment` transaction for the client to sign.
+   * Sets X-Conflict-Warning header if duplicates found; use ?force=true to bypass.
+   *
+   * Response: { created: true, unsignedXdr, networkPassphrase, message }
    */
   router.post("/", validate(createRecurringBodySchema), createRecurringController(service));
 
