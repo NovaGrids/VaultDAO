@@ -620,7 +620,7 @@ describe("contract.ts bindings", () => {
       expect(comments).toEqual([
         { id: 1n, proposalId: 5n, author: "GALICE", content: "hi", createdAt: 100n },
       ]);
-      expect(contractCallSpy).toHaveBeenCalledWith("get_comments", "u64:5");
+      expect(contractCallSpy).toHaveBeenCalledWith("get_proposal_comments", "u64:5");
     });
 
     it("getVaultMetrics decodes and maps to VaultMetrics", async () => {
