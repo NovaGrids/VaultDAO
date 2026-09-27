@@ -115,4 +115,26 @@ test("Event Processing Latency Metrics", async (t) => {
     assert.ok(openMetrics.includes("event_processing_duration_ms"), "OpenMetrics should include the metric");
     assert.ok(openMetrics.includes("# EOF"), "OpenMetrics should end with EOF marker");
   });
+
+  await t.test("Event lag and queue depth metrics are registered", async () => {
+    const registry = new MetricsRegistry();
+
+    const lag = registry.gauge("vaultdao_event_processing_lag_seconds", {
+      help: "Event processing lag in seconds",
+      labelNames: ["event_type"],
+    });
+    const depth = registry.gauge("vaultdao_event_queue_depth", {
+      help: "Number of events waiting to be processed",
+      labelNames: ["queue"],
+    });
+
+    lag.labels("proposal_created").set(2.5);
+    depth.labels("default").set(7);
+
+    const output = registry.render();
+    assert.ok(output.includes("vaultdao_event_processing_lag_seconds"), "lag metric should be present");
+    assert.ok(output.includes("vaultdao_event_queue_depth"), "queue depth metric should be present");
+    assert.ok(output.includes('event_type="proposal_created"'), "lag metric should carry event_type label");
+    assert.ok(output.includes('queue="default"'), "queue depth metric should carry queue label");
+  });
 });
