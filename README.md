@@ -128,6 +128,10 @@ Pull requests and pushes to `main` run `.github/workflows/ci.yml`:
 - Security: [docs/reference/SECURITY.md](docs/reference/SECURITY.md)
 - Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
-## License
+## Licenses
 
-AGPL-3.0 — see [LICENSE](LICENSE).
+| Package | License | License text |
+| --- | --- | --- |
+| Repository root, backend, and frontend | Apache-2.0 | [LICENSE](LICENSE) |
+| Soroban contract (`contracts/vault`) | AGPL-3.0-only | [GNU AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html) |
+| TypeScript SDK (`sdk`) | MIT | [MIT License](https://opensource.org/license/mit) |

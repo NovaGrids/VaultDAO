@@ -125,6 +125,8 @@ mod test_spending_limit_invariants_proptest;
 mod test_stream_vesting_invariants_proptest;
 #[cfg(test)]
 mod test_spending_refund_buckets;
+#[cfg(test)]
+mod testutils;
 // #[cfg(test)]
 // mod test_token_allowlist;
 // #[cfg(test)]
@@ -132,9 +134,6 @@ mod test_spending_refund_buckets;
 // #[cfg(test)]
 // mod test_delegation_depth;
 
-// #[cfg(test)]
-// #[cfg(test)]
-// pub mod mock_oracle { /* commented out with other broken test modules */ }
 #[cfg(test)]
 mod test_recovery_security_1702;
 #[cfg(test)]
@@ -306,48 +305,6 @@ mod test_circular_dependency;
 mod test_threshold_reduction;
 #[cfg(test)]
 mod test_regressions;
-#[cfg(test)]
-pub mod mock_oracle {
-    use crate::types::VaultPriceData;
-    use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
-
-    #[contracttype]
-    #[derive(Clone)]
-    enum DataKey {
-        Price,
-    }
-
-    #[contract]
-    pub struct MockOracle;
-
-    #[contractimpl]
-    impl MockOracle {
-        /// Set the mocked price and timestamp (ledger sequence).
-        pub fn set_price(env: Env, price: i128, timestamp: u64) {
-            env.storage()
-                .instance()
-                .set(&DataKey::Price, &VaultPriceData { price, timestamp });
-        }
-
-        /// Return the last mocked price, defaulting to price=1000, timestamp=0.
-        pub fn lastprice(env: Env, _asset: Address) -> Option<VaultPriceData> {
-            Some(
-                env.storage()
-                    .instance()
-                    .get(&DataKey::Price)
-                    .unwrap_or(VaultPriceData {
-                        price: 1000,
-                        timestamp: 0,
-                    }),
-            )
-        }
-
-        pub fn base(_env: Env) -> Symbol {
-            Symbol::new(&_env, "USD")
-        }
-    }
-}
-
 #[contractimpl]
 #[allow(clippy::too_many_arguments)]
 impl VaultDAO {
