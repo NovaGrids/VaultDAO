@@ -768,7 +768,7 @@ export async function getComments(
   opts: SdkOptions
 ): Promise<Comment[]> {
   const contract = getContract(opts);
-  const op = contract.call("get_comments", u64ToScVal(proposalId));
+  const op = contract.call("get_proposal_comments", u64ToScVal(proposalId));
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
     op,
     opts,
