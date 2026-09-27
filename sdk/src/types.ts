@@ -303,12 +303,15 @@ export interface Comment {
   createdAt: bigint;
 }
 
-/** Vault metrics and statistics. */
+/** Vault metrics and statistics. Mirrors `VaultMetrics` in contracts/vault/src/types.rs. */
 export interface VaultMetrics {
+  totalProposals: bigint;
   executedCount: bigint;
   rejectedCount: bigint;
   expiredCount: bigint;
-  totalVolume: bigint;
+  totalExecutionTimeLedgers: bigint;
+  totalGasUsed: bigint;
+  lastUpdatedLedger: bigint;
 }
 
 /** Reputation record for an address. */
