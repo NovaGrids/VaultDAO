@@ -23,8 +23,16 @@ import type {
   VaultMetrics,
   Reputation,
   AuditEntry,
+  AuditTrailPagination,
 } from "./types";
-import { Role, ProposalStatus, VaultError, VaultErrorCode, noopLogger } from "./types";
+import {
+  Role,
+  ProposalStatus,
+  VaultError,
+  VaultErrorCode,
+  MAX_AUDIT_TRAIL_LIMIT,
+  noopLogger,
+} from "./types";
 import type { SdkLogger } from "./types";
 import {
   getContract,
@@ -883,14 +891,50 @@ export async function getReputation(
 }
 
 /**
- * Get audit trail entries.
+ * Get a page of audit trail entries in ascending ID order.
+ *
+ * The contract requires both `offset` and `limit`; when omitted they default
+ * to `0n` and {@link MAX_AUDIT_TRAIL_LIMIT} respectively.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (simulation source).
+ * @param opts            - SDK connection options.
+ * @param pagination      - Optional `offset` / `limit` page window.
+ *
+ * @example
+ * ```ts
+ * const firstPage = await getAuditTrail(publicKey, opts);
+ * const nextPage = await getAuditTrail(publicKey, opts, {
+ *   offset: BigInt(firstPage.length),
+ *   limit: 25,
+ * });
+ * ```
  */
 export async function getAuditTrail(
   callerPublicKey: string,
-  opts: SdkOptions
+  opts: SdkOptions,
+  pagination: AuditTrailPagination = {}
 ): Promise<AuditEntry[]> {
+  const offset = pagination.offset ?? 0n;
+  const limit = pagination.limit ?? MAX_AUDIT_TRAIL_LIMIT;
+
+  if (offset < 0n) {
+    throw new RangeError("getAuditTrail: offset must be zero or greater");
+  }
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new RangeError("getAuditTrail: limit must be a non-negative integer");
+  }
+  if (limit > MAX_AUDIT_TRAIL_LIMIT) {
+    throw new RangeError(
+      `getAuditTrail: limit must not exceed ${MAX_AUDIT_TRAIL_LIMIT} (the contract caps each page)`
+    );
+  }
+
   const contract = getContract(opts);
-  const op = contract.call("get_audit_trail");
+  const op = contract.call(
+    "get_audit_trail",
+    u64ToScVal(offset),
+    u32ToScVal(limit)
+  );
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
     op,
     opts,

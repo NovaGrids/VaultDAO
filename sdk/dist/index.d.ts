@@ -7,7 +7,8 @@
  * import { proposeTransfer, signAndSubmit, buildOptions } from "@vaultdao/sdk";
  */
 export type { InitConfig, VaultConfig, Proposal, RecurringPayment, StreamingPayment, Subscription, Escrow, ProposalTemplate, Comment, VaultMetrics, Reputation, AuditEntry, SdkOptions, SdkLogger, Network, StateDiff, StateChangeValue, StateChangeEntry, } from "./types";
-export { Role, ProposalStatus, VaultErrorCode, VaultError } from "./types";
+export { Role, ProposalStatus, VaultErrorCode, VaultError, MAX_AUDIT_TRAIL_LIMIT, } from "./types";
+export type { AuditTrailPagination } from "./types";
 export type { ErrorRegistryEntry } from "./errors";
 export { ERROR_REGISTRY, ERROR_REGISTRY as DEFAULT_ERROR_REGISTRY, getErrorEntry, getErrorDescription, getAllErrorEntries, } from "./errors";
 export type { WalletConnection } from "./utils";

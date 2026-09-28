@@ -206,6 +206,32 @@ export interface AuditEntry {
   timestamp: bigint;
 }
 
+/**
+ * Maximum number of audit entries the contract returns in a single page.
+ * Requests for a larger `limit` are capped on-chain.
+ */
+export const MAX_AUDIT_TRAIL_LIMIT = 50;
+
+/**
+ * Pagination options for {@link getAuditTrail}.
+ *
+ * The contract's `get_audit_trail(offset, limit)` requires both arguments, so
+ * the SDK always sends them — defaulting to the first page of
+ * {@link MAX_AUDIT_TRAIL_LIMIT} entries.
+ */
+export interface AuditTrailPagination {
+  /**
+   * Zero-based index of the first entry to return.
+   * Defaults to `0n` (the oldest entry).
+   */
+  offset?: bigint;
+  /**
+   * Number of entries to return, in ascending ID order.
+   * Defaults to {@link MAX_AUDIT_TRAIL_LIMIT} (50).
+   */
+  limit?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Error codes
 // ---------------------------------------------------------------------------

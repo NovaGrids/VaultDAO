@@ -575,11 +575,38 @@ async function getReputation(address, callerPublicKey, opts) {
     };
 }
 /**
- * Get audit trail entries.
+ * Get a page of audit trail entries in ascending ID order.
+ *
+ * The contract requires both `offset` and `limit`; when omitted they default
+ * to `0n` and {@link MAX_AUDIT_TRAIL_LIMIT} respectively.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (simulation source).
+ * @param opts            - SDK connection options.
+ * @param pagination      - Optional `offset` / `limit` page window.
+ *
+ * @example
+ * ```ts
+ * const firstPage = await getAuditTrail(publicKey, opts);
+ * const nextPage = await getAuditTrail(publicKey, opts, {
+ *   offset: BigInt(firstPage.length),
+ *   limit: 25,
+ * });
+ * ```
  */
-async function getAuditTrail(callerPublicKey, opts) {
+async function getAuditTrail(callerPublicKey, opts, pagination = {}) {
+    const offset = pagination.offset ?? 0n;
+    const limit = pagination.limit ?? types_1.MAX_AUDIT_TRAIL_LIMIT;
+    if (offset < 0n) {
+        throw new RangeError("getAuditTrail: offset must be zero or greater");
+    }
+    if (!Number.isInteger(limit) || limit < 0) {
+        throw new RangeError("getAuditTrail: limit must be a non-negative integer");
+    }
+    if (limit > types_1.MAX_AUDIT_TRAIL_LIMIT) {
+        throw new RangeError(`getAuditTrail: limit must not exceed ${types_1.MAX_AUDIT_TRAIL_LIMIT} (the contract caps each page)`);
+    }
     const contract = (0, utils_1.getContract)(opts);
-    const op = contract.call("get_audit_trail");
+    const op = contract.call("get_audit_trail", (0, utils_1.u64ToScVal)(offset), (0, utils_1.u32ToScVal)(limit));
     const raw = await simulateReadOnly(op, opts, callerPublicKey, "getAuditTrail");
     return raw.map((e) => ({
         id: BigInt(e.id),

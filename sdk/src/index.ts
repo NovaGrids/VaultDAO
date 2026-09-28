@@ -30,7 +30,16 @@ export type {
 } from "./types";
 
 // Enums & errors
-export { Role, ProposalStatus, VaultErrorCode, VaultError } from "./types";
+export {
+  Role,
+  ProposalStatus,
+  VaultErrorCode,
+  VaultError,
+  MAX_AUDIT_TRAIL_LIMIT,
+} from "./types";
+
+// Pagination
+export type { AuditTrailPagination } from "./types";
 
 // Error code registry
 export type { ErrorRegistryEntry } from "./errors";

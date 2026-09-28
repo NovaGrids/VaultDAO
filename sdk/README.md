@@ -563,20 +563,46 @@ See [sdk/examples/create-recurring.ts](./examples/create-recurring.ts) for a ful
 The audit trail provides a complete record of all vault operations — proposals, approvals, executions, role changes, and configuration updates.
 
 ```typescript
-import { getAuditTrail } from "@vaultdao/sdk";
+import { getAuditTrail, MAX_AUDIT_TRAIL_LIMIT } from "@vaultdao/sdk";
 
-// Fetch the full audit trail for the vault
+// Fetch the first page of the audit trail (50 entries by default)
 const auditEntries = await getAuditTrail(wallet.publicKey, opts);
 
 for (const entry of auditEntries) {
   console.log(`[${entry.timestamp}] ${entry.action} by ${entry.actor}`);
-  console.log(`  Details: ${JSON.stringify(entry.details)}`);
 }
 ```
 
+### Paginating the Audit Trail
+
+The contract caps each page at 50 entries, so a vault with a long history
+returns the audit trail one page at a time. Pass `offset` and `limit` to walk
+it; both default to `0` and `MAX_AUDIT_TRAIL_LIMIT`.
+
+```typescript
+// A single page: entries 50 through 74
+const page = await getAuditTrail(wallet.publicKey, opts, {
+  offset: 50n,
+  limit: 25,
+});
+
+// Walk every page until an empty one comes back
+const allEntries = [];
+let offset = 0n;
+for (;;) {
+  const batch = await getAuditTrail(wallet.publicKey, opts, { offset });
+  if (batch.length === 0) break;
+  allEntries.push(...batch);
+  offset += BigInt(batch.length);
+}
+```
+
+`limit` above `MAX_AUDIT_TRAIL_LIMIT` (50) throws a `RangeError` rather than
+being silently capped, so page-walking loops cannot quietly skip entries.
+
 ### Filtering Audit Entries
 
-The audit trail returns all entries. Filter client-side for specific operations:
+Filter a page client-side for specific operations:
 
 ```typescript
 // Find all proposal executions

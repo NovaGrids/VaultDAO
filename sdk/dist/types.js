@@ -5,7 +5,7 @@
  * Mirrors the Soroban contract types defined in contracts/vault/src/types.rs
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.noopLogger = exports.VaultError = exports.VaultErrorCode = exports.ProposalStatus = exports.Role = void 0;
+exports.noopLogger = exports.VaultError = exports.VaultErrorCode = exports.MAX_AUDIT_TRAIL_LIMIT = exports.ProposalStatus = exports.Role = void 0;
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -33,6 +33,11 @@ var ProposalStatus;
     /** Expired without reaching the approval threshold. */
     ProposalStatus[ProposalStatus["Expired"] = 4] = "Expired";
 })(ProposalStatus || (exports.ProposalStatus = ProposalStatus = {}));
+/**
+ * Maximum number of audit entries the contract returns in a single page.
+ * Requests for a larger `limit` are capped on-chain.
+ */
+exports.MAX_AUDIT_TRAIL_LIMIT = 50;
 // ---------------------------------------------------------------------------
 // Error codes
 // ---------------------------------------------------------------------------

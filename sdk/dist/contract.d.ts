@@ -8,7 +8,7 @@
  * For read-only calls (getProposal, getRole, etc.) the function directly
  * decodes and returns the on-chain value without requiring a signature.
  */
-import type { InitConfig, Proposal, SdkOptions, Comment, VaultMetrics, Reputation, AuditEntry } from "./types";
+import type { InitConfig, Proposal, SdkOptions, Comment, VaultMetrics, Reputation, AuditEntry, AuditTrailPagination } from "./types";
 import { Role } from "./types";
 /**
  * Build a transaction to initialise the VaultDAO contract (call once).
@@ -214,9 +214,25 @@ export declare function getVaultMetrics(callerPublicKey: string, opts: SdkOption
  */
 export declare function getReputation(address: string, callerPublicKey: string, opts: SdkOptions): Promise<Reputation>;
 /**
- * Get audit trail entries.
+ * Get a page of audit trail entries in ascending ID order.
+ *
+ * The contract requires both `offset` and `limit`; when omitted they default
+ * to `0n` and {@link MAX_AUDIT_TRAIL_LIMIT} respectively.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (simulation source).
+ * @param opts            - SDK connection options.
+ * @param pagination      - Optional `offset` / `limit` page window.
+ *
+ * @example
+ * ```ts
+ * const firstPage = await getAuditTrail(publicKey, opts);
+ * const nextPage = await getAuditTrail(publicKey, opts, {
+ *   offset: BigInt(firstPage.length),
+ *   limit: 25,
+ * });
+ * ```
  */
-export declare function getAuditTrail(callerPublicKey: string, opts: SdkOptions): Promise<AuditEntry[]>;
+export declare function getAuditTrail(callerPublicKey: string, opts: SdkOptions, pagination?: AuditTrailPagination): Promise<AuditEntry[]>;
 /**
  * Get delegation chain for an address.
  */
