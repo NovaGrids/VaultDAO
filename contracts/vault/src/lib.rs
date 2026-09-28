@@ -17630,6 +17630,7 @@ impl VaultDAO {
             cancelled: false,
         };
         storage::set_vesting_schedule(env, &schedule);
+        storage::add_vesting_for_beneficiary(env, beneficiary, id);
         storage::set_active_vesting_count(env, active + 1);
         storage::set_reserved_vesting(env, token_addr, reserved + total);
         storage::create_audit_entry(env, AuditAction::VestingCreated, executor, id);
@@ -17647,6 +17648,62 @@ impl VaultDAO {
 
     pub fn get_vesting_schedule(env: Env, schedule_id: u64) -> Option<VestingSchedule> {
         storage::get_vesting_schedule(&env, schedule_id)
+    }
+
+    /// List the vesting schedules created for a beneficiary, in creation order.
+    ///
+    /// Beneficiaries and UIs can enumerate their own schedules without
+    /// guessing IDs. Read-only: anyone may query any beneficiary's list.
+    /// Schedules that cannot be loaded (e.g. archived storage entries) are
+    /// skipped. Cancelled and fully claimed schedules are still listed, with
+    /// their `cancelled`/`claimed` fields set, so the history stays visible.
+    ///
+    /// # Arguments
+    /// * `beneficiary` - Address whose schedules to list.
+    /// * `offset`      - Number of schedules to skip (use 0 for the first page).
+    /// * `limit`       - Maximum number of schedules to return (0 or above 50
+    ///                   returns up to 50).
+    pub fn get_vesting_schedules_by_beneficiary(
+        env: Env,
+        beneficiary: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<VestingSchedule> {
+        storage::extend_instance_ttl(&env);
+        // Tighter cap for full objects: a VestingSchedule is much larger than a u64.
+        let cap: u32 = if limit == 0 || limit > 50 { 50 } else { limit };
+        let ids = storage::get_vesting_ids_by_beneficiary(&env, &beneficiary);
+        let mut schedules: Vec<VestingSchedule> = Vec::new(&env);
+        let mut skipped: u32 = 0;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            if let Some(schedule) = storage::get_vesting_schedule(&env, id) {
+                schedules.push_back(schedule);
+            }
+            if schedules.len() >= cap {
+                break;
+            }
+        }
+        schedules
+    }
+
+    /// List vesting schedule IDs in ascending ID order, paginated.
+    ///
+    /// The counter-reading counterpart of
+    /// `get_vesting_schedules_by_beneficiary`, for UIs that page through every
+    /// schedule in the vault rather than one beneficiary's.
+    ///
+    /// # Arguments
+    /// * `offset` - Number of schedules to skip (use 0 for the first page).
+    /// * `limit`  - Maximum number of IDs to return (0 or above 100 returns
+    ///              up to 100).
+    pub fn list_vesting_ids(env: Env, offset: u64, limit: u64) -> Vec<u64> {
+        storage::extend_instance_ttl(&env);
+        storage::get_vesting_ids_paginated(&env, offset, limit)
     }
 
     pub fn claim_vested_tokens(

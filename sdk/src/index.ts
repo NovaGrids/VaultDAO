@@ -142,6 +142,8 @@ export {
   claimVestedTokens,
   cancelVesting,
   getVestingSchedule,
+  getVestingSchedulesByBeneficiary,
+  listVestingIds,
   // Token locks
   lockTokens,
   extendLock,

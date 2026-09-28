@@ -150,6 +150,23 @@ Using the schedule from §2, the Admin cancels at day 180 (ledger `5,110,400`) a
 
 Read-only. Returns `None` for an unknown id.
 
+### `get_vesting_schedules_by_beneficiary(beneficiary: Address, offset: u32, limit: u32) -> Vec<VestingSchedule>`
+
+Read-only. Lists the schedules created for `beneficiary` in creation order, so a
+beneficiary or UI can enumerate its own schedules without guessing ids.
+
+- `offset` skips schedules (0 for the first page); `limit` is capped at 50
+  (0 or above 50 returns up to 50).
+- Cancelled and fully claimed schedules are still listed, with their
+  `cancelled`/`claimed` fields set, so the history stays visible.
+- Returns an empty vector when the beneficiary has no schedules.
+
+### `list_vesting_ids(offset: u64, limit: u64) -> Vec<u64>`
+
+Read-only. Lists schedule ids in ascending order across the whole vault, for
+indexers and UIs that page through every schedule. `limit` is capped at 100
+(0 or above 100 returns up to 100).
+
 ---
 
 ## 5. Events

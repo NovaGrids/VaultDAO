@@ -238,6 +238,8 @@ pub enum VestingKey {
     NextId,
     ActiveCount,
     Reserved(Address),
+    /// Per-beneficiary index of schedule IDs (#1744)
+    BeneficiaryIndex(Address),
 }
 
 /// Per-token balances earmarked for escrows and streams (#1698)
@@ -543,6 +545,56 @@ pub fn set_reserved_vesting(env: &Env, token: &Address, amount: i128) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Vesting schedule IDs created for `beneficiary`, in creation order (#1744).
+pub fn get_vesting_ids_by_beneficiary(env: &Env, beneficiary: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&VestingKey::BeneficiaryIndex(beneficiary.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Record `schedule_id` in `beneficiary`'s index so it can be enumerated
+/// without guessing IDs (#1744).
+pub fn add_vesting_for_beneficiary(env: &Env, beneficiary: &Address, schedule_id: u64) {
+    let mut ids = get_vesting_ids_by_beneficiary(env, beneficiary);
+    if ids.contains(&schedule_id) {
+        return;
+    }
+    ids.push_back(schedule_id);
+    let key = VestingKey::BeneficiaryIndex(beneficiary.clone());
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// One page of vesting schedule IDs in ascending ID order (#1744).
+///
+/// Mirrors `get_proposal_ids_paginated`: IDs are sequential from 1, so missing
+/// schedules (e.g. archived storage entries) are skipped rather than reported.
+pub fn get_vesting_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64> {
+    let cap: u64 = if limit == 0 || limit > 100 { 100 } else { limit };
+    // Read the counter without consuming it: `next_vesting_id` increments.
+    let next_id: u64 = env.storage().instance().get(&VestingKey::NextId).unwrap_or(1);
+    let mut ids: Vec<u64> = Vec::new(env);
+    let mut skipped: u64 = 0;
+
+    for id in 1..next_id {
+        if !env.storage().persistent().has(&VestingKey::Schedule(id)) {
+            continue;
+        }
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        ids.push_back(id);
+        if ids.len() as u64 >= cap {
+            break;
+        }
+    }
+    ids
 }
 
 fn get_reserve(env: &Env, key: &ReserveKey) -> i128 {
