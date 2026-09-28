@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import type {
   SyncProposalActivityPersistence,
   ProposalActivity,
@@ -91,14 +91,15 @@ function rowToActivity(row: ActivityRow): ProposalActivity {
 /**
  * SQLite-backed implementation of `ProposalActivityPersistence`.
  *
- * Uses `better-sqlite3` for synchronous, low-overhead access. All writes use
- * prepared statements and WAL journal mode for safe concurrent reads.
+ * Uses the built-in `node:sqlite` module for synchronous, low-overhead access.
+ * All writes use prepared statements and WAL journal mode for safe concurrent
+ * reads.
  *
  * @example
  * const adapter = new SqliteProposalActivityAdapter("/data/vault.db");
  */
 export class SqliteProposalActivityAdapter implements SyncProposalActivityPersistence {
-  private readonly db: any;
+  private readonly db: DatabaseSync;
 
   // Prepared statements — compiled once, reused on every call
   private readonly stmtInsert: any;
@@ -109,11 +110,11 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
   private readonly stmtFtsSearchByProposal: any;
 
   constructor(databasePath: string) {
-    this.db = new Database(databasePath);
+    this.db = new DatabaseSync(databasePath);
 
     // Enable WAL for concurrent read access alongside writes
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA foreign_keys = ON");
 
     // Create table, indexes, and FTS virtual table (idempotent)
     this.db.exec(CREATE_TABLE_SQL);
@@ -124,7 +125,7 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
       INSERT INTO proposal_activity
         (proposal_id, contract_id, activity_type, actor, data, timestamp, ledger_sequence, tx_hash)
       VALUES
-        (@proposalId, @contractId, @activityType, @actor, @data, @timestamp, @ledgerSequence, @txHash)
+        (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.stmtGetByProposalId = this.db.prepare(`
@@ -183,16 +184,16 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
    * Returns the inserted record with its auto-generated `id`.
    */
   save(activity: Omit<ProposalActivity, "id">): ProposalActivity {
-    const info = this.stmtInsert.run({
-      proposalId: activity.proposalId,
-      contractId: activity.contractId,
-      activityType: activity.activityType,
-      actor: activity.actor ?? null,
-      data: activity.data !== undefined ? JSON.stringify(activity.data) : null,
-      timestamp: activity.timestamp,
-      ledgerSequence: activity.ledgerSequence ?? null,
-      txHash: activity.txHash ?? null,
-    });
+    const info = this.stmtInsert.run(
+      activity.proposalId,
+      activity.contractId,
+      activity.activityType,
+      activity.actor ?? null,
+      activity.data !== undefined ? JSON.stringify(activity.data) : null,
+      activity.timestamp,
+      activity.ledgerSequence ?? null,
+      activity.txHash ?? null,
+    );
 
     return { ...activity, id: Number(info.lastInsertRowid) };
   }
@@ -206,12 +207,15 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
   saveBatch(activities: Omit<ProposalActivity, "id">[]): ProposalActivity[] {
     if (activities.length === 0) return [];
 
-    const insertMany = this.db.transaction(
-      (items: Omit<ProposalActivity, "id">[]) =>
-        items.map((activity) => this.save(activity)),
-    );
-
-    return insertMany(activities);
+    this.db.exec("BEGIN");
+    try {
+      const results = activities.map((activity) => this.save(activity));
+      this.db.exec("COMMIT");
+      return results;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   // ── getByProposalId ──────────────────────────────────────────────────────
@@ -237,49 +241,50 @@ export class SqliteProposalActivityAdapter implements SyncProposalActivityPersis
   // ── getSummary ───────────────────────────────────────────────────────────
 
   /**
-   * Return an aggregated summary for a given proposal.
-   * Returns `null` when no activity has been recorded for the proposal.
+   * Aggregate activity counts for a proposal.
    */
-  getSummary(proposalId: string): ProposalActivitySyncSummary | null {
-    const row = this.stmtSummary.get(proposalId) as
-      | ProposalActivitySyncSummary
-      | undefined;
-    return row ?? null;
+  getSummary(proposalId: string): ProposalActivitySyncSummary | undefined {
+    const row = this.stmtSummary.get(proposalId) as any;
+    if (!row) return undefined;
+
+    return {
+      proposalId: row.proposalId,
+      contractId: row.contractId,
+      totalEvents: Number(row.totalEvents),
+      firstEventAt: row.firstEventAt ?? undefined,
+      lastEventAt: row.lastEventAt ?? undefined,
+      voteCount: Number(row.voteCount ?? 0),
+      approvalCount: Number(row.approvalCount ?? 0),
+      rejectionCount: Number(row.rejectionCount ?? 0),
+      executionCount: Number(row.executionCount ?? 0),
+      cancellationCount: Number(row.cancellationCount ?? 0),
+    };
   }
 
-  // ── search (full-text) ───────────────────────────────────────────────────
+  // ── search ───────────────────────────────────────────────────────────────
 
   /**
-   * Full-text search across proposal activity records.
-   * Searches proposal_id, activity_type, actor, and data fields.
-   * Uses FTS5 ranking for relevance ordering.
+   * Full-text search across all proposal activity.
    */
-  search(query: string, limit: number = 50): ProposalActivity[] {
+  search(query: string, limit = 50): ProposalActivity[] {
     const rows = this.stmtFtsSearch.all(query, limit) as ActivityRow[];
     return rows.map(rowToActivity);
   }
 
+  // ── searchByProposal ─────────────────────────────────────────────────────
+
   /**
    * Full-text search scoped to a single proposal.
    */
-  searchByProposal(proposalId: string, query: string, limit: number = 50): ProposalActivity[] {
+  searchByProposal(proposalId: string, query: string, limit = 50): ProposalActivity[] {
     const rows = this.stmtFtsSearchByProposal.all(query, proposalId, limit) as ActivityRow[];
     return rows.map(rowToActivity);
-  }
-
-  /**
-   * Rebuild the FTS index from scratch. Useful after bulk imports that
-   * bypass the trigger-based sync (e.g. restoring from a backup).
-   */
-  rebuildFtsIndex(): void {
-    this.db.exec(`INSERT INTO proposal_activity_fts(proposal_activity_fts) VALUES ('rebuild')`);
   }
 
   // ── close ────────────────────────────────────────────────────────────────
 
   /**
    * Close the underlying database connection.
-   * Call this during graceful shutdown to flush WAL frames.
    */
   close(): void {
     this.db.close();
