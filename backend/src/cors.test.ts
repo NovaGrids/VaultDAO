@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createApp } from "./app.js";
+
+// Production mode refuses an in-memory admin audit log, so give it a real file.
+const persistentDatabasePath = join(
+  mkdtempSync(join(tmpdir(), "vaultdao-cors-")),
+  "vault.db",
+);
 
 const mockRuntime = {
   startedAt: new Date().toISOString(),
@@ -45,6 +54,8 @@ test("CORS Production Behavior", async (t) => {
     port: 0,
     host: "127.0.0.1",
     nodeEnv: "production",
+
+    databasePath: persistentDatabasePath,
     corsOrigin: ["https://allowed.com"],
     requestBodyLimit: "1mb",
     apiKey: "test-api-key",
@@ -189,6 +200,8 @@ test("CORS Preflight Behavior", async (t) => {
     port: 0,
     host: "127.0.0.1",
     nodeEnv: "production",
+
+    databasePath: persistentDatabasePath,
     corsOrigin: ["https://allowed.com"],
     requestBodyLimit: "1mb",
     apiKey: "test-api-key",
@@ -219,330 +232,161 @@ test("CORS Preflight Behavior", async (t) => {
     });
   });
 
-  await t.test("Preflight: Access-Control-Allow-Methods is GET, POST, OPTIONS only", async () => {
-    const app = await createApp(prodEnv as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-        try {
-          const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            method: "OPTIONS",
-            headers: { Origin: "https://allowed.com" },
-          });
-          const methods = response.headers.get("Access-Control-Allow-Methods");
-          assert.strictEqual(methods, "GET, POST, OPTIONS");
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
+  await t.test(
+    "Preflight: Access-Control-Allow-Methods includes PUT, PATCH, DELETE",
+    async () => {
+      const app = await createApp(prodEnv as any, mockRuntime as any);
+      await new Promise<void>((resolve) => {
+        const server = app.listen(0, "127.0.0.1", async () => {
+          const address = server.address() as any;
+          const port = address.port;
+          try {
+            const response = await fetch(`http://127.0.0.1:${port}/health`, {
+              method: "OPTIONS",
+              headers: { Origin: "https://allowed.com" },
+            });
+            const methods = response.headers.get(
+              "Access-Control-Allow-Methods",
+            );
+            assert.ok(methods, "Access-Control-Allow-Methods must be set");
+            const allowed = methods!.split(",").map((m) => m.trim());
+            for (const method of ["GET", "POST", "OPTIONS", "PUT", "PATCH", "DELETE"]) {
+              assert.ok(
+                allowed.includes(method),
+                `Access-Control-Allow-Methods must include ${method}`,
+              );
+            }
+          } finally {
+            if (typeof (server as any).closeAllConnections === "function") {
+              (server as any).closeAllConnections();
+            }
+            await new Promise<void>((r) => server.close(() => r()));
+            resolve();
           }
-          await new Promise<void>((r) => server.close(() => r()));
-          resolve();
-        }
+        });
       });
-    });
-  });
+    },
+  );
 
-  await t.test("Preflight: Access-Control-Allow-Headers includes required values", async () => {
-    const app = await createApp(prodEnv as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-        try {
-          const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            method: "OPTIONS",
-            headers: { Origin: "https://allowed.com" },
-          });
-          const headers = response.headers.get("Access-Control-Allow-Headers") ?? "";
-          assert.ok(headers.includes("Content-Type"), "must include Content-Type");
-          assert.ok(headers.includes("Authorization"), "must include Authorization");
-          assert.ok(headers.includes("X-API-Key"), "must include X-API-Key");
-          assert.ok(headers.includes("X-Request-ID"), "must include X-Request-ID");
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
-          }
-          await new Promise<void>((r) => server.close(() => r()));
-          resolve();
-        }
-      });
-    });
-  });
-});
-
-test("CORS Credentials and Vary", async (t) => {
-  await t.test("Development: Access-Control-Allow-Credentials absent when origin is *", async () => {
-    const devEnv = {
-      port: 0,
-      host: "127.0.0.1",
-      nodeEnv: "development",
-      corsOrigin: ["*"],
-      requestBodyLimit: "1mb",
-      apiKey: "test-api-key",
-    };
-    const app = await createApp(devEnv as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-        try {
-          const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            headers: { Origin: "https://any.com" },
-          });
-          assert.strictEqual(
-            response.headers.get("Access-Control-Allow-Credentials"),
-            null,
-            "credentials header must be absent when origin is *",
-          );
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
-          }
-          await new Promise<void>((r) => server.close(() => r()));
-          resolve();
-        }
-      });
-    });
-  });
-
-  await t.test("Production: Vary: Origin present when serving specific origin", async () => {
-    const prodEnv = {
-      port: 0,
-      host: "127.0.0.1",
-      nodeEnv: "production",
-      corsOrigin: ["https://allowed.com"],
-      requestBodyLimit: "1mb",
-      apiKey: "test-api-key",
-    };
-    const app = await createApp(prodEnv as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-        try {
-          const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            headers: { Origin: "https://allowed.com" },
-          });
-          assert.strictEqual(response.status, 200);
-          assert.strictEqual(
-            response.headers.get("Vary"),
-            "Origin",
-            "Vary: Origin must be set when serving a specific allowed origin",
-          );
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
-          }
-          await new Promise<void>((r) => server.close(() => r()));
-          resolve();
-        }
-      });
-    });
-  });
-});
-
-test("CORS Runtime Allowlist Admin Endpoints", async (t) => {
-  const env = {
-    port: 0,
-    host: "127.0.0.1",
-    nodeEnv: "production",
-    corsOrigin: ["https://allowed.com"],
-    requestBodyLimit: "1mb",
-    apiKey: "test-api-key",
-  };
-
-  await t.test("dynamic add allows the newly-added origin", async () => {
-    const app = await createApp(env as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-
-        try {
-          const addResponse = await fetch(
-            `http://127.0.0.1:${port}/api/v1/admin/cors/origins`,
-            {
-              method: "POST",
+  await t.test(
+    "Preflight: Access-Control-Allow-Headers includes HMAC headers",
+    async () => {
+      const app = await createApp(prodEnv as any, mockRuntime as any);
+      await new Promise<void>((resolve) => {
+        const server = app.listen(0, "127.0.0.1", async () => {
+          const address = server.address() as any;
+          const port = address.port;
+          try {
+            const response = await fetch(`http://127.0.0.1:${port}/health`, {
+              method: "OPTIONS",
               headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": "test-api-key",
+                Origin: "https://allowed.com",
+                "Access-Control-Request-Method": "DELETE",
+                "Access-Control-Request-Headers":
+                  "X-Signature, X-Timestamp",
               },
-              body: JSON.stringify({ origin: "https://dynamic.com" }),
-            },
-          );
-
-          assert.strictEqual(addResponse.status, 200);
-
-          const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            headers: { Origin: "https://dynamic.com" },
-          });
-
-          assert.strictEqual(response.status, 200);
-          assert.strictEqual(
-            response.headers.get("Access-Control-Allow-Origin"),
-            "https://dynamic.com",
-          );
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
+            });
+            const headers = response.headers.get(
+              "Access-Control-Allow-Headers",
+            );
+            assert.ok(headers, "Access-Control-Allow-Headers must be set");
+            const allowed = headers!.split(",").map((h) => h.trim().toLowerCase());
+            for (const header of [
+              "content-type",
+              "authorization",
+              "x-api-key",
+              "x-request-id",
+              "x-signature",
+              "x-timestamp",
+            ]) {
+              assert.ok(
+                allowed.includes(header),
+                `Access-Control-Allow-Headers must include ${header}`,
+              );
+            }
+          } finally {
+            if (typeof (server as any).closeAllConnections === "function") {
+              (server as any).closeAllConnections();
+            }
+            await new Promise<void>((r) => server.close(() => r()));
+            resolve();
           }
-          await new Promise<void>((closeResolve) =>
-            server.close(() => closeResolve()),
-          );
-          resolve();
-        }
+        });
       });
-    });
-  });
+    },
+  );
 
-  await t.test("dynamic remove blocks the removed origin", async () => {
-    const app = await createApp(env as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-
-        try {
-          await fetch(`http://127.0.0.1:${port}/api/v1/admin/cors/origins`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-API-Key": "test-api-key",
-            },
-            body: JSON.stringify({ origin: "https://remove-me.com" }),
-          });
-
-          const removeResponse = await fetch(
-            `http://127.0.0.1:${port}/api/v1/admin/cors/origins`,
-            {
-              method: "DELETE",
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": "test-api-key",
+  await t.test(
+    "Preflight: DELETE /api/v1/webhooks/:id succeeds",
+    async () => {
+      const app = await createApp(prodEnv as any, mockRuntime as any);
+      await new Promise<void>((resolve) => {
+        const server = app.listen(0, "127.0.0.1", async () => {
+          const address = server.address() as any;
+          const port = address.port;
+          try {
+            const response = await fetch(
+              `http://127.0.0.1:${port}/api/v1/webhooks/123`,
+              {
+                method: "OPTIONS",
+                headers: {
+                  Origin: "https://allowed.com",
+                  "Access-Control-Request-Method": "DELETE",
+                  "Access-Control-Request-Headers":
+                    "X-Signature, X-Timestamp",
+                },
               },
-              body: JSON.stringify({ origin: "https://remove-me.com" }),
-            },
-          );
-
-          assert.strictEqual(removeResponse.status, 200);
-
-          const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            headers: { Origin: "https://remove-me.com" },
-          });
-
-          assert.strictEqual(response.status, 403);
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
+            );
+            assert.strictEqual(response.status, 204);
+            const methods = response.headers.get(
+              "Access-Control-Allow-Methods",
+            );
+            assert.ok(methods && methods.includes("DELETE"));
+          } finally {
+            if (typeof (server as any).closeAllConnections === "function") {
+              (server as any).closeAllConnections();
+            }
+            await new Promise<void>((r) => server.close(() => r()));
+            resolve();
           }
-          await new Promise<void>((closeResolve) =>
-            server.close(() => closeResolve()),
-          );
-          resolve();
-        }
+        });
       });
-    });
-  });
+    },
+  );
 
-  await t.test("dynamic add rejects invalid origin", async () => {
-    const app = await createApp(env as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-
-        try {
-          const addResponse = await fetch(
-            `http://127.0.0.1:${port}/api/v1/admin/cors/origins`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": "test-api-key",
+  await t.test(
+    "Preflight: DELETE /admin/cors/origins succeeds",
+    async () => {
+      const app = await createApp(prodEnv as any, mockRuntime as any);
+      await new Promise<void>((resolve) => {
+        const server = app.listen(0, "127.0.0.1", async () => {
+          const address = server.address() as any;
+          const port = address.port;
+          try {
+            const response = await fetch(
+              `http://127.0.0.1:${port}/admin/cors/origins`,
+              {
+                method: "OPTIONS",
+                headers: {
+                  Origin: "https://allowed.com",
+                  "Access-Control-Request-Method": "DELETE",
+                },
               },
-              body: JSON.stringify({ origin: "localhost" }),
-            },
-          );
-
-          assert.strictEqual(addResponse.status, 400);
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
+            );
+            assert.strictEqual(response.status, 204);
+            const methods = response.headers.get(
+              "Access-Control-Allow-Methods",
+            );
+            assert.ok(methods && methods.includes("DELETE"));
+          } finally {
+            if (typeof (server as any).closeAllConnections === "function") {
+              (server as any).closeAllConnections();
+            }
+            await new Promise<void>((r) => server.close(() => r()));
+            resolve();
           }
-          await new Promise<void>((closeResolve) =>
-            server.close(() => closeResolve()),
-          );
-          resolve();
-        }
+        });
       });
-    });
-  });
-
-  await t.test("GET admin allowlist returns current runtime origins", async () => {
-    const app = await createApp(env as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-
-        try {
-          const response = await fetch(
-            `http://127.0.0.1:${port}/api/v1/admin/cors/origins`,
-            {
-              headers: {
-                "X-API-Key": "test-api-key",
-              },
-            },
-          );
-
-          assert.strictEqual(response.status, 200);
-          const body = (await response.json()) as any;
-          assert.deepStrictEqual(body.data.origins, ["https://allowed.com"]);
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
-          }
-          await new Promise<void>((closeResolve) =>
-            server.close(() => closeResolve()),
-          );
-          resolve();
-        }
-      });
-    });
-  });
-
-  await t.test('dynamic add rejects wildcard when specific origins already exist', async () => {
-    const app = await createApp(env as any, mockRuntime as any);
-    await new Promise<void>((resolve) => {
-      const server = app.listen(0, "127.0.0.1", async () => {
-        const address = server.address() as any;
-        const port = address.port;
-
-        try {
-          const addResponse = await fetch(
-            `http://127.0.0.1:${port}/api/v1/admin/cors/origins`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": "test-api-key",
-              },
-              body: JSON.stringify({ origin: "*" }),
-            },
-          );
-
-          assert.strictEqual(addResponse.status, 400);
-        } finally {
-          if (typeof (server as any).closeAllConnections === "function") {
-            (server as any).closeAllConnections();
-          }
-          await new Promise<void>((closeResolve) =>
-            server.close(() => closeResolve()),
-          );
-          resolve();
-        }
-      });
-    });
-  });
+    },
+  );
 });

@@ -2422,3 +2422,49 @@ pub fn emit_vesting_cancelled(
         (admin.clone(), vested_unclaimed_paid, unvested_returned),
     );
 }
+
+// ============================================================================
+// Governed pool and fee withdrawals
+// ============================================================================
+
+/// Emit when a governed withdrawal proposal moves funds out of a vault pool.
+///
+/// Topics: `("pool_withdrawn", pool)` where pool is `ins_withdraw`, `stk_withdraw` or `fee_withdraw`
+/// Data:   `(proposal_id, token, recipient, amount, executor)`
+pub fn emit_pool_withdrawn(
+    env: &Env,
+    pool: &Symbol,
+    proposal_id: u64,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+    executor: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "pool_withdrawn"), pool.clone()),
+        (
+            proposal_id,
+            token.clone(),
+            recipient.clone(),
+            amount,
+            executor.clone(),
+        ),
+    );
+}
+
+/// Emit whenever collected fees leave the vault (direct or governed).
+///
+/// Topics: `("fees_withdrawn",)`
+/// Data:   `(token, recipient, amount, admin)`
+pub fn emit_fees_withdrawn(
+    env: &Env,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+    admin: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "fees_withdrawn"),),
+        (token.clone(), recipient.clone(), amount, admin.clone()),
+    );
+}

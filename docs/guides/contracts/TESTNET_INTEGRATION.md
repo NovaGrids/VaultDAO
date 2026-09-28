@@ -121,6 +121,18 @@ Testnet integration tests (requires setup):
 TESTNET_ENABLED=true cargo test --features testnet test_full_proposal_workflow
 ```
 
+The `test_testnet_integration` module is compiled only when the `testnet`
+cargo feature is enabled, so the regular `cargo test` run never touches the network.
+
+### Running from GitHub Actions
+
+The **Testnet Integration** workflow (`.github/workflows/testnet-integration.yml`)
+runs these tests on demand via *Actions → Testnet Integration → Run workflow*.
+It reads the values above from repository secrets (`TESTNET_CONTRACT_ID`,
+`TESTNET_ADMIN_SECRET`, `TESTNET_SIGNER1_SECRET`, `TESTNET_SIGNER2_SECRET`,
+`TESTNET_RECIPIENT`) and the optional `TESTNET_RPC_URL` variable. Tick
+**deploy** to deploy a fresh contract with `scripts/deploy_testnet.sh` first.
+
 ## Test Results Logging
 
 Each test logs:

@@ -1,7 +1,7 @@
 //! Issue #1708: swap price-impact math must not trap on zero prices or overflow.
 
 use crate::errors::VaultError;
-use crate::mock_oracle::{MockOracle, MockOracleClient};
+use crate::testutils::mock_oracle::{MockOracle, MockOracleClient};
 use crate::types::{InitConfig, RetryConfig, VelocityConfig};
 use crate::{compute_swap_price_impact, VaultDAO, VaultDAOClient, VaultOracleConfig};
 use soroban_sdk::{

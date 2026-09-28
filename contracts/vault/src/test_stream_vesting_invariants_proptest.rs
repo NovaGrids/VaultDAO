@@ -114,9 +114,12 @@ proptest! {
                 let s = client.get_stream(id);
                 prop_assert!(s.claimed_amount >= 0 && s.claimed_amount <= s.total_amount);
             }
+            // create_vesting_schedule returns a proposal id; the schedule only
+            // exists once that proposal is approved and executed.
             for id in vesting_ids.iter() {
-                let v = client.get_vesting_schedule(id).unwrap();
-                prop_assert!(v.claimed >= 0 && v.claimed <= v.total);
+                if let Some(v) = client.get_vesting_schedule(id) {
+                    prop_assert!(v.claimed >= 0 && v.claimed <= v.total);
+                }
             }
             let (reserved, balance) = env.as_contract(&client.address, || {
                 (storage::get_total_reserved(&env, &token), 0i128)

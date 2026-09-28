@@ -101,6 +101,8 @@ stateDiagram-v2
 
 ### `create_vesting_schedule(admin, beneficiary, token_addr, total, cliff_ledger, start_ledger, end_ledger) -> Result<u64, VaultError>`
 
+> **Governed:** this call now only *proposes* the schedule and returns a proposal ID. The schedule is created when the proposal reaches the approval threshold and is executed with `execute_multi_phase_proposal`, and the vested total counts against the daily/weekly spending limits. The first parameter is the proposer (Treasurer or Admin).
+
 | Parameter | Type |
 |---|---|
 | `admin` | `Address` |

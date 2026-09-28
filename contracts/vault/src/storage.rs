@@ -3207,6 +3207,14 @@ pub fn get_fees_collected(env: &Env, token: &Address) -> i128 {
         .unwrap_or(0)
 }
 
+/// Deduct `amount` from the collected-fee balance for `token` (never below zero).
+pub fn subtract_fees_collected(env: &Env, token: &Address, amount: i128) {
+    let remaining = get_fees_collected(env, token).saturating_sub(amount).max(0);
+    env.storage()
+        .persistent()
+        .set(&FeatureKey::FeesCollected(token.clone()), &remaining);
+}
+
 pub fn add_fees_collected(env: &Env, token: &Address, amount: i128) {
     let current = get_fees_collected(env, token);
     let key = FeatureKey::FeesCollected(token.clone());

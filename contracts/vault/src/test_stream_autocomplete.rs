@@ -73,6 +73,7 @@ fn setup(env: &Env) -> Fixture<'_> {
 
     let mut signers: Vec<Address> = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
     client.initialize(&admin, &make_config(env, signers));
 
     let token = env

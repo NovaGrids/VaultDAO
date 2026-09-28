@@ -103,3 +103,14 @@ Findings will be stored in `artifacts/` directory with detailed crash data.
   cargo fuzz run fuzz_execute_proposal -- -max_total_time=1800 -timeout=30
   ```
   and record the outcome (clean run, or crash details + fix) in this section.
+
+## Continuous Integration
+
+- The `Contract fuzz targets (build)` job in `.github/workflows/ci.yml` runs
+  `cargo fuzz build` on every push and pull request, so the targets cannot
+  silently stop compiling.
+- `.github/workflows/fuzz-nightly.yml` runs each target for 5 minutes every
+  night (and on demand via `workflow_dispatch`). If a target finds a crash, the
+  job fails and the reproducer from `fuzz/artifacts/<target>/` is uploaded as
+  the `fuzz-crashes-<target>` workflow artifact. Reproduce locally with
+  `cargo fuzz run <target> <path-to-crash-file>`.

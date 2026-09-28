@@ -132,7 +132,8 @@ fn test_vesting_reservation_cannot_be_spent_by_execution() {
     env.mock_all_auths();
     let ctx = setup(&env, 1_000);
 
-    ctx.client.create_vesting_schedule(
+    // Vesting is created through an approved proposal.
+    let vesting_proposal = ctx.client.create_vesting_schedule(
         &ctx.admin,
         &Address::generate(&env),
         &ctx.token,
@@ -141,6 +142,10 @@ fn test_vesting_reservation_cannot_be_spent_by_execution() {
         &100u32,
         &1_000u32,
     );
+    ctx.client.approve_proposal(&ctx.admin, &vesting_proposal);
+    ctx.client.approve_proposal(&ctx.signer2, &vesting_proposal);
+    ctx.client
+        .execute_multi_phase_proposal(&ctx.admin, &vesting_proposal);
 
     let recipient = Address::generate(&env);
     let pid = approved_transfer(&env, &ctx, &recipient, 100);

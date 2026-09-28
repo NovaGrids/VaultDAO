@@ -15,7 +15,18 @@ export interface ClientErrorPayload {
 
 export interface StoredClientError extends ClientErrorPayload {
   id: string;
+  /** Stable dedup key derived from the error's identifying fields. */
+  fingerprint: string;
   firstSeen: string;
   lastSeen: string;
   occurrences: number;
+}
+
+export interface ClientErrorQuery {
+  /** Maximum number of reports to return, newest first. */
+  limit?: number;
+  /** Only return reports whose lastSeen is at or after this ISO timestamp. */
+  since?: string;
+  /** Filter by error code. */
+  code?: string;
 }

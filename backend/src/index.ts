@@ -57,7 +57,22 @@ runtime.proposalActivityConsumer.registerConsumer((record) => {
   });
 });
 
-
+// Issue #1789: query-param tokens (?token=<API_KEY>) leak the raw key into
+// proxy/LB access logs. Prefer the `authenticate` message or the
+// `Sec-WebSocket-Protocol` token; short-lived single-use tickets are issued by
+// an authenticated HTTP endpoint. Query-param tokens remain supported for now
+// but are deprecated and must never be logged verbatim.
+realtimeServer.setQueryTokenDeprecationHandler(({ connectionId, hasToken }) => {
+  if (!hasToken) {
+    return;
+  }
+  logger.warn("deprecated websocket query-param token used", {
+    connectionId,
+    token: "[redacted]",
+    deprecation:
+      "?token=<API_KEY> is deprecated; use the `authenticate` message, the Sec-WebSocket-Protocol token, or a short-lived WS ticket from the authenticated HTTP endpoint",
+  });
+});
 
 realtimeServer.start(server);
 

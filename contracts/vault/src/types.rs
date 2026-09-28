@@ -796,15 +796,24 @@ pub struct HolidayCalendar {
     pub holiday_ledgers: Vec<u64>,
 }
 
-/// Recurring payment schedule
+/// Recurring payment schedule.
+///
+/// Lifecycle is tracked by `status` ([`RecurringStatus`]); there is no
+/// separate `is_active` flag. Check `status == RecurringStatus::Active`.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RecurringPayment {
+    /// Unique recurring payment ID
     pub id: u64,
+    /// Address that created the schedule
     pub proposer: Address,
+    /// Address receiving each payment
     pub recipient: Address,
+    /// Token contract address
     pub token: Address,
+    /// Amount transferred per execution
     pub amount: i128,
+    /// Short memo attached to each payment
     pub memo: Symbol,
     /// Interval in ledgers (e.g., 172800 for ~1 week)
     pub interval: u64,
@@ -879,7 +888,10 @@ pub enum StreamStatus {
     Completed = 3,
 }
 
-/// Continuous token transfer over time
+/// Continuous token transfer over time.
+///
+/// The committed amount is `total_amount` (not `amount_total`), and
+/// lifecycle is tracked by `status` ([`StreamStatus`]).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct StreamingPayment {
@@ -1355,6 +1367,10 @@ pub enum AuditAction {
     FundingRoundCancelled = 24,
     SubscriptionCreated = 25,
     SubscriptionCancelled = 26,
+    /// Funds left a pool (insurance, stake or fees) via a governed withdrawal proposal.
+    PoolWithdrawn = 27,
+    /// Collected fees withdrawn directly by an Admin (within the spending limit).
+    FeesWithdrawn = 28,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -2025,6 +2041,9 @@ pub struct TimeWeightedConfig {
     pub apply_decay: bool,
     /// Penalty for early unlock (basis points, e.g., 1000 = 10%)
     pub early_unlock_penalty_bps: u32,
+    /// The only token that may be locked for voting power (#1705).
+    /// `None` means no token is accepted.
+    pub governance_token: Option<Address>,
 }
 
 impl Default for TimeWeightedConfig {
@@ -2036,6 +2055,7 @@ impl Default for TimeWeightedConfig {
             max_lock_duration: 730 * DAY_LEDGERS, // 2 years maximum
             apply_decay: true,
             early_unlock_penalty_bps: 1000, // 10% penalty
+            governance_token: None,
         }
     }
 }
@@ -2494,6 +2514,10 @@ pub enum ProposalOperation {
     /// Admin key. The whitelist governs who may receive funds, so unilateral
     /// edits amount to unilateral spending authority.
     UpdateWhitelist(Address, ListAction),
+    /// Create a vesting schedule: (beneficiary, token, total, cliff_ledger,
+    /// start_ledger, end_ledger). Only reachable through an approved proposal,
+    /// so a single Admin cannot commit treasury funds to vesting on their own.
+    CreateVesting(Address, Address, i128, u32, u32, u32),
 }
 
 /// Optional ProposalOperation wrapper (Soroban contracttype limitation)

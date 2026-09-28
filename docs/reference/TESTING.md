@@ -287,15 +287,15 @@ Files that existed under `src/` without a `mod` declaration, and what happened t
 | `test_commit_reveal.rs` | Deleted (obsolete, see below) |
 | `test_compliance.rs` | Deleted (obsolete, see below) |
 | `test_delegation_depth.rs` | Re-enabled, all tests pass |
-| `test_escrow_expiration.rs` | Quarantined in `src/quarantine/` |
-| `test_escrow_milestone_partial_release.rs` | Quarantined in `src/quarantine/` |
+| `test_escrow_expiration.rs` | Fixed on main, re-enabled; all tests pass |
+| `test_escrow_milestone_partial_release.rs` | Fixed on main, re-enabled; all tests pass |
 | `test_escrow_multisig.rs` | Deleted (obsolete, see below) |
-| `test_escrow_multisig_arbitration.rs` | Quarantined in `src/quarantine/` |
+| `test_escrow_multisig_arbitration.rs` | Fixed on main, re-enabled; all tests pass |
 | `test_escrow_oracle.rs` | Deleted (obsolete, see below) |
-| `test_escrow_timeout.rs` | Quarantined in `src/quarantine/` |
-| `test_escrow_voting.rs` | Deleted (obsolete, see below) |
-| `test_escrows_by_recipient.rs` | Quarantined in `src/quarantine/` |
-| `test_fan_out_streams.rs` | Quarantined in `src/quarantine/` |
+| `test_escrow_timeout.rs` | Fixed on main, re-enabled; all tests pass |
+| `test_escrow_voting.rs` | Fixed on main, re-enabled; all tests pass |
+| `test_escrows_by_recipient.rs` | Fixed on main, re-enabled; all tests pass |
+| `test_fan_out_streams.rs` | Fixed on main, re-enabled; all tests pass |
 | `test_fee_cache.rs` | Quarantined in `src/quarantine/` |
 | `test_fingerprint.rs` | Re-enabled; 5 test(s) ignored |
 | `test_gas_price_oracle.rs` | Quarantined in `src/quarantine/` |
@@ -307,7 +307,7 @@ Files that existed under `src/` without a `mod` declaration, and what happened t
 | `test_overflow_checks.rs` | Re-enabled, all tests pass |
 | `test_pause_circuit_breaker.rs` | Re-enabled; 6 test(s) ignored |
 | `test_rbac_consistency.rs` | Re-enabled, all tests pass |
-| `test_recurring.rs` | Quarantined in `src/quarantine/` |
+| `test_recurring.rs` | Fixed on main, re-enabled; all tests pass |
 | `test_recurring_alerts.rs` | Deleted (obsolete, see below) |
 | `test_recurring_conditions.rs` | Deleted (obsolete, see below) |
 | `test_recurring_dryrun.rs` | Deleted (obsolete, see below) |
@@ -319,8 +319,8 @@ Files that existed under `src/` without a `mod` declaration, and what happened t
 | `test_staking_tier_progression.rs` | Deleted (obsolete, see below) |
 | `test_stream_autocomplete.rs` | Re-enabled; 4 test(s) ignored |
 | `test_stream_burst_config.rs` | Re-enabled, all tests pass |
-| `test_stream_clawback.rs` | Deleted (obsolete, see below) |
-| `test_stream_pause_ttl.rs` | Quarantined in `src/quarantine/` |
+| `test_stream_clawback.rs` | Fixed on main, re-enabled; all tests pass |
+| `test_stream_pause_ttl.rs` | Fixed on main, re-enabled; all tests pass |
 | `test_subscription_auto_topup.rs` | Re-enabled, all tests pass |
 | `test_subscription_downgrade_grace.rs` | Re-enabled; 1 test(s) ignored |
 | `test_subscription_tier_usage.rs` | Deleted (obsolete, see below) |
@@ -332,13 +332,7 @@ Files that existed under `src/` without a `mod` declaration, and what happened t
 Do not compile against the current contract API. Fix, move back to `src/`, declare in `lib.rs`, then tick the box.
 
 - [ ] `test_escrow_dispute_filing_deadline.rs`: 52 compile errors; escrow/dispute types changed; getters renamed
-- [ ] `test_escrow_expiration.rs`: 16 compile errors; Result-style assertions on value returns; escrow getters changed
-- [ ] `test_escrow_milestone_partial_release.rs`: 32 compile errors; Result-style assertions on value returns; milestone API changed
 - [ ] `test_escrow_milestone_verification_event.rs`: 29 compile errors; Result-style assertions on value returns; milestone API changed
-- [ ] `test_escrow_multisig_arbitration.rs`: 9 compile errors; client calls treat unit/value returns as Result (.is_ok/.unwrap)
-- [ ] `test_escrow_timeout.rs`: 9 compile errors; create_escrow arity changed (8 to 7 args); Result-style assertions on value returns
-- [ ] `test_escrows_by_recipient.rs`: 15 compile errors; get_escrows_by_recipient is now get_recipient_escrows; create_escrow arity changed
-- [ ] `test_fan_out_streams.rs`: 17 compile errors; stream creation arity changed (5 to 6 args); types changed
 - [ ] `test_fee_cache.rs`: 16 compile errors; fee types changed; fee cache client methods renamed
 - [ ] `test_gas_price_oracle.rs`: 16 compile errors; gas price oracle client methods renamed or removed
 - [ ] `test_insurance_governance.rs`: 10 compile errors; insurance client methods renamed or removed
@@ -347,9 +341,7 @@ Do not compile against the current contract API. Fix, move back to `src/`, decla
 - [ ] `test_multitoken_swap.rs`: 26 compile errors; propose_token_swap is now propose_swap; swap types changed
 - [ ] `test_proposal_amendment.rs`: 10 compile errors; amend_proposal takes an extra argument (5 to 6)
 - [ ] `test_recovery_security_1702.rs`: 45 compile errors; uses types that are not imported or no longer exist (39 unresolved names)
-- [ ] `test_recurring.rs`: 40 compile errors; schedule_payment arity changed (8 to 9 args)
 - [ ] `test_staking_slash_appeals_window.rs`: 13 compile errors; staking types changed; helper constructors removed
-- [ ] `test_stream_pause_ttl.rs`: 39 compile errors; stream types changed; Result-style assertions on value returns
 - [ ] `test_token_limits.rs`: 11 compile errors; set_token_limits argument types changed
 - [ ] `test_treasurer_pause_recurring.rs`: 12 compile errors; RecurringPayment.is_active replaced by status; schedule_payment arity changed (8 to 9)
 
@@ -362,7 +354,6 @@ These tested entry points or fields that do not exist anywhere in the contract (
 - `test_escrow_counterparty_acknowledgment.rs`
 - `test_escrow_multisig.rs`
 - `test_escrow_oracle.rs`
-- `test_escrow_voting.rs`
 - `test_max_concurrent_streams_per_recipient.rs`
 - `test_multitoken_insurance.rs`
 - `test_multitoken_limits.rs`
@@ -373,7 +364,6 @@ These tested entry points or fields that do not exist anywhere in the contract (
 - `test_staking_lockup.rs`
 - `test_staking_rewards.rs`
 - `test_staking_tier_progression.rs`
-- `test_stream_clawback.rs`
 - `test_stream_rate_window_clawback.rs`
 - `test_subscription_tier_usage.rs`
 - `test_token_allowlist.rs`
