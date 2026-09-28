@@ -185,7 +185,7 @@ Read-only. Returns the defaults listed in §1 if nothing has been stored.
 
 ## 6. Early-unlock penalty examples
 
-The penalty stays inside the vault's token balance, tracked in the per-token insurance pool (see `get_insurance_pool(token)`). An Admin can later move it out with `withdraw_insurance_pool`.
+The penalty stays inside the vault's token balance, tracked in the per-token insurance pool (see `get_insurance_pool(token)`). It can later be moved out only through a governed super-majority proposal (`propose_insurance_withdrawal` / `execute_insurance_withdrawal`).
 
 | Locked amount | `early_unlock_penalty_bps` | Penalty → insurance pool | Returned to owner |
 |---|---|---|---|

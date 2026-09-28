@@ -747,9 +747,31 @@ Get slashed insurance balance for token (read-only).
 
 ---
 
-### `withdraw_insurance_pool(admin: Address, token: Address, recipient: Address, amount: i128) -> Result<(), VaultError>`
+### Governed pool withdrawals
 
-Withdraw slashed insurance funds (admin only).
+Slashed insurance, slashed stake and collected fees leave the vault only through a super-majority proposal: `min(threshold + 1, signers)` approvals. There is no single-Admin withdrawal (the former `withdraw_insurance_pool` / `withdraw_stake_pool` entry points were removed).
+
+| Pool | Propose | Execute | Proposal memo |
+| --- | --- | --- | --- |
+| Insurance | `propose_insurance_withdrawal(proposer, token, amount, recipient) -> u64` | `execute_insurance_withdrawal(executor, proposal_id)` | `ins_withdraw` |
+| Stake | `propose_stake_withdrawal(proposer, token, amount, recipient) -> u64` | `execute_stake_withdrawal(executor, proposal_id)` | `stk_withdraw` |
+| Fees | `propose_fee_withdrawal(proposer, token, amount, recipient) -> u64` | `execute_fee_withdrawal(executor, proposal_id)` | `fee_withdraw` |
+
+- **Propose:** Treasurer or Admin; `amount` must not exceed the pool balance.
+- **Execute:** refused while the vault is paused; debits the pool and transfers to the recipient.
+- **Events:** `proposal_executed`, `pool_withdrawn(pool, proposal_id, token, recipient, amount, executor)`; fee withdrawals also emit `fees_withdrawn`.
+- **Audit:** `AuditAction::PoolWithdrawn` (target = proposal ID).
+- **Errors:** `InsufficientRole`, `InvalidAmount`, `InsurancePoolInsufficient` / `InsufficientBalance`, `ProposalNotApproved` (no super-majority), `Unauthorized` (proposal is for a different pool), `VaultPaused`.
+
+### `withdraw_fees(admin: Address, token: Address, recipient: Address) -> Result<i128, VaultError>`
+
+Withdraw the full collected-fee balance for `token` on one Admin signature, only while it is within the vault `spending_limit`; larger balances must use `propose_fee_withdrawal`.
+
+**Events:** `fees_withdrawn(token, recipient, amount, admin)`
+
+**Audit:** `AuditAction::FeesWithdrawn`
+
+**Errors:** `Unauthorized`, `ExceedsProposalLimit` (above spending limit), `InsufficientBalance`, `VaultPaused`
 
 ---
 
@@ -759,19 +781,19 @@ Update staking configuration (admin only).
 
 ---
 
-### `withdraw_stake_pool(admin: Address, token: Address, recipient: Address, amount: i128) -> Result<(), VaultError>`
+## Emergency Pause Coverage
 
-Withdraw slashed stake funds (admin only).
+While `pause_vault` is in effect, every entry point that pays vault-held funds out returns `VaultPaused`: proposal execution (`execute_proposal`, `batch_execute_proposals`, `execute_batch`, `execute_multi_phase_proposal`, `execute_cross_vault`), `execute_recurring_payment`, streams (`claim_stream`, `trigger_stream_payment`), escrow (`release_escrow`, `auto_resolve_escrow`, `resolve_escrow_dispute`), disputes (`resolve_dispute`, `resolve_dispute_with_outcome`), `release_round_funds`, vesting (`claim_vested_tokens`, `cancel_vesting`), subscriptions (`create_subscription`, `renew_subscription`, `reactivate_subscription`), bridging (`bridge_to_vault`, `confirm_bridge_receipt`), insurance (`close_insurance_claim_voting`), `unlock_early`, `withdraw_fees` and the governed pool withdrawals.
 
----
+Intentionally exempt, because they only return a depositor's own funds or are protective actions: `unlock_tokens`, `cancel_proposal` (refunds the proposer's insurance/stake), `cancel_stream` (returns the unstreamed remainder to the sender) and `veto_proposal`.
 
 ## Token Vesting
 
 Linear token vesting with an optional cliff. All ledger arguments are **absolute ledger sequence numbers** (~5 s per ledger). See the [Vesting guide](../guides/VESTING.md) for the lifecycle, math and worked examples.
 
-### `create_vesting_schedule(admin: Address, beneficiary: Address, token_addr: Address, total: i128, cliff_ledger: u32, start_ledger: u32, end_ledger: u32) -> Result<u64, VaultError>`
+### `create_vesting_schedule(proposer: Address, beneficiary: Address, token_addr: Address, total: i128, cliff_ledger: u32, start_ledger: u32, end_ledger: u32) -> Result<u64, VaultError>`
 
-Reserve `total` of the vault's `token_addr` balance for `beneficiary`, vesting linearly from `start_ledger` to `end_ledger`, with nothing claimable before `cliff_ledger` (Admin only — role must be exactly `Admin`).
+**Proposes** reserving `total` of the vault's `token_addr` balance for `beneficiary`, vesting linearly from `start_ledger` to `end_ledger`, with nothing claimable before `cliff_ledger`. Vesting commits treasury funds, so it goes through the multisig proposal flow: this creates a multi-phase proposal with one `ProposalOperation::CreateVesting` phase (Treasurer or Admin). The schedule is created when the approved proposal is executed with `execute_multi_phase_proposal`; at that point `total` counts against the daily and weekly spending limits.
 
 **Constraints:**
 - `total > 0`
@@ -779,11 +801,11 @@ Reserve `total` of the vault's `token_addr` balance for `beneficiary`, vesting l
 - At most **100 active schedules** vault-wide (active = not fully claimed and not cancelled)
 - Unreserved vault balance of `token_addr` (balance − amount reserved by other schedules) ≥ `total`
 
-**Returns:** New schedule ID (IDs start at 1)
+**Returns:** The **proposal ID** (not a schedule ID). The schedule ID is in the `vesting_created` event emitted on execution.
 
-**Events:** `vesting_created`
+**Events:** `vesting_created` (on execution)
 
-**Errors:** `Unauthorized`, `InvalidAmount`, `BatchTooLarge` (cap reached), `InsufficientBalance`
+**Errors:** `InsufficientRole`, `InvalidAmount` at proposal time; on execution a failed phase (cap reached, `InsufficientBalance`, `ExceedsDailyLimit`, `ExceedsWeeklyLimit`) surfaces as `PhaseExecutionFailed`
 
 ---
 
