@@ -194,6 +194,8 @@ mod test_notification_prefs;
 // #[cfg(test)]
 // mod test_retry;
 #[cfg(test)]
+mod test_rejection_slashing;
+#[cfg(test)]
 mod test_staking_slashing;
 #[cfg(test)]
 mod test_streaming;
@@ -3247,15 +3249,6 @@ impl VaultDAO {
             );
             Self::update_reputation_on_rejection(&env, &proposal.proposer);
 
-            /// Get the current vault configuration
-            pub fn get_config(env: Env) -> Result<Config, VaultError> {
-                storage::get_config(&env)
-            }
-
-            /// Get proposal by ID
-            pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, VaultError> {
-                storage::get_proposal(&env, proposal_id)
-            }
             // ?? Slash insurance ??????????????????????????????????????????????
             Self::slash_insurance_on_rejection(&env, &proposal);
 
