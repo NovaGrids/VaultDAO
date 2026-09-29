@@ -17,7 +17,7 @@ fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         high_impact_threshold: 70,
         admin_rotation_delay: 1440,
         signers,
-        threshold: 1,
+        threshold: 2,
         quorum: 0,
         spending_limit: 50_000,
         daily_limit: 200_000,
@@ -25,12 +25,19 @@ fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         timelock_threshold: 40_000,
         timelock_delay: 10,
         velocity_limit: VelocityConfig {
-        per_token_limit: 0, limit: 100, window: 3600 },
+            per_token_limit: 0,
+            limit: 100,
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
         veto_addresses: Vec::new(env),
         retry_config: RetryConfig {
-        max_retry_delay: 0, enabled: false, max_retries: 0, initial_backoff_ledgers: 0 },
+            max_retry_delay: 0,
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: types::StakingConfig::default(),
         pre_execution_hooks: Vec::new(env),
@@ -47,10 +54,13 @@ fn test_add_supported_token() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let usdc = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let usdc = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     client.add_supported_token(&admin, &usdc, &10_000i128, &50_000i128);
@@ -72,10 +82,13 @@ fn test_add_duplicate_token_fails() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     client.add_supported_token(&admin, &token, &10_000i128, &50_000i128);
@@ -92,11 +105,16 @@ fn test_is_token_supported() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let token_a = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_b = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_a = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     client.add_supported_token(&admin, &token_a, &10_000i128, &50_000i128);
@@ -114,11 +132,16 @@ fn test_remove_non_default_token() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let token_a = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_b = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_a = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     // Add both tokens — first is default
@@ -141,10 +164,13 @@ fn test_cannot_remove_default_token() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let token_a = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_a = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     client.add_supported_token(&admin, &token_a, &10_000i128, &50_000i128);
@@ -164,16 +190,21 @@ fn test_max_token_limit() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     // Add 10 tokens
     for _ in 0..10 {
-        let tok = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let tok = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
         client.add_supported_token(&admin, &tok, &1_000i128, &5_000i128);
     }
 
     // 11th should fail
-    let extra = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let extra = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let res = client.try_add_supported_token(&admin, &extra, &1_000i128, &5_000i128);
     assert_eq!(res.err(), Some(Ok(VaultError::TooManyTokens)));
 }
@@ -188,12 +219,17 @@ fn test_remove_token_with_active_payment_blocked() {
 
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token_a = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token_b = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_a = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&contract_id, &10_000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     // Add both (token_a is default, token_b is second)
@@ -202,9 +238,15 @@ fn test_remove_token_with_active_payment_blocked() {
 
     // Create recurring payment using token_b
     client.schedule_payment(
-        &admin, &recipient, &token_b, &100i128,
-        &Symbol::new(&env, "salary"), &1000u64,
-        &0u32, &0u32, &0u32,
+        &admin,
+        &recipient,
+        &token_b,
+        &100i128,
+        &Symbol::new(&env, "salary"),
+        &1000u64,
+        &0u32,
+        &0u32,
+        &0u32,
     );
 
     // Attempt to remove token_b — should fail
@@ -222,7 +264,9 @@ fn test_non_admin_cannot_add_token() {
 
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -243,10 +287,13 @@ fn test_remove_unsupported_token_fails() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     let res = client.try_remove_supported_token(&admin, &token);

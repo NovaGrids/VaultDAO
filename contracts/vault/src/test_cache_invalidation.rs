@@ -20,6 +20,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
 
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
 
     client.initialize(
         &admin,
@@ -30,7 +31,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             high_impact_threshold: 70,
             admin_rotation_delay: 1440,
             signers,
-            threshold: 1,
+            threshold: 2,
             quorum: 0,
             quorum_percentage: 0,
             default_voting_deadline: 0,

@@ -17,7 +17,7 @@ fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         high_impact_threshold: 70,
         admin_rotation_delay: 1440,
         signers,
-        threshold: 1,
+        threshold: 2,
         quorum: 0,
         spending_limit: 10_000,
         daily_limit: 50_000,
@@ -67,6 +67,7 @@ fn test_verify_attachment_invalid_leaf() {
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     let pid = client.propose_transfer(
@@ -111,6 +112,7 @@ fn test_verify_empty_attachments_zero_leaf() {
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
     client.initialize(&admin, &make_config(&env, signers));
 
     let pid = client.propose_transfer(

@@ -416,6 +416,11 @@ pub enum FeatureKey {
     ScopedDelegation(u64),
     /// Scoped delegation IDs by delegator -> Vec<u64>
     ScopedDelegationsByDelegator(soroban_sdk::Address),
+    /// Scoped delegation IDs by delegate -> Vec<u64> (used to revoke incoming
+    /// delegations when a signer is removed)
+    ScopedDelegationsByDelegate(soroban_sdk::Address),
+    /// Capability token IDs by holder (`granted_to`) -> Vec<BytesN<32>>
+    CapabilityTokensByHolder(soroban_sdk::Address),
     /// Balance snapshots -> Vec<BalanceSnapshot>
     BalanceSnapshots,
     /// Snapshot interval in ledgers -> u32
@@ -645,7 +650,9 @@ pub fn get_schema_version(env: &Env) -> u32 {
 }
 
 pub fn set_schema_version(env: &Env, version: u32) {
-    env.storage().instance().set(&DataKey::SchemaVersion, &version);
+    env.storage()
+        .instance()
+        .set(&DataKey::SchemaVersion, &version);
 }
 
 pub fn get_config(env: &Env) -> Result<Config, VaultError> {
@@ -2663,6 +2670,21 @@ pub fn get_delegated_permission(
         ))
 }
 
+pub fn remove_delegated_permission(
+    env: &Env,
+    delegatee: &Address,
+    delegator: &Address,
+    permission: u32,
+) {
+    env.storage()
+        .persistent()
+        .remove(&FeatureKey::DelegatedPermission(
+            delegatee.clone(),
+            delegator.clone(),
+            permission,
+        ));
+}
+
 pub fn set_delegated_permission(env: &Env, delegation: &DelegatedPermission) {
     let key = FeatureKey::DelegatedPermission(
         delegation.delegatee.clone(),
@@ -3072,9 +3094,10 @@ fn get_next_recovery_config_change_id(env: &Env) -> u64 {
 
 pub fn increment_recovery_config_change_id(env: &Env) -> u64 {
     let id = get_next_recovery_config_change_id(env);
-    env.storage()
-        .instance()
-        .set(&FeatureKey::Counter(CounterKey::RecoveryConfigChange), &(id + 1));
+    env.storage().instance().set(
+        &FeatureKey::Counter(CounterKey::RecoveryConfigChange),
+        &(id + 1),
+    );
     id
 }
 
@@ -3086,7 +3109,10 @@ pub fn set_recovery_config_change_proposal(env: &Env, proposal: &RecoveryConfigC
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
-pub fn get_recovery_config_change_proposal(env: &Env, id: u64) -> Result<RecoveryConfigChangeProposal, VaultError> {
+pub fn get_recovery_config_change_proposal(
+    env: &Env,
+    id: u64,
+) -> Result<RecoveryConfigChangeProposal, VaultError> {
     env.storage()
         .persistent()
         .get(&FeatureKey::RecoveryConfigChangeProposal(id))
@@ -3239,8 +3265,7 @@ fn remove_from_delegators_index(env: &Env, delegate: &Address, delegator: &Addre
 }
 
 pub fn get_delegators_for(env: &Env, delegate: &Address) -> Vec<Address> {
-    get_migrating(env, &DataKey::DelegatorsFor(delegate.clone()))
-        .unwrap_or_else(|| Vec::new(env))
+    get_migrating(env, &DataKey::DelegatorsFor(delegate.clone())).unwrap_or_else(|| Vec::new(env))
 }
 
 pub fn get_delegation_history(env: &Env, user: &Address) -> Vec<DelegationHistory> {
@@ -3867,6 +3892,32 @@ pub fn remove_capability_token(env: &Env, id: &BytesN<32>) {
     env.storage()
         .persistent()
         .remove(&FeatureKey::CapabilityToken(id.clone()));
+}
+
+pub fn get_capability_tokens_by_holder(env: &Env, holder: &Address) -> Vec<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::CapabilityTokensByHolder(holder.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_capability_token_to_holder_index(env: &Env, holder: &Address, id: &BytesN<32>) {
+    let mut ids = get_capability_tokens_by_holder(env, holder);
+    if ids.contains(id) {
+        return;
+    }
+    ids.push_back(id.clone());
+    let key = FeatureKey::CapabilityTokensByHolder(holder.clone());
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+pub fn clear_capability_tokens_by_holder(env: &Env, holder: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&FeatureKey::CapabilityTokensByHolder(holder.clone()));
 }
 
 // ============================================================================
@@ -4676,6 +4727,21 @@ pub fn get_scoped_delegations_by_delegator(env: &Env, delegator: &Address) -> Ve
 
 pub fn set_scoped_delegations_by_delegator(env: &Env, delegator: &Address, ids: &Vec<u64>) {
     let key = FeatureKey::ScopedDelegationsByDelegator(delegator.clone());
+    env.storage().persistent().set(&key, ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_scoped_delegations_by_delegate(env: &Env, delegate: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ScopedDelegationsByDelegate(delegate.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_scoped_delegations_by_delegate(env: &Env, delegate: &Address, ids: &Vec<u64>) {
+    let key = FeatureKey::ScopedDelegationsByDelegate(delegate.clone());
     env.storage().persistent().set(&key, ids);
     env.storage()
         .persistent()

@@ -72,8 +72,6 @@ fn test_insurance_calculation_normal_amounts() {
         .address();
     let recipient = Address::generate(&env);
 
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
     // Normal amount should calculate insurance correctly
     // amount * min_insurance_bps / 10_000
     let proposal_id = client.propose_transfer(
@@ -91,87 +89,63 @@ fn test_insurance_calculation_normal_amounts() {
     assert!(proposal_id > 0);
 }
 
-/// Issue #1417: Test insurance calculation near i128::MAX without overflow
+/// Issue #1417: amounts at the top of the i128 range must be rejected with a
+/// typed contract error, never an arithmetic overflow panic.
 #[test]
-fn test_insurance_calculation_large_amount() {
+fn test_proposal_amount_near_i128_max_is_rejected_without_overflow() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, _signer1, _signer2, _contract_id) = setup(&env);
 
-    let token_admin = Address::generate(&env);
     let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
+        .register_stellar_asset_contract_v2(Address::generate(&env))
         .address();
     let recipient = Address::generate(&env);
 
-    client.set_role(&admin, &admin, &Role::Treasurer);
+    for amount in [92233720368547758i128, i128::MAX / 2, i128::MAX] {
+        let result = client.try_propose_transfer(
+            &admin,
+            &recipient,
+            &token,
+            &amount,
+            &Symbol::new(&env, "memo"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &crate::types::ConditionLogic::And,
+            &0i128,
+        );
+        assert_eq!(result, Err(Ok(VaultError::ExceedsProposalLimit)));
+    }
+}
 
-    // Use a large but safe amount that won't overflow with typical insurance bps
-    // i128::MAX = 9223372036854775807
-    // If min_insurance_bps = 100 (1%), then: 9223372036854775807 * 100 / 10_000 would overflow
-    // Safe amount would be: 9223372036854775807 / 100 * 100 = 92233720368547758
-    let safe_large_amount = 92233720368547758i128;
+/// Issue #1417: an insurance amount at i128::MAX must not overflow the
+/// insurance/stake arithmetic; it resolves to a typed error.
+#[test]
+fn test_insurance_amount_at_i128_max_does_not_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _signer1, _signer2, _contract_id) = setup(&env);
 
-    let proposal_id = client.propose_transfer(
+    let token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+
+    let result = client.try_propose_transfer(
         &admin,
-        &recipient,
+        &Address::generate(&env),
         &token,
-        &safe_large_amount,
+        &1000i128,
         &Symbol::new(&env, "memo"),
         &Priority::Normal,
         &Vec::new(&env),
         &crate::types::ConditionLogic::And,
-        &0i128,
+        &i128::MAX,
     );
-
-    assert!(proposal_id > 0);
-}
-
-/// Issue #1417: Test staking calculation with normal amounts
-#[test]
-fn test_staking_calculation_normal_amounts() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-
-    client.set_role(&admin, &admin, &Role::Treasurer);
-    client.set_role(&signer1, &signer1, &Role::Staker);
-
-    // Normal staking amount should work without overflow
-    // stake_proposal with normal amount
-}
-
-/// Issue #1417: Test batch proposal transfer overflow prevention
-#[test]
-fn test_batch_proposal_no_overflow() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _signer1, _signer2, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    // Create batch proposal with multiple transfers
-    // Should handle accumulation without overflow
-    let mut recipients = Vec::new(&env);
-    let mut amounts = Vec::new(&env);
-
-    for i in 0..3 {
-        recipients.push_back(Address::generate(&env));
-        amounts.push_back(1000i128);
-    }
-
-    // batch_propose_transfers should safely calculate totals
-    // without integer overflow
+    // Err(Ok(_)) is a contract error; an overflow panic would surface as Err(Err(_)).
+    assert!(
+        matches!(result, Err(Ok(_))),
+        "expected a typed error, got {result:?}"
+    );
 }
 
 /// Issue #1417: Test multiplication overflow in dividend calculation
@@ -186,8 +160,6 @@ fn test_dividend_multiplication_safe() {
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
     let recipient = Address::generate(&env);
-
-    client.set_role(&admin, &admin, &Role::Treasurer);
 
     // Proposal with dividend calculation
     // amount * rate / divisor should use checked operations
@@ -219,8 +191,6 @@ fn test_saturating_arithmetic_used() {
         .address();
     let recipient = Address::generate(&env);
 
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
     // When operations would exceed bounds, saturating operations should cap at i128::MAX
     // instead of panicking or wrapping
     let proposal_id = client.propose_transfer(
@@ -238,52 +208,36 @@ fn test_saturating_arithmetic_used() {
     assert!(proposal_id > 0);
 }
 
-/// Issue #1417: Test insurance claim amount overflow
-#[test]
-fn test_insurance_claim_no_overflow() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, _signer1, _signer2, _contract_id) = setup(&env);
-
-    let token_admin = Address::generate(&env);
-    let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
-        .address();
-
-    // Insurance claim calculations should also use checked operations
-    // claim_amount * payout_ratio / divisor
-}
-
-/// Issue #1417: Test velocity limit enforcement with large amounts
+/// Issue #1417: amounts above the per-proposal limit are rejected before any
+/// velocity/spending accumulation can overflow.
 #[test]
 fn test_velocity_limit_checked() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, _signer1, _signer2, _contract_id) = setup(&env);
 
-    let token_admin = Address::generate(&env);
     let token = env
-        .register_stellar_asset_contract_v2(token_admin.clone())
+        .register_stellar_asset_contract_v2(Address::generate(&env))
         .address();
     let recipient = Address::generate(&env);
+    let propose = |amount: i128| {
+        client.try_propose_transfer(
+            &admin,
+            &recipient,
+            &token,
+            &amount,
+            &Symbol::new(&env, "memo"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &crate::types::ConditionLogic::And,
+            &0i128,
+        )
+    };
 
-    client.set_role(&admin, &admin, &Role::Treasurer);
-
-    // Velocity tracking: cumulative_amount + new_amount should be checked
-    // for overflow before comparing with limit
-    let proposal_id = client.propose_transfer(
-        &admin,
-        &recipient,
-        &token,
-        &500_000i128,
-        &Symbol::new(&env, "memo"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &crate::types::ConditionLogic::And,
-        &0i128,
-    );
-
-    assert!(proposal_id > 0);
+    // At the 100_000 spending limit: accepted.
+    assert!(propose(100_000).is_ok());
+    // Above it: typed rejection, no overflow.
+    assert_eq!(propose(500_000), Err(Ok(VaultError::ExceedsProposalLimit)));
 }
 
 /// Issue #1417: Test daily/weekly spending accumulation safe
@@ -298,8 +252,7 @@ fn test_daily_weekly_spending_accumulation() {
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
 
-    client.set_role(&admin, &admin, &Role::Treasurer);
-    client.set_role(&signer1, &signer1, &Role::Approver);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
     // Multiple proposals accumulating daily/weekly spending
     // total = existing + new_amount should use checked_add

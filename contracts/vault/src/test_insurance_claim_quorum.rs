@@ -28,7 +28,7 @@ fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         high_impact_threshold: 70,
         admin_rotation_delay: 1440,
         signers,
-        threshold: 1,
+        threshold: 2,
         quorum: 0,
         spending_limit: 50_000,
         daily_limit: 200_000,

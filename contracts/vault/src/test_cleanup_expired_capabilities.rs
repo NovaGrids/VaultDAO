@@ -5,7 +5,7 @@ mod tests {
         CapabilityToken, InitConfig, Role, ThresholdStrategy, VelocityConfig, VoteWeight,
     };
     use crate::{VaultDAO, VaultDAOClient};
-    use soroban_sdk::{testutils::Ledger, Address, Env, Symbol, Vec};
+    use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Symbol, Vec};
 
     fn setup_vault_with_capabilities() -> (VaultDAOClient<'static>, Address, Address, Address) {
         let env = Env::default();
@@ -29,7 +29,7 @@ mod tests {
             high_impact_threshold: 70,
             admin_rotation_delay: 1440,
             signers,
-            threshold: 1,
+            threshold: 2,
             quorum: 0,
             quorum_percentage: 0,
             spending_limit: 1_000_000,
