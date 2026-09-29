@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Keypair, nativeToScVal, scValToNative, xdr, Address } from 'stellar-sdk';
+import { Keypair, nativeToScVal, scValToNative, xdr, Address } from '@stellar/stellar-sdk';
 import { buildConfigWithAddedSigner } from '../configChange';
 
 const addr = () => Keypair.random().publicKey();

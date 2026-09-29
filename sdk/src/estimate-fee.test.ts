@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SorobanRpc } from "stellar-sdk";
+import { SorobanRpc } from "@stellar/stellar-sdk";
 import { estimateFee } from "./utils";
 import type { SdkOptions } from "./types";
 

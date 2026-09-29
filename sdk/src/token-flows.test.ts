@@ -3,13 +3,13 @@
  * helpers.
  *
  * `./utils` is mocked so contract calls can be captured without a network,
- * but the ScVal encoders delegate to the real stellar-sdk `nativeToScVal`
+ * but the ScVal encoders delegate to the real @stellar/stellar-sdk `nativeToScVal`
  * so assertions can decode arguments with `scValToNative` and check the
  * actual on-chain encoding (including struct field ordering).
  */
 
 import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
-import { nativeToScVal, scValToNative, xdr } from "stellar-sdk";
+import { nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { SdkOptions } from "./types";
 import { EscrowStatus, FundingRoundStatus, FundingMilestoneStatus } from "./types";
 import {
@@ -48,7 +48,7 @@ const { serverMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("./utils", async () => {
-  const sdk = await import("stellar-sdk");
+  const sdk = await import("@stellar/stellar-sdk");
   return {
     getContract: vi.fn(),
     buildTransaction: vi.fn(),
@@ -63,8 +63,8 @@ vi.mock("./utils", async () => {
   };
 });
 
-vi.mock("stellar-sdk", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("stellar-sdk")>();
+vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@stellar/stellar-sdk")>();
   const builder = {
     addOperation: vi.fn().mockReturnThis(),
     setTimeout: vi.fn().mockReturnThis(),

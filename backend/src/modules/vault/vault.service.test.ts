@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Address, xdr, Keypair, StrKey } from "stellar-sdk";
+import { Address, xdr, Keypair, StrKey } from "@stellar/stellar-sdk";
 import { VaultService } from "./vault.service.js";
 
 function mockFetch(responseBody: unknown, status = 200): typeof fetch {

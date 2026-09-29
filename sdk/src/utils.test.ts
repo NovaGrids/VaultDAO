@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
-import { xdr, Contract } from "stellar-sdk";
+import { xdr, Contract } from "@stellar/stellar-sdk";
 import {
   buildOptions,
   NETWORK_PASSPHRASES,
@@ -45,8 +45,8 @@ const { serverMock, freighterMock } = vi.hoisted(() => ({
 
 vi.mock("@stellar/freighter-api", () => freighterMock);
 
-vi.mock("stellar-sdk", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("stellar-sdk")>();
+vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@stellar/stellar-sdk")>();
 
   const mockTxBuilderInstance = {
     addOperation: vi.fn().mockReturnThis(),
@@ -113,7 +113,7 @@ describe("utils.ts — pure helpers", () => {
     });
   });
 
-  describe("ScVal converters round-trip through real stellar-sdk encoding", () => {
+  describe("ScVal converters round-trip through real @stellar/stellar-sdk encoding", () => {
     it("addressToScVal encodes and decodes back to the same address", () => {
       const address = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
       const scv = addressToScVal(address);

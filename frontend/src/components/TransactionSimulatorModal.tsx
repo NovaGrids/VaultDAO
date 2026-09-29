@@ -27,7 +27,7 @@ import {
   ChevronUp,
   Info,
 } from 'lucide-react';
-import type { xdr } from 'stellar-sdk';
+import type { xdr } from '@stellar/stellar-sdk';
 import type { SimulationResult, StateChange } from '../utils/simulation';
 import {
   generateCacheKey,
@@ -41,7 +41,7 @@ import { getDiffSegments } from '../utils/diffHighlighting';
 import { getUserFriendlyError } from '../utils/errorMapping';
 import { env } from '../config/env';
 import { useWallet } from '../hooks/useWallet';
-import { SorobanRpc, Address, Operation, xdr as xdrModule } from 'stellar-sdk';
+import { SorobanRpc, Address, Operation, xdr as xdrModule } from '@stellar/stellar-sdk';
 import { newTransactionBuilder } from '../utils/transactionBuilder';
 
 const server = new SorobanRpc.Server(env.sorobanRpcUrl);

@@ -324,7 +324,7 @@ import {
   signAndSubmit,
   ProposalStatus,
 } from "@vaultdao/sdk";
-import { SorobanRpc } from "stellar-sdk";
+import { SorobanRpc } from "@stellar/stellar-sdk";
 
 const proposal = await getProposal(BigInt(1), wallet.publicKey, opts);
 
@@ -1172,7 +1172,7 @@ const metrics = await getVaultMetrics(wallet.publicKey, opts);
 **Fix**: Check `proposal.unlockLedger` against the current ledger sequence:
 
 ```typescript
-import { SorobanRpc } from "stellar-sdk";
+import { SorobanRpc } from "@stellar/stellar-sdk";
 
 const server = new SorobanRpc.Server(opts.rpcUrl);
 const ledger = await server.getLatestLedger();

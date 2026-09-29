@@ -15,7 +15,7 @@ import {
   TransactionBuilder,
   SorobanRpc,
   nativeToScVal,
-} from 'stellar-sdk';
+} from '@stellar/stellar-sdk';
 import { useWallet } from './useWallet';
 import { env } from '../config/env';
 import { parseError } from '../utils/errorParser';
@@ -310,7 +310,7 @@ export function useEscrow(): UseEscrowReturn {
         const topic0 = ev.topic?.[0];
         if (!topic0) return false;
         try {
-          const { scValToNative } = require('stellar-sdk');
+          const { scValToNative } = require('@stellar/stellar-sdk');
           const scv = xdr.ScVal.fromXDR(topic0, 'base64');
           const native = scValToNative(scv);
           return typeof native === 'string' && native.startsWith('escrow');

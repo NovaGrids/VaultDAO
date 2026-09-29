@@ -10,7 +10,7 @@
  * `VITE_MAX_BASE_FEE`. If fee stats are unavailable we fall back to
  * `BASE_FEE * multiplier`. Resource fees are still added by `prepareTransaction`.
  */
-import { TransactionBuilder } from 'stellar-sdk';
+import { TransactionBuilder } from '@stellar/stellar-sdk';
 import { env } from '../config/env';
 
 type SourceAccount = ConstructorParameters<typeof TransactionBuilder>[0];
@@ -39,7 +39,7 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
 let cachedFee: { value: string; expiresAt: number } | null = null;
 let inflight: Promise<string> | null = null;
 
-/** Protocol minimum base fee per operation (stellar-sdk BASE_FEE), in stroops. */
+/** Protocol minimum base fee per operation (@stellar/stellar-sdk BASE_FEE), in stroops. */
 const minFee = 100;
 
 const DEFAULT_FEE_MULTIPLIER = 1.5;

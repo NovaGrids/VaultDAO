@@ -45,8 +45,8 @@ vi.mock('../../utils/contractRead', () => ({
 //   "sym:<name>"   -> the symbol string <name>
 //   "actor:<addr>" -> an array whose first element is <addr>
 // Address is stubbed so tests can use short fake account IDs.
-vi.mock('stellar-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('stellar-sdk')>();
+vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>();
   return {
     ...actual,
     Address: class {

@@ -22,7 +22,7 @@ import {
   VaultErrorCode,
   ProposalStatus,
 } from "../src/index";
-import { SorobanRpc } from "stellar-sdk";
+import { SorobanRpc } from "@stellar/stellar-sdk";
 
 const CONTRACT_ID = "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 const PROPOSAL_ID = BigInt(1);

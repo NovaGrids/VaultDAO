@@ -4,7 +4,7 @@ import { createVaultConfigController } from "./vault.controller.js";
 import { VaultService } from "./vault.service.js";
 import { CacheManager } from "../../shared/cache/cache-manager.js";
 import type { VaultConfigResponse } from "./vault.types.js";
-import { Keypair, StrKey } from "stellar-sdk";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
 
 function makeRes() {
   const state: { statusCode: number; body: unknown } = {

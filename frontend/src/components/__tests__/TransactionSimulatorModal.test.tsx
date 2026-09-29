@@ -19,7 +19,7 @@ vi.mock('../../config/env', () => ({
   },
 }));
 
-vi.mock('stellar-sdk', () => ({
+vi.mock('@stellar/stellar-sdk', () => ({
   SorobanRpc: {
     Server: vi.fn().mockImplementation(function () {
       return {
@@ -118,7 +118,7 @@ describe('TransactionSimulatorModal', () => {
   });
 
   it('blocks submission and shows error when simulation fails', async () => {
-    const { SorobanRpc } = await import('stellar-sdk');
+    const { SorobanRpc } = await import('@stellar/stellar-sdk');
     vi.mocked(SorobanRpc.Api.isSimulationError).mockReturnValueOnce(true);
     const { parseSimulationError } = await import('../../utils/simulation');
     vi.mocked(parseSimulationError).mockReturnValueOnce({ message: 'Insufficient balance', code: 'INSUFFICIENT_BALANCE' });

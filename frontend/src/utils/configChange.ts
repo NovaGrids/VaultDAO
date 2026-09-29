@@ -1,4 +1,4 @@
-import { xdr } from 'stellar-sdk';
+import { xdr } from '@stellar/stellar-sdk';
 
 /**
  * Return a copy of an on-chain `Config` ScVal (as returned by `get_config`)

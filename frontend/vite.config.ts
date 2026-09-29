@@ -66,7 +66,7 @@ export default defineConfig({
           }
           // Stellar / Soroban
           if (
-            id.includes('stellar-sdk') ||
+            id.includes('@stellar/stellar-sdk') ||
             id.includes('@stellar/') ||
             id.includes('@soroban-react') ||
             id.includes('stellar-base')
@@ -118,7 +118,7 @@ export default defineConfig({
       'react-router-dom',
       'recharts',
       'lucide-react',
-      'stellar-sdk',
+      '@stellar/stellar-sdk',
     ],
   },
 })

@@ -15,7 +15,7 @@ import {
   xdr,
   nativeToScVal,
   scValToNative,
-} from "stellar-sdk";
+} from "@stellar/stellar-sdk";
 import type { SdkOptions, Network, SdkLogger, StateDiff, StateChangeValue, StateChangeEntry } from "./types";
 import { VaultError, VaultErrorCode, noopLogger } from "./types";
 import { getErrorDescription } from "./errors";
@@ -263,7 +263,7 @@ export async function signAndSubmit(
   });
 
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
-  const { Transaction } = await import("stellar-sdk");
+  const { Transaction } = await import("@stellar/stellar-sdk");
   const signedTx = new Transaction(signedXdr, opts.networkPassphrase);
   const sendResult = await retryOnRateLimit(
     () => server.sendTransaction(signedTx),

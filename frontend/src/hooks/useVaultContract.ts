@@ -7,7 +7,7 @@ import {
     SorobanRpc,
     nativeToScVal,
     scValToNative
-} from 'stellar-sdk';
+} from '@stellar/stellar-sdk';
 import { useWallet } from './useWallet';
 import { parseError, type VaultError } from '../utils/errorParser';
 

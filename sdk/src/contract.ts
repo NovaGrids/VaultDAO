@@ -9,7 +9,7 @@
  * decodes and returns the on-chain value without requiring a signature.
  */
 
-import { SorobanRpc, xdr } from "stellar-sdk";
+import { SorobanRpc, xdr } from "@stellar/stellar-sdk";
 import type {
   InitConfig,
   VaultConfig,
@@ -52,7 +52,7 @@ export async function simulateReadOnly<T>(
 ): Promise<T> {
   const log: SdkLogger = opts.logger ?? noopLogger;
   const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
-  const { TransactionBuilder, BASE_FEE } = await import("stellar-sdk");
+  const { TransactionBuilder, BASE_FEE } = await import("@stellar/stellar-sdk");
   const ctx = { contractId: opts.contractId, method };
   const simStart = Date.now();
   log.debug("Simulating read-only call", ctx);
