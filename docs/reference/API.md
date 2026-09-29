@@ -841,6 +841,20 @@ Fetch a vesting schedule by ID (read-only).
 
 **Returns:** `VestingSchedule { id, beneficiary, token, total, cliff_ledger, start_ledger, end_ledger, claimed, cancelled }`, or `None`
 
+### `get_vesting_schedules_by_beneficiary(beneficiary: Address, offset: u32, limit: u32) -> Vec<VestingSchedule>`
+
+List the vesting schedules created for a beneficiary, in creation order (read-only).
+
+**Arguments:** `offset` schedules to skip, `limit` capped at 50 (0 or above 50 returns up to 50)
+
+**Returns:** up to `limit` `VestingSchedule` values; empty when the beneficiary has none. Cancelled and fully claimed schedules remain listed.
+
+### `list_vesting_ids(offset: u64, limit: u64) -> Vec<u64>`
+
+List vesting schedule IDs in ascending order, vault-wide (read-only).
+
+**Arguments:** `offset` schedules to skip, `limit` capped at 100 (0 or above 100 returns up to 100)
+
 ---
 
 ## Dynamic Fees

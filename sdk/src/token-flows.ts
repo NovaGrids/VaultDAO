@@ -151,6 +151,21 @@ export async function cancelVesting(
   return invokeMethod("cancel_vesting", adminPublicKey, op, opts);
 }
 
+/** Map a decoded `VestingSchedule` struct to the SDK's camelCase shape. */
+function toVestingSchedule(raw: Record<string, unknown>): VestingSchedule {
+  return {
+    id: big(raw.id),
+    beneficiary: raw.beneficiary as string,
+    token: raw.token as string,
+    total: big(raw.total),
+    cliffLedger: Number(raw.cliff_ledger),
+    startLedger: Number(raw.start_ledger),
+    endLedger: Number(raw.end_ledger),
+    claimed: big(raw.claimed),
+    cancelled: Boolean(raw.cancelled),
+  };
+}
+
 /**
  * Fetch a vesting schedule, or `null` if it does not exist.
  */
@@ -167,17 +182,62 @@ export async function getVestingSchedule(
     "getVestingSchedule"
   );
   if (!raw) return null;
-  return {
-    id: big(raw.id),
-    beneficiary: raw.beneficiary as string,
-    token: raw.token as string,
-    total: big(raw.total),
-    cliffLedger: Number(raw.cliff_ledger),
-    startLedger: Number(raw.start_ledger),
-    endLedger: Number(raw.end_ledger),
-    claimed: big(raw.claimed),
-    cancelled: Boolean(raw.cancelled),
-  };
+  return toVestingSchedule(raw);
+}
+
+/**
+ * Fetch a page of the vesting schedules created for `beneficiary`, in
+ * creation order.
+ *
+ * Returns an empty array when the beneficiary has no schedules, so a UI can
+ * enumerate a beneficiary's schedules without guessing IDs. The contract caps
+ * `limit` at 50; pass 0 for the contract's own default.
+ */
+export async function getVestingSchedulesByBeneficiary(
+  beneficiary: string,
+  offset: number,
+  limit: number,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<VestingSchedule[]> {
+  if (offset < 0) throw new Error("Vesting schedule offset must be non-negative");
+  if (limit < 0) throw new Error("Vesting schedule limit must be non-negative");
+  const op = getContract(opts).call(
+    "get_vesting_schedules_by_beneficiary",
+    addressToScVal(beneficiary),
+    u32ToScVal(offset),
+    u32ToScVal(limit)
+  );
+  const raw = await simulateReadOnly<Record<string, unknown>[]>(
+    op,
+    opts,
+    callerPublicKey,
+    "getVestingSchedulesByBeneficiary"
+  );
+  return (raw ?? []).map(toVestingSchedule);
+}
+
+/**
+ * List a page of vesting schedule IDs in ascending order, so a UI can page
+ * through every schedule in the vault.
+ *
+ * The contract caps `limit` at 100; pass 0 for the contract's own default.
+ */
+export async function listVestingIds(
+  offset: number,
+  limit: number,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<bigint[]> {
+  if (offset < 0) throw new Error("Vesting schedule offset must be non-negative");
+  if (limit < 0) throw new Error("Vesting schedule limit must be non-negative");
+  const op = getContract(opts).call(
+    "list_vesting_ids",
+    u64ToScVal(offset),
+    u64ToScVal(limit)
+  );
+  const raw = await simulateReadOnly<unknown[]>(op, opts, callerPublicKey, "listVestingIds");
+  return (raw ?? []).map(big);
 }
 
 // ---------------------------------------------------------------------------
