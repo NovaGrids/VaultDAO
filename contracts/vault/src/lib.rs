@@ -42,7 +42,8 @@ use types::{
     GasPriceSource, GovernanceProposal, HolidayBehavior, HolidayCalendar, HookEventType,
     HookRegistration, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
     InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
-    NotificationPrefs, OptionalProposalOperation, OptionalVaultOracleConfig, PauseCooldownConfig,
+    NotificationPreferencesV2, NotificationPrefs, OptionalProposalOperation,
+    OptionalVaultOracleConfig, PauseCooldownConfig,
     PauseState, Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase,
     ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig,
     RecoveryConfigChangeProposal, RecoveryProposal, RecoveryStatus, RecurringPayment,
@@ -114,6 +115,13 @@ mod test_insurance_claim_quorum;
 mod test_merge;
 #[cfg(test)]
 mod test_notification_index_cap;
+mod test_rejection_slashing;
+#[cfg(test)]
+mod test_staking_slashing;
+#[cfg(test)]
+mod test_streaming;
+#[cfg(test)]
+mod test_trigger_stream_payment_accrual;
 #[cfg(test)]
 mod test_notification_prefs;
 #[cfg(test)]
@@ -3187,15 +3195,6 @@ impl VaultDAO {
             );
             Self::update_reputation_on_rejection(&env, &proposal.proposer);
 
-            /// Get the current vault configuration
-            pub fn get_config(env: Env) -> Result<Config, VaultError> {
-                storage::get_config(&env)
-            }
-
-            /// Get proposal by ID
-            pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, VaultError> {
-                storage::get_proposal(&env, proposal_id)
-            }
             // ?? Slash insurance ??????????????????????????????????????????????
             Self::slash_insurance_on_rejection(&env, &proposal);
 
@@ -10243,12 +10242,51 @@ impl VaultDAO {
     // ========================================================================
 
     /// Set notification preferences for the caller.
+    ///
+    /// Event-type flags only: the amount threshold and quiet-hours window stay
+    /// at their defaults (0). Use [`Self::set_notification_preferences_v2`] to
+    /// configure them.
     pub fn set_notification_preferences(
         env: Env,
         caller: Address,
         prefs: NotificationPreferences,
     ) -> Result<(), VaultError> {
+        Self::set_notification_preferences_v2(
+            env,
+            caller,
+            NotificationPreferencesV2 {
+                notify_on_proposal: prefs.notify_on_proposal,
+                notify_on_approval: prefs.notify_on_approval,
+                notify_on_execution: prefs.notify_on_execution,
+                notify_on_rejection: prefs.notify_on_rejection,
+                notify_on_expiry: prefs.notify_on_expiry,
+                min_amount_threshold: 0,
+                quiet_hours_start: 0,
+                quiet_hours_end: 0,
+            },
+        )
+    }
+
+    /// Set notification preferences, including the amount threshold and the
+    /// quiet-hours window that `compute_relevant_signers` filters on (#1741).
+    ///
+    /// Supersedes [`Self::set_notification_preferences`], which could not
+    /// reach those fields, making the filtering unreachable through the
+    /// public API.
+    ///
+    /// # Errors
+    /// * `Unauthorized` - caller is neither a signer nor a role holder.
+    /// * `InvalidNotificationPrefs` - negative `min_amount_threshold`, or a
+    ///   quiet-hours offset outside one `QUIET_HOURS_CYCLE`.
+    /// * `NotificationIndexFull` - the subscriber index is at its hard cap.
+    pub fn set_notification_preferences_v2(
+        env: Env,
+        caller: Address,
+        prefs: NotificationPreferencesV2,
+    ) -> Result<(), VaultError> {
         caller.require_auth();
+
+        Self::validate_notification_prefs(&prefs)?;
 
         // Only signers or explicit role holders may register (#1704)
         let config = storage::get_config(&env)?;
@@ -10276,15 +10314,32 @@ impl VaultDAO {
         let stored = NotificationPrefs {
             signer: caller.clone(),
             subscribed_events,
-            min_amount_threshold: 0,
-            quiet_hours_start: 0,
-            quiet_hours_end: 0,
+            min_amount_threshold: prefs.min_amount_threshold,
+            quiet_hours_start: prefs.quiet_hours_start,
+            quiet_hours_end: prefs.quiet_hours_end,
         };
         storage::set_notification_prefs(&env, &stored)?;
         storage::extend_instance_ttl(&env);
 
         events::emit_notification_prefs_updated(&env, &caller);
 
+        Ok(())
+    }
+
+    /// Reject notification preferences that `compute_relevant_signers` could
+    /// not honour: a negative threshold, or a quiet-hours offset that can never
+    /// fall inside a cycle.
+    ///
+    /// A wrapping window (`start > end`) is valid and spans the cycle boundary;
+    /// `start == end` means "no quiet hours".
+    fn validate_notification_prefs(prefs: &NotificationPreferencesV2) -> Result<(), VaultError> {
+        if prefs.min_amount_threshold < 0 {
+            return Err(VaultError::InvalidNotificationPrefs);
+        }
+        let cycle = QUIET_HOURS_CYCLE as u32;
+        if prefs.quiet_hours_start >= cycle || prefs.quiet_hours_end >= cycle {
+            return Err(VaultError::InvalidNotificationPrefs);
+        }
         Ok(())
     }
 
@@ -10300,6 +10355,31 @@ impl VaultDAO {
             notify_on_execution: has("execution"),
             notify_on_rejection: has("rejection"),
             notify_on_expiry: has("expiry"),
+        }
+    }
+
+    /// Get notification preferences for an address, including the amount
+    /// threshold and quiet-hours window stored by
+    /// [`Self::set_notification_preferences_v2`] (#1741).
+    ///
+    /// Returns the defaults (no threshold, no quiet hours) for an address that
+    /// has never set preferences.
+    pub fn get_notification_preferences_v2(env: Env, addr: Address) -> NotificationPreferencesV2 {
+        let prefs = storage::get_notification_prefs(&env, &addr);
+        let subscribed = prefs
+            .as_ref()
+            .map(|p| p.subscribed_events.clone())
+            .unwrap_or_else(|| Vec::new(&env));
+        let has = |name: &str| subscribed.contains(Symbol::new(&env, name));
+        NotificationPreferencesV2 {
+            notify_on_proposal: has("proposal"),
+            notify_on_approval: has("approval"),
+            notify_on_execution: has("execution"),
+            notify_on_rejection: has("rejection"),
+            notify_on_expiry: has("expiry"),
+            min_amount_threshold: prefs.as_ref().map(|p| p.min_amount_threshold).unwrap_or(0),
+            quiet_hours_start: prefs.as_ref().map(|p| p.quiet_hours_start).unwrap_or(0),
+            quiet_hours_end: prefs.as_ref().map(|p| p.quiet_hours_end).unwrap_or(0),
         }
     }
 

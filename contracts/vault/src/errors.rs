@@ -498,6 +498,11 @@ pub enum VaultError {
     LockAlreadyActive = 1162,
     /// Active vesting schedule cap has been reached
     VestingCapReached = 1163,
+    // Issue #1741: Notification preference ranges
+    /// Notification preferences are out of range: a negative
+    /// `min_amount_threshold`, or a quiet-hours offset outside one
+    /// `QUIET_HOURS_CYCLE`
+    InvalidNotificationPrefs = 1164,
     // Issue #1748: Storage schema versioning
     /// Stored schema version does not match this contract build; call `migrate`
     SchemaVersionMismatch = 1140,
