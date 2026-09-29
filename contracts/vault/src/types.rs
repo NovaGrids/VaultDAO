@@ -1053,6 +1053,34 @@ impl Default for NotificationPreferences {
     }
 }
 
+/// Extended per-user notification preferences, including the amount threshold
+/// and the quiet-hours window that `compute_relevant_signers` filters on.
+///
+/// A separate type from [`NotificationPreferences`] so the existing
+/// `set_notification_preferences` entry point keeps its XDR layout for clients
+/// already built against it (#1741).
+///
+/// Constraints (validated by `set_notification_preferences_v2`):
+/// - `min_amount_threshold`: must not be negative; 0 means "no threshold"
+/// - `quiet_hours_start` / `quiet_hours_end`: ledger offsets within one
+///   `QUIET_HOURS_CYCLE`; the window is `[start, end)`, and `start > end`
+///   is a wrapping window that spans the cycle boundary.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct NotificationPreferencesV2 {
+    pub notify_on_proposal: bool,
+    pub notify_on_approval: bool,
+    pub notify_on_execution: bool,
+    pub notify_on_rejection: bool,
+    pub notify_on_expiry: bool,
+    /// Only notify when the event amount is >= this value (0 = no threshold).
+    pub min_amount_threshold: i128,
+    /// Start of the quiet window (inclusive), as a ledger offset in the cycle.
+    pub quiet_hours_start: u32,
+    /// End of the quiet window (exclusive), as a ledger offset in the cycle.
+    pub quiet_hours_end: u32,
+}
+
 /// Rich per-signer notification preferences for on-chain subscriber filtering.
 ///
 /// Stored in Instance storage (hot path) keyed by `signer` address so indexers
@@ -1060,7 +1088,7 @@ impl Default for NotificationPreferences {
 ///
 /// Constraints:
 /// - `subscribed_events`: at most 20 Symbol entries (e.g. `"proposal_created"`)
-/// - `quiet_hours_*`: ledger offset 0–1440 (one 24 h cycle at 5 s/ledger)
+/// - `quiet_hours_*`: ledger offsets inside one `QUIET_HOURS_CYCLE`
 ///   Signers are excluded from `relevant_signers` while in their quiet window.
 #[contracttype]
 #[derive(Clone, Debug)]
