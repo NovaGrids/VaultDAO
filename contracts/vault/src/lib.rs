@@ -33,7 +33,7 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, Comment, Condition,
+    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
     DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
@@ -7034,6 +7034,14 @@ impl VaultDAO {
         };
 
         storage::set_streaming_payment(&env, &stream);
+        storage::set_stream_rate_window(
+            &env,
+            id,
+            &StreamRateWindow {
+                total_streamed_in_window: total_amount,
+                window_start_ledger: env.ledger().sequence(),
+            },
+        );
         storage::extend_instance_ttl(&env);
 
         events::emit_stream_created(
@@ -7426,6 +7434,122 @@ impl VaultDAO {
         storage::set_streaming_payment(&env, &stream);
         events::emit_stream_rate_adjusted(&env, stream_id, old_rate, new_rate, &sender);
 
+        Ok(())
+    }
+
+    /// Request a clawback of funds from a stream (Issue #1724).
+    pub fn request_stream_clawback(
+        env: Env,
+        caller: Address,
+        stream_id: u64,
+        amount: i128,
+        reason: Symbol,
+    ) -> Result<u64, VaultError> {
+        caller.require_auth();
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && role != Role::Treasurer {
+            return Err(VaultError::InsufficientRole);
+        }
+        let stream = storage::get_streaming_payment(&env, stream_id)?;
+        if amount <= 0 || amount > stream.total_amount {
+            return Err(VaultError::InvalidAmount);
+        }
+        if stream.status == StreamStatus::Cancelled {
+            return Err(VaultError::ProposalAlreadyCancelled);
+        }
+        let id = storage::increment_clawback_id(&env);
+        let req = ClawbackRequest {
+            id,
+            stream_id,
+            requester: caller,
+            amount,
+            reason,
+            status: ClawbackStatus::Pending,
+        };
+        storage::set_clawback_request(&env, &req);
+        storage::extend_instance_ttl(&env);
+        Ok(id)
+    }
+
+    /// Vote to approve or reject a stream clawback request (Issue #1724).
+    pub fn vote_clawback(
+        env: Env,
+        caller: Address,
+        clawback_id: u64,
+        approve: bool,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && role != Role::Treasurer {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut req = storage::get_clawback_request(&env, clawback_id)?;
+        if approve {
+            req.status = ClawbackStatus::Approved;
+            storage::remove_stream_rate_window(&env, req.stream_id);
+        } else {
+            req.status = ClawbackStatus::Rejected;
+        }
+        storage::set_clawback_request(&env, &req);
+        Ok(())
+    }
+
+    /// Retrieve a stream clawback request by ID (Issue #1724).
+    pub fn get_clawback_request(
+        env: Env,
+        clawback_id: u64,
+    ) -> Result<ClawbackRequest, VaultError> {
+        storage::get_clawback_request(&env, clawback_id)
+    }
+
+    /// Close an active stream and clean up its rate window (Issue #1724, #1536).
+    pub fn close_stream(
+        env: Env,
+        caller: Address,
+        stream_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        let mut stream = storage::get_streaming_payment(&env, stream_id)?;
+        let role = storage::get_role(&env, &caller);
+        if stream.sender != caller && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+        stream.status = StreamStatus::Completed;
+        storage::set_streaming_payment(&env, &stream);
+        storage::remove_stream_rate_window(&env, stream_id);
+        Ok(())
+    }
+
+    /// Get the current rate window for a stream (Issue #1724).
+    pub fn get_stream_rate_window(
+        env: Env,
+        stream_id: u64,
+    ) -> Option<StreamRateWindow> {
+        storage::get_stream_rate_window(&env, stream_id)
+    }
+
+    /// Execute an approved clawback and recall unearned tokens (Issue #1724).
+    pub fn execute_clawback(
+        env: Env,
+        caller: Address,
+        clawback_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        let role = storage::get_role(&env, &caller);
+        if role != Role::Admin && role != Role::Treasurer {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut req = storage::get_clawback_request(&env, clawback_id)?;
+        if req.status != ClawbackStatus::Approved {
+            return Err(VaultError::ProposalNotPending);
+        }
+        let mut stream = storage::get_streaming_payment(&env, req.stream_id)?;
+        stream.status = StreamStatus::Cancelled;
+        storage::set_streaming_payment(&env, &stream);
+        storage::remove_stream_rate_window(&env, req.stream_id);
+        req.status = ClawbackStatus::Executed;
+        storage::set_clawback_request(&env, &req);
+        events::emit_stream_status_updated(&env, req.stream_id, StreamStatus::Cancelled as u32, &caller);
         Ok(())
     }
     // ========================================================================
