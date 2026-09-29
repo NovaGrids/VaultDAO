@@ -18,6 +18,8 @@ export interface RateLimitConfig {
   trustProxy?: boolean;
   /** Redis URL — reserved for future distributed use; unused by token bucket. */
   redisUrl?: string;
+  /** Namespace/prefix for bucket keys to prevent collisions across route limiters (Issue #1774). */
+  keyPrefix?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +70,7 @@ interface BucketState {
 export class TokenBucketLimiter {
   protected readonly windowMs: number;
   protected readonly maxRequests: number;
+  protected readonly keyPrefix: string;
   private readonly trustProxy: boolean;
   private readonly refillRatePerMs: number;
 
@@ -77,6 +80,7 @@ export class TokenBucketLimiter {
     this.windowMs = config.windowMs;
     this.maxRequests = config.maxRequests;
     this.trustProxy = config.trustProxy ?? false;
+    this.keyPrefix = config.keyPrefix ? `${config.keyPrefix}:` : "";
     this.refillRatePerMs = config.maxRequests / config.windowMs;
 
     this.scheduleCleanup();
@@ -99,9 +103,9 @@ export class TokenBucketLimiter {
     const apiKey = this.extractApiKey(req);
 
     const now = Date.now();
-    const ipResult = this.consumeBucket(`ip:${ip}`, now);
+    const ipResult = this.consumeBucket(`${this.keyPrefix}ip:${ip}`, now);
     const keyResult = apiKey
-      ? this.consumeBucket(`key:${apiKey}`, now)
+      ? this.consumeBucket(`${this.keyPrefix}key:${apiKey}`, now)
       : { allowed: true, tokens: this.maxRequests, retryAfterSecs: 0 };
 
     const allowed = ipResult.allowed && keyResult.allowed;
@@ -137,9 +141,9 @@ export class TokenBucketLimiter {
   peekRemaining(req: Request): number {
     const ip = this.extractIp(req);
     const apiKey = this.extractApiKey(req);
-    const ipTokens = this.peekBucketTokens(`ip:${ip}`);
+    const ipTokens = this.peekBucketTokens(`${this.keyPrefix}ip:${ip}`);
     const keyTokens = apiKey
-      ? this.peekBucketTokens(`key:${apiKey}`)
+      ? this.peekBucketTokens(`${this.keyPrefix}key:${apiKey}`)
       : this.maxRequests;
     return Math.floor(Math.min(ipTokens, keyTokens));
   }
@@ -151,7 +155,7 @@ export class TokenBucketLimiter {
    */
   getResetTimeMs(req: Request): number {
     const ip = this.extractIp(req);
-    const state = this.buckets.get(`ip:${ip}`);
+    const state = this.buckets.get(`${this.keyPrefix}ip:${ip}`);
     if (!state) return Date.now() + this.windowMs;
     return state.windowStartMs + this.windowMs;
   }
