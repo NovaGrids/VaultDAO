@@ -12,7 +12,7 @@ pub(crate) const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
 pub(crate) const LEDGER_INTERVAL_SECONDS: u64 = 5;
 
 /// One 24-hour cycle in ledgers (quiet-hours day offset, 5 s/ledger)
-pub(crate) const QUIET_HOURS_CYCLE: u64 = 1440;
+pub(crate) const QUIET_HOURS_CYCLE: u64 = 17280;
 
 /// Maximum proposals that can be batch-executed in one call (gas limit)
 pub(crate) const MAX_BATCH_SIZE: u32 = 10;
