@@ -24,15 +24,15 @@ function resolveState(
   };
 }
 
-function isValidKey(providedKey: string, expectedKey: string): boolean {
+export function isValidKey(providedKey: string, expectedKey: string): boolean {
   try {
-    const bufferProvided = Buffer.from(providedKey);
-    const bufferActual = Buffer.from(expectedKey);
+    if (typeof providedKey !== "string" || typeof expectedKey !== "string") {
+      return false;
+    }
+    const hashProvided = crypto.createHash("sha256").update(providedKey, "utf8").digest();
+    const hashActual = crypto.createHash("sha256").update(expectedKey, "utf8").digest();
 
-    return (
-      bufferProvided.length === bufferActual.length &&
-      crypto.timingSafeEqual(bufferProvided, bufferActual)
-    );
+    return crypto.timingSafeEqual(hashProvided, hashActual);
   } catch {
     return false;
   }
