@@ -163,10 +163,19 @@ pub(crate) fn calculate_impact_score(
 ) -> ImpactScore {
     // 1. Treasury Impact in basis points
     let treasury_impact_bps = if treasury_balance > 0 {
-        let bps = (amount as u64)
-            .saturating_mul(10_000)
-            .saturating_div(treasury_balance as u64);
-        bps.min(10_000) as u32 // Cap at 10000 bps (100%)
+        if amount <= 0 {
+            0
+        } else if amount >= treasury_balance {
+            10_000
+        } else {
+            let amount_u128 = amount as u128;
+            let treasury_u128 = treasury_balance as u128;
+            let bps = match amount_u128.checked_mul(10_000) {
+                Some(prod) => prod / treasury_u128,
+                None => amount_u128 / (treasury_u128 / 10_000),
+            };
+            (bps as u32).min(10_000)
+        }
     } else {
         10_000 // Assume max impact if treasury is empty/zero
     };
