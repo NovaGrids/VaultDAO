@@ -12,7 +12,7 @@
  * `signAndSubmit()`. Read helpers simulate the call and decode the result.
  */
 
-import { xdr } from "stellar-sdk";
+import { xdr } from "@stellar/stellar-sdk";
 import type {
   SdkOptions,
   VestingSchedule,

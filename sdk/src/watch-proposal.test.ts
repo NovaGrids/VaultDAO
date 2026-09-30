@@ -4,7 +4,7 @@ import { watchProposal } from "./watch-proposal";
 
 const { getEvents } = vi.hoisted(() => ({ getEvents: vi.fn() }));
 
-vi.mock("stellar-sdk", () => ({
+vi.mock("@stellar/stellar-sdk", () => ({
   SorobanRpc: {
     Server: class {
       getEvents = getEvents;

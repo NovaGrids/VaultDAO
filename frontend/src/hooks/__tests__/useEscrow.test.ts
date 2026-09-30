@@ -27,8 +27,8 @@ vi.mock('../../utils/contractRead', () => ({
 
 // Stub Address so tests can use short fake account IDs, and make
 // nativeToScVal pass the value through so escrow IDs are easy to inspect.
-vi.mock('stellar-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('stellar-sdk')>();
+vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>();
   return {
     ...actual,
     Address: class {

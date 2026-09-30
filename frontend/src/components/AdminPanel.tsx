@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { StrKey } from 'stellar-sdk';
+import { StrKey } from '@stellar/stellar-sdk';
 import { AlertTriangle, ExternalLink, KeyRound, Shield, UserMinus, UserPlus } from 'lucide-react';
 import { useVaultContract, type VaultConfig } from '../hooks/useVaultContract';
 import { useToast } from '../hooks/useToast';

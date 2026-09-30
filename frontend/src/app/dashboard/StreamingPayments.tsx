@@ -248,7 +248,7 @@ const StreamingPayments: React.FC = () => {
     setClaimingId(streamId);
     try {
       // Call the vault contract claimStream function via RPC
-      const { SorobanRpc, Operation, Address, nativeToScVal, xdr } = await import('stellar-sdk');
+      const { SorobanRpc, Operation, Address, nativeToScVal, xdr } = await import('@stellar/stellar-sdk');
       const server = new SorobanRpc.Server(env.sorobanRpcUrl);
       const account = await server.getAccount(address);
       const tx = (await newTransactionBuilder(account))
@@ -279,7 +279,7 @@ const StreamingPayments: React.FC = () => {
         .freighterApi?.signTransaction(prepared.toXDR(), { network: env.stellarNetwork });
       if (!signedXdr) throw new Error('Wallet signing failed');
 
-      const { TransactionBuilder: TB } = await import('stellar-sdk');
+      const { TransactionBuilder: TB } = await import('@stellar/stellar-sdk');
       const response = await server.sendTransaction(TB.fromXDR(signedXdr, env.networkPassphrase));
       notify('proposal_executed', `Stream #${streamId} claimed! Tx: ${response.hash.slice(0, 12)}…`, 'success');
       await fetchStreams();

@@ -309,7 +309,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       let signature = '';
       try {
         if (!address) throw new Error('Wallet not connected');
-        const sdk = (await import('stellar-sdk')) as any;
+        const sdk = (await import('@stellar/stellar-sdk')) as any;
         const { Account, Networks, Operation, Asset } = sdk;
         const account = new Account(address, '0');
         const tx = (await newTransactionBuilder(account, { networkPassphrase: Networks.TESTNET }))

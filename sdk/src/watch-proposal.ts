@@ -1,4 +1,4 @@
-import { SorobanRpc, xdr } from "stellar-sdk";
+import { SorobanRpc, xdr } from "@stellar/stellar-sdk";
 import { ProposalStatus, noopLogger, type SdkOptions } from "./types";
 
 export type ProposalEventType =

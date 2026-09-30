@@ -13,7 +13,7 @@ import {
   TransactionBuilder,
   scValToNative,
   xdr,
-} from 'stellar-sdk';
+} from '@stellar/stellar-sdk';
 import { env } from '../config/env';
 
 let server: SorobanRpc.Server | null = null;

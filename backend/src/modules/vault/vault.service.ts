@@ -1,4 +1,4 @@
-import { Account, Address, Operation, TransactionBuilder, scValToNative, xdr } from "stellar-sdk";
+import { Account, Address, Operation, TransactionBuilder, scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { VaultConfigResponse } from "./vault.types.js";
 
 export class VaultService {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Address, Operation, SorobanRpc, xdr } from 'stellar-sdk';
+import { Address, Operation, SorobanRpc, xdr } from '@stellar/stellar-sdk';
 import { env } from '../config/env';
 import { newTransactionBuilder } from '../utils/transactionBuilder';
 import { useWallet } from '../hooks/useWallet';

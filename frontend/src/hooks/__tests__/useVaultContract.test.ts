@@ -2,16 +2,16 @@ import { renderHook } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, beforeAll, type Mock } from 'vitest';
 import { useVaultContract } from '../useVaultContract';
 import { useWallet } from '../useWallet';
-import { SorobanRpc, TransactionBuilder, Address, nativeToScVal } from 'stellar-sdk';
+import { SorobanRpc, TransactionBuilder, Address, nativeToScVal } from '@stellar/stellar-sdk';
 
 // Mock useWallet
 vi.mock('../useWallet', () => ({
   useWallet: vi.fn(),
 }));
 
-// Mock stellar-sdk
-vi.mock('stellar-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('stellar-sdk')>();
+// Mock @stellar/stellar-sdk
+vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>();
   
   const mockServerInstance = {
     getAccount: vi.fn(),

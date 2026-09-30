@@ -25,7 +25,7 @@ import type { TokenInfo, TokenBalance } from '../../types';
 import { DEFAULT_TOKENS } from '../../constants/tokens';
 import VoiceCommands from '../../components/VoiceCommands';
 import ReadinessWarning from '../../components/ReadinessWarning';
-import { nativeToScVal, Address, xdr } from 'stellar-sdk';
+import { nativeToScVal, Address, xdr } from '@stellar/stellar-sdk';
 import { env } from '../../config/env';
 
 const CopyButton = ({ text }: { text: string }) => (
