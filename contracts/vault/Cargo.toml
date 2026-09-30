@@ -22,3 +22,7 @@ testnet = []
 [dev-dependencies]
 soroban-sdk = { version = "22.0.8", features = ["testutils"] }
 proptest = "1"
+
+[[bench]]
+name = "contract"
+harness = false
