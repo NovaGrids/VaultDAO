@@ -23,7 +23,7 @@ use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Symbol, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
-    AuditCheckpoint, AuditEntry, BridgeConfig, CapabilityToken, ColdSignatureRecord,
+    AuditCheckpoint, AuditEntry, BridgeConfig, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignatureRecord,
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, ForceRotationRequest, FundingRound, FundingRoundConfig,
@@ -115,6 +115,10 @@ pub enum DataKey {
     // ---- Issue #1064: Stream rate window per stream sender ----
     /// Rolling-window outflow tracker for streaming payments (stream_id) -> StreamRateWindow
     StreamRateWindow(u64),
+    /// Clawback request by ID -> ClawbackRequest
+    ClawbackRequest(u64),
+    /// Next clawback request ID -> u64
+    NextClawbackId,
     // ---- Issue #1075: Insurance Claim Governance ----
     /// Insurance claim by ID -> InsuranceClaim
     InsuranceClaim(u64),
@@ -3377,6 +3381,35 @@ pub fn set_stream_rate_window(env: &Env, stream_id: u64, window: &StreamRateWind
     env.storage()
         .temporary()
         .extend_ttl(&key, DAY_IN_LEDGERS * 2, DAY_IN_LEDGERS * 2);
+}
+
+/// Remove a stream rate window from temporary storage upon clawback or close.
+pub fn remove_stream_rate_window(env: &Env, stream_id: u64) {
+    let key = DataKey::StreamRateWindow(stream_id);
+    env.storage().temporary().remove(&key);
+}
+
+/// Retrieve a clawback request by ID.
+pub fn get_clawback_request(env: &Env, id: u64) -> Result<ClawbackRequest, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ClawbackRequest(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+/// Persist a clawback request.
+pub fn set_clawback_request(env: &Env, req: &ClawbackRequest) {
+    let key = DataKey::ClawbackRequest(req.id);
+    env.storage().persistent().set(&key, req);
+}
+
+/// Increment and return the next clawback ID.
+pub fn increment_clawback_id(env: &Env) -> u64 {
+    let key = DataKey::NextClawbackId;
+    let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
+    let next = current + 1;
+    env.storage().instance().set(&key, &next);
+    next
 }
 
 // ============================================================================

@@ -3128,3 +3128,29 @@ pub struct HookRegistration {
     /// Set to 0 to disable fee payment.
     pub max_fee: i128,
 }
+
+// ============================================================================
+// Issue #1724: Stream Clawback
+// ============================================================================
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ClawbackStatus {
+    Pending = 0,
+    Approved = 1,
+    Rejected = 2,
+    Executed = 3,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClawbackRequest {
+    pub id: u64,
+    pub stream_id: u64,
+    pub requester: Address,
+    pub amount: i128,
+    pub reason: Symbol,
+    pub status: ClawbackStatus,
+}
+
