@@ -89,6 +89,10 @@ export class MockVaultContract {
   private escrowIdCounter = 1n;
   private templateIdCounter = 1n;
   private commentIdCounter = 1n;
+  private auditIdCounter = 1n;
+
+  // Audit trail storage
+  private auditEntries: Map<bigint, AuditEntry> = new Map();
 
   // Time/ledger controls for testing
   private currentLedger = 0n;
@@ -624,5 +628,47 @@ export class MockVaultContract {
 
   public simulate_with_state_diff(tx: any): StateDiff {
     return this.simulateWithStateDiff(tx);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Audit Trail
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Seed an audit entry directly (test helper — mirrors on-chain behaviour).
+   */
+  public addAuditEntry(action: string, actor: string, proposalId: bigint = 0n): AuditEntry {
+    const id = this.auditIdCounter++;
+    const entry: AuditEntry = {
+      id,
+      action,
+      actor,
+      proposalId,
+      timestamp: this.currentTime,
+    };
+    this.auditEntries.set(id, entry);
+    this.logger.debug("Audit entry added", { id, action, actor });
+    return entry;
+  }
+
+  /**
+   * Get a paginated slice of audit entries in ascending ID order.
+   * Mirrors contract: offset is zero-based, limit is capped at 50.
+   *
+   * @param offset - Zero-based start offset (default: 0).
+   * @param limit  - Maximum entries to return, capped at 50 (default: 50).
+   */
+  public getAuditTrail(offset: bigint = 0n, limit: number = 50): AuditEntry[] {
+    this.checkFailure("getAuditTrail");
+
+    const cappedLimit = Math.min(limit, 50);
+    if (cappedLimit === 0) return [];
+
+    // All entries sorted by id ascending
+    const all = Array.from(this.auditEntries.values()).sort((a, b) =>
+      a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    );
+
+    return all.slice(Number(offset), Number(offset) + cappedLimit);
   }
 }

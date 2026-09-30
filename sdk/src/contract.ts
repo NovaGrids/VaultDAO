@@ -912,14 +912,25 @@ export async function getReputation(
 }
 
 /**
- * Get audit trail entries.
+ * Get audit trail entries with pagination.
+ *
+ * @param callerPublicKey - Any valid Stellar public key (used as simulation source).
+ * @param opts            - SDK options (network, contract ID, etc.).
+ * @param offset          - Zero-based entry offset (default: 0).
+ * @param limit           - Number of entries to return, capped at 50 on-chain (default: 50).
  */
 export async function getAuditTrail(
   callerPublicKey: string,
-  opts: SdkOptions
+  opts: SdkOptions,
+  offset: bigint = 0n,
+  limit: number = 50
 ): Promise<AuditEntry[]> {
   const contract = getContract(opts);
-  const op = contract.call("get_audit_trail");
+  const op = contract.call(
+    "get_audit_trail",
+    u64ToScVal(offset),
+    u32ToScVal(limit)
+  );
   const raw = await simulateReadOnly<Record<string, unknown>[]>(
     op,
     opts,
