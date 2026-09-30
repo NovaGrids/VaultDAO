@@ -88,6 +88,8 @@ describe("utils.ts — pure helpers", () => {
         rpcUrl: DEFAULT_RPC_URLS.testnet,
         networkPassphrase: NETWORK_PASSPHRASES.testnet,
         logger: undefined,
+        maxRetries: 3,
+        retryDelayMs: 500,
       });
     });
 
