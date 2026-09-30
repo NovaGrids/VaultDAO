@@ -66,6 +66,7 @@ Canonical technical documentation.
 - [Events](reference/EVENTS.md)
 - [Storage](reference/STORAGE.md)
 - [Testing](reference/TESTING.md)
+- [Contract benchmarks](reference/CONTRACT_BENCHMARKS.md)
 - [Deployment](reference/DEPLOYMENT.md)
 - [Security](reference/SECURITY.md)
 - [Audit scope](reference/AUDIT_SCOPE.md)

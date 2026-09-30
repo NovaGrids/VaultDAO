@@ -1,0 +1,96 @@
+name: Contract Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  benchmark:
+    name: Soroban contract benchmarks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/vault
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/vault/target
+          key: ${{ runner.os }}-contract-bench-${{ hashFiles('contracts/vault/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-contract-bench-
+
+      - name: Build release WASM
+        run: cargo build --target wasm32-unknown-unknown --release
+
+      - name: Run benchmark suite
+        run: >-
+          cargo bench --bench contract --
+          --output benchmark-results.json
+          --wasm-size target/wasm32-unknown-unknown/release/vault_dao.wasm
+
+      - name: Download latest successful main baseline
+        id: baseline
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          baseline_run="$(gh run list --workflow contract-benchmarks.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if [[ -n "$baseline_run" ]]; then
+            mkdir -p contracts/vault/benchmark-baseline
+            gh run download "$baseline_run" --name contract-benchmark-results --dir contracts/vault/benchmark-baseline
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No successful main benchmark artifact exists yet; this run seeds the baseline history."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check regressions and publish comparison
+        if: steps.baseline.outputs.available == 'true'
+        run: >-
+          python3 scripts/compare_benchmarks.py
+          --baseline benchmark-baseline/benchmark-results.json
+          --current benchmark-results.json
+          --threshold 5
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish initial benchmark summary
+        if: steps.baseline.outputs.available != 'true'
+        run: |
+          {
+            echo '## Contract benchmark results'
+            echo
+            echo 'No main-branch baseline was available. This run seeds benchmark history; subsequent runs enforce the 5% regression threshold.'
+            echo
+            echo '```json'
+            cat benchmark-results.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark history
+        if: always() && hashFiles('contracts/vault/benchmark-results.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-benchmark-results
+          path: contracts/vault/benchmark-results.json
+          retention-days: 90
+          if-no-files-found: error
