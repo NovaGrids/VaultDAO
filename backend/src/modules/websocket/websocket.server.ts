@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
 import { createLogger } from "../../shared/logging/logger.js";
+import { isValidKey } from "../../shared/http/auth.js";
 import type { ContractEvent } from "../events/events.types.js";
 import type { MetricsRegistry } from "../health/metrics.registry.js";
 import { validateEventFilter } from "../events/filters/event-filter.validator.js";
@@ -332,7 +333,10 @@ export class EventWebSocketServer extends EventEmitter {
       // is wrong, reject immediately — this is a hard auth failure, not a
       // state transition. Clients that omit the token start in "connecting"
       // and must send an "authenticate" message before the auth deadline.
-      if (apiKey && token !== null && token !== apiKey) {
+      const isTokenValid = Boolean(
+        apiKey && token !== null && isValidKey(token, apiKey),
+      );
+      if (apiKey && token !== null && !isTokenValid) {
         ws.close(4401, "Unauthorized");
         logger.warn("rejected unauthenticated websocket connection");
         return;
@@ -344,7 +348,7 @@ export class EventWebSocketServer extends EventEmitter {
       // If a valid token was supplied at connect time (or no API key is
       // configured) the client is immediately authenticated.
       const initialState: ConnectionState =
-        !apiKey || token === apiKey ? "authenticated" : "connecting";
+        !apiKey || isTokenValid ? "authenticated" : "connecting";
 
       const sub: ClientSubscription = {
         connectionId,
@@ -621,7 +625,7 @@ export class EventWebSocketServer extends EventEmitter {
     const apiKey = process.env["API_KEY"];
     const token: string | undefined = message.token;
 
-    if (apiKey && token !== apiKey) {
+    if (apiKey && (typeof token !== "string" || !isValidKey(token, apiKey))) {
       logger.warn("authenticate: bad token", {
         connectionId: sub.connectionId,
       });
