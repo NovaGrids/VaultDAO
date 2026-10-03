@@ -272,7 +272,7 @@ Before submitting your PR, ensure:
 
 ## 🔍 Code Review Process
 
-1. **Automated Checks**: CI runs frontend typecheck/build, contract `cargo check --lib`, backend typecheck/build, and SDK typecheck/build/tests
+1. **Automated Checks**: CI runs frontend typecheck/build, backend typecheck/build, and contract `cargo check --lib`
 2. **Maintainer Review**: A maintainer will review your code
 3. **Feedback**: Address any requested changes
 4. **Approval**: Once approved, your PR will be merged

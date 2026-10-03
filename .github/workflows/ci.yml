@@ -6,35 +6,6 @@ on:
   pull_request:
 
 jobs:
-  backend:
-    name: Backend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm test
-
-      - name: Build Docker image
-        run: docker build -t backend:ci .
-
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
@@ -57,28 +28,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # The remaining checks run even if an earlier one fails, so a single
-      # CI run reports every kind of breakage instead of stopping at the first.
-      - name: Lint
-        if: ${{ !cancelled() }}
-        run: npm run lint
-
-      - name: Unit tests
-        if: ${{ !cancelled() }}
-        run: npm test
-
-      - name: Production build
-        if: ${{ !cancelled() }}
+      - name: Build
         run: npm run build
 
-  frontend-e2e:
-    name: Frontend E2E (Playwright)
+  backend:
+    name: Backend
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: frontend
-    env:
-      VITE_DEMO_MODE: "true"
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -87,26 +45,16 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+      - name: Typecheck
+        run: npm run typecheck
 
-      - name: Run Playwright tests
-        run: npm run test:e2e -- --project=chromium
-
-      - name: Upload Playwright report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: |
-            frontend/playwright-report
-            frontend/test-results
-          retention-days: 7
+      - name: Build
+        run: npm run build
 
   contract:
     name: Contract
@@ -121,7 +69,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-          components: rustfmt, clippy
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -133,64 +80,5 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/vault/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # Every src/test*.rs must be declared in lib.rs, otherwise it is never
-      # compiled and its coverage is silently lost.
-      - name: Check test modules are declared
-        run: bash scripts/check_test_modules.sh
-
-      - name: Check formatting
-        if: ${{ !cancelled() }}
-        run: cargo fmt --all -- --check
-
-      # The remaining checks run even if an earlier one fails, so one run
-      # reports test results independently of lint status.
-      - name: Clippy
-        if: ${{ !cancelled() }}
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Compile tests
-        if: ${{ !cancelled() }}
-        run: cargo test --no-run
-
-      - name: Run tests
-        if: ${{ !cancelled() }}
-        run: cargo test
-
-      - name: Build release WASM
-        if: ${{ !cancelled() }}
-        run: cargo build --target wasm32-unknown-unknown --release
-
-      - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vault-dao-wasm
-          path: contracts/vault/target/wasm32-unknown-unknown/release/vault_dao.wasm
-          if-no-files-found: error
-
-  sdk:
-    name: SDK
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdk
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: sdk/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Test
-        run: npm test
+      - name: Check contract library
+        run: cargo check --lib

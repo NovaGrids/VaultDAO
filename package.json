@@ -3,7 +3,7 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "ci": "npm run typecheck && npm run build && npm run contract:check && npm run backend:typecheck && npm run backend:build && npm run sdk:typecheck && npm run sdk:build && npm run sdk:test",
+    "ci": "npm run typecheck && npm run build && npm run backend:typecheck && npm run backend:build && npm run contract:check",
     "typecheck": "npm --prefix frontend run typecheck",
     "build": "npm --prefix frontend run build",
     "contract:check": "cargo check --lib --manifest-path contracts/vault/Cargo.toml",

@@ -16,7 +16,7 @@ VaultDAO is a monorepo for the Soroban treasury contract, dashboard, support ser
 ├── terraform/          # Infrastructure as code
 ├── monitoring/         # Prometheus / Grafana assets
 ├── load-tests/         # Load testing scripts
-├── .github/workflows/  # CI (frontend, backend, SDK, contract)
+├── .github/workflows/  # CI (frontend, backend, contract)
 ├── README.md
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
@@ -55,11 +55,10 @@ See [docs/README.md](../README.md) for the full index.
 
 ### CI
 
-GitHub Actions runs two jobs on `main` PRs and pushes:
+GitHub Actions runs three jobs on `main` PRs and pushes:
 
 1. **Frontend** — `npm ci --legacy-peer-deps` + `npm run typecheck` + `npm run build`
-2. **Contract** — `cargo check --lib`
-3. **Backend** — `npm ci` + `npm run typecheck` + `npm run build`
-4. **SDK** — `npm ci` + `npm run typecheck` + `npm run build` + `npm test`
+2. **Backend** — `npm ci` + `npm run typecheck` + `npm run build`
+3. **Contract** — `cargo check --lib`
 
 Local equivalent from the repo root: `npm run ci`.
