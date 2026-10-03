@@ -262,7 +262,7 @@ It includes:
 Before submitting your PR, ensure:
 
 - [ ] Code follows style guidelines
-- [ ] CI checks pass (`npm run typecheck`, `cargo check --lib`)
+- [ ] CI checks pass (`npm run ci` from the repo root, or the GitHub Actions workflow)
 - [ ] New functionality includes tests
 - [ ] Documentation is updated (if needed)
 - [ ] Updated `sdk/CHANGELOG.md` if this PR changes SDK behaviour or API
@@ -272,7 +272,7 @@ Before submitting your PR, ensure:
 
 ## 🔍 Code Review Process
 
-1. **Automated Checks**: CI runs frontend typecheck and contract `cargo check --lib`
+1. **Automated Checks**: CI runs frontend typecheck/build, contract `cargo check --lib`, backend typecheck/build, and SDK typecheck/build/tests
 2. **Maintainer Review**: A maintainer will review your code
 3. **Feedback**: Address any requested changes
 4. **Approval**: Once approved, your PR will be merged
