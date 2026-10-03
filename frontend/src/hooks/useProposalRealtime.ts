@@ -35,7 +35,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useRealtime } from '../contexts/RealtimeContext';
+import { useRealtime } from '../context/RealtimeContext';
 import type { Proposal } from '../components/type';
 
 /** Partial update payload pushed over the wire for a single proposal. */

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Loader2, RefreshCw, AlertCircle } from 'lucide-react';
 import { useVaultContract } from '../../hooks/useVaultContract';
-import { useRealtime } from '../../contexts/RealtimeContext';
+import { useRealtime } from '../../context/RealtimeContext';
 import ActivityItem from '../../components/ActivityItem';
 import { env } from '../../config/env';
 import type { VaultActivity, VaultEventType } from '../../types/activity';

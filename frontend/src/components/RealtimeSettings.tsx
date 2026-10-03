@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Wifi, WifiOff, Activity, Bell, Users } from 'lucide-react';
-import { useRealtime } from '../contexts/RealtimeContext';
+import { useRealtime } from '../context/RealtimeContext';
 
 interface RealtimePreferences {
   enabled: boolean;

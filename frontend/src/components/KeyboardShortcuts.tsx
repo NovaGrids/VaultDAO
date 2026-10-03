@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { X, Keyboard } from 'lucide-react';
-import { useAccessibility } from '../contexts/AccessibilityContext';
+import { useAccessibility } from '../context/AccessibilityContext';
 
 interface Shortcut {
   key: string;

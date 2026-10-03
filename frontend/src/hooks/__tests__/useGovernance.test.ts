@@ -23,7 +23,7 @@ import {
   buildSignerRecord,
 } from '../useGovernance';
 import { useWallet } from '../useWallet';
-import { useRealtime } from '../../contexts/RealtimeContext';
+import { useRealtime } from '../../context/RealtimeContext';
 import { readContract, fetchAllContractEvents, fetchLatestLedger } from '../../utils/contractRead';
 import { env } from '../../config/env';
 
@@ -31,7 +31,7 @@ vi.mock('../useWallet', () => ({
   useWallet: vi.fn(),
 }));
 
-vi.mock('../../contexts/RealtimeContext', () => ({
+vi.mock('../../context/RealtimeContext', () => ({
   useRealtime: vi.fn(),
 }));
 

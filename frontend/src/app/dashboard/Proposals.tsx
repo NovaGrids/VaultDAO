@@ -20,7 +20,7 @@ import { filtersToSearchParams, searchParamsToFilters } from '../../utils/search
 import { ProposalSearchIndex } from '../../utils/proposalSearchIndex';
 import { stroopsToDecimal } from '../../utils/amount';
 import { useActionReadiness } from '../../hooks/useActionReadiness';
-import { useRealtime } from '../../contexts/RealtimeContext';
+import { useRealtime } from '../../context/RealtimeContext';
 import type { TokenInfo, TokenBalance } from '../../types';
 import { DEFAULT_TOKENS } from '../../constants/tokens';
 import VoiceCommands from '../../components/VoiceCommands';

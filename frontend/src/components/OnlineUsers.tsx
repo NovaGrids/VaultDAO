@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Users, Circle } from 'lucide-react';
-import { useRealtime } from '../contexts/RealtimeContext';
+import { useRealtime } from '../context/RealtimeContext';
 
 export function OnlineUsers() {
   const { onlineUsers, isConnected } = useRealtime();

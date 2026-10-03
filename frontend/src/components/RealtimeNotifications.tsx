@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, CheckCircle, XCircle, AlertCircle, Info } from 'lucide-react';
-import { useRealtime } from '../contexts/RealtimeContext';
+import { useRealtime } from '../context/RealtimeContext';
 
 interface Notification {
   id: string;

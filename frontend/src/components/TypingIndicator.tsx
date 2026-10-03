@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useRealtime } from '../contexts/RealtimeContext';
+import { useRealtime } from '../context/RealtimeContext';
 
 interface TypingUser {
   userId: string;

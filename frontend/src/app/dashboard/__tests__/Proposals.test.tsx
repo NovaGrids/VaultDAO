@@ -13,7 +13,7 @@ vi.mock('../../../hooks/useProposals');
 vi.mock('../../../hooks/useWallet');
 vi.mock('../../../hooks/useActionReadiness');
 vi.mock('../../../hooks/useToast', () => ({ useToast: () => ({ notify: vi.fn() }) }));
-vi.mock('../../../contexts/RealtimeContext');
+vi.mock('../../../context/RealtimeContext');
 
 // Stub heavy modal/component dependencies
 vi.mock('../../../components/modals/NewProposalModal', () => ({ default: () => null }));
@@ -33,7 +33,7 @@ import { useVaultContract } from '../../../hooks/useVaultContract';
 import { useProposals } from '../../../hooks/useProposals';
 import { useWallet } from '../../../hooks/useWallet';
 import { useActionReadiness } from '../../../hooks/useActionReadiness';
-import { useRealtime } from '../../../contexts/RealtimeContext';
+import { useRealtime } from '../../../context/RealtimeContext';
 
 const mockUseVaultContract = vi.mocked(useVaultContract);
 const mockUseProposals = vi.mocked(useProposals);

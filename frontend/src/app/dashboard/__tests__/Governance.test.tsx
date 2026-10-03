@@ -96,7 +96,7 @@ vi.mock('../../../hooks/useWallet', () => ({
   }),
 }));
 
-vi.mock('../../../contexts/RealtimeContext', () => ({
+vi.mock('../../../context/RealtimeContext', () => ({
   useRealtime: () => ({
     subscribe: vi.fn(() => vi.fn()),
     isConnected: false,

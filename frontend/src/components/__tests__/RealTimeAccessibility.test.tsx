@@ -19,7 +19,7 @@ const mockContextValue = {
   callbacks: {} as Record<string, any>,
 };
 
-vi.mock('../../contexts/RealtimeContext', () => ({
+vi.mock('../../context/RealtimeContext', () => ({
   useRealtime: () => mockContextValue,
 }));
 

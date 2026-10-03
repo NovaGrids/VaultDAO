@@ -38,7 +38,7 @@ const mockSubscribe = vi.fn().mockImplementation(
   },
 );
 
-vi.mock('../../contexts/RealtimeContext', () => ({
+vi.mock('../../context/RealtimeContext', () => ({
   useRealtime: () => ({
     isConnected: true,
     connectionStatus: 'connected',

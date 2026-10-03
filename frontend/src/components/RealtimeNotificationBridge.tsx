@@ -3,7 +3,7 @@
  * Must be rendered inside both RealtimeProvider and NotificationProvider.
  */
 import { useEffect } from 'react';
-import { useRealtime } from '../contexts/RealtimeContext';
+import { useRealtime } from '../context/RealtimeContext';
 import { useNotifications } from '../context/NotificationContext';
 import type { NotificationCategory, NotificationPriority } from '../types/notification';
 

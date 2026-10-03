@@ -12,7 +12,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { xdr, scValToNative, Address } from '@stellar/stellar-sdk';
 import { useWallet } from './useWallet';
-import { useRealtime } from '../contexts/RealtimeContext';
+import { useRealtime } from '../context/RealtimeContext';
 import { env } from '../config/env';
 import { readContract, fetchAllContractEvents, fetchLatestLedger } from '../utils/contractRead';
 import { fetchContractEvents, isAbortError } from '../utils/sorobanEvents';

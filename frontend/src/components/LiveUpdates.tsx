@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Bell, X, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
-import { useRealtime, type RealtimeUpdate } from '../contexts/RealtimeContext';
+import { useRealtime, type RealtimeUpdate } from '../context/RealtimeContext';
 
 export function LiveUpdates() {
   const { subscribe, isConnected } = useRealtime();

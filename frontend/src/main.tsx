@@ -10,12 +10,12 @@ import { WalletProviders } from './components/WalletProviders';
 import { NotificationProvider } from './context/NotificationContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { OnboardingProvider } from './context/OnboardingProvider';
-import { RealtimeProvider } from './contexts/RealtimeContext';
+import { RealtimeProvider } from './context/RealtimeContext';
 import { AppErrorBoundary } from './components/ErrorHandler';
 import { flushOfflineErrorQueue } from './components/ErrorReporting';
 import { RealtimeNotificationBridge } from './components/RealtimeNotificationBridge';
 import { registerServiceWorker } from './utils/pwa';
-import { AccessibilityProvider } from './contexts/AccessibilityContext';
+import { AccessibilityProvider } from './context/AccessibilityContext';
 import { SkipLinks } from './components/SkipLinks';
 import { applyThemeBeforeMount } from './styles/themes';
 
