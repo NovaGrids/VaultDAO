@@ -204,7 +204,7 @@ export class EventWebSocketServer extends EventEmitter {
     if (this.metrics) {
       this.registerMetrics(this.metrics);
     }
-    this.wss = new WebSocketServer({ server });
+    this.wss = new WebSocketServer({ server, maxPayload: 64 * 1024 });
     this.init();
   }
 
