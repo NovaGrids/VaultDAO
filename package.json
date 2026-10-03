@@ -1,6 +1,12 @@
 {
+  "name": "vaultdao",
+  "private": true,
   "license": "Apache-2.0",
   "scripts": {
+    "ci": "npm run typecheck && npm run build && npm run contract:check && npm run backend:typecheck && npm run backend:build && npm run sdk:typecheck && npm run sdk:build && npm run sdk:test",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "build": "npm --prefix frontend run build",
+    "contract:check": "cargo check --lib --manifest-path contracts/vault/Cargo.toml",
     "backend:dev": "npm --prefix backend run dev",
     "backend:build": "npm --prefix backend run build",
     "backend:typecheck": "npm --prefix backend run typecheck",
@@ -9,12 +15,6 @@
     "sdk:typecheck": "npm --prefix sdk run typecheck",
     "sdk:test": "npm --prefix sdk run test",
     "sdk:test:coverage": "npm --prefix sdk run test:coverage",
-    "typecheck": "npm --prefix frontend run typecheck",
-    "build:frontend": "npm --prefix frontend run build",
-    "contract:check": "cargo check --lib --manifest-path contracts/vault/Cargo.toml"
-  },
-  "devDependencies": {
-    "@types/node": "^25.3.0",
-    "prettier": "^3.6.2"
+    "sdk:build": "npm --prefix sdk run build"
   }
 }

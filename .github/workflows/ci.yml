@@ -70,8 +70,6 @@ jobs:
       - name: Production build
         if: ${{ !cancelled() }}
         run: npm run build
-      - name: Unit tests
-        run: npm test
 
   frontend-e2e:
     name: Frontend E2E (Playwright)

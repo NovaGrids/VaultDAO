@@ -45,6 +45,7 @@ sdk/dist/
 sdk/coverage/
 frontend/coverage/
 frontend/dist/
+frontend/.demo-shots/
 
 # Prefer npm lockfiles in this repo
 pnpm-lock.yaml
