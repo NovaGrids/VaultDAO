@@ -144,6 +144,8 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+import { toCsvFromArrays } from "./csv";
+
 /** Export search results to CSV (array of objects) */
 export function exportSearchResultsToCsv<T extends Record<string, unknown>>(
   rows: T[],
@@ -153,19 +155,7 @@ export function exportSearchResultsToCsv<T extends Record<string, unknown>>(
     return;
   }
   const keys = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
-  const header = keys
-    .map((k) => `"${String(k).replace(/"/g, '""')}"`)
-    .join(",");
-  const lines = [header];
-  for (const row of rows) {
-    const cells = keys.map((k) => {
-      const v = row[k];
-      const str = v == null ? "" : String(v);
-      return `"${str.replace(/"/g, '""')}"`;
-    });
-    lines.push(cells.join(","));
-  }
-  const csv = lines.join("\n");
+  const csv = toCsvFromArrays([keys, ...rows.map((row) => keys.map((k) => row[k]))], "\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

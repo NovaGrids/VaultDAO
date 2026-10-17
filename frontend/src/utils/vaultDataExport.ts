@@ -1,6 +1,7 @@
 /**
  * Export utilities for CSV, JSON, and PDF reports.
  */
+import { csvLine, toCsv as serializeCsv } from './csv';
 
 export type ExportFormat = 'csv' | 'json' | 'pdf';
 
@@ -8,24 +9,13 @@ export type ExportFormat = 'csv' | 'json' | 'pdf';
 export type ExportRow = Record<string, string | number | boolean | null | undefined>;
 export type TabularRow = Record<string, unknown>;
 
-function escapeCsvCell(value: unknown): string {
-  const s = String(value ?? '');
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
 /** Convert array of objects to CSV with headers. */
 export function toCSV(rows: ExportRow[], headers?: string[]): string {
   if (rows.length === 0) {
-    const h = headers ?? [];
-    return h.map(escapeCsvCell).join(',') + '\r\n';
+    return csvLine(headers ?? []) + '\r\n';
   }
   const keys = headers ?? Object.keys(rows[0] ?? {});
-  const lines = [keys.map(escapeCsvCell).join(',')];
-  rows.forEach((row) => {
-    lines.push(keys.map((k) => escapeCsvCell(row[k])).join(','));
-  });
-  return lines.join('\r\n');
+  return serializeCsv(keys, rows);
 }
 
 /** Convert data to pretty-printed JSON string. */
@@ -78,11 +68,7 @@ export function previewRows<T>(rows: T[], limit = 10): T[] {
 
 /** Convert tabular data to CSV with header row. */
 export function toCsv(headers: string[], rows: TabularRow[]): string {
-  const headerRow = headers.map(escapeCsvCell).join(',');
-  const dataRows = rows.map((row) =>
-    headers.map((h) => escapeCsvCell(row[h])).join(',')
-  );
-  return [headerRow, ...dataRows].join('\r\n');
+  return serializeCsv(headers, rows);
 }
 
 /** Download CSV from headers + rows (ExportModal API). */

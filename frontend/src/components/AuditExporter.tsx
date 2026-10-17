@@ -16,6 +16,8 @@ interface AuditExporterProps {
 
 type ExportFormat = 'CSV' | 'PDF' | 'JSON';
 
+import { toCsvFromArrays } from '../utils/csv';
+
 /** Build a CSV blob client-side from the provided entries (fallback). */
 function buildCSV(entries: BackendAuditEntry[]): Blob {
   const headers = ['Timestamp', 'Action', 'Actor', 'Target', 'TxHash', 'Details'];
@@ -27,9 +29,7 @@ function buildCSV(entries: BackendAuditEntry[]): Blob {
     e.txHash ?? '',
     JSON.stringify(e.details ?? {}),
   ]);
-  const csv = [headers, ...rows]
-    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
-    .join('\n');
+  const csv = toCsvFromArrays([headers, ...rows], '\n');
   return new Blob([csv], { type: 'text/csv' });
 }
 

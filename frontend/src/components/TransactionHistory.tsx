@@ -95,20 +95,12 @@ function mergeAndSortTransactions(existing: VaultActivity[], incoming: VaultActi
   );
 }
 
-function escapeCsvCell(value: unknown): string {
-  const normalized = value == null ? '' : String(value);
-  if (/["\n,]/.test(normalized)) {
-    return `"${normalized.replace(/"/g, '""')}"`;
-  }
-  return normalized;
-}
+import { toCsv as serializeCsv } from '../utils/csv';
 
 function toCsv(rows: TransactionExportRow[]): string {
   if (rows.length === 0) return '';
   const headers = Object.keys(rows[0]) as Array<keyof TransactionExportRow>;
-  const headerLine = headers.join(',');
-  const bodyLines = rows.map((row) => headers.map((header) => escapeCsvCell(row[header])).join(','));
-  return [headerLine, ...bodyLines].join('\n');
+  return serializeCsv(headers, rows, '\n');
 }
 
 function downloadTextFile(content: string, filename: string, mimeType: string): void {

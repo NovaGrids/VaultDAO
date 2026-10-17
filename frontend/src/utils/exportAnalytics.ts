@@ -3,12 +3,7 @@
  */
 
 import type { AggregatedAnalytics } from '../types/analytics';
-
-function escapeCsvCell(value: string | number): string {
-  const s = String(value);
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+import { toCsvFromArrays } from './csv';
 
 export function exportAnalyticsToCsv(analytics: AggregatedAnalytics, filename = 'vault-analytics.csv'): void {
   const rows: string[][] = [];
@@ -37,7 +32,7 @@ export function exportAnalyticsToCsv(analytics: AggregatedAnalytics, filename = 
   rows.push(['Total volume', String(analytics.totalVolume)]);
   rows.push(['Pending proposals', String(analytics.pendingCount)]);
 
-  const csv = rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n');
+  const csv = toCsvFromArrays(rows, '\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

@@ -7,6 +7,8 @@ import { useToast } from '../hooks/useToast';
 import type { AuditEntry } from '../utils/auditVerification';
 import { prepareChainedAuditLog } from '../utils/auditVerification';
 import { env } from '../config/env';
+import { buildReportPreviewHtml, buildPdfPreviewHtml, buildCsvPreviewHtml } from '../utils/compliancePreview';
+import { evaluateComplianceRules } from '../utils/complianceRules';
 
 type ReportType = 'SOC2' | 'ISO27001' | 'Custom';
 type ScheduleFrequency = 'weekly' | 'monthly';
@@ -217,50 +219,7 @@ const ComplianceReports: React.FC = () => {
         return;
       }
 
-      // Generate preview HTML (simplified version)
-      const html = `
-        <div style="padding: 20px; background: #1a1a1a; color: white; font-family: Arial, sans-serif;">
-          <h1 style="color: #a855f7;">${config.type} Compliance Report</h1>
-          <p><strong>Period:</strong> ${new Date(config.startDate).toLocaleDateString()} - ${new Date(config.endDate).toLocaleDateString()}</p>
-          <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
-          
-          <h2 style="margin-top: 30px;">Report Summary</h2>
-          <ul>
-            <li>Total Audit Entries: ${filteredData.length}</li>
-            <li>Unique Users: ${new Set(filteredData.map(e => e.user)).size}</li>
-            <li>Action Types: ${new Set(filteredData.map(e => e.action)).size}</li>
-          </ul>
-
-          <h2 style="margin-top: 30px;">Selected Sections</h2>
-          <ul>
-            ${config.sections.map(section => `<li>${section}</li>`).join('')}
-          </ul>
-
-          <h2 style="margin-top: 30px;">Recent Activities (Sample)</h2>
-          <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
-            <thead>
-              <tr style="background: #2a2a2a; border-bottom: 2px solid #a855f7;">
-                <th style="padding: 10px; text-align: left;">Timestamp</th>
-                <th style="padding: 10px; text-align: left;">User</th>
-                <th style="padding: 10px; text-align: left;">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${filteredData.slice(0, 10).map(entry => `
-                <tr style="border-bottom: 1px solid #333;">
-                  <td style="padding: 10px;">${new Date(entry.timestamp).toLocaleString()}</td>
-                  <td style="padding: 10px; font-family: monospace;">${entry.user.slice(0, 8)}...${entry.user.slice(-6)}</td>
-                  <td style="padding: 10px;">${entry.action}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          <p style="margin-top: 30px; color: #999; font-size: 12px;">
-            This is a preview. Download the full PDF report for complete details and compliance documentation.
-          </p>
-        </div>
-      `;
+      const html = buildReportPreviewHtml({ type: config.type, startDate: config.startDate, endDate: config.endDate, sections: config.sections, entries: filteredData });
       
       setPreviewHtml(html);
       notify('preview_ready', 'Report preview generated', 'success');
@@ -326,14 +285,18 @@ const ComplianceReports: React.FC = () => {
     }
   };
 
-  const buildExportData = () => ({
-    vaultAddress: env.contractId,
-    reportPeriod: { start: config.startDate, end: config.endDate },
-    complianceScore: Math.max(0, Math.min(100, Math.round(80 + (filterDataByDateRange().length % 20)))),
-    sections: config.sections,
-    entries: filterDataByDateRange(),
-    reportType: config.type,
-  });
+  const buildExportData = () => {
+    const entries = filterDataByDateRange();
+    const { rules, score } = evaluateComplianceRules(entries);
+    return {
+      vaultAddress: env.contractId,
+      reportPeriod: { start: config.startDate, end: config.endDate },
+      complianceScore: score,
+      rules,
+      entries,
+      reportType: config.type,
+    };
+  };
 
   const handleExportPDFPreview = async () => {
     setGenerating(true);
@@ -343,28 +306,7 @@ const ComplianceReports: React.FC = () => {
         notify('no_data', 'No audit data found in selected date range', 'info');
         return;
       }
-      const previewRows = data.sections
-        .map((s, i) => {
-          const matched = data.entries.filter((e) => e.action.toLowerCase().includes(s.split(' ')[0].toLowerCase())).length;
-          const status = matched > 0 || i % 3 !== 2 ? '✓ COMPLIANT' : '⚠ REVIEW';
-          return `<tr><td style="padding:6px 10px;border-bottom:1px solid #333">${s}</td><td style="padding:6px 10px;border-bottom:1px solid #333;text-align:center">${matched}</td><td style="padding:6px 10px;border-bottom:1px solid #333;color:${status.startsWith('✓') ? '#4ade80' : '#f87171'};font-weight:600">${status}</td></tr>`;
-        })
-        .join('');
-      const html = `
-        <div style="padding:20px;font-family:Arial,sans-serif;background:#1a1a1a;color:#fff">
-          <div style="background:#581c87;padding:14px 20px;border-radius:8px;margin-bottom:16px">
-            <div style="font-size:18px;font-weight:bold">VaultDAO</div>
-            <div style="font-size:12px;opacity:.8">${data.reportType} Compliance Report — PDF Preview</div>
-          </div>
-          <p><strong>Vault:</strong> <code style="font-size:11px">${data.vaultAddress}</code></p>
-          <p><strong>Period:</strong> ${new Date(data.reportPeriod.start).toLocaleDateString()} – ${new Date(data.reportPeriod.end).toLocaleDateString()}</p>
-          <div style="display:inline-block;background:${data.complianceScore>=80?'#166534':data.complianceScore>=60?'#854d0e':'#7f1d1d'};padding:4px 14px;border-radius:20px;font-weight:bold;margin-bottom:16px">Score: ${data.complianceScore}%</div>
-          <table style="width:100%;border-collapse:collapse;margin-top:8px">
-            <thead><tr style="background:#2a2a2a"><th style="padding:8px 10px;text-align:left">Rule</th><th style="padding:8px 10px">Events</th><th style="padding:8px 10px">Status</th></tr></thead>
-            <tbody>${previewRows}</tbody>
-          </table>
-          <p style="color:#999;font-size:11px;margin-top:16px">This is a preview. Click "Download PDF" to save the full formatted report.</p>
-        </div>`;
+      const html = buildPdfPreviewHtml(data);
       setExportPreview({ type: 'pdf', content: html });
     } finally {
       setGenerating(false);
@@ -406,20 +348,7 @@ const ComplianceReports: React.FC = () => {
         notify('no_data', 'No audit data found in selected date range', 'info');
         return;
       }
-      const headers = ['Rule/Section', 'Report Type', 'Vault Address', 'Period Start', 'Period End', 'Compliance Score', 'Matched Events', 'Status'];
-      const rows = data.sections.map((s, i) => {
-        const matched = data.entries.filter((e) => e.action.toLowerCase().includes(s.split(' ')[0].toLowerCase())).length;
-        const status = matched > 0 || i % 3 !== 2 ? 'COMPLIANT' : 'REVIEW';
-        return [s, data.reportType, data.vaultAddress.slice(0, 12) + '…', data.reportPeriod.start, data.reportPeriod.end, `${data.complianceScore}%`, matched, status];
-      });
-      const headerHtml = headers.map((h) => `<th style="padding:6px 10px;background:#2a2a2a;border-bottom:2px solid #581c87;text-align:left">${h}</th>`).join('');
-      const rowsHtml = rows.map((r) => `<tr>${r.map((c, ci) => `<td style="padding:5px 10px;border-bottom:1px solid #333;${ci === 7 ? `color:${c === 'COMPLIANT' ? '#4ade80' : '#f87171'};font-weight:600` : ''}">${c}</td>`).join('')}</tr>`).join('');
-      const html = `
-        <div style="padding:20px;font-family:Arial,sans-serif;background:#1a1a1a;color:#fff">
-          <h3 style="color:#a855f7;margin-bottom:12px">${data.reportType} CSV Preview</h3>
-          <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table></div>
-          <p style="color:#999;font-size:11px;margin-top:12px">Click "Download CSV" to save the full export.</p>
-        </div>`;
+      const html = buildCsvPreviewHtml(data);
       setExportPreview({ type: 'csv', content: html });
     } finally {
       setGenerating(false);

@@ -1,18 +1,17 @@
+import { toCsvFromArrays } from './csv';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { AuditEntry } from './auditVerification';
+import { RULE_STATUS_LABEL, type RuleResult } from './complianceRules';
 
 export interface ComplianceExportData {
   vaultAddress: string;
   reportPeriod: { start: string; end: string };
-  complianceScore: number;
-  sections: string[];
+  /** null when no rule had data to evaluate */
+  complianceScore: number | null;
+  rules: RuleResult[];
   entries: AuditEntry[];
   reportType: string;
-}
-
-function quoteCSV(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
 }
 
 export function exportCompliancePDF(data: ComplianceExportData): Blob {
@@ -62,14 +61,15 @@ export function exportCompliancePDF(data: ComplianceExportData): Blob {
   y += 7;
 
   // Compliance score badge
+  const score = data.complianceScore;
   const scoreColor: [number, number, number] =
-    data.complianceScore >= 80 ? [22, 163, 74] : data.complianceScore >= 60 ? [202, 138, 4] : [220, 38, 38];
+    score === null ? [100, 100, 100] : score >= 80 ? [22, 163, 74] : score >= 60 ? [202, 138, 4] : [220, 38, 38];
   doc.setFillColor(...scoreColor);
-  doc.roundedRect(14, y, 50, 12, 3, 3, 'F');
+  doc.roundedRect(14, y, 60, 12, 3, 3, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text(`Score: ${data.complianceScore}%`, 18, y + 8);
+  doc.text(`Score: ${score === null ? 'Not evaluated' : `${score}%`}`, 18, y + 8);
   doc.setTextColor(30, 30, 30);
   y += 20;
 
@@ -79,21 +79,22 @@ export function exportCompliancePDF(data: ComplianceExportData): Blob {
   doc.text('Rule-by-Rule Breakdown', 14, y);
   y += 4;
 
-  const ruleRows = data.sections.map((section, i) => {
-    const relevantCount = data.entries.filter((e) => e.action.toLowerCase().includes(section.split(' ')[0].toLowerCase())).length;
-    const status = relevantCount > 0 || i % 3 !== 2 ? 'COMPLIANT' : 'REVIEW';
-    return [section, relevantCount.toString(), status];
-  });
+  const ruleRows = data.rules.map((r) => [
+    r.label,
+    r.evaluated.toString(),
+    r.violations.toString(),
+    RULE_STATUS_LABEL[r.status],
+  ]);
 
   autoTable(doc as unknown as import('jspdf').jsPDF, {
     startY: y,
-    head: [['Rule / Control', 'Matched Events', 'Status']],
+    head: [['Rule / Control', 'Events Evaluated', 'Violations', 'Status']],
     body: ruleRows,
     theme: 'striped',
     styles: { fontSize: 8 },
     headStyles: { fillColor: purple },
     didParseCell: (hookData: { column: { index: number }; cell: { raw: unknown; styles: Record<string, unknown> } }) => {
-      if (hookData.column.index === 2 && hookData.cell.raw === 'REVIEW') {
+      if (hookData.column.index === 3 && hookData.cell.raw === RULE_STATUS_LABEL.review) {
         hookData.cell.styles.textColor = [220, 38, 38];
         hookData.cell.styles.fontStyle = 'bold';
       }
@@ -151,37 +152,30 @@ export function exportCompliancePDF(data: ComplianceExportData): Blob {
 
 export function exportComplianceCSV(data: ComplianceExportData): Blob {
   const headers = [
-    'Rule/Section',
+    'Rule',
     'Report Type',
     'Vault Address',
     'Period Start',
     'Period End',
     'Compliance Score',
-    'Matched Events',
+    'Events Evaluated',
+    'Violations',
     'Status',
   ];
 
-  const actionCounts: Record<string, number> = {};
-  data.entries.forEach((e) => {
-    actionCounts[e.action] = (actionCounts[e.action] ?? 0) + 1;
-  });
+  const score = data.complianceScore === null ? 'Not evaluated' : `${data.complianceScore}%`;
+  const rows = data.rules.map((r) => [
+    r.label,
+    data.reportType,
+    data.vaultAddress,
+    data.reportPeriod.start,
+    data.reportPeriod.end,
+    score,
+    r.evaluated,
+    r.violations,
+    RULE_STATUS_LABEL[r.status],
+  ]);
 
-  const rows = data.sections.map((section, i) => {
-    const keyword = section.split(' ')[0].toLowerCase();
-    const matched = data.entries.filter((e) => e.action.toLowerCase().includes(keyword)).length;
-    const status = matched > 0 || i % 3 !== 2 ? 'COMPLIANT' : 'REVIEW';
-    return [
-      section,
-      data.reportType,
-      data.vaultAddress,
-      data.reportPeriod.start,
-      data.reportPeriod.end,
-      `${data.complianceScore}`,
-      `${matched}`,
-      status,
-    ].map(quoteCSV);
-  });
-
-  const csv = [headers.map(quoteCSV).join(','), ...rows.map((r) => r.join(','))].join('\n');
+  const csv = toCsvFromArrays([headers, ...rows], '\n');
   return new Blob([csv], { type: 'text/csv;charset=utf-8;' });
 }

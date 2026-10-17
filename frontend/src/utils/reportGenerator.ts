@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { AuditEntry } from './auditVerification';
 import { stripHtml } from './pdfExport';
+import { toCsvFromArrays } from './csv';
 
 export type ReportType = 'SOC2' | 'ISO27001' | 'Custom' | 'Full' | 'TransactionLog' | 'SignerActivity';
 
@@ -213,10 +214,7 @@ export function exportToCSV(entries: AuditEntry[]): Blob {
     entry.hash ?? '',
   ]);
   
-  const csvContent = [
-    headers.join(','),
-    ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
-  ].join('\n');
+  const csvContent = toCsvFromArrays([headers, ...rows], '\n');
   
   return new Blob([csvContent], { type: 'text/csv' });
 }
