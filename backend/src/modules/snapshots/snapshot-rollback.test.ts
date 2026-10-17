@@ -149,3 +149,136 @@ test("Snapshot Rollback: rollback and replay consistency", async () => {
   assert.strictEqual(replayedSnap?.lastProcessedLedger, initialSnap?.lastProcessedLedger);
   assert.strictEqual(replayedSnap?.totalRoleAssignments, initialSnap?.totalRoleAssignments);
 });
+
+test("Snapshot Rollback: unknown snapshot ID returns SNAPSHOT_NOT_FOUND and leaves state untouched", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+  const contractId = "C_ROLLBACK_UNKNOWN_1";
+
+  await service.processEvent(
+    createMockEvent("u1", contractId, EventType.ROLE_ASSIGNED, 10, {
+      address: "G_CAROL",
+      role: Role.ADMIN,
+    }),
+  );
+  const before = await adapter.getSnapshot(contractId);
+
+  const result = await service.rollbackSnapshot(contractId, "does-not-exist", "typo", []);
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.errorCode, "SNAPSHOT_NOT_FOUND");
+  const after = await adapter.getSnapshot(contractId);
+  assert.strictEqual(after?.lastProcessedLedger, before?.lastProcessedLedger);
+  assert.strictEqual(after?.totalRoleAssignments, before?.totalRoleAssignments);
+  assert.ok(after?.signers.size === before?.signers.size);
+});
+
+test("Snapshot Rollback: known snapshot ID still restores successfully", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+  const contractId = "C_ROLLBACK_KNOWN_1";
+
+  await service.processEvent(
+    createMockEvent("k1", contractId, EventType.ROLE_ASSIGNED, 10, {
+      address: "G_DAN",
+      role: Role.ADMIN,
+    }),
+  );
+  const target = (await adapter.getSnapshotHistory(contractId))[0];
+
+  const result = await service.rollbackSnapshot(contractId, target.lastProcessedLedger, "ok", []);
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.errorCode, undefined);
+  assert.strictEqual((await adapter.getSnapshot(contractId))?.lastProcessedLedger, 10);
+});
+
+test("Snapshot Rollback: unknown ID on adapter without restoreSnapshot returns SNAPSHOT_NOT_FOUND", async () => {
+  const base = new MemorySnapshotAdapter();
+  const adapter = {
+    getSnapshot: base.getSnapshot.bind(base),
+    saveSnapshot: base.saveSnapshot.bind(base),
+    clearSnapshot: base.clearSnapshot.bind(base),
+    getSnapshotHistory: base.getSnapshotHistory.bind(base),
+  };
+  const service = new SnapshotService(adapter as any);
+  const contractId = "C_ROLLBACK_NO_RESTORE_1";
+
+  await service.processEvent(
+    createMockEvent("n1", contractId, EventType.ROLE_ASSIGNED, 10, {
+      address: "G_ERIN",
+      role: Role.TREASURER,
+    }),
+  );
+  const before = await base.getSnapshot(contractId);
+
+  const result = await service.rollbackSnapshot(contractId, 999, "missing", []);
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.errorCode, "SNAPSHOT_NOT_FOUND");
+  assert.strictEqual((await base.getSnapshot(contractId))?.lastProcessedLedger, before?.lastProcessedLedger);
+});
+
+test("Snapshot Rebuild: failing event mid-replay keeps the previous snapshot intact", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+  const contractId = "C_REBUILD_ATOMIC_1";
+
+  await service.processEvent(
+    createMockEvent("old1", contractId, EventType.ROLE_ASSIGNED, 10, {
+      address: "G_OLD",
+      role: Role.ADMIN,
+    }),
+  );
+  const before = await adapter.getSnapshot(contractId);
+
+  const events = [
+    createMockEvent("new1", contractId, EventType.ROLE_ASSIGNED, 20, {
+      address: "G_NEW",
+      role: Role.TREASURER,
+    }),
+    // Null data makes the handler throw, so processEvent reports success: false.
+    createMockEvent("bad", contractId, EventType.ROLE_ASSIGNED, 21, null),
+    createMockEvent("new2", contractId, EventType.ROLE_ASSIGNED, 22, {
+      address: "G_LATE",
+      role: Role.MEMBER,
+    }),
+  ];
+
+  const result = await service.rebuildSnapshot(events, { contractId, clearExisting: true });
+
+  assert.strictEqual(result.success, false);
+  const after = await adapter.getSnapshot(contractId);
+  assert.strictEqual(after?.lastProcessedLedger, before?.lastProcessedLedger);
+  assert.ok(after?.signers.has("G_OLD") || after?.roles.has("G_OLD"));
+  assert.strictEqual(after?.roles.has("G_NEW"), false);
+});
+
+test("Snapshot Rebuild: successful replay replaces the previous snapshot", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+  const contractId = "C_REBUILD_OK_1";
+
+  await service.processEvent(
+    createMockEvent("old2", contractId, EventType.ROLE_ASSIGNED, 10, {
+      address: "G_OLD",
+      role: Role.ADMIN,
+    }),
+  );
+
+  const result = await service.rebuildSnapshot(
+    [
+      createMockEvent("new3", contractId, EventType.ROLE_ASSIGNED, 20, {
+        address: "G_NEW",
+        role: Role.TREASURER,
+      }),
+    ],
+    { contractId, clearExisting: true },
+  );
+
+  assert.strictEqual(result.success, true);
+  const after = await adapter.getSnapshot(contractId);
+  assert.strictEqual(after?.lastProcessedLedger, 20);
+  assert.strictEqual(after?.roles.has("G_OLD"), false);
+  assert.strictEqual(after?.roles.has("G_NEW"), true);
+});

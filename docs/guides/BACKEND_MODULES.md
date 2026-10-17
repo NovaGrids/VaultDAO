@@ -159,6 +159,10 @@ graph TD
 - `snapshot.service.ts` — Snapshot creation and query logic.
 - `normalizer.ts` — `SnapshotNormalizer` for snapshot-related events.
 
+**Rebuild behavior**: `rebuildSnapshot` replays events into a staging copy and only writes to storage after every event succeeds. If any event fails, the previous snapshot is kept and the result has `success: false`. A successful rebuild with `clearExisting: true` clears history and then saves the rebuilt snapshot. The clear and save are two storage calls, so a crash between them can leave the contract with no snapshot until the next rebuild.
+
+**Rollback behavior**: `rollbackSnapshot` returns `errorCode: "SNAPSHOT_NOT_FOUND"` and leaves state untouched when the target snapshot ID does not exist. It never replaces current state with an empty snapshot.
+
 ### `notifications/` — Notification Publishing
 
 **Purpose**: Outbound notification delivery for vault events (webhook, email, etc.).

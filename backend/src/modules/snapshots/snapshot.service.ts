@@ -64,6 +64,32 @@ function isTransientError(err: unknown): boolean {
   return TRANSIENT_ERROR_PATTERNS.some((p) => p.test(msg));
 }
 
+/**
+ * The subset of storage that event replay needs. Rebuilds pass a staging store
+ * here so the live snapshot is never touched until the replay has succeeded.
+ */
+type SnapshotStateStore = Pick<SnapshotStorageAdapter, "getSnapshot" | "saveSnapshot">;
+
+/**
+ * In-memory holder for a snapshot being rebuilt. Writes stay here until the
+ * rebuild commits to the real adapter.
+ */
+class StagedSnapshotStore implements SnapshotStateStore {
+  constructor(private staged: ContractSnapshot | null) {}
+
+  async getSnapshot(): Promise<ContractSnapshot | null> {
+    return this.staged;
+  }
+
+  async saveSnapshot(snapshot: ContractSnapshot): Promise<void> {
+    this.staged = snapshot;
+  }
+
+  get snapshot(): ContractSnapshot | null {
+    return this.staged;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -168,7 +194,10 @@ export class SnapshotService {
   /**
    * Process a single normalized event and update snapshot.
    */
-  async processEvent(event: NormalizedEvent): Promise<SnapshotUpdateResult> {
+  async processEvent(
+    event: NormalizedEvent,
+    store: SnapshotStateStore = this.adapter,
+  ): Promise<SnapshotUpdateResult> {
     const contractId = event.metadata.contractId;
 
     // Only process snapshot-relevant events
@@ -184,7 +213,7 @@ export class SnapshotService {
 
     try {
       // Get or create snapshot
-      let snapshot = (await this.adapter.getSnapshot(contractId)) ?? null;
+      let snapshot = (await store.getSnapshot(contractId)) ?? null;
       if (snapshot !== null && !validateSnapshot(snapshot)) {
         snapshot = null;
       }
@@ -240,7 +269,7 @@ export class SnapshotService {
       const MAX_RETRIES = 3;
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-          await this.adapter.saveSnapshot(snapshot);
+          await store.saveSnapshot(snapshot);
           break;
         } catch (saveError) {
           if (attempt < MAX_RETRIES && isTransientError(saveError)) {
@@ -281,6 +310,7 @@ export class SnapshotService {
   async processEvents(
     events: NormalizedEvent[],
     options: { maxConsecutiveErrors?: number } = {},
+    store: SnapshotStateStore = this.adapter,
   ): Promise<SnapshotUpdateResult> {
     const { maxConsecutiveErrors = 3 } = options;
     let totalSignersUpdated = 0;
@@ -292,7 +322,7 @@ export class SnapshotService {
 
     for (let i = 0; i < events.length; i++) {
       const event = events[i];
-      const result = await this.processEvent(event);
+      const result = await this.processEvent(event, store);
 
       if (result.success) {
         totalSignersUpdated += result.signersUpdated;
@@ -366,10 +396,14 @@ export class SnapshotService {
     }
 
     try {
-      // Clear existing snapshot if requested
-      if (clearExisting) {
-        await this.adapter.clearSnapshot(contractId);
-      }
+      // Replay into a staging copy. The stored snapshot is only replaced once
+      // the whole replay succeeds, so a failing event leaves the old state intact.
+      const seed = clearExisting ? null : await this.adapter.getSnapshot(contractId);
+      const staging = new StagedSnapshotStore(
+        seed
+          ? { ...seed, signers: new Map(seed.signers), roles: new Map(seed.roles) }
+          : null,
+      );
 
       // Filter events by ledger range if specified
       let filteredEvents = events.filter(
@@ -392,7 +426,24 @@ export class SnapshotService {
       filteredEvents.sort((a, b) => a.metadata.ledger - b.metadata.ledger);
 
       // Process all events
-      return await this.processEvents(filteredEvents);
+      const result = await this.processEvents(filteredEvents, {}, staging);
+      if (!result.success) {
+        logger.warn("snapshot rebuild failed — previous snapshot preserved", {
+          contractId,
+          error: result.error,
+        });
+        return result;
+      }
+
+      // Commit: replace stored state with the fully replayed snapshot.
+      if (clearExisting) {
+        await this.adapter.clearSnapshot(contractId);
+      }
+      const built = staging.snapshot;
+      if (built) {
+        await this.adapter.saveSnapshot(built);
+      }
+      return result;
     } catch (error) {
       logger.error("Error rebuilding snapshot", { error: String(error) });
       return {
@@ -969,8 +1020,24 @@ export class SnapshotService {
       }
 
       if (!restoredSnapshot) {
-        restoredSnapshot = this.createEmptySnapshot(contractId);
-        await this.adapter.saveSnapshot(restoredSnapshot);
+        // Never replace current state with an empty rebuild when the target is unknown.
+        const message = `snapshot ${String(targetSnapshotId)} not found for contract ${contractId}`;
+        logger.warn("[snapshot-service] rollback target not found", {
+          contractId,
+          rollbackSnapshotId: targetSnapshotId,
+        });
+        return {
+          success: false,
+          signersUpdated: 0,
+          rolesUpdated: 0,
+          eventsProcessed: 0,
+          lastProcessedLedger: 0,
+          rollbackSnapshotId: targetSnapshotId,
+          eventsReplayed: 0,
+          reason: rollbackReason,
+          error: message,
+          errorCode: "SNAPSHOT_NOT_FOUND",
+        };
       }
 
       const rollbackLedger = restoredSnapshot.lastProcessedLedger;

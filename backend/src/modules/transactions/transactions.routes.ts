@@ -30,8 +30,8 @@ export function createTransactionsRouter(
    * - token:      string (optional) — filter by token address
    * - from:       ISO8601 date (optional) — filter by start date
    * - to:         ISO8601 date (optional) — filter by end date
-   * - minAmount:  number (optional) — filter by minimum amount
-   * - maxAmount:  number (optional) — filter by maximum amount
+   * - minAmount:  decimal string in smallest token units (optional; requires token)
+   * - maxAmount:  decimal string in smallest token units (optional; requires token)
    */
   router.get("/", getTransactionsController(service, defaultContractId, cache));
   router.get(

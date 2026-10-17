@@ -164,6 +164,7 @@ export interface SnapshotRollbackResult extends SnapshotUpdateResult {
   readonly rollbackSnapshotId: string | number;
   readonly eventsReplayed: number;
   readonly reason: string;
+  readonly errorCode?: "SNAPSHOT_NOT_FOUND";
 }
 
 /**

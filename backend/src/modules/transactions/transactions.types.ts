@@ -30,8 +30,10 @@ export interface GetTransactionsParams {
   readonly recipient?: string;
   readonly from?: Date;
   readonly to?: Date;
-  readonly minAmount?: number;
-  readonly maxAmount?: number;
+  /** Decimal string in the token's smallest unit (e.g. "1000000000000000000000"). */
+  readonly minAmount?: string;
+  /** Decimal string in the token's smallest unit. */
+  readonly maxAmount?: string;
   readonly limit?: number;
 }
 

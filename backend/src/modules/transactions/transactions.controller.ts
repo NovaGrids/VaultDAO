@@ -5,7 +5,6 @@ import {
   validatePagination,
   validateOptionalString,
   validateOptionalDate,
-  validateOptionalNumber,
 } from "../../shared/http/validateQuery.js";
 import { validateCursorPagination, type CursorPayload } from "../../shared/pagination.js";
 import { createLogger } from "../../shared/logging/logger.js";
@@ -16,6 +15,30 @@ import type { CacheAdapter } from "../../shared/cache/cache.adapter.js";
 const TRANSACTIONS_CACHE_TTL_MS = 30_000;
 
 const logger = createLogger("transactions-controller");
+
+const DECIMAL_AMOUNT_PATTERN = /^\d+$/;
+
+/**
+ * Validates an optional amount filter as a non-negative decimal string in the
+ * token's smallest unit. Returns undefined when absent, null after sending a 400.
+ */
+function validateOptionalDecimalAmount(
+  request: Parameters<RequestHandler>[0],
+  response: Parameters<RequestHandler>[1],
+  param: string,
+): string | undefined | null {
+  const raw = request.query[param];
+  if (raw === undefined || raw === "") return undefined;
+  if (typeof raw !== "string" || !DECIMAL_AMOUNT_PATTERN.test(raw)) {
+    error(response, {
+      message: `Invalid ${param}: expected a non-negative integer string in smallest token units`,
+      status: 400,
+      code: ErrorCode.BAD_REQUEST,
+    });
+    return null;
+  }
+  return raw;
+}
 
 /**
  * Warns when a request uses the legacy `offset`/`page` pagination params so
@@ -82,10 +105,19 @@ export function getTransactionsController(
     if (from === null) return;
     const to = validateOptionalDate(request, response, "to");
     if (to === null) return;
-    const minAmount = validateOptionalNumber(request, response, "minAmount");
+    const minAmount = validateOptionalDecimalAmount(request, response, "minAmount");
     if (minAmount === null) return;
-    const maxAmount = validateOptionalNumber(request, response, "maxAmount");
+    const maxAmount = validateOptionalDecimalAmount(request, response, "maxAmount");
     if (maxAmount === null) return;
+    // Amounts are denominated per token; a range without a token would mix units.
+    if ((minAmount !== undefined || maxAmount !== undefined) && !token) {
+      error(response, {
+        message: "token is required when minAmount or maxAmount is supplied",
+        status: 400,
+        code: ErrorCode.BAD_REQUEST,
+      });
+      return;
+    }
 
     try {
       const contractId =

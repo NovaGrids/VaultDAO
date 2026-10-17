@@ -17,48 +17,77 @@ import { resolveIndexCursorWindow, buildCursorWindow } from "../../shared/pagina
 
 interface IndexedEntry {
   tx: Transaction;
-  amount: number;
+  /** Null when the stored amount is not a decimal string; such rows never match amount filters. */
+  amount: bigint | null;
   timestampMs: number;
 }
 
+/**
+ * Parses an i128 amount string (smallest token unit) without precision loss.
+ * Returns null for non-decimal input instead of a silently rounded value.
+ */
+export function parseAmount(value: string): bigint | null {
+  return /^\d+$/.test(value) ? BigInt(value) : null;
+}
+
+type AmountIndexedEntry = IndexedEntry & { amount: bigint };
+
+interface ContractIndex {
+  all: IndexedEntry[];
+  byHash: Map<string, IndexedEntry>;
+  byProposal: Map<string, IndexedEntry[]>;
+  sortedByAmount: AmountIndexedEntry[];
+}
+
+/**
+ * Per-contract index. Each contract owns its own maps, so clearing or
+ * rebuilding a contract drops every structure it had (no stale entries).
+ */
 class TransactionIndex {
-  private byContract = new Map<string, IndexedEntry[]>();
-  private byHash = new Map<string, IndexedEntry>();
-  private byProposal = new Map<string, IndexedEntry[]>();
-  private sortedByAmount = new Map<string, IndexedEntry[]>();
+  private contracts = new Map<string, ContractIndex>();
 
   clear(contractId: string): void {
-    this.byContract.delete(contractId);
-    this.sortedByAmount.delete(contractId);
+    this.contracts.delete(contractId);
   }
 
-  addAll(contractId: string, entries: IndexedEntry[]): void {
-    this.byContract.set(contractId, entries);
+  /**
+   * Builds a fresh index for the contract and swaps it in atomically.
+   * The previous index stays visible until the new one is complete.
+   */
+  replace(contractId: string, entries: IndexedEntry[]): void {
+    const byHash = new Map<string, IndexedEntry>();
+    const byProposal = new Map<string, IndexedEntry[]>();
     for (const entry of entries) {
-      this.byHash.set(`${contractId}:${entry.tx.transactionHash}`, entry);
-      const key = `${contractId}:${entry.tx.proposalId}`;
-      const arr = this.byProposal.get(key) ?? [];
+      byHash.set(entry.tx.transactionHash, entry);
+      const arr = byProposal.get(entry.tx.proposalId) ?? [];
       arr.push(entry);
-      this.byProposal.set(key, arr);
+      byProposal.set(entry.tx.proposalId, arr);
     }
-    const sorted = [...entries].sort((a, b) => a.amount - b.amount);
-    this.sortedByAmount.set(contractId, sorted);
+    const sortedByAmount = entries
+      .filter((e): e is AmountIndexedEntry => e.amount !== null)
+      .sort((a, b) => (a.amount < b.amount ? -1 : a.amount > b.amount ? 1 : 0));
+    this.contracts.set(contractId, {
+      all: entries,
+      byHash,
+      byProposal,
+      sortedByAmount,
+    });
   }
 
   getByContract(contractId: string): IndexedEntry[] | undefined {
-    return this.byContract.get(contractId);
+    return this.contracts.get(contractId)?.all;
   }
 
   getByHash(contractId: string, hash: string): IndexedEntry | undefined {
-    return this.byHash.get(`${contractId}:${hash}`);
+    return this.contracts.get(contractId)?.byHash.get(hash);
   }
 
   getByProposal(contractId: string, proposalId: string): IndexedEntry[] | undefined {
-    return this.byProposal.get(`${contractId}:${proposalId}`);
+    return this.contracts.get(contractId)?.byProposal.get(proposalId);
   }
 
-  rangeByAmount(contractId: string, min: number, max: number): IndexedEntry[] {
-    const sorted = this.sortedByAmount.get(contractId);
+  rangeByAmount(contractId: string, min: bigint, max: bigint): IndexedEntry[] {
+    const sorted = this.contracts.get(contractId)?.sortedByAmount;
     if (!sorted) return [];
     let lo = 0;
     let hi = sorted.length;
@@ -133,13 +162,12 @@ export class TransactionsService {
 
         return {
           tx,
-          amount: parseFloat(tx.amount) || 0,
+          amount: parseAmount(tx.amount),
           timestampMs: new Date(tx.timestamp).getTime() || 0,
         };
       });
 
-    this.index.clear(contractId);
-    this.index.addAll(contractId, entries);
+    this.index.replace(contractId, entries);
     this.indexTimestamps.set(contractId, now);
     return entries;
   }
@@ -151,23 +179,22 @@ export class TransactionsService {
 
     const hasAmountRange =
       params.minAmount !== undefined && params.maxAmount !== undefined;
+    const minAmount = params.minAmount !== undefined ? BigInt(params.minAmount) : undefined;
+    const maxAmount = params.maxAmount !== undefined ? BigInt(params.maxAmount) : undefined;
     let entries: IndexedEntry[];
 
     if (hasAmountRange) {
-      const rangeResults = this.index.rangeByAmount(
-        params.contractId,
-        params.minAmount!,
-        params.maxAmount!,
-      );
-      entries = rangeResults;
+      entries = this.index.rangeByAmount(params.contractId, minAmount!, maxAmount!);
     } else {
       entries = allEntries;
     }
 
     const executed = entries
       .filter((e) => {
-        if (params.minAmount !== undefined && !hasAmountRange && e.amount < params.minAmount) return false;
-        if (params.maxAmount !== undefined && !hasAmountRange && e.amount > params.maxAmount) return false;
+        if (minAmount === undefined && maxAmount === undefined) return true;
+        if (e.amount === null) return false;
+        if (minAmount !== undefined && !hasAmountRange && e.amount < minAmount) return false;
+        if (maxAmount !== undefined && !hasAmountRange && e.amount > maxAmount) return false;
         return true;
       })
       .filter((e) => (params.token ? e.tx.token === params.token : true))
