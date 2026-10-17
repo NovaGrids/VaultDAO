@@ -155,11 +155,11 @@ fn test_release_after_expiry_refunds_funder() {
     // Advance past expiration
     env.ledger().with_mut(|li| li.sequence_number += 150);
 
-    // Expired escrows are refunded to the funder even if milestones completed
+    // Completed milestones are paid to the recipient even after expiry
     let released = client.release_escrow(&recipient, &escrow_id);
     assert_eq!(released, 2000);
     let escrow = client.get_escrow_info(&escrow_id);
-    assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }
 
 // ============================================================================

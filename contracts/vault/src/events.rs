@@ -713,6 +713,17 @@ pub fn emit_hook_executed(
     );
 }
 
+/// Emit when a hook call fails during proposal execution (#1892)
+///
+/// Topics: `("hook_failed", proposal_id)`
+/// Data:   `(hook, is_pre)`
+pub fn emit_hook_failed(env: &Env, proposal_id: u64, hook: &Address, is_pre: bool) {
+    env.events().publish(
+        (Symbol::new(env, "hook_failed"), proposal_id),
+        (hook.clone(), is_pre),
+    );
+}
+
 /// Emit when liquidity is removed
 #[allow(dead_code)]
 pub fn emit_liquidity_removed(env: &Env, proposal_id: u64, dex: &Address, lp_tokens: i128) {
@@ -2571,31 +2582,16 @@ pub fn emit_phase_executed(
 ///
 /// Topics: `("phase_failed", proposal_id)`
 /// Data:   `(phase_index, executor, error_code)`
-    status: u32,
-    error_code: u32,
-) {
-    env.events().publish(
-        (Symbol::new(env, "phase_executed"), proposal_id),
-        (phase_index, status, error_code),
-    );
-}
-
-/// Emit when a proposal phase fails.
-///
-/// Topics: `("phase_failed", proposal_id)`
-/// Data:   `(phase_index, status, error_code)`
 pub fn emit_phase_failed(
     env: &Env,
     proposal_id: u64,
     phase_index: u32,
-    executor: &Address,
-    status: u32,
     error_code: u32,
+    executor: &Address,
 ) {
     env.events().publish(
         (Symbol::new(env, "phase_failed"), proposal_id),
         (phase_index, executor.clone(), error_code),
-        (phase_index, status, error_code),
     );
 }
 

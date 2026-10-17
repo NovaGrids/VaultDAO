@@ -25,9 +25,9 @@ use crate::errors::VaultError;
 use crate::types::{
     AuditCheckpoint, AuditEntry, BridgeConfig, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignatureRecord,
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
-    DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, ExecutionFeeEstimate,
+    DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, EscrowStatus, ExecutionFeeEstimate,
     ExecutionSnapshot, FeeStructure, ForceRotationRequest, FundingRound, FundingRoundConfig,
-    GasConfig, GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType,
+    GasConfig, GasPriceOracleConfig, GovernanceProposal, HolidayCalendar, HookEventType, HookFailure,
     HookRegistration, InsuranceClaim, InsuranceConfig, InsuranceVotingConfig, ListMode,
     MergeRecord, MultiPhaseProposal, NotificationPreferences, NotificationPrefs,
     PauseCooldownConfig, PauseState, PermissionGrant, Proposal, ProposalAmendment, ProposalStatus,
@@ -221,6 +221,8 @@ pub enum DataKey {
     NextForceRotationId,
     /// Addresses that have voted to reject a proposal -> Vec<Address>
     RejectionVotes(u64),
+    /// Failed hook calls recorded for a proposal -> Vec<HookFailure> (#1892)
+    HookFailures(u64),
 }
 
 #[contracttype(export = false)]
@@ -674,18 +676,6 @@ pub fn get_vesting_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64>
     ids
 }
 
-/// One page of vesting schedule IDs in ascending ID order, starting strictly
-/// after `start_after_id` (#1744).
-///
-/// Cursor-based counterpart to `get_vesting_ids_paginated`; pass the last ID
-/// received (or 0 to start from the beginning).
-pub fn get_vesting_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit == 0 || limit > 100 { 100 } else { limit };
-    // Read the counter without consuming it: `next_vesting_id` increments.
-    let next_id: u64 = env.storage().instance().get(&VestingKey::NextId).unwrap_or(1);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Cursor-based pagination over vesting schedule IDs.
 ///
 /// Seeks directly to the position of `start_after_id` (or the first position
@@ -1073,26 +1063,6 @@ pub fn get_proposal_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64
     ids
 }
 
-/// Return a page of existing proposal IDs in ascending creation order,
-/// starting strictly after `start_after_id`.
-///
-/// This is the cursor-based counterpart to `get_proposal_ids_paginated`:
-/// callers pass the last ID they received (or 0 to start from the
-/// beginning) and receive the next `limit` IDs. Cursor pagination is
-/// stable under concurrent inserts, unlike offset pagination.
-///
-/// # Arguments
-/// * `start_after_id` - Return IDs strictly greater than this value (0 = from start).
-/// * `limit`          - Maximum number of IDs to return. Capped at 100 internally.
-///
-/// # Returns
-/// A vector of proposal IDs in ascending order.
-pub fn get_proposal_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit > 100 { 100 } else { limit };
-    let next_id = get_next_proposal_id(env);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Binary-search the dense proposal ID index for `id`.
 ///
 /// IDs are assigned sequentially starting at 1, so the dense index is the
@@ -1609,24 +1579,6 @@ pub fn get_recurring_payment_ids_paginated(env: &Env, offset: u64, limit: u64) -
     ids
 }
 
-/// Return a page of existing recurring payment IDs in ascending creation
-/// order, starting strictly after `start_after_id`.
-///
-/// Cursor-based counterpart to `get_recurring_payment_ids_paginated`; pass the
-/// last ID received (or 0 to start from the beginning).
-///
-/// # Arguments
-/// * `start_after_id` - Return IDs strictly greater than this value (0 = from start).
-/// * `limit`          - Maximum number of IDs to return. Capped at 100 internally.
-///
-/// # Returns
-/// A vector of recurring payment IDs in ascending order.
-pub fn get_recurring_payment_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit > 100 { 100 } else { limit };
-    let next_id = get_next_recurring_id(env);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Cursor-based pagination over recurring payment IDs.
 ///
 /// Seeks directly to the position of `start_after_id` (or the first position
@@ -3461,11 +3413,42 @@ pub fn set_escrow(env: &Env, escrow: &Escrow) {
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
-pub fn get_escrow(env: &Env, id: u64) -> Result<Escrow, VaultError> {
+/// Append a failed hook call to the failure log for its proposal (#1892).
+pub fn add_hook_failure(env: &Env, failure: &HookFailure) {
+    let key = DataKey::HookFailures(failure.proposal_id);
+    let mut failures: Vec<HookFailure> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    failures.push_back(failure.clone());
+    env.storage().persistent().set(&key, &failures);
     env.storage()
         .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Failed hook calls recorded for a proposal, in the order they occurred (#1892).
+pub fn get_hook_failures(env: &Env, proposal_id: u64) -> Vec<HookFailure> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::HookFailures(proposal_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn get_escrow(env: &Env, id: u64) -> Result<Escrow, VaultError> {
+    let mut escrow: Escrow = env
+        .storage()
+        .persistent()
         .get(&FeatureKey::Escrow(id))
-        .ok_or(VaultError::ProposalNotFound)
+        .ok_or(VaultError::ProposalNotFound)?;
+    // Escrows disputed before `disputed_at` existed have no recorded dispute
+    // ledger. Backfill from `created_at` so their timeout keeps its old meaning.
+    if escrow.status == EscrowStatus::Disputed && escrow.disputed_at == 0 {
+        escrow.disputed_at = escrow.created_at;
+        set_escrow(env, &escrow);
+    }
+    Ok(escrow)
 }
 
 pub fn get_funder_escrows(env: &Env, funder: &Address) -> Vec<u64> {

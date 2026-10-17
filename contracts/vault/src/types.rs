@@ -1410,6 +1410,8 @@ pub enum AuditAction {
     PhaseExecuted = 29,
     /// A single phase of a multi-phase proposal failed to execute.
     PhaseFailed = 30,
+    /// A milestone of an escrow was marked complete by the funder or arbitrator.
+    MilestoneCompleted = 31,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -1984,6 +1986,9 @@ pub struct Escrow {
     pub expires_at: u64,
     /// Ledger when escrow was released/refunded (0 if still active)
     pub finalized_at: u64,
+    /// Ledger when the escrow was disputed (0 if never disputed).
+    /// Arbitration timeout is measured from this ledger.
+    pub disputed_at: u64,
     /// Whether escrow release requires signer voting approval - Issue #1431
     pub requires_signer_approval: bool,
     /// Count of approval votes received - Issue #1431
@@ -3162,6 +3167,9 @@ pub struct PaginationCursor {
     pub start_after_id: u64,
     /// Maximum number of items to return (capped at `MAX_PAGE_LIMIT`).
     pub limit: u32,
+}
+
+// ============================================================================
 // Pending Reservation Exposure
 // ============================================================================
 
@@ -3183,6 +3191,18 @@ pub struct PendingReserved {
     pub per_token: Map<Address, i128>,
     /// Per-proposer reserved amounts, keyed by proposer address.
     pub per_proposer: Map<Address, i128>,
+}
+
+/// A post- or pre-execution hook call that failed for a proposal (#1892).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookFailure {
+    /// Proposal whose execution invoked the hook
+    pub proposal_id: u64,
+    /// Hook contract that failed
+    pub hook: Address,
+    /// True for a pre-execution hook, false for a post-execution hook
+    pub is_pre: bool,
 }
 
 // ============================================================================
