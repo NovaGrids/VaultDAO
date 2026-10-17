@@ -102,6 +102,7 @@ fn test_escrow_auto_resolve_refunds_after_timeout() {
     let token = env
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
     let sac_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     sac_admin.mint(&admin, &10_000);
 
@@ -155,6 +156,7 @@ fn test_escrow_auto_resolve_fails_before_timeout() {
     let token = env
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
     let sac_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     sac_admin.mint(&admin, &10_000);
 
@@ -191,6 +193,7 @@ fn test_escrow_auto_resolve_only_refunds_disputed() {
     let token = env
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
     let sac_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     sac_admin.mint(&admin, &10_000);
 

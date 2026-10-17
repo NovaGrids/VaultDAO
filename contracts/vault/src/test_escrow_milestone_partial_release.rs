@@ -77,6 +77,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             quorum_percentage: 0,
         },
     );
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
 
     // Fund admin
     StellarAssetClient::new(env, &token).mint(&admin, &10_000_000i128);

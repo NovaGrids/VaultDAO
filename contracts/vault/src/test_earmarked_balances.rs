@@ -77,6 +77,7 @@ fn setup(env: &Env, free: i128) -> Ctx {
         StellarAssetClient::new(env, &token).mint(&vault, &free);
     }
     client.initialize(&admin, &init_config(env, signers));
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
     client.set_role(&admin, &signer2, &Role::Treasurer);
     Ctx {
         client,

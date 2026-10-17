@@ -65,6 +65,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Vec<Addre
             proposal_id_prefix: 0,
         },
     );
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
 
     (client, admin, token, contract_id, signers)
 }

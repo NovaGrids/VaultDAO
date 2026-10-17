@@ -59,6 +59,7 @@ fn setup_with_escrows(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Addre
             proposal_id_prefix: 0,
         },
     );
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
 
     client.set_role(&admin, &sender, &Role::Treasurer);
 

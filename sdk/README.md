@@ -1095,7 +1095,7 @@ import {
   ProposalStatus,    // Pending, Approved, Executed, Rejected, Expired
   EscrowStatus,      // Pending, Active, MilestonesComplete, Released, Refunded, Disputed
   FundingRoundStatus,     // Pending, Approved, Active, Completed, Cancelled
-  FundingMilestoneStatus, // Pending, Submitted, Verified, Rejected
+  FundingMilestoneStatus, // Pending, Submitted, Verified, Released, Rejected
   VaultErrorCode,    // Contract error codes
 } from "@vaultdao/sdk";
 ```

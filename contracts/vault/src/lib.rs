@@ -97,6 +97,9 @@ const MIN_ADMIN_ROTATION_DELAY: u64 = 1_440;
 /// allow near-instant contract replacement, defeating the timelock security guarantee.
 const MIN_UPGRADE_TIMELOCK: u64 = 17_280;
 
+/// Maximum number of milestones allowed on a single escrow
+const MAX_ESCROW_MILESTONES: u32 = 50;
+
 /// Minimum length for an attachment CID (CIDv0 = 46 chars, CIDv1 base32 = 59+ chars)
 const MIN_ATTACHMENT_LEN: u32 = 46;
 
@@ -447,6 +450,14 @@ mod test_escrow_milestone_partial_release;
 mod test_escrow_multisig_arbitration;
 #[cfg(test)]
 mod test_escrow_timeout;
+#[cfg(test)]
+mod test_escrow_creation_validation;
+#[cfg(test)]
+mod test_funding_round_release_accounting;
+#[cfg(test)]
+mod test_funding_milestone_release_once;
+#[cfg(test)]
+mod test_funding_percentage_rounds;
 #[cfg(test)]
 mod test_escrow_voting;
 #[cfg(test)]
@@ -13898,16 +13909,37 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
-        if milestones.is_empty() {
+        if milestones.is_empty() || milestones.len() > MAX_ESCROW_MILESTONES {
             return Err(VaultError::InvalidAmount);
         }
 
-        // Validate milestone percentages sum to 100
+        if !storage::get_config(&env)?
+            .supported_tokens
+            .contains(&token_addr)
+        {
+            return Err(VaultError::TokenNotSupported);
+        }
+
+        if duration_ledgers == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        if recipient == funder {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Validate milestone percentages sum to 100 and IDs are unique and non-zero.
+        // Duplicate IDs would let `complete_milestone` complete several milestones at once.
         let mut total_pct: u32 = 0;
         for i in 0..milestones.len() {
             if let Some(m) = milestones.get(i) {
-                if m.percentage == 0 || m.percentage > 100 {
+                if m.percentage == 0 || m.percentage > 100 || m.id == 0 {
                     return Err(VaultError::InvalidAmount);
+                }
+                for j in 0..i {
+                    if milestones.get(j).map(|prev| prev.id) == Some(m.id) {
+                        return Err(VaultError::InvalidAmount);
+                    }
                 }
                 total_pct = total_pct.saturating_add(m.percentage);
             }
@@ -15657,6 +15689,7 @@ impl VaultDAO {
         }
 
         // Validate against config if present
+        let mut min_milestone_amount: i128 = 0;
         if let Some(config) = storage::get_funding_round_config(&env) {
             if !config.enabled {
                 return Err(VaultError::InvalidAmount);
@@ -15667,63 +15700,51 @@ impl VaultDAO {
             if milestones.len() > config.max_milestones {
                 return Err(VaultError::InvalidAmount);
             }
-            if config.min_milestone_amount > 0 {
-                for i in 0..milestones.len() {
-                    let m = milestones.get(i).unwrap();
-                    if m.amount < config.min_milestone_amount {
-                        return Err(VaultError::InvalidAmount);
-                    }
-                }
-            }
+            min_milestone_amount = config.min_milestone_amount;
         }
 
-        // Determine mode: percentage-based or fixed-amount
-        let mut total_percentage_bps: u32 = 0;
-        let mut any_percentage_bps: bool = false;
-        for i in 0..milestones.len() {
-            if let Some(m) = milestones.get(i) {
-                if m.release_percentage_bps > 0 {
-                    any_percentage_bps = true;
-                }
-                total_percentage_bps =
-                    total_percentage_bps.saturating_add(m.release_percentage_bps);
-            }
-        }
+        let any_percentage_bps = milestones.iter().any(|m| m.release_percentage_bps > 0);
 
-        // Validate: if any milestone uses percentage, all must sum to exactly 10000
-        if any_percentage_bps && total_percentage_bps != 10_000 {
-            return Err(VaultError::FundingRoundError);
-        }
-
-        // Mixed mode (some percentage, some fixed) is not allowed
-        if any_percentage_bps {
+        let (total_amount, milestones) = if any_percentage_bps {
+            // Percentage mode: every milestone carries a percentage and no fixed amount,
+            // and the percentages must cover the whole round.
+            let mut total_percentage_bps: u32 = 0;
             for i in 0..milestones.len() {
-                if let Some(m) = milestones.get(i) {
-                    if m.release_percentage_bps == 0 && m.amount != 0 {
-                        return Err(VaultError::FundingRoundError);
-                    }
+                let m = milestones.get(i).unwrap();
+                if m.release_percentage_bps == 0 || m.amount != 0 {
+                    return Err(VaultError::FundingRoundError);
                 }
+                total_percentage_bps = total_percentage_bps.saturating_add(m.release_percentage_bps);
             }
-        }
+            if total_percentage_bps != 10_000 {
+                return Err(VaultError::FundingRoundError);
+            }
 
-        let total_amount: i128 = if any_percentage_bps {
-            // For percentage-based, total_amount must be provided via milestone amounts or
-            // we derive it. We use the sum of amounts (should be the total round amount).
-            // If all amounts are 0, the proposal amount is used as total.
-            let sum_amounts: i128 = milestones.iter().map(|m| m.amount).sum();
-            if sum_amounts > 0 {
-                sum_amounts
-            } else {
-                total_amount
+            // Store each milestone's amount now so release never has to derive it
+            let mut resolved: Vec<FundingMilestone> = Vec::new(&env);
+            let mut allocated: i128 = 0;
+            for i in 0..milestones.len() {
+                let mut m = milestones.get(i).unwrap();
+                m.amount = total_amount.saturating_mul(m.release_percentage_bps as i128) / 10_000;
+                allocated = allocated.saturating_add(m.amount);
+                resolved.push_back(m);
             }
+            // Truncation remainder goes to the last milestone so amounts sum to total_amount
+            let last = resolved.len() - 1;
+            let mut last_milestone = resolved.get(last).unwrap();
+            last_milestone.amount = last_milestone.amount.saturating_add(total_amount - allocated);
+            resolved.set(last, last_milestone);
+
+            (total_amount, resolved)
         } else {
-            milestones.iter().map(|m| m.amount).sum()
+            let sum: i128 = milestones.iter().map(|m| m.amount).sum();
+            (sum, milestones)
         };
-        // Validate milestone amounts sum to total_amount
+
         let mut milestone_sum: i128 = 0;
         for i in 0..milestones.len() {
             let m = milestones.get(i).unwrap();
-            if m.amount <= 0 {
+            if m.amount <= 0 || m.amount < min_milestone_amount {
                 return Err(VaultError::InvalidAmount);
             }
             milestone_sum = milestone_sum.saturating_add(m.amount);
@@ -15963,10 +15984,19 @@ impl VaultDAO {
             }
         }
 
+        if round.released_amount.saturating_add(amount) > round.total_amount {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Mark the milestone as paid in the same call that transfers, so a second
+        // release of the same milestone is rejected by the status check above.
+        let mut paid_milestone = round.milestones.get(milestone_index).unwrap();
+        paid_milestone.status = FundingMilestoneStatus::Released;
+        paid_milestone.amount = amount;
+        round.milestones.set(milestone_index, paid_milestone);
+
         // Release proportional tranche to recipient
         token::transfer(&env, &round.token, &round.recipient, amount);
-        round.released_amount = round.released_amount.saturating_add(amount);
-
         round.released_amount = round.released_amount.saturating_add(amount);
 
         // Auto-complete if all milestones are now verified

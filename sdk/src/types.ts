@@ -235,6 +235,7 @@ export enum FundingMilestoneStatus {
   Pending = "Pending",
   Submitted = "Submitted",
   Verified = "Verified",
+  Released = "Released",
   Rejected = "Rejected",
 }
 
