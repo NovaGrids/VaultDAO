@@ -679,13 +679,6 @@ pub fn get_vesting_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64>
 ///
 /// Cursor-based counterpart to `get_vesting_ids_paginated`; pass the last ID
 /// received (or 0 to start from the beginning).
-pub fn get_vesting_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit == 0 || limit > 100 { 100 } else { limit };
-    // Read the counter without consuming it: `next_vesting_id` increments.
-    let next_id: u64 = env.storage().instance().get(&VestingKey::NextId).unwrap_or(1);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Cursor-based pagination over vesting schedule IDs.
 ///
 /// Seeks directly to the position of `start_after_id` (or the first position
@@ -1087,12 +1080,6 @@ pub fn get_proposal_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64
 ///
 /// # Returns
 /// A vector of proposal IDs in ascending order.
-pub fn get_proposal_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit > 100 { 100 } else { limit };
-    let next_id = get_next_proposal_id(env);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Binary-search the dense proposal ID index for `id`.
 ///
 /// IDs are assigned sequentially starting at 1, so the dense index is the
@@ -1621,12 +1608,6 @@ pub fn get_recurring_payment_ids_paginated(env: &Env, offset: u64, limit: u64) -
 ///
 /// # Returns
 /// A vector of recurring payment IDs in ascending order.
-pub fn get_recurring_payment_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit > 100 { 100 } else { limit };
-    let next_id = get_next_recurring_id(env);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Cursor-based pagination over recurring payment IDs.
 ///
 /// Seeks directly to the position of `start_after_id` (or the first position

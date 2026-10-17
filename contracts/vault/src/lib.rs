@@ -502,6 +502,7 @@ mod test_subscription_auto_topup;
 #[cfg(test)]
 mod test_subscription_downgrade_grace;
 #[cfg(test)]
+mod test_swap_controls;
 mod test_swap_multi_token;
 #[cfg(test)]
 mod test_threshold_reduction;
@@ -12274,6 +12275,68 @@ impl VaultDAO {
         storage::get_dex_config(&env)
     }
 
+    /// Apply the spending controls that `propose_transfer_internal` enforces to an
+    /// outflow of `amount` of `token`, then reserve the amount against the daily,
+    /// weekly and per-token counters. Shared by swap proposals (#1926).
+    fn reserve_outflow_limits(
+        env: &Env,
+        config: &Config,
+        proposer: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> Result<(), VaultError> {
+        if !storage::check_and_update_velocity(env, proposer, token, &config.velocity_limit) {
+            return Err(VaultError::VelocityLimitExceeded);
+        }
+
+        let mut rep = storage::get_reputation(env, proposer);
+        storage::apply_reputation_decay(env, &mut rep);
+        storage::set_reputation(env, proposer, &rep);
+        let per_proposal_limit = if rep.score >= 900 {
+            config.spending_limit * 3
+        } else if rep.score >= 800 {
+            config.spending_limit * 2
+        } else {
+            config.spending_limit
+        };
+        if amount > per_proposal_limit {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+
+        let daily_limit = if rep.score >= 750 {
+            (config.daily_limit * 3) / 2
+        } else {
+            config.daily_limit
+        };
+        let weekly_limit = if rep.score >= 750 {
+            (config.weekly_limit * 3) / 2
+        } else {
+            config.weekly_limit
+        };
+        let today = storage::get_day_number(env);
+        let week = storage::get_week_number(env);
+        if storage::get_daily_spent(env, today) + amount > daily_limit {
+            return Err(VaultError::ExceedsDailyLimit);
+        }
+        if storage::get_weekly_spent(env, week) + amount > weekly_limit {
+            return Err(VaultError::ExceedsWeeklyLimit);
+        }
+        if let Some(token_cfg) = storage::get_token_spending_config(env, token) {
+            if storage::get_token_daily_spent(env, token, today) + amount > token_cfg.daily_limit {
+                return Err(VaultError::ExceedsTokenDailyLimit);
+            }
+            if storage::get_token_weekly_spent(env, token, week) + amount > token_cfg.weekly_limit {
+                return Err(VaultError::ExceedsTokenWeeklyLimit);
+            }
+        }
+
+        storage::add_daily_spent(env, today, amount);
+        storage::add_weekly_spent(env, week, amount);
+        storage::add_token_daily_spent(env, token, today, amount);
+        storage::add_token_weekly_spent(env, token, week, amount);
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn propose_swap(
         env: Env,
@@ -12285,6 +12348,8 @@ impl VaultDAO {
         insurance_amount: i128,
     ) -> Result<u64, VaultError> {
         proposer.require_auth();
+        // Swaps move treasury funds, so they honour the same pause as transfers (#1926)
+        require_not_paused(&env)?;
         let config = storage::get_config(&env)?;
         let role = storage::get_role(&env, &proposer);
         if !Role::role_satisfies(Role::Treasurer, role) {
@@ -12304,14 +12369,83 @@ impl VaultDAO {
             return Err(VaultError::DexError);
         }
 
+        // Derive what the swap takes out of the vault, and which tokens it touches (#1926).
+        // Every touched token must be supported, and the outflow is subject to the same
+        // limits, velocity window and timelock as an ordinary transfer.
+        let (spend_token, spend_amount, touched_tokens) = match &swap_op {
+            SwapProposal::Swap(_, token_in, token_out, amount_in, _) => (
+                token_in.clone(),
+                *amount_in,
+                soroban_sdk::vec![&env, token_in.clone(), token_out.clone()],
+            ),
+            SwapProposal::AddLiquidity(_, token_a, token_b, amount_a, _, _) => (
+                token_a.clone(),
+                *amount_a,
+                soroban_sdk::vec![&env, token_a.clone(), token_b.clone()],
+            ),
+            SwapProposal::RemoveLiquidity(_, lp_token, amount, _, _) => (
+                lp_token.clone(),
+                *amount,
+                soroban_sdk::vec![&env, lp_token.clone()],
+            ),
+            SwapProposal::StakeLp(_, lp_token, amount) => (
+                lp_token.clone(),
+                *amount,
+                soroban_sdk::vec![&env, lp_token.clone()],
+            ),
+            SwapProposal::UnstakeLp(_, lp_token, _) => (
+                lp_token.clone(),
+                0,
+                soroban_sdk::vec![&env, lp_token.clone()],
+            ),
+            SwapProposal::ClaimRewards(_) => (
+                env.current_contract_address(),
+                0,
+                Vec::new(&env),
+            ),
+        };
+        for token in touched_tokens.iter() {
+            if !config.supported_tokens.contains(&token) {
+                return Err(VaultError::TokenNotSupported);
+            }
+        }
+        if spend_amount < 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        if spend_amount > 0 {
+            Self::reserve_outflow_limits(&env, &config, &proposer, &spend_token, spend_amount)?;
+        }
+
+        // Collect insurance the way propose_transfer_internal does, so that the refund on
+        // execute and the slash on reject or cancel act on funds the vault really holds (#1928).
+        let insurance_config = storage::get_insurance_config(&env);
+        let actual_insurance = insurance_amount.max(0);
+        if insurance_config.enabled && spend_amount >= insurance_config.min_amount {
+            let mut min_required = spend_amount * insurance_config.min_insurance_bps as i128 / 10_000;
+            if storage::get_reputation(&env, &proposer).score >= 750 {
+                min_required /= 2;
+            }
+            if actual_insurance < min_required {
+                return Err(VaultError::InsuranceInsufficient);
+            }
+        }
+        if actual_insurance > 0 {
+            token::transfer_to_vault(&env, &spend_token, &proposer, actual_insurance);
+        }
+
         let current_ledger = env.ledger().sequence() as u64;
+        let unlock_ledger = if spend_amount > 0 && spend_amount >= config.timelock_threshold {
+            current_ledger + config.timelock_delay
+        } else {
+            0
+        };
         let proposal_id = storage::increment_proposal_id(&env);
         let proposal = Proposal {
             id: proposal_id,
             proposer: proposer.clone(),
             recipient: env.current_contract_address(),
-            token: env.current_contract_address(),
-            amount: 0,
+            token: spend_token,
+            amount: spend_amount,
             memo: Symbol::new(&env, "swap"),
             metadata: Map::new(&env),
             tags: Vec::new(&env),
@@ -12325,10 +12459,10 @@ impl VaultDAO {
             condition_logic,
             created_at: current_ledger,
             expires_at: calculate_expiration_ledger(&config, &priority, current_ledger),
-            unlock_ledger: 0,
+            unlock_ledger,
             execution_time: None,
             execution_window_ledgers: 0,
-            insurance_amount,
+            insurance_amount: actual_insurance,
             stake_amount: 0,
             gas_limit: 0,
             gas_used: 0,
@@ -12396,6 +12530,11 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         executor.require_auth();
 
+        // Reject if vault is paused, as execute_proposal does (#1927)
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
         // Get proposal
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
@@ -12410,14 +12549,48 @@ impl VaultDAO {
             return Err(VaultError::ProposalAlreadyExecuted);
         }
 
-        // Check expiration
+        // Reentrancy guard (#1414)
+        if storage::is_proposal_in_progress(&env, proposal_id) {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        // Expired and window-expired proposals are persisted as Expired and the
+        // reserved spend is refunded. Soroban rolls back state on Err, so this
+        // returns Ok to keep the status change.
         let current_ledger = env.ledger().sequence() as u64;
-        if current_ledger > proposal.expires_at {
+        let config = storage::get_config(&env)?;
+        let window_expired = config.exec_window_ledgers > 0
+            && proposal.approved_at > 0
+            && current_ledger > proposal.approved_at + config.exec_window_ledgers;
+        if current_ledger > proposal.expires_at || window_expired {
+            storage::refund_spending_limits(
+                &env,
+                proposal.amount,
+                proposal.spend_day,
+                proposal.spend_week,
+            );
+            storage::refund_token_spending_limits(
+                &env,
+                &proposal.token,
+                proposal.amount,
+                proposal.spend_day,
+                proposal.spend_week,
+            );
             proposal.status = ProposalStatus::Expired;
+            storage::pending_expiry_index_remove(&env, proposal_id);
             storage::set_proposal(&env, &proposal);
             storage::metrics_on_expiry(&env);
-            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
-            return Err(VaultError::ProposalExpired);
+            if window_expired {
+                events::emit_execution_window_expired(
+                    &env,
+                    proposal_id,
+                    proposal.approved_at,
+                    config.exec_window_ledgers,
+                );
+            } else {
+                events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
+            }
+            return Ok(());
         }
 
         // Check Timelock
@@ -12425,10 +12598,42 @@ impl VaultDAO {
             return Err(VaultError::TimelockNotExpired);
         }
 
+        // Evaluate the conditions attached to the swap (#1927)
+        Self::evaluate_conditions(&env, &proposal)?;
+
+        // Dependencies must be executed in a prior ledger, as in execute_proposal
+        for dependency_id in proposal.depends_on.iter() {
+            if let Ok(dep_proposal) = storage::get_proposal(&env, dependency_id) {
+                if dep_proposal.status != ProposalStatus::Executed {
+                    return Err(VaultError::ProposalNotApproved);
+                }
+                if dep_proposal.execution_ledger == 0
+                    || dep_proposal.execution_ledger >= current_ledger
+                {
+                    return Err(VaultError::DependencyNotExecuted);
+                }
+            } else {
+                return Err(VaultError::ProposalNotFound);
+            }
+        }
+
+        // Circuit breaker: same hourly outflow accounting as execute_proposal
+        let threshold = storage::get_circuit_breaker_threshold(&env);
+        if threshold > 0 {
+            let window = storage::get_hour_window(&env);
+            let outflow = storage::get_circuit_breaker_outflow(&env, window);
+            if outflow + proposal.amount > threshold {
+                return Err(VaultError::VaultPaused);
+            }
+            storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
+        }
+
         // Get DEX config and swap details
         let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexError)?;
         let swap_proposal =
             storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::DexError)?;
+
+        storage::set_proposal_in_progress(&env, proposal_id);
 
         // Perform comprehensive swap validation and execution
         let swap_result =
@@ -12439,9 +12644,51 @@ impl VaultDAO {
 
         // Update proposal status
         proposal.status = ProposalStatus::Executed;
+        proposal.execution_ledger = current_ledger;
         storage::pending_expiry_index_remove(&env, proposal_id);
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
+
+        // Success side effects, matching execute_proposal (#1927)
+        events::emit_proposal_executed(
+            &env,
+            proposal_id,
+            &executor,
+            &proposal.recipient,
+            &proposal.token,
+            proposal.amount.saturating_sub(proposal.gas_used),
+            proposal.gas_used,
+            current_ledger,
+        );
+        // Return insurance on success, as execute_proposal does (#1928)
+        if proposal.insurance_amount > 0 {
+            token::transfer(
+                &env,
+                &proposal.token,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+            events::emit_insurance_returned(
+                &env,
+                proposal_id,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+        }
+        Self::update_reputation_on_execution(&env, &proposal);
+        let execution_time = current_ledger.saturating_sub(proposal.created_at);
+        storage::metrics_on_execution(&env, proposal.gas_used, execution_time);
+        let metrics = storage::get_metrics(&env);
+        events::emit_metrics_updated(
+            &env,
+            metrics.executed_count,
+            metrics.rejected_count,
+            metrics.expired_count,
+            metrics.success_rate_bps(),
+        );
+        storage::create_audit_entry(&env, AuditAction::ExecuteProposal, &executor, proposal_id);
+
+        storage::clear_proposal_in_progress(&env, proposal_id);
         Ok(())
     }
 
@@ -16792,10 +17039,16 @@ impl VaultDAO {
         if interval_ledgers == 0 {
             return Err(VaultError::IntervalTooShort);
         }
+        // Only supported tokens may back a subscription. Without this check an
+        // arbitrary token contract runs inside the payment calls below, and
+        // per-token configuration is bypassed.
+        if !storage::get_config(&env)?.supported_tokens.contains(&token) {
+            return Err(VaultError::TokenNotSupported);
+        }
 
-        // First payment up-front: subscriber ? vault ? provider.
-        token::transfer_to_vault(&env, &token, &subscriber, amount_per_period);
-        token::transfer(&env, &token, &provider, amount_per_period);
+        // First payment goes straight from subscriber to provider. Staging it in the
+        // vault gained nothing and left the vault as an intermediate custodian.
+        token::transfer_from_holder(&env, &token, &subscriber, &provider, amount_per_period);
 
         let current_ledger = env.ledger().sequence() as u64;
         let id = storage::increment_subscription_id(&env);

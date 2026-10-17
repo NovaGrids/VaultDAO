@@ -41,6 +41,13 @@ pub fn transfer_to_vault(env: &Env, token_addr: &Address, from: &Address, amount
     client.transfer(from, &vault_address, &amount);
 }
 
+/// Transfer tokens directly from `from` to `to`, without staging them in the vault.
+/// Requires the `from` address to have already authorized (via require_auth in the caller).
+pub fn transfer_from_holder(env: &Env, token_addr: &Address, from: &Address, to: &Address, amount: i128) {
+    let client = token::Client::new(env, token_addr);
+    client.transfer(from, to, &amount);
+}
+
 /// Attempt to transfer tokens from a holder back into the vault (used for rollback).
 /// Returns Result to indicate success/failure without panicking.
 pub fn transfer_from_vault(
