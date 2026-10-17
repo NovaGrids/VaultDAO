@@ -7874,8 +7874,24 @@ impl VaultDAO {
             gross_earned
         };
 
-        // Refund = total committed ? everything earned (claimed + unclaimed earned)
+        // Earned by recipient but not yet claimed: paid out now so accrued
+        // funds are never lost to a cancellation.
+        let unclaimed_earned = (gross_earned - stream.claimed_amount).max(0);
+
+        // Refund = total committed - everything earned (claimed + unclaimed earned)
         let refund_amount = stream.total_amount - gross_earned;
+
+        if unclaimed_earned > 0
+            && token::try_transfer(
+                &env,
+                &stream.token_addr,
+                &stream.recipient,
+                unclaimed_earned,
+            )
+            .is_err()
+        {
+            return Err(VaultError::InsufficientBalance);
+        }
 
         if refund_amount > 0
             && token::try_transfer(&env, &stream.token_addr, &stream.sender, refund_amount).is_err()
@@ -7889,6 +7905,7 @@ impl VaultDAO {
             &stream.token_addr,
             stream.total_amount - stream.claimed_amount,
         );
+        stream.claimed_amount += unclaimed_earned;
         stream.last_update_timestamp = now;
         stream.status = StreamStatus::Cancelled;
 
@@ -7997,13 +8014,26 @@ impl VaultDAO {
             amount,
             reason,
             status: ClawbackStatus::Pending,
+            approvals: 0,
+            votes: 0,
         };
         storage::set_clawback_request(&env, &req);
         storage::extend_instance_ttl(&env);
         Ok(id)
     }
 
-    /// Vote to approve or reject a stream clawback request (Issue #1724).
+    /// Vote to approve or reject a stream clawback request (Issue #1724, #1911).
+    ///
+    /// Only a Pending request accepts votes, and each Admin or Treasurer may vote
+    /// once. The requester cannot approve their own request. A rejection finalises
+    /// the request immediately. An approval only moves it to Approved once approvals
+    /// reach `config.threshold` and total votes reach `config.quorum` (0 disables
+    /// the quorum check).
+    ///
+    /// # Errors
+    /// * `ProposalNotPending` - request is no longer Pending.
+    /// * `ClaimSelfVote`      - requester attempting to approve their own request.
+    /// * `ClaimAlreadyVoted`  - voter has already voted on this request.
     pub fn vote_clawback(
         env: Env,
         caller: Address,
@@ -8016,13 +8046,30 @@ impl VaultDAO {
             return Err(VaultError::InsufficientRole);
         }
         let mut req = storage::get_clawback_request(&env, clawback_id)?;
+        if req.status != ClawbackStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if approve && caller == req.requester {
+            return Err(VaultError::ClaimSelfVote);
+        }
+        if storage::has_voted_on_clawback(&env, clawback_id, &caller) {
+            return Err(VaultError::ClaimAlreadyVoted);
+        }
+        storage::record_clawback_vote(&env, clawback_id, &caller);
+        req.votes += 1;
+
         if approve {
-            req.status = ClawbackStatus::Approved;
-            storage::remove_stream_rate_window(&env, req.stream_id);
+            req.approvals += 1;
+            let config = storage::get_config(&env)?;
+            let quorum_met = config.quorum == 0 || req.votes >= config.quorum;
+            if req.approvals >= config.threshold && quorum_met {
+                req.status = ClawbackStatus::Approved;
+            }
         } else {
             req.status = ClawbackStatus::Rejected;
         }
         storage::set_clawback_request(&env, &req);
+        storage::extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -8034,7 +8081,16 @@ impl VaultDAO {
         storage::get_clawback_request(&env, clawback_id)
     }
 
-    /// Close an active stream and clean up its rate window (Issue #1724, #1536).
+    /// Close a stream and clean up its rate window (Issue #1724, #1536, #1912).
+    ///
+    /// A live (Active or Paused) stream can only be closed once the recipient has
+    /// claimed all of it. Closing therefore never freezes funds the recipient is
+    /// still owed, and no reserve is left to release. Cancelled and Completed
+    /// streams have already released their reserve, so closing them only clears
+    /// the rate window.
+    ///
+    /// # Errors
+    /// Returns [`VaultError::StreamNotFullyClaimed`] if a live stream still has unclaimed funds.
     pub fn close_stream(
         env: Env,
         caller: Address,
@@ -8046,9 +8102,20 @@ impl VaultDAO {
         if stream.sender != caller && role != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
+        let is_live =
+            stream.status == StreamStatus::Active || stream.status == StreamStatus::Paused;
+        if is_live && stream.claimed_amount < stream.total_amount {
+            return Err(VaultError::StreamNotFullyClaimed);
+        }
         stream.status = StreamStatus::Completed;
         storage::set_streaming_payment(&env, &stream);
         storage::remove_stream_rate_window(&env, stream_id);
+        events::emit_stream_status_updated(
+            &env,
+            stream_id,
+            StreamStatus::Completed as u32,
+            &caller,
+        );
         Ok(())
     }
 
@@ -8060,7 +8127,17 @@ impl VaultDAO {
         storage::get_stream_rate_window(&env, stream_id)
     }
 
-    /// Execute an approved clawback and recall unearned tokens (Issue #1724).
+    /// Execute an approved clawback and recall unvested tokens (Issue #1724, #1910).
+    ///
+    /// The recalled amount is `min(req.amount, total_amount - gross_earned)`, so
+    /// nothing the recipient has already accrued is taken. The recalled tokens
+    /// go back to the stream sender and their reserve is released. The stream
+    /// keeps running with a reduced `total_amount`, so the recipient still
+    /// receives everything accrued and the remainder of the schedule.
+    ///
+    /// # Errors
+    /// Returns [`VaultError::StreamNotActive`] if the stream is not Active or Paused.
+    /// Returns [`VaultError::InvalidAmount`] if there is no unvested amount to recall.
     pub fn execute_clawback(
         env: Env,
         caller: Address,
@@ -8076,12 +8153,42 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
         let mut stream = storage::get_streaming_payment(&env, req.stream_id)?;
-        stream.status = StreamStatus::Cancelled;
+        if stream.status != StreamStatus::Active && stream.status != StreamStatus::Paused {
+            return Err(VaultError::StreamNotActive);
+        }
+
+        let now = env.ledger().timestamp();
+        let mut accumulated_seconds = stream.accumulated_seconds;
+        if stream.status == StreamStatus::Active {
+            let effective_now = if now > stream.end_timestamp {
+                stream.end_timestamp
+            } else {
+                now
+            };
+            accumulated_seconds += effective_now.saturating_sub(stream.last_update_timestamp);
+        }
+
+        let gross_earned = (stream.rate * accumulated_seconds as i128).min(stream.total_amount);
+        let unvested = stream.total_amount - gross_earned;
+        let recall = req.amount.min(unvested);
+        if recall <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        if token::try_transfer(&env, &stream.token_addr, &stream.sender, recall).is_err() {
+            return Err(VaultError::InsufficientBalance);
+        }
+        storage::release_stream_reserve(&env, &stream.token_addr, recall);
+
+        stream.total_amount -= recall;
+        stream.accumulated_seconds = accumulated_seconds;
+        stream.last_update_timestamp = now;
         storage::set_streaming_payment(&env, &stream);
         storage::remove_stream_rate_window(&env, req.stream_id);
+
         req.status = ClawbackStatus::Executed;
         storage::set_clawback_request(&env, &req);
-        events::emit_stream_status_updated(&env, req.stream_id, StreamStatus::Cancelled as u32, &caller);
+        events::emit_stream_clawback_executed(&env, req.stream_id, recall, &caller);
         Ok(())
     }
     // ========================================================================

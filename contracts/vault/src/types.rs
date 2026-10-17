@@ -3208,5 +3208,9 @@ pub struct ClawbackRequest {
     pub amount: i128,
     pub reason: Symbol,
     pub status: ClawbackStatus,
+    /// Number of approve votes cast so far (Issue #1911)
+    pub approvals: u32,
+    /// Number of votes (approve or reject) cast so far (Issue #1911)
+    pub votes: u32,
 }
 

@@ -511,6 +511,8 @@ pub enum VaultError {
     /// `min_amount_threshold`, or a quiet-hours offset outside one
     /// `QUIET_HOURS_CYCLE`
     InvalidNotificationPrefs = 1164,
+    /// Stream still has unclaimed funds and cannot be closed (Issue #1912)
+    StreamNotFullyClaimed = 1165,
     // Issue #1748: Storage schema versioning
     /// Stored schema version does not match this contract build; call `migrate`
     SchemaVersionMismatch = 1140,

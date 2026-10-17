@@ -117,6 +117,8 @@ pub enum DataKey {
     StreamRateWindow(u64),
     /// Clawback request by ID -> ClawbackRequest
     ClawbackRequest(u64),
+    /// Whether a voter has voted on a clawback request (request ID, voter) -> bool
+    ClawbackVote(u64, Address),
     /// Next clawback request ID -> u64
     NextClawbackId,
     // ---- Issue #1075: Insurance Claim Governance ----
@@ -3862,6 +3864,23 @@ pub fn get_clawback_request(env: &Env, id: u64) -> Result<ClawbackRequest, Vault
 pub fn set_clawback_request(env: &Env, req: &ClawbackRequest) {
     let key = DataKey::ClawbackRequest(req.id);
     env.storage().persistent().set(&key, req);
+}
+
+/// Returns true if `voter` has already voted on this clawback request.
+pub fn has_voted_on_clawback(env: &Env, id: u64, voter: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ClawbackVote(id, voter.clone()))
+        .unwrap_or(false)
+}
+
+/// Record that `voter` has voted on this clawback request.
+pub fn record_clawback_vote(env: &Env, id: u64, voter: &Address) {
+    let key = DataKey::ClawbackVote(id, voter.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 /// Increment and return the next clawback ID.

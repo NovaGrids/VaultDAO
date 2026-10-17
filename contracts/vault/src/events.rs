@@ -1510,6 +1510,21 @@ pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, update
     );
 }
 
+/// Emit when an approved clawback recalls unvested funds from a stream (Issue #1910).
+///
+/// Topics: ("stream_clawback_executed", stream_id); data: (amount, executed_by).
+pub fn emit_stream_clawback_executed(
+    env: &Env,
+    stream_id: u64,
+    amount: i128,
+    executed_by: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_clawback_executed"), stream_id),
+        (amount, executed_by.clone()),
+    );
+}
+
 /// Emit when tokens are claimed from a stream
 #[allow(dead_code)]
 pub fn emit_stream_claimed(env: &Env, stream_id: u64, recipient: &Address, amount: i128) {
