@@ -7199,6 +7199,18 @@ impl VaultDAO {
             return Err(VaultError::ExceedsWeeklyLimit);
         }
 
+        // Same per-token caps that propose_transfer_internal enforces (#1440).
+        if let Some(token_cfg) = storage::get_token_spending_config(&env, &payment.token) {
+            let token_spent_today = storage::get_token_daily_spent(&env, &payment.token, today);
+            if token_spent_today + total_amount > token_cfg.daily_limit {
+                return Err(VaultError::ExceedsTokenDailyLimit);
+            }
+            let token_spent_week = storage::get_token_weekly_spent(&env, &payment.token, week);
+            if token_spent_week + total_amount > token_cfg.weekly_limit {
+                return Err(VaultError::ExceedsTokenWeeklyLimit);
+            }
+        }
+
         // Revalidate recipient against current whitelist/blacklist policies.
         Self::validate_recipient(&env, &payment.recipient)?;
 
@@ -7238,6 +7250,8 @@ impl VaultDAO {
         // Update limits with total amount
         storage::add_daily_spent(&env, today, total_amount);
         storage::add_weekly_spent(&env, week, total_amount);
+        storage::add_token_daily_spent(&env, &payment.token, today, total_amount);
+        storage::add_token_weekly_spent(&env, &payment.token, week, total_amount);
 
         // Update payment schedule.
         // After the first payment (payment_count was 0), apply jitter to all subsequent cycles.
@@ -7387,6 +7401,7 @@ impl VaultDAO {
         payment_id: u64,
     ) -> Result<(), VaultError> {
         caller.require_auth();
+        require_not_paused(&env)?;
 
         let mut payment = storage::get_recurring_payment(&env, payment_id)?;
 
@@ -7422,13 +7437,15 @@ impl VaultDAO {
     /// # Errors
     /// - [`VaultError::ProposalNotFound`] if the payment does not exist.
     /// - [`VaultError::Unauthorized`] if caller is neither proposer nor Admin.
-    /// - [`VaultError::RecurringPaymentStopped`] if the payment is already stopped.
+    /// - [`VaultError::RecurringPaymentStopped`] if the payment is stopping or stopped.
+    /// - [`VaultError::RecurringPaymentPaused`] if the payment is already paused.
     pub fn pause_recurring_payment(
         env: Env,
         caller: Address,
         payment_id: u64,
     ) -> Result<(), VaultError> {
         caller.require_auth();
+        require_not_paused(&env)?;
 
         let mut payment = storage::get_recurring_payment(&env, payment_id)?;
 
@@ -7437,8 +7454,16 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        if payment.status == crate::types::RecurringStatus::Stopped {
+        // Pausing a stopping payment would let a later resume cancel the stop.
+        if matches!(
+            payment.status,
+            crate::types::RecurringStatus::Stopped | crate::types::RecurringStatus::Stopping
+        ) {
             return Err(VaultError::RecurringPaymentStopped);
+        }
+        // Re-pausing would overwrite paused_at_ledger and shorten the shift on resume.
+        if payment.status == crate::types::RecurringStatus::Paused {
+            return Err(VaultError::RecurringPaymentPaused);
         }
 
         payment.status = crate::types::RecurringStatus::Paused;
@@ -7458,13 +7483,15 @@ impl VaultDAO {
     /// # Errors
     /// - [`VaultError::ProposalNotFound`] if the payment does not exist.
     /// - [`VaultError::Unauthorized`] if caller is neither proposer nor Admin.
-    /// - [`VaultError::RecurringPaymentStopped`] if the payment is stopped.
+    /// - [`VaultError::RecurringPaymentStopped`] if the payment is stopping or stopped.
+    /// - [`VaultError::InvalidStatusTransition`] if the payment is not paused.
     pub fn resume_recurring_payment(
         env: Env,
         caller: Address,
         payment_id: u64,
     ) -> Result<(), VaultError> {
         caller.require_auth();
+        require_not_paused(&env)?;
 
         let mut payment = storage::get_recurring_payment(&env, payment_id)?;
 
@@ -7473,13 +7500,15 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        if payment.status == crate::types::RecurringStatus::Stopped {
-            return Err(VaultError::RecurringPaymentStopped);
+        match payment.status {
+            crate::types::RecurringStatus::Paused => {}
+            crate::types::RecurringStatus::Stopped | crate::types::RecurringStatus::Stopping => {
+                return Err(VaultError::RecurringPaymentStopped);
+            }
+            _ => return Err(VaultError::InvalidStatusTransition),
         }
-
-        if payment.status == crate::types::RecurringStatus::Active {
-            // Already active ? nothing to do
-            return Ok(());
+        if payment.paused_at_ledger == 0 {
+            return Err(VaultError::InvalidStatusTransition);
         }
 
         // Advance next_payment_ledger by the paused duration
@@ -16886,8 +16915,22 @@ impl VaultDAO {
             return Err(VaultError::NotSubscriberOrAdmin);
         }
 
-        // Pull renewal payment from subscriber into vault, then forward to provider.
-        token::transfer_to_vault(&env, &sub.token, &sub.subscriber, sub.amount_per_period);
+        // Draw the renewal from the prepaid balance so a keeper can renew without the
+        // subscriber's signature. Only a subscriber-initiated renewal may fall back to
+        // pulling directly from the subscriber, since a keeper cannot authorize that.
+        let prepaid = storage::get_subscription_balance(&env, subscription_id);
+        if prepaid >= sub.amount_per_period {
+            storage::set_subscription_balance(
+                &env,
+                subscription_id,
+                prepaid - sub.amount_per_period,
+            );
+            storage::release_subscription_reserve(&env, &sub.token, sub.amount_per_period);
+        } else if caller == sub.subscriber {
+            token::transfer_to_vault(&env, &sub.token, &sub.subscriber, sub.amount_per_period);
+        } else {
+            return Err(VaultError::InsufficientBalance);
+        }
         token::transfer(
             &env,
             &sub.token,
@@ -16908,6 +16951,96 @@ impl VaultDAO {
         events::emit_subscription_renewed(&env, subscription_id, payment_number, amount);
 
         Ok(())
+    }
+
+    /// Add funds to a subscription's prepaid balance.
+    ///
+    /// The subscriber transfers `amount` into the vault. Renewals draw from this
+    /// balance first, which lets a keeper renew without the subscriber signing.
+    ///
+    /// # Errors
+    /// - [`VaultError::InvalidAmount`] if `amount` is not positive.
+    /// - [`VaultError::NotSubscriberOrAdmin`] if `subscriber` does not own the subscription.
+    /// - [`VaultError::SubscriptionAlreadyCancelled`] if the subscription is cancelled.
+    /// - [`VaultError::SubscriptionAlreadyExpired`] if the subscription is expired.
+    pub fn top_up_subscription(
+        env: Env,
+        subscriber: Address,
+        subscription_id: u64,
+        amount: i128,
+    ) -> Result<(), VaultError> {
+        subscriber.require_auth();
+        require_not_paused(&env)?;
+
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let sub = storage::get_subscription(&env, subscription_id)?;
+        if sub.subscriber != subscriber {
+            return Err(VaultError::NotSubscriberOrAdmin);
+        }
+        match sub.status {
+            SubscriptionStatus::Cancelled => return Err(VaultError::SubscriptionAlreadyCancelled),
+            SubscriptionStatus::Expired => return Err(VaultError::SubscriptionAlreadyExpired),
+            _ => {}
+        }
+
+        token::transfer_to_vault(&env, &sub.token, &subscriber, amount);
+        let balance = storage::get_subscription_balance(&env, subscription_id);
+        storage::set_subscription_balance(&env, subscription_id, balance + amount);
+        storage::reserve_subscription(&env, &sub.token, amount);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Withdraw unspent prepaid funds from a subscription back to the subscriber.
+    ///
+    /// Not pause-gated, so subscribers can always reclaim their own funds. Works
+    /// on cancelled and expired subscriptions too.
+    ///
+    /// # Errors
+    /// - [`VaultError::InvalidAmount`] if `amount` is not positive.
+    /// - [`VaultError::NotSubscriberOrAdmin`] if `subscriber` does not own the subscription.
+    /// - [`VaultError::InsufficientBalance`] if `amount` exceeds the prepaid balance.
+    pub fn withdraw_subscription_balance(
+        env: Env,
+        subscriber: Address,
+        subscription_id: u64,
+        amount: i128,
+    ) -> Result<(), VaultError> {
+        subscriber.require_auth();
+
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let sub = storage::get_subscription(&env, subscription_id)?;
+        if sub.subscriber != subscriber {
+            return Err(VaultError::NotSubscriberOrAdmin);
+        }
+
+        let balance = storage::get_subscription_balance(&env, subscription_id);
+        if amount > balance {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        storage::set_subscription_balance(&env, subscription_id, balance - amount);
+        storage::release_subscription_reserve(&env, &sub.token, amount);
+        token::transfer(&env, &sub.token, &subscriber, amount);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Prepaid balance held by the vault for a subscription.
+    ///
+    /// # Errors
+    /// - [`VaultError::SubscriptionNotFound`] if the subscription does not exist.
+    pub fn get_subscription_balance(env: Env, subscription_id: u64) -> Result<i128, VaultError> {
+        storage::get_subscription(&env, subscription_id)?;
+        Ok(storage::get_subscription_balance(&env, subscription_id))
     }
 
     /// Cancel a subscription.

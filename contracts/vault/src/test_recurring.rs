@@ -602,6 +602,8 @@ fn test_execute_while_paused_fails() {
 fn test_resume_recurring_payment_advances_schedule() {
     let env = Env::default();
     let (client, admin, token, recipient) = setup(&env);
+    // paused_at_ledger == 0 is treated as "never paused", so pause past ledger 0.
+    env.ledger().with_mut(|l| l.sequence_number = 1_000);
 
     let payment_id = client.schedule_payment(
         &admin,
@@ -652,6 +654,243 @@ fn test_stop_then_resume_fails() {
 
     let result = client.try_resume_recurring_payment(&admin, &payment_id);
     assert_eq!(result, Err(Ok(VaultError::RecurringPaymentStopped)));
+}
+
+#[test]
+fn test_resume_stopping_payment_fails_and_keeps_stop() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &2u32, // grace_executions
+    );
+
+    client.stop_recurring_payment(&admin, &payment_id);
+    assert_eq!(
+        client.get_recurring_payment(&payment_id).status,
+        crate::types::RecurringStatus::Stopping
+    );
+
+    let result = client.try_resume_recurring_payment(&admin, &payment_id);
+    assert_eq!(result, Err(Ok(VaultError::RecurringPaymentStopped)));
+    assert_eq!(
+        client.get_recurring_payment(&payment_id).status,
+        crate::types::RecurringStatus::Stopping
+    );
+}
+
+#[test]
+fn test_repause_paused_payment_fails_and_keeps_full_pause_length() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+    env.ledger().with_mut(|l| l.sequence_number = 1_000);
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &0u32, // grace_executions
+    );
+    let original_next = client.get_recurring_payment(&payment_id).next_payment_ledger;
+
+    client.pause_recurring_payment(&admin, &payment_id);
+    env.ledger().with_mut(|l| l.sequence_number += 1_000);
+
+    let result = client.try_pause_recurring_payment(&admin, &payment_id);
+    assert_eq!(result, Err(Ok(VaultError::RecurringPaymentPaused)));
+
+    client.resume_recurring_payment(&admin, &payment_id);
+
+    let p = client.get_recurring_payment(&payment_id);
+    assert_eq!(p.status, crate::types::RecurringStatus::Active);
+    assert_eq!(p.next_payment_ledger, original_next + 1_000);
+}
+
+#[test]
+fn test_pause_stopping_payment_fails() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &2u32, // grace_executions
+    );
+
+    client.stop_recurring_payment(&admin, &payment_id);
+
+    let result = client.try_pause_recurring_payment(&admin, &payment_id);
+    assert_eq!(result, Err(Ok(VaultError::RecurringPaymentStopped)));
+}
+
+#[test]
+fn test_resume_active_payment_fails() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &0u32, // grace_executions
+    );
+
+    let before = client.get_recurring_payment(&payment_id).next_payment_ledger;
+
+    let result = client.try_resume_recurring_payment(&admin, &payment_id);
+    assert_eq!(result, Err(Ok(VaultError::InvalidStatusTransition)));
+    assert_eq!(
+        client.get_recurring_payment(&payment_id).next_payment_ledger,
+        before
+    );
+}
+
+#[test]
+fn test_stop_pause_resume_blocked_while_vault_paused() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    let active_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &0u32, // grace_executions
+    );
+    let paused_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &0u32, // grace_executions
+    );
+    client.pause_recurring_payment(&admin, &paused_id);
+
+    env.as_contract(&client.address, || {
+        crate::storage::set_pause_state(
+            &env,
+            &crate::types::PauseState {
+                is_paused: true,
+                paused_by: None,
+                paused_at_ledger: 0,
+                cause: Symbol::new(&env, "test"),
+            },
+        );
+    });
+
+    assert_eq!(
+        client.try_stop_recurring_payment(&admin, &active_id),
+        Err(Ok(VaultError::VaultPaused))
+    );
+    assert_eq!(
+        client.try_pause_recurring_payment(&admin, &active_id),
+        Err(Ok(VaultError::VaultPaused))
+    );
+    assert_eq!(
+        client.try_resume_recurring_payment(&admin, &paused_id),
+        Err(Ok(VaultError::VaultPaused))
+    );
+}
+
+// ============================================================================
+// Issue #1919: Recurring execution must respect per-token spending limits
+// ============================================================================
+
+#[test]
+fn test_execute_recurring_payment_above_token_daily_limit_fails() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    client.set_token_limits(&admin, &token, &150i128, &1_000i128);
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &200i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &0u32, // grace_executions
+    );
+
+    env.ledger().with_mut(|l| l.sequence_number += 800);
+
+    let result = client.try_execute_recurring_payment(&payment_id);
+    assert_eq!(result, Err(Ok(VaultError::ExceedsTokenDailyLimit)));
+}
+
+#[test]
+fn test_execute_recurring_payment_counts_against_token_daily_limit() {
+    let env = Env::default();
+    let (client, admin, token, recipient) = setup(&env);
+
+    client.set_token_limits(&admin, &token, &150i128, &1_000i128);
+
+    let first_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &0u32, // grace_executions
+    );
+    let second_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+        &0u32,
+        &0u32, // jitter_window
+        &0u32, // grace_executions
+    );
+
+    env.ledger().with_mut(|l| l.sequence_number += 800);
+
+    // First execution fits under the 150 cap and is recorded against it.
+    client.execute_recurring_payment(&first_id);
+
+    // Second execution would bring the token total to 200, above the cap.
+    let result = client.try_execute_recurring_payment(&second_id);
+    assert_eq!(result, Err(Ok(VaultError::ExceedsTokenDailyLimit)));
 }
 
 // ============================================================================
