@@ -299,3 +299,85 @@ fn test_remove_unsupported_token_fails() {
     let res = client.try_remove_supported_token(&admin, &token);
     assert_eq!(res.err(), Some(Ok(VaultError::TokenNotSupported)));
 }
+
+// ============================================================================
+// Issue #1908: removal must be refused while any obligation uses the token
+// ============================================================================
+
+/// Admin-only vault with `token_a` as default and `token_b` as the token under
+/// test. `token_b` is minted to the vault so obligations can be created.
+fn setup_removable_token(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    let token_a = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(env, &token_b).mint(&contract_id, &1_000_000);
+
+    let mut signers = Vec::new(env);
+    signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
+    client.initialize(&admin, &make_config(env, signers));
+    client.add_supported_token(&admin, &token_a, &10_000i128, &50_000i128);
+    client.add_supported_token(&admin, &token_b, &8_000i128, &40_000i128);
+
+    (client, admin, token_a, token_b)
+}
+
+#[test]
+fn test_remove_token_blocked_by_active_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _token_a, token_b) = setup_removable_token(&env);
+    let recipient = Address::generate(&env);
+
+    client.create_stream(&admin, &recipient, &token_b, &10i128, &1_000i128, &100u64);
+
+    let res = client.try_remove_supported_token(&admin, &token_b);
+    assert!(
+        res.is_err(),
+        "token with an active stream must not be removable"
+    );
+    assert!(client.is_token_supported(&token_b));
+}
+
+#[test]
+fn test_remove_token_blocked_by_pending_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _token_a, token_b) = setup_removable_token(&env);
+    let recipient = Address::generate(&env);
+
+    client.propose_transfer(
+        &admin,
+        &recipient,
+        &token_b,
+        &100i128,
+        &Symbol::new(&env, "pending"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let res = client.try_remove_supported_token(&admin, &token_b);
+    assert!(
+        res.is_err(),
+        "token referenced by a pending proposal must not be removable"
+    );
+    assert!(client.is_token_supported(&token_b));
+}
+
+#[test]
+fn test_remove_token_allowed_when_no_obligations_exist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _token_a, token_b) = setup_removable_token(&env);
+
+    client.remove_supported_token(&admin, &token_b);
+    assert!(!client.is_token_supported(&token_b));
+}

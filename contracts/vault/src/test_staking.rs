@@ -3,7 +3,11 @@ use crate::types::{
     ConditionLogic, Priority, RetryConfig, StakingConfig, ThresholdStrategy, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    token::StellarAssetClient,
+    Address, Env, Symbol, Vec,
+};
 
 // ============================================================================
 // Helpers
@@ -425,4 +429,67 @@ fn test_compound_stake_not_enabled() {
     let keeper = Address::generate(&env);
     let res = client.try_compound_stake(&keeper, &proposal_id);
     assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
+}
+
+// ============================================================================
+// Issue #1906: compounding must only credit rewards that are funded
+// ============================================================================
+
+/// Advances the ledger past `count` compound epochs.
+fn advance_epochs(env: &Env, count: u32) {
+    let epoch = 17_280u32;
+    env.ledger()
+        .with_mut(|li| li.sequence_number += epoch * count);
+}
+
+#[test]
+fn test_compounding_is_backed_by_stake_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (proposal_id, _) =
+        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
+    client.enable_auto_compound(&proposer, &proposal_id);
+
+    // Any address may call compound_stake; it must not mint unbacked credit.
+    let keeper = Address::generate(&env);
+    for _ in 0..5 {
+        advance_epochs(&env, 1);
+        client.compound_stake(&keeper, &proposal_id);
+    }
+
+    let record = client.get_stake_record(&proposal_id).unwrap();
+    assert!(
+        client.get_stake_pool_balance(&token) >= record.amount,
+        "compounded stake {} exceeds the funded pool {}",
+        record.amount,
+        client.get_stake_pool_balance(&token)
+    );
+}
+
+#[test]
+fn test_vault_balance_covers_all_stake_records_after_compounding() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, token, contract_id) = setup_with_staking(&env, 50);
+    let (proposal_id, _) =
+        create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
+    client.enable_auto_compound(&proposer, &proposal_id);
+
+    let keeper = Address::generate(&env);
+    for _ in 0..20 {
+        advance_epochs(&env, 1);
+        client.compound_stake(&keeper, &proposal_id);
+    }
+
+    let record = client.get_stake_record(&proposal_id).unwrap();
+    let vault_balance = soroban_sdk::token::Client::new(&env, &token).balance(&contract_id);
+    assert!(
+        vault_balance >= record.amount,
+        "vault holds {} but stake record claims {}",
+        vault_balance,
+        record.amount
+    );
 }
