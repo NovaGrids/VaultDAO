@@ -207,4 +207,3 @@ fn test_pending_reservations_reset_after_day_rollover() {
     let id = vault.propose(&proposer, &per_proposer_cap);
     assert!(id > 0, "proposal should succeed after day rollover");
 }
-</final_file_content>

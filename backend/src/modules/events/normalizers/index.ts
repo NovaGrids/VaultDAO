@@ -3,6 +3,7 @@ import type { NormalizedEvent } from "../types.js";
 import { EventType, CONTRACT_EVENT_MAP } from "../types.js";
 import { ProposalNormalizer } from "./proposal.normalizer.js";
 import { RoleNormalizer } from "./role.normalizer.js";
+import { DelegationNormalizer } from "./delegation.normalizer.js";
 import { EscrowNormalizer } from "./escrow.normalizer.js";
 import { RecurringNormalizer } from "./recurring.normalizer.js";
 import { InsuranceNormalizer } from "./insurance.normalizer.js";
@@ -89,6 +90,10 @@ export class EventNormalizer {
         return RoleNormalizer.normalizeSignerRemoved(event);
       case EventType.QUORUM_UPDATED:
         return RoleNormalizer.normalizeQuorumUpdated(event);
+      case EventType.DELEGATION_SET:
+        return DelegationNormalizer.normalizeDelegationSet(event);
+      case EventType.DELEGATION_REVOKED:
+        return DelegationNormalizer.normalizeDelegationRevoked(event);
       case EventType.CONFIG_UPDATED:
         return MiscNormalizer.normalizeConfigUpdated(event);
       case EventType.ORACLE_CONFIG_UPDATED:

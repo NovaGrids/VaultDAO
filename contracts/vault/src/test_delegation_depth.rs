@@ -6,7 +6,7 @@ use crate::types::{
     VoteWeight,
 };
 use crate::{InitConfig, Role, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+use soroban_sdk::{testutils::Address as _, testutils::Events as _, Address, Env, TryIntoVal, Vec};
 
 fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
@@ -292,4 +292,87 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
     client.approve(&delegator, &proposal_id2);
     let result2 = client.try_abstain(&delegate, &proposal_id2);
     assert!(result2.is_err());
+}
+
+// ============================================================================
+// Issue #1939: delegation set and revocation emit events
+// ============================================================================
+
+/// Return the `(delegator, delegate, expiry)` payloads of every
+/// `delegation_set` event with the given delegator in its topics.
+fn delegation_set_payloads(env: &Env, delegator: &Address) -> Vec<(Address, u64)> {
+    let mut out = Vec::new(env);
+    for (_, topics, data) in env.events().all().iter() {
+        if topics.len() != 2 {
+            continue;
+        }
+        let name: soroban_sdk::Symbol = topics.get(0).unwrap().try_into_val(env).unwrap();
+        if name != soroban_sdk::Symbol::new(env, "delegation_set") {
+            continue;
+        }
+        let topic_delegator: Address = topics.get(1).unwrap().try_into_val(env).unwrap();
+        if &topic_delegator == delegator {
+            out.push_back(data.try_into_val(env).unwrap());
+        }
+    }
+    out
+}
+
+#[test]
+fn test_1939_delegate_voting_power_emits_delegation_set() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, members) = setup(&env, 3);
+    let delegator = members.get(0).unwrap();
+    let delegate = members.get(1).unwrap();
+
+    client.delegate_voting_power(&delegator, &delegate, &500u64);
+
+    let payloads = delegation_set_payloads(&env, &delegator);
+    assert_eq!(payloads.len(), 1);
+    let (emitted_delegate, emitted_expiry) = payloads.get(0).unwrap();
+    assert_eq!(emitted_delegate, delegate);
+    assert_eq!(emitted_expiry, 500u64);
+}
+
+#[test]
+fn test_1939_delegate_vote_alias_emits_delegation_set() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, members) = setup(&env, 3);
+    let delegator = members.get(0).unwrap();
+    let delegate = members.get(1).unwrap();
+
+    client.delegate_vote(&delegator, &delegate, &0u64);
+
+    assert_eq!(delegation_set_payloads(&env, &delegator).len(), 1);
+}
+
+#[test]
+fn test_1939_revoke_delegation_emits_delegation_revoked() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, members) = setup(&env, 3);
+    let delegator = members.get(0).unwrap();
+    let delegate = members.get(1).unwrap();
+    client.delegate_voting_power(&delegator, &delegate, &0u64);
+
+    client.revoke_delegation(&delegator);
+
+    let mut found = false;
+    for (_, topics, data) in env.events().all().iter() {
+        if topics.len() != 2 {
+            continue;
+        }
+        let name: soroban_sdk::Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        if name != soroban_sdk::Symbol::new(&env, "delegation_revoked") {
+            continue;
+        }
+        let topic_delegator: Address = topics.get(1).unwrap().try_into_val(&env).unwrap();
+        let emitted_delegate: Address = data.try_into_val(&env).unwrap();
+        assert_eq!(topic_delegator, delegator);
+        assert_eq!(emitted_delegate, delegate);
+        found = true;
+    }
+    assert!(found, "delegation_revoked event was not emitted");
 }

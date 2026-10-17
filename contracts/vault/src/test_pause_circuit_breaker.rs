@@ -6,7 +6,7 @@ use super::*;
 
 use crate::types::*;
 use crate::VaultDAO;
-use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, Symbol, Vec};
 
 fn make_env() -> (Env, crate::VaultDAOClient<'static>) {
     let env = Env::default();
@@ -512,4 +512,74 @@ fn test_1353_validate_pending_proposals() {
         &admin, &false, // no auto-cancel
     );
     assert_eq!(cancelled_count, 0u32);
+}
+
+// ── Issue #1937: pause/unpause write tamper-evident audit entries ───────
+
+#[test]
+fn test_1937_pause_writes_audit_entry_with_actor_and_cause() {
+    let (env, client) = make_env();
+    let (_admin, _treasurer, em1, _em2) = setup_with_emergency(&env, &client);
+    let count_before = client.get_audit_entry_count();
+
+    client.pause_vault(&em1, &Symbol::new(&env, "manual"));
+
+    let count_after = client.get_audit_entry_count();
+    assert_eq!(count_after, count_before + 1);
+    let entry = client.get_audit_entry(&count_after);
+    assert_eq!(entry.action, AuditAction::VaultPaused);
+    assert_eq!(entry.actor, em1);
+    assert_eq!(
+        entry.target,
+        storage::symbol_to_u64_key(&env, &Symbol::new(&env, "manual"))
+    );
+    client.verify_audit_chain(&1u64, &count_after);
+}
+
+#[test]
+fn test_1937_different_causes_produce_different_targets() {
+    let (env, client) = make_env();
+    let (_admin, _treasurer, em1, em2) = setup_with_emergency(&env, &client);
+
+    client.pause_vault(&em1, &Symbol::new(&env, "manual"));
+    let first = client.get_audit_entry(&client.get_audit_entry_count());
+    client.unpause_vault(&em2);
+
+    client.pause_vault(&em1, &Symbol::new(&env, "exploit"));
+    let second = client.get_audit_entry(&client.get_audit_entry_count());
+
+    assert_eq!(second.action, AuditAction::VaultPaused);
+    assert_ne!(first.target, second.target);
+}
+
+#[test]
+fn test_1937_unpause_writes_audit_entry_with_paused_duration() {
+    let (env, client) = make_env();
+    let (_admin, _treasurer, em1, em2) = setup_with_emergency(&env, &client);
+
+    client.pause_vault(&em1, &Symbol::new(&env, "manual"));
+    env.ledger().with_mut(|l| l.sequence_number += 10);
+    let count_before = client.get_audit_entry_count();
+
+    client.unpause_vault(&em2);
+
+    let count_after = client.get_audit_entry_count();
+    assert_eq!(count_after, count_before + 1);
+    let entry = client.get_audit_entry(&count_after);
+    assert_eq!(entry.action, AuditAction::VaultUnpaused);
+    assert_eq!(entry.actor, em2);
+    assert_eq!(entry.target, 10);
+    client.verify_audit_chain(&1u64, &count_after);
+}
+
+#[test]
+fn test_1937_rejected_pause_writes_no_audit_entry() {
+    let (env, client) = make_env();
+    let (_admin, treasurer, _em1, _em2) = setup_with_emergency(&env, &client);
+    let count_before = client.get_audit_entry_count();
+
+    let r = client.try_pause_vault(&treasurer, &Symbol::new(&env, "manual"));
+
+    assert!(r.is_err());
+    assert_eq!(client.get_audit_entry_count(), count_before);
 }

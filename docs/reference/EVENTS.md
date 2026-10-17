@@ -170,6 +170,21 @@ For each event:
   2. `effective_voter: Address`
   3. `signer: Address`
 
+#### `delegation_set`
+
+- **Contract topic**: `delegation_set`, with the `delegator` address as the second topic
+- **Emitted by**: `delegate_voting_power` and its alias `delegate_vote`, when a delegation is set or replaced
+- **Published data**:
+  1. `delegate: Address`
+  2. `expiry_ledger: u64` (0 means the delegation does not expire)
+
+#### `delegation_revoked`
+
+- **Contract topic**: `delegation_revoked`, with the `delegator` address as the second topic
+- **Emitted by**: `revoke_delegation`
+- **Published data**:
+  1. `delegate: Address` (the signer whose delegation was removed)
+
 #### `proposal_scheduled`
 
 - **Contract topic**: `proposal_scheduled`
@@ -842,6 +857,91 @@ The remainder of `events.rs` includes many integration-oriented events. They are
 > `cv_proposed`, `cv_executed`, `bridge_proposed`, `bridge_executed`, `permission_granted`, `permission_revoked`, `permission_delegated`, `dispute_raised`, `dispute_resolved`, `swap_executed`, `liquidity_added`, `liquidity_removed`, `lp_staked`, `lp_unstaked`, `rewards_claimed`, `fee_collected`, `tokens_locked`/`lock_extended`/`tokens_unlocked`/`early_unlock`, etc.
 >
 > Because normalized schemas are the primary integration surface, the per-event field-by-field mapping is provided next using the backend `*Data` interfaces.
+
+### State-change events (Issue #1940)
+
+These changes previously mutated state without publishing an event, so indexers could not reflect them.
+
+#### `attachment_added`
+
+- **Contract topic**: `attachment_added`, with the `proposal_id` as the second topic
+- **Published data**:
+  1. `actor: Address`
+  2. `attachment: String` (CID)
+
+#### `attachment_removed`
+
+- **Contract topic**: `attachment_removed`, with the `proposal_id` as the second topic
+- **Published data**:
+  1. `actor: Address`
+  2. `cid: String`
+
+#### `metadata_set`
+
+- **Contract topic**: `metadata_set`, with the `proposal_id` as the second topic
+- **Published data**:
+  1. `actor: Address`
+  2. `key: Symbol` (the value is not published)
+
+#### `metadata_removed`
+
+- **Contract topic**: `metadata_removed`, with the `proposal_id` as the second topic
+- **Published data**:
+  1. `actor: Address`
+  2. `key: Symbol`
+
+#### `audit_checkpoint`
+
+- **Contract topic**: `audit_checkpoint`, with the `checkpoint_id` as the second topic
+- **Emitted by**: `create_audit_checkpoint`
+- **Published data**:
+  1. `admin: Address`
+  2. `from_entry_id: u64`
+  3. `to_entry_id: u64`
+
+#### `whitelist_mode`
+
+- **Contract topic**: `whitelist_mode`
+- **Published data**:
+  1. `admin: Address`
+  2. `enabled: bool`
+
+#### `funding_cfg_updated`
+
+- **Contract topic**: `funding_cfg_updated`
+- **Emitted by**: `set_funding_round_config`
+- **Published data**:
+  1. `signer: Address`
+  2. `config: FundingRoundConfig`
+
+#### `template_status`
+
+- **Contract topic**: `template_status`, with the `template_id` as the second topic
+- **Emitted by**: `set_template_status` (in addition to its existing emitter)
+- **Published data**:
+  1. `name: Symbol`
+  2. `is_active: bool`
+  3. `admin: Address`
+
+#### `stream_auto_complete`
+
+- **Contract topic**: `stream_auto_complete`, with the `stream_id` as the second topic
+- **Published data**:
+  1. `actor: Address`
+  2. `enabled: bool`
+
+#### `batch_created`
+
+- **Contract topic**: `batch_created`, with the `batch_id` as the second topic
+- **Published data**:
+  1. `creator: Address`
+  2. `proposal_ids: Vec<u64>`
+
+#### `gas_oracle_cleared`
+
+- **Contract topic**: `gas_oracle_cleared`
+- **Published data**:
+  1. `admin: Address`
 
 ## Normalized payload schemas (TypeScript interfaces)
 

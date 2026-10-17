@@ -35,6 +35,8 @@ export enum EventType {
   SIGNER_ADDED = "SIGNER_ADDED",
   SIGNER_REMOVED = "SIGNER_REMOVED",
   QUORUM_UPDATED = "QUORUM_UPDATED",
+  DELEGATION_SET = "DELEGATION_SET",
+  DELEGATION_REVOKED = "DELEGATION_REVOKED",
   ORACLE_CONFIG_UPDATED = "ORACLE_CONFIG_UPDATED",
   ORACLE_PRICE_STALE = "ORACLE_PRICE_STALE",
   RECOVERY_CONFIG_UPDATED = "RECOVERY_CONFIG_UPDATED",
@@ -290,6 +292,18 @@ export interface QuorumUpdatedData {
   readonly admin: string;
   readonly oldQuorum: number;
   readonly newQuorum: number;
+}
+
+export interface DelegationSetData {
+  readonly delegator: string;
+  readonly delegate: string;
+  /** Ledger at which the delegation expires (0 = no expiration). */
+  readonly expiryLedger: number;
+}
+
+export interface DelegationRevokedData {
+  readonly delegator: string;
+  readonly delegate: string;
 }
 
 // ── Insurance / staking data interfaces ──────────────────────────────────────
@@ -730,6 +744,8 @@ export const CONTRACT_EVENT_MAP: Record<string, EventType> = {
   signer_added: EventType.SIGNER_ADDED,
   signer_removed: EventType.SIGNER_REMOVED,
   quorum_updated: EventType.QUORUM_UPDATED,
+  delegation_set: EventType.DELEGATION_SET,
+  delegation_revoked: EventType.DELEGATION_REVOKED,
   oracle_cfg_updated: EventType.ORACLE_CONFIG_UPDATED,
   oracle_price_stale: EventType.ORACLE_PRICE_STALE,
   recovery_config: EventType.RECOVERY_CONFIG_UPDATED,

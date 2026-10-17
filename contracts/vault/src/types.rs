@@ -1410,6 +1410,44 @@ pub enum AuditAction {
     PhaseExecuted = 29,
     /// A single phase of a multi-phase proposal failed to execute.
     PhaseFailed = 30,
+    /// Vault paused by an emergency signer or the circuit breaker (#1937).
+    /// `target` is the fingerprint of the pause cause.
+    VaultPaused = 31,
+    /// Vault unpaused by an emergency signer (#1937).
+    /// `target` is the number of ledgers the vault was paused.
+    VaultUnpaused = 32,
+    /// Supported-token list or per-token limits changed (#1938).
+    /// `target` is a fingerprint of the setter arguments.
+    TokenConfigUpdated = 33,
+    /// Fee structure changed (#1938). `target` is a fingerprint of the arguments.
+    FeeConfigUpdated = 34,
+    /// Insurance configuration changed (#1938). `target` is a fingerprint of the arguments.
+    InsuranceConfigUpdated = 35,
+    /// Signer quorum changed (#1938). `target` is a fingerprint of the arguments.
+    QuorumUpdated = 36,
+    /// Voting strategy changed (#1938). `target` is a fingerprint of the arguments.
+    VotingStrategyUpdated = 37,
+    /// Threshold strategy changed (#1938). `target` is a fingerprint of the arguments.
+    ThresholdStrategyUpdated = 38,
+    /// DEX configuration changed (#1938). `target` is a fingerprint of the arguments.
+    DexConfigUpdated = 39,
+    /// Time-weighted voting configuration changed (#1938).
+    /// `target` is a fingerprint of the arguments.
+    TimeWeightedConfigUpdated = 40,
+    /// Permission granted to an address (#1938). `target` is a fingerprint of the arguments.
+    PermissionGranted = 41,
+    /// Permission revoked from an address (#1938). `target` is a fingerprint of the arguments.
+    PermissionRevoked = 42,
+    /// Signer tier changed (#1938). `target` is a fingerprint of the arguments.
+    SignerTierUpdated = 43,
+    /// Pre- or post-execution hook registered (#1938). `target` is a fingerprint of the arguments.
+    HookRegistered = 44,
+    /// Pre- or post-execution hook removed (#1938). `target` is a fingerprint of the arguments.
+    HookRemoved = 45,
+    /// Keeper hook registered (#1938). `target` is a fingerprint of the arguments.
+    KeeperHookRegistered = 46,
+    /// Keeper hook removed (#1938). `target` is a fingerprint of the arguments.
+    KeeperHookRemoved = 47,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -3162,6 +3200,9 @@ pub struct PaginationCursor {
     pub start_after_id: u64,
     /// Maximum number of items to return (capped at `MAX_PAGE_LIMIT`).
     pub limit: u32,
+}
+
+// ============================================================================
 // Pending Reservation Exposure
 // ============================================================================
 

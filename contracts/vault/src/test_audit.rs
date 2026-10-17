@@ -120,3 +120,172 @@ fn test_checkpoint_with_nonexistent_id_fails() {
         "Should fail when checkpoint does not exist"
     );
 }
+
+// ============================================================================
+// Issue #1938: configuration setters write audit entries
+// ============================================================================
+
+/// Assert the most recent audit entry matches `expected` and `actor`, and that
+/// the chain still verifies from the first entry.
+fn assert_latest_audit(client: &crate::VaultDAOClient, expected: AuditAction, actor: &Address) {
+    let count = client.get_audit_entry_count();
+    let entry = client.get_audit_entry(&count);
+    assert_eq!(entry.action, expected);
+    assert_eq!(&entry.actor, actor);
+    client.verify_audit_chain(&1u64, &count);
+}
+
+#[test]
+fn test_1938_token_setters_write_audit_entries() {
+    let env = Env::default();
+    let (admin, client, _) = make_checkpoint_config(&env);
+    let token = Address::generate(&env);
+
+    client.add_supported_token(&admin, &token, &1_000, &5_000);
+    assert_latest_audit(&client, AuditAction::TokenConfigUpdated, &admin);
+
+    client.set_token_limits(&admin, &token, &2_000, &6_000);
+    assert_latest_audit(&client, AuditAction::TokenConfigUpdated, &admin);
+
+    client.remove_supported_token(&admin, &token);
+    assert_latest_audit(&client, AuditAction::TokenConfigUpdated, &admin);
+}
+
+#[test]
+fn test_1938_insurance_and_fee_setters_write_audit_entries() {
+    let env = Env::default();
+    let (admin, client, _) = make_checkpoint_config(&env);
+
+    client.set_insurance_config(
+        &admin,
+        &crate::types::InsuranceConfig {
+            enabled: true,
+            min_amount: 100,
+            min_insurance_bps: 100,
+            slash_percentage: 50,
+        },
+    );
+    assert_latest_audit(&client, AuditAction::InsuranceConfigUpdated, &admin);
+
+    client.set_fee_structure(
+        &admin,
+        &crate::types::FeeStructure {
+            tiers: Vec::new(&env),
+            base_fee_bps: 10,
+            reputation_discount_threshold: 0,
+            reputation_discount_percentage: 0,
+            treasury: Address::generate(&env),
+            enabled: true,
+        },
+    );
+    assert_latest_audit(&client, AuditAction::FeeConfigUpdated, &admin);
+}
+
+#[test]
+fn test_1938_quorum_and_strategy_setters_write_audit_entries() {
+    let env = Env::default();
+    let (admin, client, _) = make_checkpoint_config(&env);
+
+    client.update_quorum(&admin, &1);
+    assert_latest_audit(&client, AuditAction::QuorumUpdated, &admin);
+
+    client.update_voting_strategy(&admin, &crate::types::VotingStrategy::Weighted);
+    assert_latest_audit(&client, AuditAction::VotingStrategyUpdated, &admin);
+
+    client.set_threshold_strategy(&admin, &ThresholdStrategy::Percentage(50));
+    assert_latest_audit(&client, AuditAction::ThresholdStrategyUpdated, &admin);
+}
+
+#[test]
+fn test_1938_dex_and_time_weighted_setters_write_audit_entries() {
+    let env = Env::default();
+    let (admin, client, _) = make_checkpoint_config(&env);
+
+    client.set_dex_config(
+        &admin,
+        &crate::types::DexConfig {
+            enabled_dexs: Vec::new(&env),
+            max_slippage_bps: 100,
+            max_price_impact_bps: 500,
+            min_liquidity: 1_000,
+        },
+    );
+    assert_latest_audit(&client, AuditAction::DexConfigUpdated, &admin);
+
+    client.set_time_weighted_config(
+        &admin,
+        &crate::types::TimeWeightedConfig {
+            enabled: false,
+            min_lock_duration: 0,
+            max_lock_duration: 0,
+            apply_decay: false,
+            early_unlock_penalty_bps: 0,
+            governance_token: None,
+        },
+    );
+    assert_latest_audit(&client, AuditAction::TimeWeightedConfigUpdated, &admin);
+}
+
+#[test]
+fn test_1938_permission_and_signer_tier_setters_write_audit_entries() {
+    let env = Env::default();
+    let (admin, client, _) = make_checkpoint_config(&env);
+    let target = Address::generate(&env);
+
+    client.grant_permission(
+        &admin,
+        &target,
+        &crate::types::Permission::ViewMetrics,
+        &None,
+    );
+    assert_latest_audit(&client, AuditAction::PermissionGranted, &admin);
+
+    client.revoke_permission(&admin, &target, &crate::types::Permission::ViewMetrics);
+    assert_latest_audit(&client, AuditAction::PermissionRevoked, &admin);
+
+    client.set_signer_tier(&admin, &admin, &crate::types::SignerTier::Principal);
+    assert_latest_audit(&client, AuditAction::SignerTierUpdated, &admin);
+}
+
+#[test]
+fn test_1938_hook_setters_write_audit_entries() {
+    let env = Env::default();
+    let (admin, client, _) = make_checkpoint_config(&env);
+    let hook = Address::generate(&env);
+
+    client.register_pre_hook(&admin, &hook);
+    assert_latest_audit(&client, AuditAction::HookRegistered, &admin);
+
+    client.remove_pre_hook(&admin, &hook);
+    assert_latest_audit(&client, AuditAction::HookRemoved, &admin);
+
+    client.register_post_hook(&admin, &hook);
+    assert_latest_audit(&client, AuditAction::HookRegistered, &admin);
+
+    client.remove_post_hook(&admin, &hook);
+    assert_latest_audit(&client, AuditAction::HookRemoved, &admin);
+}
+
+#[test]
+fn test_1938_keeper_hook_setters_write_audit_entries() {
+    let env = Env::default();
+    let (admin, client, _) = make_checkpoint_config(&env);
+    let keeper = Address::generate(&env);
+    let callback = Address::generate(&env);
+
+    client.register_keeper_hook(
+        &admin,
+        &keeper,
+        &crate::types::HookEventType::StreamDue,
+        &callback,
+        &100,
+    );
+    assert_latest_audit(&client, AuditAction::KeeperHookRegistered, &admin);
+
+    client.deregister_keeper_hook(
+        &admin,
+        &keeper,
+        &crate::types::HookEventType::StreamDue,
+    );
+    assert_latest_audit(&client, AuditAction::KeeperHookRemoved, &admin);
+}
