@@ -72,8 +72,8 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
   };
   return {
     ...actual,
-    SorobanRpc: {
-      ...actual.SorobanRpc,
+    rpc: {
+      ...actual.rpc,
       Server: vi.fn().mockImplementation(function (this: unknown) {
         return serverMock;
       }),

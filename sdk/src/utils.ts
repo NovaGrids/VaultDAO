@@ -9,7 +9,7 @@ import {
   Contract,
   Keypair,
   Networks,
-  SorobanRpc,
+  rpc,
   TransactionBuilder,
   BASE_FEE,
   xdr,
@@ -19,6 +19,7 @@ import {
 import type { SdkOptions, Network, SdkLogger, StateDiff, StateChangeValue, StateChangeEntry } from "./types";
 import { VaultError, VaultErrorCode, noopLogger } from "./types";
 import { getErrorDescription } from "./errors";
+import { getRpcServer } from "./rpc";
 
 // ---------------------------------------------------------------------------
 // Network helpers
@@ -61,11 +62,12 @@ export const DEFAULT_RPC_URLS: Record<Exclude<Network, "custom">, string> = {
 export function buildOptions(
   network: Exclude<Network, "custom">,
   contractId: string,
-  overrides?: Partial<Pick<SdkOptions, "rpcUrl" | "networkPassphrase" | "logger" | "maxRetries" | "retryDelayMs">>
+  overrides?: Partial<Pick<SdkOptions, "rpcUrl" | "networkPassphrase" | "logger" | "maxRetries" | "retryDelayMs" | "allowHttp">>
 ): SdkOptions {
   return {
     contractId,
     rpcUrl: overrides?.rpcUrl ?? DEFAULT_RPC_URLS[network],
+    allowHttp: overrides?.allowHttp,
     networkPassphrase: overrides?.networkPassphrase ?? NETWORK_PASSPHRASES[network],
     logger: overrides?.logger,
     maxRetries: overrides?.maxRetries ?? 3,
@@ -137,7 +139,7 @@ export async function buildTransaction(
   opts: SdkOptions
 ): Promise<string> {
   const log: SdkLogger = opts.logger ?? noopLogger;
-  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const server = getRpcServer(opts);
   const account = await server.getAccount(sourcePublicKey);
 
   const tx = new TransactionBuilder(account, {
@@ -156,7 +158,7 @@ export async function buildTransaction(
 
   const simResult = await server.simulateTransaction(tx);
 
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
+  if (rpc.Api.isSimulationError(simResult)) {
     const durationMs = Date.now() - simStart;
     const err = parseSimulationError(simResult.error);
     log.error("Transaction simulation failed", {
@@ -173,7 +175,7 @@ export async function buildTransaction(
     durationMs,
   });
 
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+  const preparedTx = rpc.assembleTransaction(tx, simResult).build();
   return preparedTx.toXDR();
 }
 
@@ -190,7 +192,7 @@ export async function estimateFee(
     throw new Error("Contract arguments must be an array");
   }
 
-  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const server = getRpcServer(opts);
   const sourceAccount = new Account(Keypair.random().publicKey(), "0");
   const tx = new TransactionBuilder(sourceAccount, {
     fee: BASE_FEE,
@@ -208,7 +210,7 @@ export async function estimateFee(
     .build();
 
   const simResult = await server.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
+  if (rpc.Api.isSimulationError(simResult)) {
     throw parseSimulationError(simResult.error);
   }
 
@@ -262,7 +264,7 @@ export async function signAndSubmit(
     contractId: opts.contractId,
   });
 
-  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const server = getRpcServer(opts);
   const { Transaction } = await import("@stellar/stellar-sdk");
   const signedTx = new Transaction(signedXdr, opts.networkPassphrase);
   const sendResult = await retryOnRateLimit(
@@ -292,7 +294,7 @@ export async function signAndSubmit(
     await sleep(2000);
     const status = await server.getTransaction(hash);
 
-    if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+    if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) {
       log.info("Transaction confirmed", {
         contractId: opts.contractId,
         txHash: hash,
@@ -301,7 +303,7 @@ export async function signAndSubmit(
       return hash;
     }
 
-    if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
+    if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
       log.error("Transaction reverted on-chain", {
         contractId: opts.contractId,
         txHash: hash,
@@ -536,7 +538,7 @@ export async function simulateWithStateDiff(
     return extractStateDiff(tx);
   }
 
-  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const server = getRpcServer(opts);
   let transactionObj: any = tx;
   if (typeof tx === "string") {
     transactionObj = TransactionBuilder.fromXDR(tx, opts.networkPassphrase);
@@ -544,7 +546,7 @@ export async function simulateWithStateDiff(
 
   const simResult = await server.simulateTransaction(transactionObj);
 
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
+  if (rpc.Api.isSimulationError(simResult)) {
     const err = parseSimulationError(simResult.error);
     throw err;
   }

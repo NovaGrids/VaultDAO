@@ -1,4 +1,5 @@
-import { SorobanRpc, xdr } from "@stellar/stellar-sdk";
+import { rpc, xdr } from "@stellar/stellar-sdk";
+import { getRpcServer } from "./rpc";
 import { ProposalStatus, noopLogger, type SdkOptions } from "./types";
 
 export type ProposalEventType =
@@ -42,7 +43,7 @@ export function watchProposal(
   proposalId: bigint,
   onChange: ProposalChangeHandler
 ): () => void {
-  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const server = getRpcServer(opts);
   const intervalMs = opts.proposalWatchIntervalMs ?? 5_000;
   const seenEvents = new Set<string>();
   let stopped = false;

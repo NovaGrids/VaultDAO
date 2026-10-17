@@ -11,6 +11,7 @@
 export type {
   InitConfig,
   VaultConfig,
+  PauseState,
   Proposal,
   RecurringPayment,
   StreamingPayment,
@@ -135,6 +136,12 @@ export {
   getRole,
   getTodaySpent,
   isSigner,
+  // Emergency pause
+  pauseVault,
+  unpauseVault,
+  configureEmergency,
+  getPauseState,
+  getPauseCooldownRemaining,
 } from "./contract";
 
 // Token flows: vesting, token locks, escrow, funding rounds

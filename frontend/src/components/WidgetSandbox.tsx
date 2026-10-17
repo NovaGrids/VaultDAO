@@ -5,20 +5,25 @@ import { useToast } from '../hooks/useToast';
 import { useProposals } from '../hooks/useProposals';
 import { useVaultContract } from '../hooks/useVaultContract';
 import type { InstalledWidget, WidgetMessage, WidgetEventType } from '../types/widget';
+import { persistWidgetSettings } from '../utils/widgetSettingsStorage';
+import { getNewProposalsSince } from '../utils/widgetProposalEvents';
 
 interface WidgetSandboxProps {
   widget: InstalledWidget;
   onLoad?: () => void;
   onError?: (error: Error) => void;
   onRemove?: () => void;
+  onSettingsChange?: (widgetId: string, settings: Record<string, unknown>) => void;
 }
 
 /**
  * WidgetSandbox component
  * Renders a third-party widget in a secure iframe with a postMessage bridge.
  */
-const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, onRemove }) => {
+const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, onRemove, onSettingsChange }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const settingsRef = useRef<Record<string, unknown>>(widget.settings);
+  const highestSeenIdRef = useRef<bigint | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -56,11 +61,16 @@ const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, 
 
         case 'config':
           if (payload.action === 'get') {
-            respond(widget.settings);
+            respond(settingsRef.current);
           } else if (payload.action === 'set') {
-            // In a real app, this would persist the settings
-            console.log(`[Widget:${widget.id}] Saving config:`, payload.config);
-            respond({ success: true });
+            const result = persistWidgetSettings(widget.id, payload.config);
+            if (result.ok) {
+              settingsRef.current = result.settings;
+              onSettingsChange?.(widget.id, result.settings);
+              respond({ success: true });
+            } else {
+              respond({ success: false, error: result.error });
+            }
           }
           break;
 
@@ -88,7 +98,7 @@ const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, 
       console.error(`[Widget:${widget.id}] Error handling message:`, err);
       respond({ error: (err as Error).message }, 'error');
     }
-  }, [widget, proposals, getVaultConfig, onLoad, onError]);
+  }, [widget, proposals, getVaultConfig, onLoad, onError, onSettingsChange]);
 
   const handleWidgetAction = (payload: Record<string, unknown>, respond: (data: unknown) => void) => {
     switch (payload.action) {
@@ -127,21 +137,30 @@ const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, 
     }
   };
 
-  // Watch for proposal changes to fire events
+  // Watch for proposal changes to fire events. Only proposals with an id above
+  // the highest one already seen are emitted, so refetches do not re-fire.
   useEffect(() => {
-    if (activeSubscriptions.has('proposalCreated') && proposals.length > 0) {
-      // In a real scenario, we'd only fire this for the *newest* proposal
-      // For the sandbox demo, we'll just emit the latest one if it's new
+    const { highestSeenId, newProposals } = getNewProposalsSince(proposals, highestSeenIdRef.current);
+    highestSeenIdRef.current = highestSeenId;
+
+    if (!activeSubscriptions.has('proposalCreated')) return;
+
+    for (const proposal of newProposals) {
       iframeRef.current?.contentWindow?.postMessage({
         type: 'event',
         payload: {
           eventType: 'proposalCreated',
-          data: proposals[0]
+          data: proposal
         },
         widgetId: widget.id
       }, '*');
     }
   }, [proposals, activeSubscriptions, widget.id]);
+
+  // Pick up settings changed from outside the sandbox (e.g. the config form)
+  useEffect(() => {
+    settingsRef.current = widget.settings;
+  }, [widget.settings]);
 
   useEffect(() => {
     window.addEventListener('message', handleMessage);

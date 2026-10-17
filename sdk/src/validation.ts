@@ -72,6 +72,13 @@ export function validateMemo(field: string, value: unknown): void {
   }
 }
 
+/** Soroban symbols: 1-32 characters of letters, digits, or underscores. */
+export function validateSymbol(field: string, value: unknown): void {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_]{1,32}$/.test(value)) {
+    fail(field, value, `${field} must be 1-32 characters of letters, digits, or underscores`);
+  }
+}
+
 export function validateRole(field: string, value: unknown): void {
   if (value !== 0 && value !== 1 && value !== 2) {
     fail(

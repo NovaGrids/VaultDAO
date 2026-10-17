@@ -60,6 +60,17 @@ export interface InitConfig {
 /**
  * Active vault configuration returned by the contract.
  */
+/** Emergency pause state of a vault, as returned by `get_pause_state`. */
+export interface PauseState {
+  isPaused: boolean;
+  /** Address of the emergency signer that paused the vault, or null when not paused. */
+  pausedBy: string | null;
+  /** Ledger sequence at which the vault was paused. */
+  pausedAtLedger: number;
+  /** Reason code supplied when the vault was paused. */
+  cause: string;
+}
+
 export interface VaultConfig {
   signers: string[];
   threshold: number;
@@ -522,6 +533,11 @@ export interface SdkOptions {
   contractId: string;
   /** Stellar RPC endpoint URL. */
   rpcUrl: string;
+  /**
+   * Allow plain `http://` RPC URLs. Defaults to `false`, except for localhost
+   * URLs (e.g. a Quickstart node), where it defaults to `true`.
+   */
+  allowHttp?: boolean;
   /** Stellar network passphrase. */
   networkPassphrase: string;
   /**

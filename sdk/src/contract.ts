@@ -9,10 +9,12 @@
  * decodes and returns the on-chain value without requiring a signature.
  */
 
-import { SorobanRpc, xdr } from "@stellar/stellar-sdk";
+import { rpc, xdr } from "@stellar/stellar-sdk";
+import { getRpcServer } from "./rpc";
 import type {
   InitConfig,
   VaultConfig,
+  PauseState,
   Proposal,
   RecurringPayment,
   SdkOptions,
@@ -49,6 +51,7 @@ import {
   validateMemo,
   validateRole,
   validateId,
+  validateSymbol,
   validateStreamLedgers,
   validateInitConfig,
   SdkValidationError,
@@ -66,7 +69,7 @@ export async function simulateReadOnly<T>(
   method?: string
 ): Promise<T> {
   const log: SdkLogger = opts.logger ?? noopLogger;
-  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const server = getRpcServer(opts);
   const { TransactionBuilder, BASE_FEE } = await import("@stellar/stellar-sdk");
   const ctx = { contractId: opts.contractId, method };
   const simStart = Date.now();
@@ -89,7 +92,7 @@ export async function simulateReadOnly<T>(
     "read-only simulation"
   );
 
-  if (SorobanRpc.Api.isSimulationError(sim)) {
+  if (rpc.Api.isSimulationError(sim)) {
     const durationMs = Date.now() - simStart;
     const err = parseError(new Error(sim.error));
     log.error("Read-only simulation failed", {
@@ -99,7 +102,7 @@ export async function simulateReadOnly<T>(
     });
     throw err;
   }
-  if (!SorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) {
+  if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) {
     const durationMs = Date.now() - simStart;
     log.error("Read-only simulation returned no result", { ...ctx, durationMs });
     throw new Error("Simulation returned no result");
@@ -1292,6 +1295,126 @@ export async function isSigner(
   const contract = getContract(opts);
   const op = contract.call("is_signer", addressToScVal(address));
   return simulateReadOnly<boolean>(op, opts, callerPublicKey, "isSigner");
+}
+
+// ---------------------------------------------------------------------------
+// Emergency pause
+// ---------------------------------------------------------------------------
+
+/**
+ * Pause the vault. The caller must be a registered emergency signer.
+ *
+ * @param callerPublicKey - Emergency signer submitting the pause.
+ * @param cause           - Reason code, 1-32 characters of letters, digits, or underscores.
+ * @param opts            - SDK connection options.
+ * @returns Unsigned transaction XDR.
+ */
+export async function pauseVault(
+  callerPublicKey: string,
+  cause: string,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+  validateSymbol("cause", cause);
+
+  const contract = getContract(opts);
+  const op = contract.call("pause_vault", addressToScVal(callerPublicKey), symbolToScVal(cause));
+  return buildTransaction(callerPublicKey, op, opts);
+}
+
+/**
+ * Unpause the vault. The caller must be a registered emergency signer.
+ *
+ * @param callerPublicKey - Emergency signer submitting the unpause.
+ * @param opts            - SDK connection options.
+ * @returns Unsigned transaction XDR.
+ */
+export async function unpauseVault(callerPublicKey: string, opts: SdkOptions): Promise<string> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("unpause_vault", addressToScVal(callerPublicKey));
+  return buildTransaction(callerPublicKey, op, opts);
+}
+
+/**
+ * Set the emergency signers and circuit-breaker threshold (Admin only).
+ *
+ * @param adminPublicKey          - Admin submitting the change.
+ * @param signers                 - Addresses allowed to pause and unpause.
+ * @param circuitBreakerThreshold - Threshold passed to the contract, must be non-negative.
+ * @param opts                    - SDK connection options.
+ * @returns Unsigned transaction XDR.
+ */
+export async function configureEmergency(
+  adminPublicKey: string,
+  signers: string[],
+  circuitBreakerThreshold: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  if (!Array.isArray(signers) || signers.length === 0) {
+    throw new SdkValidationError("signers", signers, "signers must be a non-empty array");
+  }
+  signers.forEach((signer, i) => validateNonEmptyString(`signers[${i}]`, signer));
+  validateNonNegativeBigInt("circuitBreakerThreshold", circuitBreakerThreshold);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "configure_emergency",
+    addressToScVal(adminPublicKey),
+    xdr.ScVal.scvVec(signers.map((s) => addressToScVal(s))),
+    i128ToScVal(circuitBreakerThreshold)
+  );
+  return buildTransaction(adminPublicKey, op, opts);
+}
+
+/**
+ * Read the vault's emergency pause state without submitting a transaction.
+ *
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getPauseState(callerPublicKey: string, opts: SdkOptions): Promise<PauseState> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_pause_state");
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey,
+    "getPauseState"
+  );
+  return {
+    isPaused: Boolean(raw.is_paused),
+    pausedBy: (raw.paused_by as string | null) ?? null,
+    pausedAtLedger: Number(raw.paused_at_ledger ?? 0),
+    cause: (raw.cause as string) ?? "",
+  };
+}
+
+/**
+ * Read how many ledgers remain before another pause or unpause is allowed.
+ *
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getPauseCooldownRemaining(
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<bigint> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_pause_cooldown_remaining");
+  const remaining = await simulateReadOnly<bigint | number>(
+    op,
+    opts,
+    callerPublicKey,
+    "getPauseCooldownRemaining"
+  );
+  return BigInt(remaining);
 }
 
 // ---------------------------------------------------------------------------

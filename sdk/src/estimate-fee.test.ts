@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SorobanRpc } from "@stellar/stellar-sdk";
+import { rpc } from "@stellar/stellar-sdk";
 import { estimateFee } from "./utils";
 import type { SdkOptions } from "./types";
 
@@ -12,7 +12,7 @@ const opts: SdkOptions = {
 describe("estimateFee", () => {
   it("returns the minimum Soroban inclusion fee in stroops", async () => {
     const simulateTransaction = vi
-      .spyOn(SorobanRpc.Server.prototype, "simulateTransaction")
+      .spyOn(rpc.Server.prototype, "simulateTransaction")
       .mockResolvedValue({
         minResourceFee: "12345",
       } as any);
@@ -25,7 +25,7 @@ describe("estimateFee", () => {
 
   it("rejects an invalid fee returned by RPC", async () => {
     const simulateTransaction = vi
-      .spyOn(SorobanRpc.Server.prototype, "simulateTransaction")
+      .spyOn(rpc.Server.prototype, "simulateTransaction")
       .mockResolvedValue({
         minResourceFee: "not-a-fee",
       } as any);
