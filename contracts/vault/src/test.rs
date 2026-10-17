@@ -3048,6 +3048,8 @@ fn test_swap_proposal_creation() {
         staking_config: types::StakingConfig::default(),
     };
     client.initialize(&admin, &config);
+    client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
+    client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
 
     let mut enabled_dexs = Vec::new(&env);

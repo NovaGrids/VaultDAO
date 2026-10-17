@@ -74,6 +74,8 @@ mod tests {
 
         let token_in = Address::generate(&env);
         let token_out = Address::generate(&env);
+        client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
+        client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
 
         let swap_op =
             SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
@@ -127,6 +129,8 @@ mod tests {
 
         let token_in = Address::generate(&env);
         let token_out = Address::generate(&env);
+        client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
+        client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
 
         let swap_op =
             SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
@@ -182,6 +186,8 @@ mod tests {
 
         let token_in = Address::generate(&env);
         let token_out = Address::generate(&env);
+        client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
+        client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
 
         let swap_op =
             SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
@@ -233,6 +239,8 @@ mod tests {
 
         let token_in = Address::generate(&env);
         let token_out = Address::generate(&env);
+        client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
+        client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
 
         let swap_op = SwapProposal::Swap(
             dex.clone(),
@@ -255,5 +263,162 @@ mod tests {
 
         let result = client.try_execute_swap_proposal(&admin, &proposal_id);
         assert!(result.is_err());
+    }
+
+    struct SwapFixture<'a> {
+        contract_id: Address,
+        client: VaultDAOClient<'a>,
+        admin: Address,
+        treasurer: Address,
+        dex: Address,
+        token_in: Address,
+        token_out: Address,
+    }
+
+    fn swap_fixture(env: &Env) -> SwapFixture<'_> {
+        let contract_id = env.register(VaultDAO, ());
+        let client = VaultDAOClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        let treasurer = Address::generate(env);
+        let dex = Address::generate(env);
+        let token_in = Address::generate(env);
+        let token_out = Address::generate(env);
+
+        let mut signers = Vec::new(env);
+        signers.push_back(admin.clone());
+        signers.push_back(treasurer.clone());
+        client.initialize(&admin, &make_config(env, signers));
+        client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+        let mut enabled_dexs = Vec::new(env);
+        enabled_dexs.push_back(dex.clone());
+        client.set_dex_config(
+            &admin,
+            &DexConfig {
+                enabled_dexs,
+                max_slippage_bps: 100,
+                max_price_impact_bps: 500,
+                min_liquidity: 1000,
+            },
+        );
+        client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
+        client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
+
+        SwapFixture {
+            contract_id,
+            client,
+            admin,
+            treasurer,
+            dex,
+            token_in,
+            token_out,
+        }
+    }
+
+    #[test]
+    fn test_swap_over_proposal_limit_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let f = swap_fixture(&env);
+
+        let swap_op = SwapProposal::Swap(
+            f.dex.clone(),
+            f.token_in.clone(),
+            f.token_out.clone(),
+            10_001,
+            0,
+        );
+        let res = f.client.try_propose_swap(
+            &f.treasurer,
+            &swap_op,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+    }
+
+    #[test]
+    fn test_swap_unsupported_token_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let f = swap_fixture(&env);
+        let unlisted = Address::generate(&env);
+
+        let swap_op = SwapProposal::Swap(
+            f.dex.clone(),
+            unlisted,
+            f.token_out.clone(),
+            1000,
+            0,
+        );
+        let res = f.client.try_propose_swap(
+            &f.treasurer,
+            &swap_op,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        assert_eq!(res.err(), Some(Ok(VaultError::TokenNotSupported)));
+    }
+
+    #[test]
+    fn test_swap_rejected_while_paused() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let f = swap_fixture(&env);
+
+        env.as_contract(&f.contract_id, || {
+            let mut state = storage::get_pause_state(&env);
+            state.is_paused = true;
+            storage::set_pause_state(&env, &state);
+        });
+
+        let swap_op = SwapProposal::Swap(
+            f.dex.clone(),
+            f.token_in.clone(),
+            f.token_out.clone(),
+            1000,
+            0,
+        );
+        let res = f.client.try_propose_swap(
+            &f.treasurer,
+            &swap_op,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        assert_eq!(res.err(), Some(Ok(VaultError::VaultPaused)));
+    }
+
+    #[test]
+    fn test_swap_above_timelock_threshold_is_timelocked() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let f = swap_fixture(&env);
+        let current = env.ledger().sequence() as u64;
+
+        let swap_op = SwapProposal::Swap(
+            f.dex.clone(),
+            f.token_in.clone(),
+            f.token_out.clone(),
+            6000,
+            0,
+        );
+        let proposal_id = f.client.propose_swap(
+            &f.treasurer,
+            &swap_op,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+
+        let proposal = f.client.get_proposal(&proposal_id);
+        assert_eq!(proposal.amount, 6000);
+        assert_eq!(proposal.unlock_ledger, current + 100);
     }
 }

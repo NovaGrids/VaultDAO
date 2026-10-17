@@ -3162,6 +3162,9 @@ pub struct PaginationCursor {
     pub start_after_id: u64,
     /// Maximum number of items to return (capped at `MAX_PAGE_LIMIT`).
     pub limit: u32,
+}
+
+// ============================================================================
 // Pending Reservation Exposure
 // ============================================================================
 
