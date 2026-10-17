@@ -380,6 +380,8 @@ pub enum VaultError {
     NotSubscriberOrAdmin = 194,
     RenewalNotDue = 195,
     SubscriptionNotFound = 196,
+    /// Upgrade must not lower the tier or amount; downgrades use the grace flow
+    InvalidSubscriptionChange = 197,
 
     // =========================================================
     // Signer / execution constraints

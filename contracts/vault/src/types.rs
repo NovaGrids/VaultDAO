@@ -109,6 +109,18 @@ pub struct InitConfig {
     pub upgrade_timelock_delay: u64,
 }
 
+/// Result of one bounded page of `expire_overdue_subscriptions` (#1924).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpiryBatch {
+    /// Number of subscriptions expired in this page.
+    pub expired_count: u32,
+    /// Pass as `start_id` to continue scanning from the next page.
+    pub next_cursor: u64,
+    /// True when the scan has reached the end of the subscription IDs.
+    pub done: bool,
+}
+
 /// Vault configuration
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1410,6 +1422,8 @@ pub enum AuditAction {
     PhaseExecuted = 29,
     /// A single phase of a multi-phase proposal failed to execute.
     PhaseFailed = 30,
+    /// A bounded page of overdue subscriptions was expired (#1924).
+    SubscriptionsExpired = 31,
 }
 
 /// Audit trail entry with cryptographic verification

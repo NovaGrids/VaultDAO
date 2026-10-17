@@ -1023,6 +1023,17 @@ pub fn emit_subscription_expired(env: &Env, subscription_id: u64) {
         .publish((Symbol::new(env, "subscription_expired"),), subscription_id);
 }
 
+/// Summary of one bounded expiry scan over subscription IDs `[from_id, to_id)`.
+///
+/// Topics: `("subscription_expiry_batch",)`
+/// Data:   `(from_id, to_id, expired_count)`
+pub fn emit_subscription_expiry_batch(env: &Env, from_id: u64, to_id: u64, expired_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "subscription_expiry_batch"),),
+        (from_id, to_id, expired_count),
+    );
+}
+
 pub fn emit_subscription_paused(env: &Env, subscription_id: u64, paused_by: &Address) {
     env.events().publish(
         (Symbol::new(env, "subscription_paused"), subscription_id),
