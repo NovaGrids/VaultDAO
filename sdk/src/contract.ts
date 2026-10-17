@@ -23,6 +23,18 @@ import type {
   VaultMetrics,
   Reputation,
   AuditEntry,
+  VoteChoice,
+  VotingDelegation,
+  InsuranceClaim,
+  InsuranceClaimStatus,
+  StakeRecord,
+  StakingConfig,
+  ListMode,
+  TokenSpendingConfig,
+  TransferDetails,
+  SwapProposal,
+  SwapResult,
+  DexConfig,
 } from "./types";
 import { Role, ProposalStatus, VaultError, VaultErrorCode, noopLogger } from "./types";
 import type { SdkLogger } from "./types";
@@ -37,6 +49,11 @@ import {
   decodeScVal,
   parseError,
   retryOnRateLimit,
+  enumToScVal,
+  vecToScVal,
+  boolToScVal,
+  bytesN32ToScVal,
+  structToScVal,
 } from "./utils";
 import {
   validateNonEmptyString,
@@ -51,6 +68,8 @@ import {
   validateId,
   validateStreamLedgers,
   validateInitConfig,
+  validateAddressList,
+  validateIdList,
   SdkValidationError,
 } from "./validation";
 
@@ -325,6 +344,1174 @@ export async function rejectProposal(
     u64ToScVal(proposalId)
   );
   return buildTransaction(rejectorPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Voting Lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a transaction for a signer to abstain on a proposal.
+ *
+ * @param signerPublicKey - Signer's address (must be in the signers list).
+ * @param proposalId      - ID of the proposal.
+ * @param opts            - SDK connection options.
+ */
+export async function abstainProposal(
+  signerPublicKey: string,
+  proposalId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("signerPublicKey", signerPublicKey);
+  validateId("proposalId", proposalId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "abstain_proposal",
+    addressToScVal(signerPublicKey),
+    u64ToScVal(proposalId)
+  );
+  return invokeMethod("abstain_proposal", signerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction for a signer to change a vote they already cast.
+ *
+ * @param signerPublicKey - Signer's address.
+ * @param proposalId      - ID of the proposal.
+ * @param choice          - The new vote (`"Approve"` or `"Abstain"`).
+ * @param opts            - SDK connection options.
+ */
+export async function changeVote(
+  signerPublicKey: string,
+  proposalId: bigint,
+  choice: VoteChoice,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("signerPublicKey", signerPublicKey);
+  validateId("proposalId", proposalId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "change_vote",
+    addressToScVal(signerPublicKey),
+    u64ToScVal(proposalId),
+    enumToScVal(choice)
+  );
+  return invokeMethod("change_vote", signerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction for a signer to veto a proposal.
+ *
+ * @param vetoerPublicKey - Address holding veto rights.
+ * @param proposalId      - ID of the proposal to veto.
+ * @param opts            - SDK connection options.
+ */
+export async function vetoProposal(
+  vetoerPublicKey: string,
+  proposalId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("vetoerPublicKey", vetoerPublicKey);
+  validateId("proposalId", proposalId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "veto_proposal",
+    addressToScVal(vetoerPublicKey),
+    u64ToScVal(proposalId)
+  );
+  return invokeMethod("veto_proposal", vetoerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to cancel a proposal.
+ *
+ * @param cancellerPublicKey - Proposer or Admin.
+ * @param proposalId         - ID of the proposal to cancel.
+ * @param reason             - Short reason recorded on-chain (max 32 chars).
+ * @param opts               - SDK connection options.
+ */
+export async function cancelProposal(
+  cancellerPublicKey: string,
+  proposalId: bigint,
+  reason: string,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("cancellerPublicKey", cancellerPublicKey);
+  validateId("proposalId", proposalId);
+  validateMemo("reason", reason);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "cancel_proposal",
+    addressToScVal(cancellerPublicKey),
+    u64ToScVal(proposalId),
+    symbolToScVal(reason)
+  );
+  return invokeMethod("cancel_proposal", cancellerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to amend the recipient, amount, and memo of a pending proposal.
+ *
+ * @param proposerPublicKey - Original proposer's address.
+ * @param proposalId        - ID of the proposal to amend.
+ * @param amendment         - New recipient, amount, memo, and reason for the change.
+ * @param opts              - SDK connection options.
+ */
+export async function amendProposal(
+  proposerPublicKey: string,
+  proposalId: bigint,
+  amendment: {
+    recipient: string;
+    amount: bigint;
+    memo: string;
+    reason: string;
+  },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  validateId("proposalId", proposalId);
+  validateNonEmptyString("recipient", amendment.recipient);
+  validatePositiveBigInt("amount", amendment.amount);
+  validateMemo("memo", amendment.memo);
+  validateMemo("reason", amendment.reason);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "amend_proposal",
+    addressToScVal(proposerPublicKey),
+    u64ToScVal(proposalId),
+    addressToScVal(amendment.recipient),
+    i128ToScVal(amendment.amount),
+    symbolToScVal(amendment.memo),
+    symbolToScVal(amendment.reason)
+  );
+  return invokeMethod("amend_proposal", proposerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction that supersedes an existing proposal with a new transfer.
+ *
+ * The old proposal is replaced in a single contract call. Defaults to
+ * `Normal` priority, no conditions (AND logic), and no insurance.
+ *
+ * @param proposerPublicKey - Original proposer's address.
+ * @param oldProposalId     - ID of the proposal being superseded.
+ * @param transfer          - Replacement recipient, token, amount, and memo.
+ * @param options           - Optional priority and insurance amount.
+ * @param opts              - SDK connection options.
+ */
+export async function supersedeProposal(
+  proposerPublicKey: string,
+  oldProposalId: bigint,
+  transfer: {
+    recipient: string;
+    tokenAddress: string;
+    amount: bigint;
+    memo: string;
+  },
+  options: {
+    priority?: "Low" | "Normal" | "High" | "Critical";
+    insuranceAmount?: bigint;
+  },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  validateId("oldProposalId", oldProposalId);
+  validateNonEmptyString("recipient", transfer.recipient);
+  validateNonEmptyString("tokenAddress", transfer.tokenAddress);
+  validatePositiveBigInt("amount", transfer.amount);
+  validateMemo("memo", transfer.memo);
+  const insuranceAmount = options.insuranceAmount ?? 0n;
+  validateNonNegativeBigInt("insuranceAmount", insuranceAmount);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "supersede_proposal",
+    addressToScVal(proposerPublicKey),
+    u64ToScVal(oldProposalId),
+    addressToScVal(transfer.recipient),
+    addressToScVal(transfer.tokenAddress),
+    i128ToScVal(transfer.amount),
+    symbolToScVal(transfer.memo),
+    enumToScVal(options.priority ?? "Normal"),
+    vecToScVal([]),
+    enumToScVal("And"),
+    i128ToScVal(insuranceAmount)
+  );
+  return invokeMethod("supersede_proposal", proposerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to delegate a signer's voting power to another address.
+ *
+ * @param delegatorPublicKey - Address delegating its voting power.
+ * @param delegation         - Delegate address and expiry ledger.
+ * @param opts               - SDK connection options.
+ */
+export async function delegateVotingPower(
+  delegatorPublicKey: string,
+  delegation: VotingDelegation,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("delegatorPublicKey", delegatorPublicKey);
+  validateNonEmptyString("delegate", delegation.delegate);
+  validateNonNegativeBigInt("expiryLedger", delegation.expiryLedger);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "delegate_voting_power",
+    addressToScVal(delegatorPublicKey),
+    addressToScVal(delegation.delegate),
+    u64ToScVal(delegation.expiryLedger)
+  );
+  return invokeMethod("delegate_voting_power", delegatorPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to revoke an active voting-power delegation.
+ *
+ * @param delegatorPublicKey - Address that previously delegated its voting power.
+ * @param opts               - SDK connection options.
+ */
+export async function revokeDelegation(
+  delegatorPublicKey: string,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("delegatorPublicKey", delegatorPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "revoke_delegation",
+    addressToScVal(delegatorPublicKey)
+  );
+  return invokeMethod("revoke_delegation", delegatorPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Insurance Claims
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a transaction to file an insurance claim against the insurance pool.
+ *
+ * @param claimantPublicKey - Address filing the claim.
+ * @param claim             - Token, amount, 32-byte evidence hash (hex), and vote deadline.
+ * @param opts              - SDK connection options.
+ */
+export async function submitInsuranceClaim(
+  claimantPublicKey: string,
+  claim: {
+    token: string;
+    amount: bigint;
+    evidenceHash: string;
+    voteDeadline: bigint;
+  },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("claimantPublicKey", claimantPublicKey);
+  validateNonEmptyString("token", claim.token);
+  validatePositiveBigInt("amount", claim.amount);
+  validateNonNegativeBigInt("voteDeadline", claim.voteDeadline);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "submit_insurance_claim",
+    addressToScVal(claimantPublicKey),
+    addressToScVal(claim.token),
+    i128ToScVal(claim.amount),
+    bytesN32ToScVal(claim.evidenceHash),
+    u64ToScVal(claim.voteDeadline)
+  );
+  return invokeMethod("submit_insurance_claim", claimantPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction for a signer to vote on an open insurance claim.
+ *
+ * @param voterPublicKey - Signer's address.
+ * @param claimId        - ID of the claim.
+ * @param approve        - `true` to approve the claim, `false` to reject it.
+ * @param opts           - SDK connection options.
+ */
+export async function voteOnInsuranceClaim(
+  voterPublicKey: string,
+  claimId: bigint,
+  approve: boolean,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("voterPublicKey", voterPublicKey);
+  validateId("claimId", claimId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "vote_on_insurance_claim",
+    addressToScVal(voterPublicKey),
+    u64ToScVal(claimId),
+    boolToScVal(approve)
+  );
+  return invokeMethod("vote_on_insurance_claim", voterPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to close voting on an insurance claim once its window has passed.
+ *
+ * @param closerPublicKey - Address closing the vote.
+ * @param claimId         - ID of the claim.
+ * @param opts            - SDK connection options.
+ */
+export async function closeInsuranceClaimVoting(
+  closerPublicKey: string,
+  claimId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("closerPublicKey", closerPublicKey);
+  validateId("claimId", claimId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "close_insurance_claim_voting",
+    addressToScVal(closerPublicKey),
+    u64ToScVal(claimId)
+  );
+  return invokeMethod("close_insurance_claim_voting", closerPublicKey, op, opts);
+}
+
+/**
+ * Fetch an insurance claim by ID.
+ *
+ * @param claimId         - ID of the claim.
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getInsuranceClaim(
+  claimId: bigint,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<InsuranceClaim> {
+  validateId("claimId", claimId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_insurance_claim", u64ToScVal(claimId));
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey,
+    "getInsuranceClaim"
+  );
+  return decodeInsuranceClaim(raw);
+}
+
+// ---------------------------------------------------------------------------
+// Staking
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a transaction to opt a stake into auto-compounding.
+ *
+ * @param stakerPublicKey - Address that staked against the proposal.
+ * @param proposalId      - Proposal the stake is locked against.
+ * @param opts            - SDK connection options.
+ */
+export async function enableAutoCompound(
+  stakerPublicKey: string,
+  proposalId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("stakerPublicKey", stakerPublicKey);
+  validateId("proposalId", proposalId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "enable_auto_compound",
+    addressToScVal(stakerPublicKey),
+    u64ToScVal(proposalId)
+  );
+  return invokeMethod("enable_auto_compound", stakerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction for a keeper to compound a stake's rewards.
+ *
+ * @param keeperPublicKey - Address triggering the compound.
+ * @param proposalId      - Proposal the stake is locked against.
+ * @param opts            - SDK connection options.
+ */
+export async function compoundStake(
+  keeperPublicKey: string,
+  proposalId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("keeperPublicKey", keeperPublicKey);
+  validateId("proposalId", proposalId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "compound_stake",
+    addressToScVal(keeperPublicKey),
+    u64ToScVal(proposalId)
+  );
+  return invokeMethod("compound_stake", keeperPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to replace the staking configuration. Only Admin can call this.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param config         - The full staking configuration to store.
+ * @param opts           - SDK connection options.
+ */
+export async function updateStakingConfig(
+  adminPublicKey: string,
+  config: StakingConfig,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonNegativeBigInt("minAmount", config.minAmount);
+  validateNonNegativeBigInt("maxStakeAmount", config.maxStakeAmount);
+  validateNonNegativeBigInt("compoundLockPeriod", config.compoundLockPeriod);
+  validateNonNegativeBigInt("compoundEpoch", config.compoundEpoch);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "update_staking_config",
+    addressToScVal(adminPublicKey),
+    structToScVal({
+      enabled: boolToScVal(config.enabled),
+      min_amount: i128ToScVal(config.minAmount),
+      base_stake_bps: u32ToScVal(config.baseStakeBps),
+      max_stake_amount: i128ToScVal(config.maxStakeAmount),
+      reputation_discount_threshold: u32ToScVal(config.reputationDiscountThreshold),
+      reputation_discount_percentage: u32ToScVal(config.reputationDiscountPercentage),
+      slash_percentage: u32ToScVal(config.slashPercentage),
+      cancellation_slash_percentage: u32ToScVal(config.cancellationSlashPercentage),
+      slash_to_insurance_pool: boolToScVal(config.slashToInsurancePool),
+      compound_lock_period: u64ToScVal(config.compoundLockPeriod),
+      compound_epoch: u64ToScVal(config.compoundEpoch),
+      reward_bps_per_execution: u32ToScVal(config.rewardBpsPerExecution),
+    })
+  );
+  return invokeMethod("update_staking_config", adminPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to propose withdrawing staked funds to a recipient.
+ *
+ * @param proposerPublicKey - Address proposing the withdrawal.
+ * @param withdrawal        - Token, amount, and recipient for the withdrawal.
+ * @param opts              - SDK connection options.
+ */
+export async function proposeStakeWithdrawal(
+  proposerPublicKey: string,
+  withdrawal: { token: string; amount: bigint; recipient: string },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  validateNonEmptyString("token", withdrawal.token);
+  validatePositiveBigInt("amount", withdrawal.amount);
+  validateNonEmptyString("recipient", withdrawal.recipient);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "propose_stake_withdrawal",
+    addressToScVal(proposerPublicKey),
+    addressToScVal(withdrawal.token),
+    i128ToScVal(withdrawal.amount),
+    addressToScVal(withdrawal.recipient)
+  );
+  return invokeMethod("propose_stake_withdrawal", proposerPublicKey, op, opts);
+}
+
+/**
+ * Fetch the stake record for a proposal, or `null` if none exists.
+ *
+ * @param proposalId      - Proposal the stake is locked against.
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getStakeRecord(
+  proposalId: bigint,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<StakeRecord | null> {
+  validateId("proposalId", proposalId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_stake_record", u64ToScVal(proposalId));
+  const raw = await simulateReadOnly<Record<string, unknown> | null>(
+    op,
+    opts,
+    callerPublicKey,
+    "getStakeRecord"
+  );
+  return raw ? decodeStakeRecord(raw) : null;
+}
+
+/**
+ * Fetch the current staking configuration.
+ *
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getStakingConfig(
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<StakingConfig> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_staking_config");
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey,
+    "getStakingConfig"
+  );
+  return decodeStakingConfig(raw);
+}
+
+// ---------------------------------------------------------------------------
+// Decoders for insurance and staking reads
+// ---------------------------------------------------------------------------
+
+function decodeInsuranceClaim(raw: Record<string, unknown>): InsuranceClaim {
+  return {
+    id: raw.id as bigint,
+    claimant: raw.claimant as string,
+    amount: raw.amount as bigint,
+    evidenceHash: raw.evidence_hash as Uint8Array,
+    voteDeadline: raw.vote_deadline as bigint,
+    approveWeight: raw.approve_weight as bigint,
+    rejectWeight: raw.reject_weight as bigint,
+    token: raw.token as string,
+    bondAmount: raw.bond_amount as bigint,
+    bondSettled: raw.bond_settled as boolean,
+    status: raw.status as InsuranceClaimStatus,
+    createdAt: raw.created_at as bigint,
+    approvalThresholdBps: raw.approval_threshold_bps as number,
+    quorumBps: raw.quorum_bps as number,
+    votingWindow: raw.voting_window as bigint,
+    eligibleVoters: raw.eligible_voters as number,
+    voterCount: raw.voter_count as number,
+    votingClosed: raw.voting_closed as boolean,
+  };
+}
+
+function decodeStakeRecord(raw: Record<string, unknown>): StakeRecord {
+  return {
+    proposalId: raw.proposal_id as bigint,
+    staker: raw.staker as string,
+    token: raw.token as string,
+    amount: raw.amount as bigint,
+    lockedAt: raw.locked_at as bigint,
+    refunded: raw.refunded as boolean,
+    slashed: raw.slashed as boolean,
+    slashedAmount: raw.slashed_amount as bigint,
+    releasedAt: raw.released_at as bigint,
+    autoCompound: raw.auto_compound as boolean,
+    reinvestmentLockUntil: raw.reinvestment_lock_until as bigint,
+    lastCompounded: raw.last_compounded as bigint,
+    stakingTier: raw.staking_tier as number,
+    accumulatedRewards: raw.accumulated_rewards as bigint,
+  };
+}
+
+function decodeStakingConfig(raw: Record<string, unknown>): StakingConfig {
+  return {
+    enabled: raw.enabled as boolean,
+    minAmount: raw.min_amount as bigint,
+    baseStakeBps: raw.base_stake_bps as number,
+    maxStakeAmount: raw.max_stake_amount as bigint,
+    reputationDiscountThreshold: raw.reputation_discount_threshold as number,
+    reputationDiscountPercentage: raw.reputation_discount_percentage as number,
+    slashPercentage: raw.slash_percentage as number,
+    cancellationSlashPercentage: raw.cancellation_slash_percentage as number,
+    slashToInsurancePool: raw.slash_to_insurance_pool as boolean,
+    compoundLockPeriod: raw.compound_lock_period as bigint,
+    compoundEpoch: raw.compound_epoch as bigint,
+    rewardBpsPerExecution: raw.reward_bps_per_execution as number,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Recipient Policy (whitelist / blacklist / list mode)
+// ---------------------------------------------------------------------------
+
+/** Maximum addresses the contract accepts in one `bulk_*` call. */
+const BULK_ADDRESS_CHUNK_SIZE = 50;
+
+/**
+ * Build a transaction to set the recipient list mode. Only Admin can call this.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param mode           - `"Disabled"`, `"Whitelist"`, or `"Blacklist"`.
+ * @param opts           - SDK connection options.
+ */
+export async function setListMode(
+  adminPublicKey: string,
+  mode: ListMode,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "set_list_mode",
+    addressToScVal(adminPublicKey),
+    enumToScVal(mode)
+  );
+  return invokeMethod("set_list_mode", adminPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to add one address to the whitelist. Only Admin can call this.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param address        - Address to whitelist.
+ * @param opts           - SDK connection options.
+ */
+export async function addToWhitelist(
+  adminPublicKey: string,
+  address: string,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("address", address);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "add_to_whitelist",
+    addressToScVal(adminPublicKey),
+    addressToScVal(address)
+  );
+  return invokeMethod("add_to_whitelist", adminPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to add one address to the blacklist. Only Admin can call this.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param address        - Address to blacklist.
+ * @param opts           - SDK connection options.
+ */
+export async function addToBlacklist(
+  adminPublicKey: string,
+  address: string,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("address", address);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "add_to_blacklist",
+    addressToScVal(adminPublicKey),
+    addressToScVal(address)
+  );
+  return invokeMethod("add_to_blacklist", adminPublicKey, op, opts);
+}
+
+/**
+ * Split addresses into contract-sized chunks and build one `bulk_*` transaction per chunk.
+ *
+ * The contract rejects bulk calls over 50 addresses, so larger lists are
+ * submitted as several transactions. Returns the transactions in order.
+ *
+ * @internal
+ */
+async function buildBulkAddressTransactions(
+  method: string,
+  adminPublicKey: string,
+  addresses: string[],
+  opts: SdkOptions
+): Promise<string[]> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateAddressList("addresses", addresses);
+
+  const contract = getContract(opts);
+  const txs: string[] = [];
+  for (let i = 0; i < addresses.length; i += BULK_ADDRESS_CHUNK_SIZE) {
+    const chunk = addresses.slice(i, i + BULK_ADDRESS_CHUNK_SIZE);
+    const op = contract.call(
+      method,
+      addressToScVal(adminPublicKey),
+      vecToScVal(chunk.map(addressToScVal))
+    );
+    txs.push(await invokeMethod(method, adminPublicKey, op, opts));
+  }
+  return txs;
+}
+
+/**
+ * Build transactions to whitelist many addresses (chunked to 50 per transaction).
+ *
+ * @returns One signed-ready XDR per chunk, in submission order.
+ */
+export function bulkAddToWhitelist(
+  adminPublicKey: string,
+  addresses: string[],
+  opts: SdkOptions
+): Promise<string[]> {
+  return buildBulkAddressTransactions("bulk_add_to_whitelist", adminPublicKey, addresses, opts);
+}
+
+/**
+ * Build transactions to remove many addresses from the whitelist (chunked to 50 per transaction).
+ *
+ * @returns One signed-ready XDR per chunk, in submission order.
+ */
+export function bulkRemoveFromWhitelist(
+  adminPublicKey: string,
+  addresses: string[],
+  opts: SdkOptions
+): Promise<string[]> {
+  return buildBulkAddressTransactions("bulk_remove_from_whitelist", adminPublicKey, addresses, opts);
+}
+
+/**
+ * Build transactions to blacklist many addresses (chunked to 50 per transaction).
+ *
+ * @returns One signed-ready XDR per chunk, in submission order.
+ */
+export function bulkAddToBlacklist(
+  adminPublicKey: string,
+  addresses: string[],
+  opts: SdkOptions
+): Promise<string[]> {
+  return buildBulkAddressTransactions("bulk_add_to_blacklist", adminPublicKey, addresses, opts);
+}
+
+/**
+ * Build transactions to remove many addresses from the blacklist (chunked to 50 per transaction).
+ *
+ * @returns One signed-ready XDR per chunk, in submission order.
+ */
+export function bulkRemoveFromBlacklist(
+  adminPublicKey: string,
+  addresses: string[],
+  opts: SdkOptions
+): Promise<string[]> {
+  return buildBulkAddressTransactions("bulk_remove_from_blacklist", adminPublicKey, addresses, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Token Allowlist
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a transaction to add a token to the supported-token allowlist with spending limits.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param config         - Token address and daily/weekly spending limits.
+ * @param opts           - SDK connection options.
+ */
+export async function addSupportedToken(
+  adminPublicKey: string,
+  config: { token: string; dailyLimit: bigint; weeklyLimit: bigint },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("token", config.token);
+  validateNonNegativeBigInt("dailyLimit", config.dailyLimit);
+  validateNonNegativeBigInt("weeklyLimit", config.weeklyLimit);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "add_supported_token",
+    addressToScVal(adminPublicKey),
+    addressToScVal(config.token),
+    i128ToScVal(config.dailyLimit),
+    i128ToScVal(config.weeklyLimit)
+  );
+  return invokeMethod("add_supported_token", adminPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to remove a token from the supported-token allowlist.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param token          - Token address to remove.
+ * @param opts           - SDK connection options.
+ */
+export async function removeSupportedToken(
+  adminPublicKey: string,
+  token: string,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("token", token);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "remove_supported_token",
+    addressToScVal(adminPublicKey),
+    addressToScVal(token)
+  );
+  return invokeMethod("remove_supported_token", adminPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to update the spending limits of a supported token.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param config         - Token address and new daily/weekly spending limits.
+ * @param opts           - SDK connection options.
+ */
+export async function setTokenLimits(
+  adminPublicKey: string,
+  config: { token: string; dailyLimit: bigint; weeklyLimit: bigint },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("token", config.token);
+  validateNonNegativeBigInt("dailyLimit", config.dailyLimit);
+  validateNonNegativeBigInt("weeklyLimit", config.weeklyLimit);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "set_token_limits",
+    addressToScVal(adminPublicKey),
+    addressToScVal(config.token),
+    i128ToScVal(config.dailyLimit),
+    i128ToScVal(config.weeklyLimit)
+  );
+  return invokeMethod("set_token_limits", adminPublicKey, op, opts);
+}
+
+/**
+ * Fetch every supported token and its spending limits.
+ *
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getSupportedTokens(
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<TokenSpendingConfig[]> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_supported_tokens");
+  const raw = await simulateReadOnly<Record<string, unknown>[]>(
+    op,
+    opts,
+    callerPublicKey,
+    "getSupportedTokens"
+  );
+  return raw.map((entry) => ({
+    token: entry.token as string,
+    dailyLimit: entry.daily_limit as bigint,
+    weeklyLimit: entry.weekly_limit as bigint,
+    isDefault: entry.is_default as boolean,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Batch Execution
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a transaction to group existing proposals into a batch.
+ *
+ * @param creatorPublicKey - Address creating the batch.
+ * @param proposalIds      - IDs of the proposals to group.
+ * @param opts             - SDK connection options.
+ */
+export async function createBatch(
+  creatorPublicKey: string,
+  proposalIds: bigint[],
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("creatorPublicKey", creatorPublicKey);
+  validateIdList("proposalIds", proposalIds);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "create_batch",
+    addressToScVal(creatorPublicKey),
+    vecToScVal(proposalIds.map(u64ToScVal))
+  );
+  return invokeMethod("create_batch", creatorPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to execute a previously created batch.
+ *
+ * @param executorPublicKey - Address triggering execution.
+ * @param batchId           - ID of the batch from `createBatch`.
+ * @param opts              - SDK connection options.
+ */
+export async function executeBatch(
+  executorPublicKey: string,
+  batchId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("executorPublicKey", executorPublicKey);
+  validateId("batchId", batchId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "execute_batch",
+    addressToScVal(executorPublicKey),
+    u64ToScVal(batchId)
+  );
+  return invokeMethod("execute_batch", executorPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction that executes many approved proposals in one contract call.
+ *
+ * Unlike executing each proposal separately, the contract applies the batch
+ * atomically. The result (executed IDs and failure count) is returned by the
+ * contract as a `BatchResult`.
+ *
+ * @param executorPublicKey - Address triggering execution.
+ * @param proposalIds       - IDs of the approved proposals to execute.
+ * @param opts              - SDK connection options.
+ */
+export async function batchExecuteProposals(
+  executorPublicKey: string,
+  proposalIds: bigint[],
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("executorPublicKey", executorPublicKey);
+  validateIdList("proposalIds", proposalIds);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "batch_execute_proposals",
+    addressToScVal(executorPublicKey),
+    vecToScVal(proposalIds.map(u64ToScVal))
+  );
+  return invokeMethod("batch_execute_proposals", executorPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction that proposes many transfers in one contract call.
+ *
+ * Defaults to `Normal` priority, no conditions (AND logic), and no insurance.
+ *
+ * @param proposerPublicKey - Address proposing the transfers.
+ * @param transfers         - Recipient, token, and amount for each transfer.
+ * @param options          - Optional priority and insurance amount.
+ * @param opts              - SDK connection options.
+ */
+export async function batchProposeTransfers(
+  proposerPublicKey: string,
+  transfers: TransferDetails[],
+  options: {
+    priority?: "Low" | "Normal" | "High" | "Critical";
+    insuranceAmount?: bigint;
+  },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  if (transfers.length === 0) {
+    throw new SdkValidationError("transfers", transfers, "transfers must not be empty");
+  }
+  transfers.forEach((transfer, index) => {
+    validateNonEmptyString(`transfers[${index}].recipient`, transfer.recipient);
+    validateNonEmptyString(`transfers[${index}].token`, transfer.token);
+    validatePositiveBigInt(`transfers[${index}].amount`, transfer.amount);
+  });
+  const insuranceAmount = options.insuranceAmount ?? 0n;
+  validateNonNegativeBigInt("insuranceAmount", insuranceAmount);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "batch_propose_transfers",
+    addressToScVal(proposerPublicKey),
+    vecToScVal(
+      transfers.map((transfer) =>
+        structToScVal({
+          recipient: addressToScVal(transfer.recipient),
+          token: addressToScVal(transfer.token),
+          amount: i128ToScVal(transfer.amount),
+        })
+      )
+    ),
+    enumToScVal(options.priority ?? "Normal"),
+    vecToScVal([]),
+    enumToScVal("And"),
+    i128ToScVal(insuranceAmount)
+  );
+  return invokeMethod("batch_propose_transfers", proposerPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Swap Proposals
+// ---------------------------------------------------------------------------
+
+/** @internal Encode a `SwapProposal` as its Soroban enum variant. */
+function swapProposalToScVal(swap: SwapProposal): xdr.ScVal {
+  switch (swap.type) {
+    case "Swap":
+      return enumToScVal("Swap", [
+        addressToScVal(swap.dex),
+        addressToScVal(swap.tokenIn),
+        addressToScVal(swap.tokenOut),
+        i128ToScVal(swap.amountIn),
+        i128ToScVal(swap.minAmountOut),
+      ]);
+    case "AddLiquidity":
+      return enumToScVal("AddLiquidity", [
+        addressToScVal(swap.dex),
+        addressToScVal(swap.tokenA),
+        addressToScVal(swap.tokenB),
+        i128ToScVal(swap.amountA),
+        i128ToScVal(swap.amountB),
+        i128ToScVal(swap.minLpTokens),
+      ]);
+    case "RemoveLiquidity":
+      return enumToScVal("RemoveLiquidity", [
+        addressToScVal(swap.dex),
+        addressToScVal(swap.lpToken),
+        i128ToScVal(swap.amount),
+        i128ToScVal(swap.minTokenA),
+        i128ToScVal(swap.minTokenB),
+      ]);
+    case "StakeLp":
+      return enumToScVal("StakeLp", [
+        addressToScVal(swap.farm),
+        addressToScVal(swap.lpToken),
+        i128ToScVal(swap.amount),
+      ]);
+    case "UnstakeLp":
+      return enumToScVal("UnstakeLp", [
+        addressToScVal(swap.farm),
+        addressToScVal(swap.lpToken),
+        i128ToScVal(swap.amount),
+      ]);
+    case "ClaimRewards":
+      return enumToScVal("ClaimRewards", [addressToScVal(swap.farm)]);
+  }
+}
+
+/**
+ * Build a transaction to propose a DEX swap or liquidity action.
+ *
+ * Defaults to `Normal` priority, no conditions (AND logic), and no insurance.
+ *
+ * @param proposerPublicKey - Address proposing the swap.
+ * @param swap              - The swap or liquidity action to propose.
+ * @param options           - Optional priority and insurance amount.
+ * @param opts              - SDK connection options.
+ */
+export async function proposeSwap(
+  proposerPublicKey: string,
+  swap: SwapProposal,
+  options: {
+    priority?: "Low" | "Normal" | "High" | "Critical";
+    insuranceAmount?: bigint;
+  },
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("proposerPublicKey", proposerPublicKey);
+  const insuranceAmount = options.insuranceAmount ?? 0n;
+  validateNonNegativeBigInt("insuranceAmount", insuranceAmount);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "propose_swap",
+    addressToScVal(proposerPublicKey),
+    swapProposalToScVal(swap),
+    enumToScVal(options.priority ?? "Normal"),
+    vecToScVal([]),
+    enumToScVal("And"),
+    i128ToScVal(insuranceAmount)
+  );
+  return invokeMethod("propose_swap", proposerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction to execute an approved swap proposal.
+ *
+ * @param executorPublicKey - Address triggering execution.
+ * @param proposalId        - ID of the swap proposal.
+ * @param opts              - SDK connection options.
+ */
+export async function executeSwapProposal(
+  executorPublicKey: string,
+  proposalId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("executorPublicKey", executorPublicKey);
+  validateId("proposalId", proposalId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "execute_swap_proposal",
+    addressToScVal(executorPublicKey),
+    u64ToScVal(proposalId)
+  );
+  return invokeMethod("execute_swap_proposal", executorPublicKey, op, opts);
+}
+
+/**
+ * Fetch the recorded result of an executed swap, or `null` if it has not run.
+ *
+ * @param proposalId      - ID of the swap proposal.
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getSwapResult(
+  proposalId: bigint,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<SwapResult | null> {
+  validateId("proposalId", proposalId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_swap_result", u64ToScVal(proposalId));
+  const raw = await simulateReadOnly<Record<string, unknown> | null>(
+    op,
+    opts,
+    callerPublicKey,
+    "getSwapResult"
+  );
+  if (!raw) return null;
+  return {
+    amountIn: raw.amount_in as bigint,
+    amountOut: raw.amount_out as bigint,
+    priceImpactBps: raw.price_impact_bps as number,
+    executedAt: raw.executed_at as bigint,
+  };
+}
+
+/**
+ * Build a transaction to set DEX routing and safety limits. Only Admin can call this.
+ *
+ * @param adminPublicKey - Admin's address.
+ * @param config         - Enabled DEXs, slippage and price-impact caps, and minimum liquidity.
+ * @param opts           - SDK connection options.
+ */
+export async function setDexConfig(
+  adminPublicKey: string,
+  config: DexConfig,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateAddressList("enabledDexs", config.enabledDexs);
+  validateNonNegativeBigInt("minLiquidity", config.minLiquidity);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "set_dex_config",
+    addressToScVal(adminPublicKey),
+    structToScVal({
+      enabled_dexs: vecToScVal(config.enabledDexs.map(addressToScVal)),
+      max_slippage_bps: u32ToScVal(config.maxSlippageBps),
+      max_price_impact_bps: u32ToScVal(config.maxPriceImpactBps),
+      min_liquidity: i128ToScVal(config.minLiquidity),
+    })
+  );
+  return invokeMethod("set_dex_config", adminPublicKey, op, opts);
 }
 
 // ---------------------------------------------------------------------------

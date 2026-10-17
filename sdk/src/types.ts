@@ -584,3 +584,145 @@ export interface StateDiff {
   changes: StateChangeEntry[];
 }
 
+/** Vote a signer can cast on a proposal (mirrors the contract's `VoteChoice`). */
+export type VoteChoice = "Approve" | "Abstain";
+
+/** Delegation of a signer's voting power to another address. */
+export interface VotingDelegation {
+  /** Address receiving the delegated voting power. */
+  delegate: string;
+  /** Ledger sequence after which the delegation expires. */
+  expiryLedger: bigint;
+}
+
+/** Status of an insurance claim (mirrors the contract's `InsuranceClaimStatus`). */
+export type InsuranceClaimStatus = "Pending" | "Approved" | "Rejected" | "Expired";
+
+/** An insurance claim filed against the vault's insurance pool. */
+export interface InsuranceClaim {
+  id: bigint;
+  claimant: string;
+  amount: bigint;
+  /** 32-byte hash of the off-chain evidence bundle. */
+  evidenceHash: Uint8Array;
+  voteDeadline: bigint;
+  approveWeight: bigint;
+  rejectWeight: bigint;
+  token: string;
+  bondAmount: bigint;
+  bondSettled: boolean;
+  status: InsuranceClaimStatus;
+  createdAt: bigint;
+  approvalThresholdBps: number;
+  quorumBps: number;
+  votingWindow: bigint;
+  eligibleVoters: number;
+  voterCount: number;
+  votingClosed: boolean;
+}
+
+/** Staking configuration (mirrors the contract's `StakingConfig`). */
+export interface StakingConfig {
+  enabled: boolean;
+  minAmount: bigint;
+  baseStakeBps: number;
+  maxStakeAmount: bigint;
+  reputationDiscountThreshold: number;
+  reputationDiscountPercentage: number;
+  slashPercentage: number;
+  cancellationSlashPercentage: number;
+  slashToInsurancePool: boolean;
+  compoundLockPeriod: bigint;
+  compoundEpoch: bigint;
+  rewardBpsPerExecution: number;
+}
+
+/** The stake locked against a proposal (mirrors the contract's `StakeRecord`). */
+export interface StakeRecord {
+  proposalId: bigint;
+  staker: string;
+  token: string;
+  amount: bigint;
+  lockedAt: bigint;
+  refunded: boolean;
+  slashed: boolean;
+  slashedAmount: bigint;
+  releasedAt: bigint;
+  autoCompound: boolean;
+  reinvestmentLockUntil: bigint;
+  lastCompounded: bigint;
+  stakingTier: number;
+  accumulatedRewards: bigint;
+}
+
+/** Recipient filtering mode (mirrors the contract's `ListMode`). */
+export type ListMode = "Disabled" | "Whitelist" | "Blacklist";
+
+/** Per-token spending limits (mirrors the contract's `TokenSpendingConfig`). */
+export interface TokenSpendingConfig {
+  token: string;
+  dailyLimit: bigint;
+  weeklyLimit: bigint;
+  isDefault: boolean;
+}
+
+/** One transfer inside a `batch_propose_transfers` call (mirrors `TransferDetails`). */
+export interface TransferDetails {
+  recipient: string;
+  token: string;
+  amount: bigint;
+}
+
+/** Outcome of `batch_execute_proposals`: IDs that executed and how many failed. */
+export interface BatchResult {
+  executedIds: bigint[];
+  failedCount: number;
+}
+
+/** Swap or liquidity action proposed against a DEX (mirrors the contract's `SwapProposal`). */
+export type SwapProposal =
+  | {
+      type: "Swap";
+      dex: string;
+      tokenIn: string;
+      tokenOut: string;
+      amountIn: bigint;
+      minAmountOut: bigint;
+    }
+  | {
+      type: "AddLiquidity";
+      dex: string;
+      tokenA: string;
+      tokenB: string;
+      amountA: bigint;
+      amountB: bigint;
+      minLpTokens: bigint;
+    }
+  | {
+      type: "RemoveLiquidity";
+      dex: string;
+      lpToken: string;
+      amount: bigint;
+      minTokenA: bigint;
+      minTokenB: bigint;
+    }
+  | { type: "StakeLp"; farm: string; lpToken: string; amount: bigint }
+  | { type: "UnstakeLp"; farm: string; lpToken: string; amount: bigint }
+  | { type: "ClaimRewards"; farm: string };
+
+/** Result recorded for an executed swap (mirrors the contract's `SwapResult`). */
+export interface SwapResult {
+  amountIn: bigint;
+  amountOut: bigint;
+  priceImpactBps: number;
+  executedAt: bigint;
+}
+
+/** DEX routing and safety configuration (mirrors the contract's `DexConfig`). */
+export interface DexConfig {
+  enabledDexs: string[];
+  maxSlippageBps: number;
+  maxPriceImpactBps: number;
+  minLiquidity: bigint;
+}
+

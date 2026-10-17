@@ -34,6 +34,19 @@ export type {
   StateDiff,
   StateChangeValue,
   StateChangeEntry,
+  VoteChoice,
+  VotingDelegation,
+  InsuranceClaim,
+  InsuranceClaimStatus,
+  StakeRecord,
+  StakingConfig,
+  ListMode,
+  TokenSpendingConfig,
+  TransferDetails,
+  BatchResult,
+  SwapProposal,
+  SwapResult,
+  DexConfig,
 } from "./types";
 
 // Enums & errors
@@ -135,6 +148,50 @@ export {
   getRole,
   getTodaySpent,
   isSigner,
+  // Voting lifecycle
+  abstainProposal,
+  changeVote,
+  vetoProposal,
+  cancelProposal,
+  amendProposal,
+  supersedeProposal,
+  delegateVotingPower,
+  revokeDelegation,
+  // Insurance claims
+  submitInsuranceClaim,
+  voteOnInsuranceClaim,
+  closeInsuranceClaimVoting,
+  getInsuranceClaim,
+  // Staking
+  enableAutoCompound,
+  compoundStake,
+  updateStakingConfig,
+  proposeStakeWithdrawal,
+  getStakeRecord,
+  getStakingConfig,
+  // Recipient policy
+  setListMode,
+  addToWhitelist,
+  addToBlacklist,
+  bulkAddToWhitelist,
+  bulkRemoveFromWhitelist,
+  bulkAddToBlacklist,
+  bulkRemoveFromBlacklist,
+  // Token allowlist
+  addSupportedToken,
+  removeSupportedToken,
+  setTokenLimits,
+  getSupportedTokens,
+  // Batch execution
+  createBatch,
+  executeBatch,
+  batchExecuteProposals,
+  batchProposeTransfers,
+  // Swap proposals
+  proposeSwap,
+  executeSwapProposal,
+  getSwapResult,
+  setDexConfig,
 } from "./contract";
 
 // Token flows: vesting, token locks, escrow, funding rounds

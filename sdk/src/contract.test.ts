@@ -58,6 +58,43 @@ import {
   getRole,
   getTodaySpent,
   isSigner,
+  abstainProposal,
+  changeVote,
+  vetoProposal,
+  cancelProposal,
+  amendProposal,
+  supersedeProposal,
+  delegateVotingPower,
+  revokeDelegation,
+  submitInsuranceClaim,
+  voteOnInsuranceClaim,
+  closeInsuranceClaimVoting,
+  getInsuranceClaim,
+  enableAutoCompound,
+  compoundStake,
+  updateStakingConfig,
+  proposeStakeWithdrawal,
+  getStakeRecord,
+  getStakingConfig,
+  setListMode,
+  addToWhitelist,
+  addToBlacklist,
+  bulkAddToWhitelist,
+  bulkRemoveFromWhitelist,
+  bulkAddToBlacklist,
+  bulkRemoveFromBlacklist,
+  addSupportedToken,
+  removeSupportedToken,
+  setTokenLimits,
+  getSupportedTokens,
+  createBatch,
+  executeBatch,
+  batchExecuteProposals,
+  batchProposeTransfers,
+  proposeSwap,
+  executeSwapProposal,
+  getSwapResult,
+  setDexConfig,
 } from "./contract";
 import {
   getContract,
@@ -67,6 +104,11 @@ import {
   u64ToScVal,
   u32ToScVal,
   symbolToScVal,
+  enumToScVal,
+  vecToScVal,
+  boolToScVal,
+  bytesN32ToScVal,
+  structToScVal,
   decodeScVal,
   parseError,
 } from "./utils";
@@ -92,6 +134,13 @@ vi.mock("./utils", () => ({
   u64ToScVal: vi.fn((v: unknown) => `u64:${v}`),
   u32ToScVal: vi.fn((v: unknown) => `u32:${v}`),
   symbolToScVal: vi.fn((v: unknown) => `sym:${v}`),
+  enumToScVal: vi.fn((v: unknown, payload: unknown[] = []) =>
+    payload.length ? `enum:${v}:${payload.join("|")}` : `enum:${v}`,
+  ),
+  vecToScVal: vi.fn((v: unknown[]) => `vec:${v.length}`),
+  boolToScVal: vi.fn((v: unknown) => `bool:${v}`),
+  bytesN32ToScVal: vi.fn((v: unknown) => `bytes32:${v}`),
+  structToScVal: vi.fn((v: unknown) => v),
   decodeScVal: vi.fn(),
   parseError: vi.fn((e: unknown) => e),
   retryOnRateLimit: vi.fn(async (fn: () => Promise<unknown>) => fn()),
@@ -250,6 +299,796 @@ describe("contract.ts bindings", () => {
         "addr:GREJ",
         "u64:7",
       );
+    });
+  });
+
+  describe("Voting Lifecycle", () => {
+    it("abstainProposal encodes signer and proposal id", async () => {
+      const xdr = await abstainProposal("GSIGNER", 7n, opts);
+      expect(xdr).toBe("FAKE_TX_XDR");
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "abstain_proposal",
+        "addr:GSIGNER",
+        "u64:7",
+      );
+      expect(buildTransaction).toHaveBeenCalledWith(
+        "GSIGNER",
+        expect.anything(),
+        opts,
+      );
+    });
+
+    it("changeVote encodes the new choice as an enum", async () => {
+      await changeVote("GSIGNER", 7n, "Abstain", opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "change_vote",
+        "addr:GSIGNER",
+        "u64:7",
+        "enum:Abstain",
+      );
+    });
+
+    it("vetoProposal encodes vetoer and proposal id", async () => {
+      await vetoProposal("GVETO", 7n, opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "veto_proposal",
+        "addr:GVETO",
+        "u64:7",
+      );
+    });
+
+    it("cancelProposal encodes canceller, id, and reason symbol", async () => {
+      await cancelProposal("GCANCEL", 7n, "changed_mind", opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "cancel_proposal",
+        "addr:GCANCEL",
+        "u64:7",
+        "sym:changed_mind",
+      );
+    });
+
+    it("amendProposal encodes the replacement recipient, amount, memo, and reason", async () => {
+      await amendProposal(
+        "GPROP",
+        7n,
+        { recipient: "GNEW", amount: 250n, memo: "fixed", reason: "typo" },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "amend_proposal",
+        "addr:GPROP",
+        "u64:7",
+        "addr:GNEW",
+        "i128:250",
+        "sym:fixed",
+        "sym:typo",
+      );
+    });
+
+    it("supersedeProposal defaults to Normal priority, no conditions, AND logic, no insurance", async () => {
+      await supersedeProposal(
+        "GPROP",
+        7n,
+        { recipient: "GRECIP", tokenAddress: "CTOKEN", amount: 100n, memo: "redo" },
+        {},
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "supersede_proposal",
+        "addr:GPROP",
+        "u64:7",
+        "addr:GRECIP",
+        "addr:CTOKEN",
+        "i128:100",
+        "sym:redo",
+        "enum:Normal",
+        "vec:0",
+        "enum:And",
+        "i128:0",
+      );
+    });
+
+    it("supersedeProposal forwards an explicit priority and insurance amount", async () => {
+      await supersedeProposal(
+        "GPROP",
+        7n,
+        { recipient: "GRECIP", tokenAddress: "CTOKEN", amount: 100n, memo: "redo" },
+        { priority: "Critical", insuranceAmount: 50n },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "supersede_proposal",
+        "addr:GPROP",
+        "u64:7",
+        "addr:GRECIP",
+        "addr:CTOKEN",
+        "i128:100",
+        "sym:redo",
+        "enum:Critical",
+        "vec:0",
+        "enum:And",
+        "i128:50",
+      );
+    });
+
+    it("delegateVotingPower encodes delegator, delegate, and expiry ledger", async () => {
+      await delegateVotingPower(
+        "GDELEG",
+        { delegate: "GDEST", expiryLedger: 900n },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "delegate_voting_power",
+        "addr:GDELEG",
+        "addr:GDEST",
+        "u64:900",
+      );
+    });
+
+    it("revokeDelegation encodes the delegator", async () => {
+      await revokeDelegation("GDELEG", opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "revoke_delegation",
+        "addr:GDELEG",
+      );
+    });
+
+    it("rejects invalid inputs before building a transaction", async () => {
+      await expect(changeVote("GSIGNER", 0n, "Approve", opts)).rejects.toThrow();
+      await expect(abstainProposal("", 7n, opts)).rejects.toThrow();
+      await expect(
+        amendProposal(
+          "GPROP",
+          7n,
+          { recipient: "GNEW", amount: 0n, memo: "fixed", reason: "typo" },
+          opts,
+        ),
+      ).rejects.toThrow();
+      await expect(
+        delegateVotingPower(
+          "GDELEG",
+          { delegate: "GDEST", expiryLedger: -1n },
+          opts,
+        ),
+      ).rejects.toThrow();
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Recipient Policy and Token Allowlist", () => {
+    it("setListMode encodes the admin and the list mode enum", async () => {
+      await setListMode("GADMIN", "Whitelist", opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "set_list_mode",
+        "addr:GADMIN",
+        "enum:Whitelist",
+      );
+    });
+
+    it("addToWhitelist and addToBlacklist encode admin and address", async () => {
+      await addToWhitelist("GADMIN", "GRECIP", opts);
+      await addToBlacklist("GADMIN", "GBAD", opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "add_to_whitelist",
+        "addr:GADMIN",
+        "addr:GRECIP",
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "add_to_blacklist",
+        "addr:GADMIN",
+        "addr:GBAD",
+      );
+    });
+
+    it("bulkAddToWhitelist returns one transaction for a list within the contract limit", async () => {
+      const txs = await bulkAddToWhitelist("GADMIN", ["GA", "GB", "GC"], opts);
+      expect(txs).toEqual(["FAKE_TX_XDR"]);
+      expect(contractCallSpy).toHaveBeenCalledTimes(1);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "bulk_add_to_whitelist",
+        "addr:GADMIN",
+        "vec:3",
+      );
+    });
+
+    it("bulk operations split lists larger than 50 into chunks", async () => {
+      const addresses = Array.from({ length: 120 }, (_, i) => `G${i}`);
+      const txs = await bulkRemoveFromBlacklist("GADMIN", addresses, opts);
+
+      expect(txs).toHaveLength(3);
+      expect(contractCallSpy).toHaveBeenNthCalledWith(
+        1,
+        "bulk_remove_from_blacklist",
+        "addr:GADMIN",
+        "vec:50",
+      );
+      expect(contractCallSpy).toHaveBeenNthCalledWith(
+        2,
+        "bulk_remove_from_blacklist",
+        "addr:GADMIN",
+        "vec:50",
+      );
+      expect(contractCallSpy).toHaveBeenNthCalledWith(
+        3,
+        "bulk_remove_from_blacklist",
+        "addr:GADMIN",
+        "vec:20",
+      );
+    });
+
+    it("bulk operations chunk exactly at the 50-address boundary without an empty tail", async () => {
+      const addresses = Array.from({ length: 50 }, (_, i) => `G${i}`);
+      const txs = await bulkAddToBlacklist("GADMIN", addresses, opts);
+      expect(txs).toHaveLength(1);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "bulk_add_to_blacklist",
+        "addr:GADMIN",
+        "vec:50",
+      );
+    });
+
+    it("bulkRemoveFromWhitelist calls the whitelist removal entry point", async () => {
+      await bulkRemoveFromWhitelist("GADMIN", ["GA"], opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "bulk_remove_from_whitelist",
+        "addr:GADMIN",
+        "vec:1",
+      );
+    });
+
+    it("addSupportedToken encodes token and both spending limits", async () => {
+      await addSupportedToken(
+        "GADMIN",
+        { token: "CTOKEN", dailyLimit: 500n, weeklyLimit: 2000n },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "add_supported_token",
+        "addr:GADMIN",
+        "addr:CTOKEN",
+        "i128:500",
+        "i128:2000",
+      );
+    });
+
+    it("removeSupportedToken encodes admin and token", async () => {
+      await removeSupportedToken("GADMIN", "CTOKEN", opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "remove_supported_token",
+        "addr:GADMIN",
+        "addr:CTOKEN",
+      );
+    });
+
+    it("setTokenLimits encodes token and both spending limits", async () => {
+      await setTokenLimits(
+        "GADMIN",
+        { token: "CTOKEN", dailyLimit: 100n, weeklyLimit: 700n },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "set_token_limits",
+        "addr:GADMIN",
+        "addr:CTOKEN",
+        "i128:100",
+        "i128:700",
+      );
+    });
+
+    it("getSupportedTokens maps each entry into camelCase fields", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue([
+        { token: "CTOKEN", daily_limit: 500n, weekly_limit: 2000n, is_default: true },
+      ]);
+
+      const tokens = await getSupportedTokens("GCALLER", opts);
+
+      expect(contractCallSpy).toHaveBeenCalledWith("get_supported_tokens");
+      expect(tokens).toEqual([
+        { token: "CTOKEN", dailyLimit: 500n, weeklyLimit: 2000n, isDefault: true },
+      ]);
+    });
+
+    it("rejects invalid inputs before building a transaction", async () => {
+      await expect(setListMode("", "Disabled", opts)).rejects.toThrow();
+      await expect(bulkAddToWhitelist("GADMIN", [], opts)).rejects.toThrow();
+      await expect(
+        bulkAddToWhitelist("GADMIN", ["GA", ""], opts),
+      ).rejects.toThrow();
+      await expect(
+        addSupportedToken(
+          "GADMIN",
+          { token: "CTOKEN", dailyLimit: -1n, weeklyLimit: 0n },
+          opts,
+        ),
+      ).rejects.toThrow();
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Batch Execution and Swaps", () => {
+    it("createBatch encodes creator and the proposal ID vec", async () => {
+      await createBatch("GCREATOR", [1n, 2n, 3n], opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "create_batch",
+        "addr:GCREATOR",
+        "vec:3",
+      );
+    });
+
+    it("executeBatch encodes executor and batch id", async () => {
+      await executeBatch("GEXEC", 4n, opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "execute_batch",
+        "addr:GEXEC",
+        "u64:4",
+      );
+    });
+
+    it("batchExecuteProposals encodes executor and the proposal ID vec", async () => {
+      const xdr = await batchExecuteProposals("GEXEC", [5n, 6n], opts);
+      expect(xdr).toBe("FAKE_TX_XDR");
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "batch_execute_proposals",
+        "addr:GEXEC",
+        "vec:2",
+      );
+    });
+
+    it("batchProposeTransfers encodes one struct per transfer with default priority and logic", async () => {
+      await batchProposeTransfers(
+        "GPROP",
+        [
+          { recipient: "GA", token: "CTOKEN", amount: 10n },
+          { recipient: "GB", token: "CTOKEN", amount: 20n },
+        ],
+        {},
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "batch_propose_transfers",
+        "addr:GPROP",
+        "vec:2",
+        "enum:Normal",
+        "vec:0",
+        "enum:And",
+        "i128:0",
+      );
+    });
+
+    it("batchProposeTransfers forwards explicit priority and insurance", async () => {
+      await batchProposeTransfers(
+        "GPROP",
+        [{ recipient: "GA", token: "CTOKEN", amount: 10n }],
+        { priority: "High", insuranceAmount: 5n },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "batch_propose_transfers",
+        "addr:GPROP",
+        "vec:1",
+        "enum:High",
+        "vec:0",
+        "enum:And",
+        "i128:5",
+      );
+    });
+
+    it("proposeSwap encodes a Swap variant with its payload", async () => {
+      await proposeSwap(
+        "GPROP",
+        {
+          type: "Swap",
+          dex: "GDEX",
+          tokenIn: "CA",
+          tokenOut: "CB",
+          amountIn: 100n,
+          minAmountOut: 90n,
+        },
+        {},
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "propose_swap",
+        "addr:GPROP",
+        "enum:Swap:addr:GDEX|addr:CA|addr:CB|i128:100|i128:90",
+        "enum:Normal",
+        "vec:0",
+        "enum:And",
+        "i128:0",
+      );
+    });
+
+    it("proposeSwap encodes each liquidity and farm variant", async () => {
+      await proposeSwap(
+        "GPROP",
+        {
+          type: "AddLiquidity",
+          dex: "GDEX",
+          tokenA: "CA",
+          tokenB: "CB",
+          amountA: 1n,
+          amountB: 2n,
+          minLpTokens: 3n,
+        },
+        {},
+        opts,
+      );
+      await proposeSwap(
+        "GPROP",
+        { type: "ClaimRewards", farm: "GFARM" },
+        {},
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "propose_swap",
+        "addr:GPROP",
+        "enum:AddLiquidity:addr:GDEX|addr:CA|addr:CB|i128:1|i128:2|i128:3",
+        "enum:Normal",
+        "vec:0",
+        "enum:And",
+        "i128:0",
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "propose_swap",
+        "addr:GPROP",
+        "enum:ClaimRewards:addr:GFARM",
+        "enum:Normal",
+        "vec:0",
+        "enum:And",
+        "i128:0",
+      );
+    });
+
+    it("executeSwapProposal encodes executor and proposal id", async () => {
+      await executeSwapProposal("GEXEC", 8n, opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "execute_swap_proposal",
+        "addr:GEXEC",
+        "u64:8",
+      );
+    });
+
+    it("getSwapResult returns null when no swap has run", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue(null);
+
+      await expect(getSwapResult(8n, "GCALLER", opts)).resolves.toBeNull();
+    });
+
+    it("getSwapResult decodes a recorded swap", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue({
+        amount_in: 100n,
+        amount_out: 97n,
+        price_impact_bps: 12,
+        executed_at: 1234n,
+      });
+
+      await expect(getSwapResult(8n, "GCALLER", opts)).resolves.toEqual({
+        amountIn: 100n,
+        amountOut: 97n,
+        priceImpactBps: 12,
+        executedAt: 1234n,
+      });
+    });
+
+    it("setDexConfig encodes the DEX list and limits as a struct", async () => {
+      await setDexConfig(
+        "GADMIN",
+        {
+          enabledDexs: ["GDEX1", "GDEX2"],
+          maxSlippageBps: 100,
+          maxPriceImpactBps: 500,
+          minLiquidity: 1000n,
+        },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "set_dex_config",
+        "addr:GADMIN",
+        {
+          enabled_dexs: "vec:2",
+          max_slippage_bps: "u32:100",
+          max_price_impact_bps: "u32:500",
+          min_liquidity: "i128:1000",
+        },
+      );
+    });
+
+    it("rejects invalid inputs before building a transaction", async () => {
+      await expect(createBatch("GCREATOR", [], opts)).rejects.toThrow();
+      await expect(batchExecuteProposals("GEXEC", [0n], opts)).rejects.toThrow();
+      await expect(
+        batchProposeTransfers("GPROP", [], {}, opts),
+      ).rejects.toThrow();
+      await expect(
+        batchProposeTransfers(
+          "GPROP",
+          [{ recipient: "GA", token: "CTOKEN", amount: 0n }],
+          {},
+          opts,
+        ),
+      ).rejects.toThrow();
+      await expect(
+        setDexConfig(
+          "GADMIN",
+          { enabledDexs: [], maxSlippageBps: 0, maxPriceImpactBps: 0, minLiquidity: 0n },
+          opts,
+        ),
+      ).rejects.toThrow();
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Insurance Claims", () => {
+    const evidenceHash = "ab".repeat(32);
+
+    it("submitInsuranceClaim encodes claim fields and calls submit_insurance_claim", async () => {
+      const xdr = await submitInsuranceClaim(
+        "GCLAIM",
+        { token: "CTOKEN", amount: 500n, evidenceHash, voteDeadline: 1000n },
+        opts,
+      );
+      expect(xdr).toBe("FAKE_TX_XDR");
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "submit_insurance_claim",
+        "addr:GCLAIM",
+        "addr:CTOKEN",
+        "i128:500",
+        `bytes32:${evidenceHash}`,
+        "u64:1000",
+      );
+      expect(buildTransaction).toHaveBeenCalledWith(
+        "GCLAIM",
+        expect.anything(),
+        opts,
+      );
+    });
+
+    it("voteOnInsuranceClaim encodes the approve flag as a bool", async () => {
+      await voteOnInsuranceClaim("GVOTER", 3n, false, opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "vote_on_insurance_claim",
+        "addr:GVOTER",
+        "u64:3",
+        "bool:false",
+      );
+    });
+
+    it("closeInsuranceClaimVoting encodes closer and claim id", async () => {
+      await closeInsuranceClaimVoting("GCLOSE", 3n, opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "close_insurance_claim_voting",
+        "addr:GCLOSE",
+        "u64:3",
+      );
+    });
+
+    it("getInsuranceClaim decodes the on-chain claim into camelCase fields", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue({
+        id: 3n,
+        claimant: "GCLAIM",
+        amount: 500n,
+        evidence_hash: new Uint8Array(32),
+        vote_deadline: 1000n,
+        approve_weight: 2n,
+        reject_weight: 1n,
+        token: "CTOKEN",
+        bond_amount: 25n,
+        bond_settled: false,
+        status: "Pending",
+        created_at: 900n,
+        approval_threshold_bps: 5000,
+        quorum_bps: 2000,
+        voting_window: 100n,
+        eligible_voters: 5,
+        voter_count: 3,
+        voting_closed: false,
+      });
+
+      const claim = await getInsuranceClaim(3n, "GCALLER", opts);
+
+      expect(contractCallSpy).toHaveBeenCalledWith("get_insurance_claim", "u64:3");
+      expect(claim.id).toBe(3n);
+      expect(claim.approveWeight).toBe(2n);
+      expect(claim.bondAmount).toBe(25n);
+      expect(claim.status).toBe("Pending");
+      expect(claim.approvalThresholdBps).toBe(5000);
+      expect(claim.votingClosed).toBe(false);
+    });
+  });
+
+  describe("Staking", () => {
+    it("enableAutoCompound encodes staker and proposal id", async () => {
+      await enableAutoCompound("GSTAKER", 9n, opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "enable_auto_compound",
+        "addr:GSTAKER",
+        "u64:9",
+      );
+    });
+
+    it("compoundStake encodes keeper and proposal id", async () => {
+      await compoundStake("GKEEPER", 9n, opts);
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "compound_stake",
+        "addr:GKEEPER",
+        "u64:9",
+      );
+    });
+
+    it("updateStakingConfig encodes every config field as a struct", async () => {
+      await updateStakingConfig(
+        "GADMIN",
+        {
+          enabled: true,
+          minAmount: 100n,
+          baseStakeBps: 250,
+          maxStakeAmount: 10000n,
+          reputationDiscountThreshold: 50,
+          reputationDiscountPercentage: 10,
+          slashPercentage: 10,
+          cancellationSlashPercentage: 20,
+          slashToInsurancePool: true,
+          compoundLockPeriod: 5n,
+          compoundEpoch: 7n,
+          rewardBpsPerExecution: 30,
+        },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "update_staking_config",
+        "addr:GADMIN",
+        expect.objectContaining({
+          enabled: "bool:true",
+          min_amount: "i128:100",
+          base_stake_bps: "u32:250",
+          slash_percentage: "u32:10",
+          slash_to_insurance_pool: "bool:true",
+          compound_lock_period: "u64:5",
+          reward_bps_per_execution: "u32:30",
+        }),
+      );
+    });
+
+    it("proposeStakeWithdrawal encodes token, amount, and recipient", async () => {
+      await proposeStakeWithdrawal(
+        "GPROP",
+        { token: "CTOKEN", amount: 40n, recipient: "GRECIP" },
+        opts,
+      );
+      expect(contractCallSpy).toHaveBeenCalledWith(
+        "propose_stake_withdrawal",
+        "addr:GPROP",
+        "addr:CTOKEN",
+        "i128:40",
+        "addr:GRECIP",
+      );
+    });
+
+    it("getStakeRecord returns null when the contract has no record", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue(null);
+
+      await expect(getStakeRecord(9n, "GCALLER", opts)).resolves.toBeNull();
+    });
+
+    it("getStakeRecord decodes an existing record into camelCase fields", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue({
+        proposal_id: 9n,
+        staker: "GSTAKER",
+        token: "CTOKEN",
+        amount: 1000n,
+        locked_at: 800n,
+        refunded: false,
+        slashed: true,
+        slashed_amount: 100n,
+        released_at: 0n,
+        auto_compound: true,
+        reinvestment_lock_until: 850n,
+        last_compounded: 820n,
+        staking_tier: 2,
+        accumulated_rewards: 15n,
+      });
+
+      const record = await getStakeRecord(9n, "GCALLER", opts);
+
+      expect(record).toMatchObject({
+        proposalId: 9n,
+        staker: "GSTAKER",
+        slashedAmount: 100n,
+        autoCompound: true,
+        stakingTier: 2,
+        accumulatedRewards: 15n,
+      });
+    });
+
+    it("getStakingConfig decodes the stored configuration", async () => {
+      serverMock.getAccount.mockResolvedValue({ accountId: () => "GCALLER" });
+      serverMock.simulateTransaction.mockResolvedValue({
+        transactionData: {},
+        result: { retval: {} },
+      });
+      (decodeScVal as Mock).mockReturnValue({
+        enabled: true,
+        min_amount: 100n,
+        base_stake_bps: 250,
+        max_stake_amount: 10000n,
+        reputation_discount_threshold: 50,
+        reputation_discount_percentage: 10,
+        slash_percentage: 10,
+        cancellation_slash_percentage: 20,
+        slash_to_insurance_pool: true,
+        compound_lock_period: 5n,
+        compound_epoch: 7n,
+        reward_bps_per_execution: 30,
+      });
+
+      const config = await getStakingConfig("GCALLER", opts);
+
+      expect(config.minAmount).toBe(100n);
+      expect(config.cancellationSlashPercentage).toBe(20);
+      expect(config.rewardBpsPerExecution).toBe(30);
+    });
+
+    it("rejects invalid inputs before building a transaction", async () => {
+      await expect(
+        submitInsuranceClaim(
+          "GCLAIM",
+          { token: "CTOKEN", amount: 0n, evidenceHash: "ab".repeat(32), voteDeadline: 1000n },
+          opts,
+        ),
+      ).rejects.toThrow();
+      await expect(voteOnInsuranceClaim("GVOTER", 0n, true, opts)).rejects.toThrow();
+      await expect(enableAutoCompound("", 9n, opts)).rejects.toThrow();
+      await expect(
+        updateStakingConfig(
+          "GADMIN",
+          {
+            enabled: true,
+            minAmount: -1n,
+            baseStakeBps: 0,
+            maxStakeAmount: 0n,
+            reputationDiscountThreshold: 0,
+            reputationDiscountPercentage: 0,
+            slashPercentage: 0,
+            cancellationSlashPercentage: 0,
+            slashToInsurancePool: false,
+            compoundLockPeriod: 0n,
+            compoundEpoch: 0n,
+            rewardBpsPerExecution: 0,
+          },
+          opts,
+        ),
+      ).rejects.toThrow();
+      expect(buildTransaction).not.toHaveBeenCalled();
     });
   });
 

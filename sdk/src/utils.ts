@@ -394,6 +394,50 @@ export function symbolToScVal(value: string): xdr.ScVal {
   return xdr.ScVal.scvSymbol(value);
 }
 
+/** Convert a JS boolean to a Soroban Bool ScVal. */
+export function boolToScVal(value: boolean): xdr.ScVal {
+  return xdr.ScVal.scvBool(value);
+}
+
+/** Convert a 64-character hex string to a Soroban BytesN<32> ScVal. */
+export function bytesN32ToScVal(hex: string): xdr.ScVal {
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error("Expected a 32-byte value encoded as 64 hex characters");
+  }
+  const bytes = Uint8Array.from(hex.match(/../g)!, (byte) => parseInt(byte, 16));
+  return xdr.ScVal.scvBytes(bytes);
+}
+
+/** Wrap already-encoded ScVals in a Soroban Vec ScVal. */
+export function vecToScVal(items: xdr.ScVal[]): xdr.ScVal {
+  return xdr.ScVal.scvVec(items);
+}
+
+/**
+ * Encode a contract struct as a Soroban map keyed by field name.
+ * Keys are sorted, as the Soroban host requires for struct maps.
+ */
+export function structToScVal(fields: Record<string, xdr.ScVal>): xdr.ScVal {
+  const entries = Object.keys(fields)
+    .sort()
+    .map(
+      (key) =>
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol(key),
+          val: fields[key],
+        })
+    );
+  return xdr.ScVal.scvMap(entries);
+}
+
+/**
+ * Encode a contract enum variant as a Soroban vec: `[Symbol(variant), ...payload]`.
+ * Unit variants pass no payload.
+ */
+export function enumToScVal(variant: string, payload: xdr.ScVal[] = []): xdr.ScVal {
+  return xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(variant), ...payload]);
+}
+
 /** Decode a raw ScVal into a native JS value. */
 export function decodeScVal(scVal: xdr.ScVal): unknown {
   return scValToNative(scVal);

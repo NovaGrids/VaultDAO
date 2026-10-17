@@ -6,7 +6,13 @@
  */
 
 import type { SdkOptions } from "./types.js";
-import { proposeTransfer, approveProposal, executeProposal } from "./contract.js";
+import {
+  proposeTransfer,
+  approveProposal,
+  executeProposal,
+  batchProposeTransfers,
+  batchExecuteProposals,
+} from "./contract.js";
 
 /**
  * Transfer configuration for batch proposal.
@@ -285,6 +291,49 @@ export class BatchProposalOrchestrator {
     }
 
     return executedIds;
+  }
+
+  /**
+   * Build one `batch_propose_transfers` transaction covering every queued transfer.
+   *
+   * Unlike {@link createProposals}, which issues one contract call per transfer,
+   * this makes a single call that the contract applies atomically: either every
+   * transfer is proposed or none is.
+   *
+   * @param proposerPublicKey Public key of proposer
+   * @returns Transaction XDR for the single batch call
+   */
+  public async createProposalsAtomic(proposerPublicKey: string): Promise<string> {
+    const transfers = this.state.transfers.map((transfer) => ({
+      recipient: transfer.recipientPublicKey,
+      token: transfer.tokenAddress,
+      amount: transfer.amount,
+    }));
+
+    return this.retryOperation(
+      () => batchProposeTransfers(proposerPublicKey, transfers, {}, this.options),
+      "create-proposals-atomic",
+    );
+  }
+
+  /**
+   * Build one `batch_execute_proposals` transaction covering every created proposal.
+   *
+   * The contract executes the batch atomically, so this does not loop per proposal.
+   *
+   * @param executorPublicKey Public key of executor
+   * @returns Transaction XDR for the single batch call
+   */
+  public async executeAllProposalsAtomic(executorPublicKey: string): Promise<string> {
+    const proposalIds = this.state.createdProposalIds.map((id) => BigInt(id));
+
+    const txn = await this.retryOperation(
+      () => batchExecuteProposals(executorPublicKey, proposalIds, this.options),
+      "execute-proposals-atomic",
+    );
+
+    this.state.executedProposalIds.push(...this.state.createdProposalIds);
+    return txn;
   }
 
   /**
