@@ -254,6 +254,10 @@ pub enum VestingKey {
 pub enum ReserveKey {
     ReservedEscrow(Address),
     ReservedStream(Address),
+    /// Tokens held in time-weighted locks, owed back to lockers (#1903)
+    ReservedLocks(Address),
+    /// Unreleased balance of approved funding rounds (#1901)
+    ReservedFunding(Address),
 }
 
 #[contracttype(export = false)]
@@ -349,6 +353,8 @@ pub enum FeatureKey {
     FundingRound(u64),
     /// Funding round IDs by proposal ID -> Vec<u64>
     ProposalFundingRounds(u64),
+    /// Admin approvals recorded for a pending funding round -> Vec<Address> (#1901)
+    FundingRoundApprovals(u64),
     /// Funding round configuration -> FundingRoundConfig
     FundingRoundConfig,
     /// Batch transaction storage (nested with BatchKey)
@@ -674,18 +680,6 @@ pub fn get_vesting_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64>
     ids
 }
 
-/// One page of vesting schedule IDs in ascending ID order, starting strictly
-/// after `start_after_id` (#1744).
-///
-/// Cursor-based counterpart to `get_vesting_ids_paginated`; pass the last ID
-/// received (or 0 to start from the beginning).
-pub fn get_vesting_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit == 0 || limit > 100 { 100 } else { limit };
-    // Read the counter without consuming it: `next_vesting_id` increments.
-    let next_id: u64 = env.storage().instance().get(&VestingKey::NextId).unwrap_or(1);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Cursor-based pagination over vesting schedule IDs.
 ///
 /// Seeks directly to the position of `start_after_id` (or the first position
@@ -758,12 +752,39 @@ pub fn release_stream_reserve(env: &Env, token: &Address, amount: i128) {
     adjust_reserve(env, ReserveKey::ReservedStream(token.clone()), -amount);
 }
 
+pub fn get_reserved_locks(env: &Env, token: &Address) -> i128 {
+    get_reserve(env, &ReserveKey::ReservedLocks(token.clone()))
+}
+
+pub fn reserve_locks(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedLocks(token.clone()), amount);
+}
+
+pub fn release_locks_reserve(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedLocks(token.clone()), -amount);
+}
+
+pub fn get_reserved_funding(env: &Env, token: &Address) -> i128 {
+    get_reserve(env, &ReserveKey::ReservedFunding(token.clone()))
+}
+
+pub fn reserve_funding(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedFunding(token.clone()), amount);
+}
+
+pub fn release_funding_reserve(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedFunding(token.clone()), -amount);
+}
+
 /// Sum of every earmarked balance for `token`: vesting, escrow, stream,
-/// insurance pool, stake pool and collected fees (#1698).
+/// time-weighted locks, funding rounds, insurance pool, stake pool and collected
+/// fees (#1698, #1901, #1903).
 pub fn get_total_reserved(env: &Env, token: &Address) -> i128 {
     get_reserved_vesting(env, token)
         .saturating_add(get_reserved_escrow(env, token))
         .saturating_add(get_reserved_stream(env, token))
+        .saturating_add(get_reserved_locks(env, token))
+        .saturating_add(get_reserved_funding(env, token))
         .saturating_add(get_insurance_pool(env, token))
         .saturating_add(get_stake_pool(env, token))
         .saturating_add(get_fees_collected(env, token))
@@ -1073,26 +1094,6 @@ pub fn get_proposal_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64
     ids
 }
 
-/// Return a page of existing proposal IDs in ascending creation order,
-/// starting strictly after `start_after_id`.
-///
-/// This is the cursor-based counterpart to `get_proposal_ids_paginated`:
-/// callers pass the last ID they received (or 0 to start from the
-/// beginning) and receive the next `limit` IDs. Cursor pagination is
-/// stable under concurrent inserts, unlike offset pagination.
-///
-/// # Arguments
-/// * `start_after_id` - Return IDs strictly greater than this value (0 = from start).
-/// * `limit`          - Maximum number of IDs to return. Capped at 100 internally.
-///
-/// # Returns
-/// A vector of proposal IDs in ascending order.
-pub fn get_proposal_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit > 100 { 100 } else { limit };
-    let next_id = get_next_proposal_id(env);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Binary-search the dense proposal ID index for `id`.
 ///
 /// IDs are assigned sequentially starting at 1, so the dense index is the
@@ -1609,24 +1610,6 @@ pub fn get_recurring_payment_ids_paginated(env: &Env, offset: u64, limit: u64) -
     ids
 }
 
-/// Return a page of existing recurring payment IDs in ascending creation
-/// order, starting strictly after `start_after_id`.
-///
-/// Cursor-based counterpart to `get_recurring_payment_ids_paginated`; pass the
-/// last ID received (or 0 to start from the beginning).
-///
-/// # Arguments
-/// * `start_after_id` - Return IDs strictly greater than this value (0 = from start).
-/// * `limit`          - Maximum number of IDs to return. Capped at 100 internally.
-///
-/// # Returns
-/// A vector of recurring payment IDs in ascending order.
-pub fn get_recurring_payment_ids_after(env: &Env, start_after_id: u64, limit: u64) -> Vec<u64> {
-    let cap: u64 = if limit > 100 { 100 } else { limit };
-    let next_id = get_next_recurring_id(env);
-    let mut ids: Vec<u64> = Vec::new(env);
-
-    let start = start_after_id.saturating_add(1);
 /// Cursor-based pagination over recurring payment IDs.
 ///
 /// Seeks directly to the position of `start_after_id` (or the first position
@@ -3677,7 +3660,6 @@ pub fn get_proposal_funding_rounds(env: &Env, proposal_id: u64) -> Vec<u64> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
-#[allow(dead_code)]
 pub fn add_proposal_funding_round(env: &Env, proposal_id: u64, round_id: u64) {
     let mut rounds = get_proposal_funding_rounds(env, proposal_id);
     rounds.push_back(round_id);
@@ -3698,6 +3680,22 @@ pub fn set_funding_round_config(env: &Env, config: &FundingRoundConfig) {
     env.storage()
         .instance()
         .set(&FeatureKey::FundingRoundConfig, config);
+}
+
+/// Admins who have approved a pending funding round (#1901).
+pub fn get_funding_round_approvals(env: &Env, round_id: u64) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::FundingRoundApprovals(round_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_funding_round_approvals(env: &Env, round_id: u64, approvals: &Vec<Address>) {
+    let key = FeatureKey::FundingRoundApprovals(round_id);
+    env.storage().persistent().set(&key, approvals);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
 // ============================================================================
