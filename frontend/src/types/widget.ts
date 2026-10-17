@@ -26,6 +26,10 @@ export interface WidgetPermissions {
   storage?: boolean;
   wallet?: boolean;
   notifications?: boolean;
+  proposals?: boolean;
+  vaultConfig?: boolean;
+  events?: boolean;
+  navigation?: boolean;
 }
 
 export interface WidgetConfig {

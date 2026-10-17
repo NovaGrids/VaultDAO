@@ -3,6 +3,7 @@ import { Plus, Settings, Trash2, AlertTriangle, Shield } from 'lucide-react';
 import WidgetSandbox from './WidgetSandbox';
 import WidgetMarketplace from './WidgetMarketplace';
 import type { InstalledWidget, WidgetManifest, WidgetPermissions } from '../types/widget';
+import { isValidWidgetId } from '../utils/widgetSandbox';
 
 interface WidgetSystemProps {
   onWidgetAdd?: (widget: InstalledWidget) => void;
@@ -22,7 +23,8 @@ const WidgetSystem: React.FC<WidgetSystemProps> = ({ onWidgetAdd, onWidgetRemove
   const loadInstalledWidgets = () => {
     const stored = localStorage.getItem('vaultdao-installed-widgets');
     if (stored) {
-      setInstalledWidgets(JSON.parse(stored));
+      const widgets: InstalledWidget[] = JSON.parse(stored);
+      setInstalledWidgets(widgets.filter((w) => isValidWidgetId(w.id)));
     }
   };
 
@@ -32,6 +34,8 @@ const WidgetSystem: React.FC<WidgetSystemProps> = ({ onWidgetAdd, onWidgetRemove
   };
 
   const installWidget = useCallback((manifest: WidgetManifest) => {
+    if (!isValidWidgetId(manifest.metadata.id)) return;
+
     const newWidget: InstalledWidget = {
       id: manifest.metadata.id,
       metadata: manifest.metadata,

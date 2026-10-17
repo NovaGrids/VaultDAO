@@ -5,6 +5,8 @@ import { useToast } from '../hooks/useToast';
 import { useProposals } from '../hooks/useProposals';
 import { useVaultContract } from '../hooks/useVaultContract';
 import type { InstalledWidget, WidgetMessage, WidgetEventType } from '../types/widget';
+import { buildWidgetSandboxHtml, isValidWidgetId } from '../utils/widgetSandbox';
+import { getDataActionPermission, hasPermission, permissionDenied, resolveNavigationPath, resolvePermissionRequest } from '../utils/widgetPermissions';
 
 interface WidgetSandboxProps {
   widget: InstalledWidget;
@@ -64,14 +66,21 @@ const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, 
           }
           break;
 
-        case 'data':
+        case 'data': {
+          const required = getDataActionPermission(payload.action);
+          if (!required) break;
+          if (!hasPermission(widget.permissions, required)) {
+            respond(permissionDenied(required));
+            break;
+          }
           if (payload.action === 'getProposals') {
             respond(proposals);
-          } else if (payload.action === 'getVaultConfig') {
+          } else {
             const config = await getVaultConfig();
             respond(config);
           }
           break;
+        }
 
         case 'action':
           handleWidgetAction(payload, respond);
@@ -93,20 +102,34 @@ const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, 
   const handleWidgetAction = (payload: Record<string, unknown>, respond: (data: unknown) => void) => {
     switch (payload.action) {
       case 'showToast':
-        if (widget.permissions.notifications) {
+        if (hasPermission(widget.permissions, 'notifications')) {
           showToast(payload.message as string, (payload.type as any) || 'info');
           respond({ success: true });
         } else {
-          respond({ error: 'Notification permission denied' });
+          respond(permissionDenied('notifications'));
         }
         break;
 
-      case 'navigate':
-        navigate(payload.path as string);
+      case 'navigate': {
+        if (!hasPermission(widget.permissions, 'navigation')) {
+          respond(permissionDenied('navigation'));
+          break;
+        }
+        const path = resolveNavigationPath(payload.path);
+        if (!path) {
+          respond({ error: 'invalid_path' });
+          break;
+        }
+        navigate(path);
         respond({ success: true });
         break;
+      }
 
       case 'subscribe':
+        if (!hasPermission(widget.permissions, 'events')) {
+          respond(permissionDenied('events'));
+          break;
+        }
         setActiveSubscriptions(prev => new Set(prev).add(payload.eventType as WidgetEventType));
         respond({ success: true });
         break;
@@ -120,10 +143,13 @@ const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, 
         respond({ success: true });
         break;
 
-      case 'request-permission':
-        // Mock permission granting
-        respond(true);
+      case 'request-permission': {
+        const granted = resolvePermissionRequest(widget, payload.permission, (permission) =>
+          window.confirm(`"${widget.metadata.name}" is requesting the "${permission}" permission. Allow it?`)
+        );
+        respond(granted);
         break;
+      }
     }
   };
 
@@ -150,97 +176,12 @@ const WidgetSandbox: React.FC<WidgetSandboxProps> = ({ widget, onLoad, onError, 
 
   const loadWidget = () => {
     if (!iframeRef.current) return;
-    
-    // Injecting a base HTML with the widget's entry point script
-    // In a production app, the entryPoint would be a URL to a JS file
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <style>
-            body { 
-              margin: 0; 
-              padding: 16px; 
-              font-family: 'Inter', system-ui, -apple-system, sans-serif;
-              color: #E2E8F0;
-              background: transparent;
-              overflow-x: hidden;
-            }
-            * { box-sizing: border-box; }
-            ::-webkit-scrollbar { width: 6px; }
-            ::-webkit-scrollbar-track { background: transparent; }
-            ::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 3px; }
-          </style>
-        </head>
-        <body>
-          <div id="root"></div>
-          <script type="module">
-            // This is where the third-party widget code would be loaded.
-            // For the demo, we'll simulate a widget that uses the SDK.
-            
-            console.log("[Widget] Starting initialization...");
-            
-            // Simulating a mini-SDK for the widget context
-            window.parent.postMessage({ type: 'init', widgetId: '${widget.id}', payload: { ready: true } }, '*');
-            
-            const root = document.getElementById('root');
-            root.innerHTML = \`
-              <div style="background: rgba(31, 41, 55, 0.5); border: 1px solid rgba(75, 85, 99, 0.3); border-radius: 12px; padding: 20px; backdrop-filter: blur(8px);">
-                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                  <div style="width: 10px; height: 10px; background: #8B5CF6; border-radius: 50%; box-shadow: 0 0 10px #8B5CF6;"></div>
-                  <h3 style="margin: 0; font-size: 16px; font-weight: 600;">Widget API Demo</h3>
-                </div>
-                <p style="font-size: 13px; color: #9CA3AF; margin-bottom: 20px; line-height: 1.5;">
-                  This widget is running in a secure sandbox. Click the button below to fetch proposals via the Vault SDK.
-                </p>
-                <div style="display: flex; flex-direction: column; gap: 10px;">
-                  <button id="fetchBtn" style="background: #3B82F6; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; transition: background 0.2s;">
-                    Fetch Proposals
-                  </button>
-                  <button id="toastBtn" style="background: rgba(255,255,255,0.05); color: #F3F4F6; border: 1px solid rgba(255,255,255,0.1); padding: 10px 16px; border-radius: 8px; font-size: 13px; cursor: pointer;">
-                    Show Notification
-                  </button>
-                </div>
-                <div id="output" style="margin-top: 20px; font-size: 12px; font-family: monospace; color: #10B981; max-height: 100px; overflow-y: auto;"></div>
-              </div>
-            \`;
+    if (!isValidWidgetId(widget.id)) {
+      setError('This widget has an invalid id and cannot be loaded.');
+      return;
+    }
 
-            document.getElementById('fetchBtn').onclick = () => {
-              const callId = Math.random().toString(36).substring(7);
-              window.parent.postMessage({ 
-                type: 'data', 
-                widgetId: '${widget.id}', 
-                payload: { action: 'getProposals' },
-                callId 
-              }, '*');
-            };
-
-            document.getElementById('toastBtn').onclick = () => {
-              window.parent.postMessage({ 
-                type: 'action', 
-                widgetId: '${widget.id}', 
-                payload: { action: 'showToast', message: 'Hello from Widget Sandbox!', type: 'success' }
-              }, '*');
-            };
-
-            window.addEventListener('message', (e) => {
-              if (e.data.type === 'response') {
-                const output = document.getElementById('output');
-                output.innerText = 'Received ' + (e.data.payload.length || 0) + ' proposals';
-              }
-              if (e.data.type === 'event') {
-                const output = document.getElementById('output');
-                output.innerText = 'Event: ' + e.data.payload.eventType;
-              }
-            });
-          </script>
-        </body>
-      </html>
-    `;
-    
-    const blob = new Blob([html], { type: 'text/html' });
+    const blob = new Blob([buildWidgetSandboxHtml(widget.id)], { type: 'text/html' });
     iframeRef.current.src = URL.createObjectURL(blob);
   };
 
