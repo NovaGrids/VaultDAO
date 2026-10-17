@@ -259,7 +259,7 @@ HORIZON_URL=http://host.docker.internal:8000/horizon
 # Contract ID — you'll get this after deploying (see Section 6)
 CONTRACT_ID=CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
-# Redis (uses the docker compose service name)
+# Redis (uses the docker compose service name; set the password in the root .env)
 REDIS_HOST=redis
 REDIS_PORT=6379
 ```
@@ -277,6 +277,15 @@ VITE_CONTRACT_ID=CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 > **Note about `host.docker.internal`:** The backend runs inside a Docker container. To reach the Stellar node running on your host machine, use `host.docker.internal` instead of `localhost`. On Linux, you may need to add `--add-host host.docker.internal:host-gateway` to the Stellar node container or use the host network mode.
 
 ### Step 3: Start the Stack
+
+Redis requires a password. Create a `.env` file in the repository root (it is git-ignored) and set one:
+
+```bash
+# From the repository root
+echo "REDIS_PASSWORD=$(openssl rand -hex 24)" > .env
+```
+
+Compose reads this file for `${REDIS_PASSWORD}`. Redis is not published to the host, so it is reachable only from the other containers on `vaultdao-shared-network`. To connect from the host, use `docker compose exec redis redis-cli` (it picks up the password from the container environment).
 
 ```bash
 # From the repository root
@@ -297,7 +306,7 @@ docker compose ps
 
 # Expected output:
 # NAME                  IMAGE                    STATUS    PORTS
-# vaultdao-redis        redis:7-alpine           Up        0.0.0.0:6379->6379/tcp
+# vaultdao-redis        redis:7-alpine           Up        6379/tcp
 # vaultdao-backend      vaultdao-backend         Up        0.0.0.0:8787->8787/tcp
 # vaultdao-frontend     vaultdao-frontend        Up        0.0.0.0:5173->5173/tcp
 
@@ -611,7 +620,7 @@ stellar keys show admin
 | `REDIS_HOST` | Redis hostname | — | `redis` | No |
 | `REDIS_PORT` | Redis port | — | `6379` | No |
 | `RATE_LIMIT_ENABLED` | Toggle rate limiting | `true` | `true` | No |
-| `RATE_LIMIT_REDIS_URL` | Redis connection string | — | `redis://redis:6379` | No |
+| `RATE_LIMIT_REDIS_URL` | Redis connection string, including the password | — | `redis://:${REDIS_PASSWORD}@redis:6379` | No |
 | `RATE_LIMIT_PROPOSALS_PER_MIN` | Proposals rate limit | `100` | `100` | No |
 | `RATE_LIMIT_EXECUTE_PER_MIN` | Execute rate limit | `10` | `10` | No |
 | `RATE_LIMIT_DEFAULT_PER_MIN` | Default rate limit | `60` | `60` | No |

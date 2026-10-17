@@ -4,19 +4,36 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
 
 # Install all dependencies (including devDependencies for typescript build)
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
+RUN npm ci
 
 # Copy source files
 COPY . .
 
 # Build/compile the application
-RUN pnpm build
+RUN npm run build
 
 # Prune node_modules to retain only production dependencies
-RUN pnpm prune --prod
+RUN npm prune --omit=dev
+
+# Development stage: full dependencies and tsx for hot reload via docker-compose
+FROM node:22-alpine AS dev
+
+WORKDIR /app
+
+# curl is needed for the docker-compose healthcheck
+RUN apk add --no-cache curl
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+EXPOSE 8787
+
+CMD ["npm", "run", "dev"]
 
 # Runtime stage
 FROM node:22-alpine AS runner

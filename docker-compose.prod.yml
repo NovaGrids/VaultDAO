@@ -1,0 +1,25 @@
+# ==============================================================================
+# VaultDAO Production Frontend Override
+# ==============================================================================
+# Serves the built frontend from the Nginx runner image on its real port (80).
+# Run with: docker compose -f docker-compose.prod.yml up frontend
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runner
+    # Distinct tag so the production build does not overwrite the dev image
+    image: vaultdao-frontend:prod
+    container_name: vaultdao-frontend
+    # Nginx listens on 80 inside the container; map it to host port 8080
+    ports:
+      - "8080:80"
+    networks:
+      - vaultdao-net
+
+networks:
+  vaultdao-net:
+    name: vaultdao-shared-network
+    driver: bridge
