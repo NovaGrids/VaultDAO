@@ -206,6 +206,12 @@ pub enum VaultError {
     /// Requested action not covered by capability
     CapabilityNotGranted = 634,
 
+    /// Capability token ID is already in use
+    CapabilityAlreadyExists = 635,
+
+    /// Capability token has invalid grant parameters
+    CapabilityInvalid = 636,
+
     /// Commit phase is closed (past commit_deadline)
     CommitPhaseClosed = 1100,
     /// Reveal phase has not started yet (before commit_deadline)

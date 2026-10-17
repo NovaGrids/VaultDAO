@@ -97,6 +97,17 @@ Create a single transfer proposal.
 
 **Returns:** Proposal ID (u64)
 
+### `propose_transfer_with_capability(...) -> Result<u64, VaultError>`
+
+Create a transfer proposal using a `CreateProposal(max_amount)` capability
+instead of the Treasurer/Admin role. Takes the same parameters as
+`propose_transfer` plus `capability_id: BytesN<32>`. The capability ceiling
+applies to the proposal amount; all other proposal validations and spending
+limits still apply.
+
+**Errors:** Same as `propose_transfer`, plus `CapabilityNotGranted`,
+`CapabilityExpired`, `CapabilityRevoked`, and `CapabilityMaxUsesReached`.
+
 **Errors:**
 - `InsufficientRole` - Proposer lacks Treasurer/Admin role
 - `InvalidAmount` - Amount ≤ 0
@@ -463,6 +474,12 @@ Execute a due recurring payment (anyone can call).
 - `ExceedsDailyLimit` - Daily cap exceeded
 - `InsufficientBalance` - Vault balance too low
 
+### `execute_recurring_payment_with_capability(caller, payment_id, capability_id) -> Result<(), VaultError>`
+
+Execute a due recurring payment using a token scoped to the exact payment ID.
+The caller must authenticate as the token's grantee. The permissionless keeper
+entry point above remains available.
+
 ---
 
 ### `get_recurring_payment(payment_id: u64) -> Result<RecurringPayment, VaultError>`
@@ -495,6 +512,16 @@ Create a token stream (continuous payment over time).
 
 **Errors:**
 - `InvalidAmount` - amount ≤ 0 or duration = 0
+
+### `create_stream_with_capability(...) -> Result<u64, VaultError>`
+
+Create a stream using an `InitiateStream(max_amount)` capability instead of
+the Treasurer/Admin role. Takes the same parameters as `create_stream` plus
+`capability_id: BytesN<32>`. The capability ceiling applies to the stream's
+`total_amount`.
+
+See [Capability Tokens](../guides/CAPABILITY_TOKENS.md) for grant validation,
+limits, lifecycle, and the complete authorization model.
 
 ---
 
@@ -1481,4 +1508,3 @@ The oracle contract must implement the `lastprice(asset: Address) -> Option<Vaul
 - Very large balances: Saturating arithmetic prevents overflow
 - Oracle not configured: Returns NotInitialized error
 - Stale price data: Returns RetryError; client should retry after staleness window
-

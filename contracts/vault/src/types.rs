@@ -1410,6 +1410,10 @@ pub enum AuditAction {
     PhaseExecuted = 29,
     /// A single phase of a multi-phase proposal failed to execute.
     PhaseFailed = 30,
+    /// A capability token was granted.
+    CapabilityGranted = 31,
+    /// A capability token was revoked.
+    CapabilityRevoked = 32,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -3209,4 +3213,3 @@ pub struct ClawbackRequest {
     pub reason: Symbol,
     pub status: ClawbackStatus,
 }
-

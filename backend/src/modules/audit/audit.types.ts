@@ -9,6 +9,8 @@ export enum AuditAction {
   RoleRevoked = "RoleRevoked",
   FundsDeposited = "FundsDeposited",
   FundsWithdrawn = "FundsWithdrawn",
+  CapabilityGranted = "CapabilityGranted",
+  CapabilityRevoked = "CapabilityRevoked",
 }
 
 // Maps AuditAction string to on-chain u32 discriminant (matches Rust AuditAction enum)
@@ -25,6 +27,8 @@ export const AUDIT_ACTION_DISCRIMINANT: Record<string, number> = {
   UpdateThreshold: 9,
   AbstainProposal: 10,
   AmendProposal: 11,
+  CapabilityGranted: 31,
+  CapabilityRevoked: 32,
 };
 
 export interface AuditEntry {

@@ -944,6 +944,43 @@ impl VaultDAO {
             None,
             0,
             false,
+            None,
+        )
+    }
+
+    /// Propose a transfer using a granted `CreateProposal` capability instead
+    /// of the Treasurer role.
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_transfer_with_capability(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token_addr: Address,
+        amount: i128,
+        memo: Symbol,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+        capability_id: BytesN<32>,
+    ) -> Result<u64, VaultError> {
+        let empty_dependencies = Vec::new(&env);
+        Self::propose_transfer_internal(
+            env,
+            proposer,
+            recipient,
+            token_addr,
+            amount,
+            memo,
+            priority,
+            conditions,
+            condition_logic,
+            insurance_amount,
+            empty_dependencies,
+            None,
+            0,
+            false,
+            Some(capability_id),
         )
     }
 
@@ -993,6 +1030,7 @@ impl VaultDAO {
             Some(schedule.execution_time),
             schedule.execution_window_ledgers,
             false,
+            None,
         )
     }
 
@@ -1029,6 +1067,7 @@ impl VaultDAO {
             None,
             0,
             false,
+            None,
         )
     }
 
@@ -1048,6 +1087,7 @@ impl VaultDAO {
         execution_time: Option<u64>,
         execution_window_ledgers: u64,
         override_duplicate: bool,
+        capability_id: Option<BytesN<32>>,
     ) -> Result<u64, VaultError> {
         // 1. Verify identity
         proposer.require_auth();
@@ -1065,9 +1105,18 @@ impl VaultDAO {
         }
 
         // 3. Check permission
-        let role = storage::get_role(&env, &proposer);
-        if !Role::role_satisfies(Role::Treasurer, role) {
-            return Err(VaultError::InsufficientRole);
+        if let Some(id) = capability_id {
+            Self::consume_capability(
+                &env,
+                &proposer,
+                &id,
+                Capability::CreateProposal(amount),
+            )?;
+        } else {
+            let role = storage::get_role(&env, &proposer);
+            if !Role::role_satisfies(Role::Treasurer, role) {
+                return Err(VaultError::InsufficientRole);
+            }
         }
 
         // 4. Validate recipient against lists
@@ -5259,6 +5308,7 @@ impl VaultDAO {
             None,
             0,
             false,
+            None,
         )?;
 
         // Cancel the old proposal with supersession reason
@@ -7128,6 +7178,27 @@ impl VaultDAO {
     ///
     /// Can be called by anyone (keeper/bot) if the schedule is due.
     pub fn execute_recurring_payment(env: Env, payment_id: u64) -> Result<(), VaultError> {
+        Self::execute_recurring_payment_internal(env, payment_id)
+    }
+
+    /// Execute a recurring payment using a token scoped to this payment ID.
+    pub fn execute_recurring_payment_with_capability(
+        env: Env,
+        caller: Address,
+        payment_id: u64,
+        capability_id: BytesN<32>,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        Self::consume_capability(
+            &env,
+            &caller,
+            &capability_id,
+            Capability::ExecuteRecurring(payment_id),
+        )?;
+        Self::execute_recurring_payment_internal(env, payment_id)
+    }
+
+    fn execute_recurring_payment_internal(env: Env, payment_id: u64) -> Result<(), VaultError> {
         require_not_paused(&env)?;
         let mut payment = storage::get_recurring_payment(&env, payment_id)?;
 
@@ -7525,12 +7596,67 @@ impl VaultDAO {
         total_amount: i128,
         duration_secs: u64,
     ) -> Result<u64, VaultError> {
+        Self::create_stream_internal(
+            env,
+            sender,
+            recipient,
+            token_addr,
+            rate,
+            total_amount,
+            duration_secs,
+            None,
+        )
+    }
+
+    /// Create a stream using a granted `InitiateStream` capability instead of
+    /// the Treasurer or Admin role.
+    pub fn create_stream_with_capability(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token_addr: Address,
+        rate: i128,
+        total_amount: i128,
+        duration_secs: u64,
+        capability_id: BytesN<32>,
+    ) -> Result<u64, VaultError> {
+        Self::create_stream_internal(
+            env,
+            sender,
+            recipient,
+            token_addr,
+            rate,
+            total_amount,
+            duration_secs,
+            Some(capability_id),
+        )
+    }
+
+    fn create_stream_internal(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token_addr: Address,
+        rate: i128,
+        total_amount: i128,
+        duration_secs: u64,
+        capability_id: Option<BytesN<32>>,
+    ) -> Result<u64, VaultError> {
         sender.require_auth();
 
-        // Role check: only Treasurer or Admin may create streams
-        let role = storage::get_role(&env, &sender);
-        if role != Role::Treasurer && role != Role::Admin {
-            return Err(VaultError::InsufficientRole);
+        if let Some(id) = capability_id {
+            Self::consume_capability(
+                &env,
+                &sender,
+                &id,
+                Capability::InitiateStream(total_amount),
+            )?;
+        } else {
+            // Role check: only Treasurer or Admin may create streams.
+            let role = storage::get_role(&env, &sender);
+            if role != Role::Treasurer && role != Role::Admin {
+                return Err(VaultError::InsufficientRole);
+            }
         }
 
         // Validate inputs
@@ -18225,15 +18351,40 @@ impl VaultDAO {
     pub fn grant_capability(
         env: Env,
         admin: Address,
-        token: CapabilityToken,
+        mut token: CapabilityToken,
     ) -> Result<(), VaultError> {
         admin.require_auth();
         let role = storage::get_role(&env, &admin);
         if !Role::role_satisfies(Role::Admin, role) {
             return Err(VaultError::InsufficientRole);
         }
+
+        if storage::get_capability_token(&env, &token.id).is_some() {
+            return Err(VaultError::CapabilityAlreadyExists);
+        }
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&token.granted_to) {
+            return Err(VaultError::SignerNotFound);
+        }
+        let current_ledger = env.ledger().sequence();
+        if token.capabilities.is_empty()
+            || (token.expires_at > 0 && token.expires_at < current_ledger)
+            || (token.expires_at == 0 && token.max_uses == 0)
+        {
+            return Err(VaultError::CapabilityInvalid);
+        }
+
+        token.revoked = false;
+        token.uses_count = 0;
         storage::set_capability_token(&env, &token);
         storage::add_capability_token_to_holder_index(&env, &token.granted_to, &token.id);
+        let token_id_bytes = token.id.to_array();
+        let audit_target = u64::from_le_bytes(
+            token_id_bytes[0..8]
+                .try_into()
+                .expect("capability token ID prefix is 8 bytes"),
+        );
+        storage::create_audit_entry(&env, AuditAction::CapabilityGranted, &admin, audit_target);
         storage::extend_instance_ttl(&env);
         events::emit_capability_granted(
             &env,
@@ -18256,13 +18407,22 @@ impl VaultDAO {
         action: Capability,
     ) -> Result<(), VaultError> {
         caller.require_auth();
+        Self::consume_capability(&env, &caller, &token_id, action)
+    }
+
+    fn consume_capability(
+        env: &Env,
+        caller: &Address,
+        token_id: &BytesN<32>,
+        action: Capability,
+    ) -> Result<(), VaultError> {
         let mut token =
-            storage::get_capability_token(&env, &token_id).ok_or(VaultError::CapabilityNotFound)?;
+            storage::get_capability_token(env, token_id).ok_or(VaultError::CapabilityNotFound)?;
 
         if token.revoked {
             return Err(VaultError::CapabilityRevoked);
         }
-        if token.granted_to != caller {
+        if token.granted_to != *caller {
             return Err(VaultError::Unauthorized);
         }
 
@@ -18300,8 +18460,11 @@ impl VaultDAO {
             return Err(VaultError::CapabilityNotGranted);
         }
 
-        token.uses_count += 1;
-        storage::set_capability_token(&env, &token);
+        token.uses_count = token
+            .uses_count
+            .checked_add(1)
+            .ok_or(VaultError::CapabilityMaxUsesReached)?;
+        storage::set_capability_token(env, &token);
         Ok(())
     }
 
@@ -18320,6 +18483,18 @@ impl VaultDAO {
             storage::get_capability_token(&env, &token_id).ok_or(VaultError::CapabilityNotFound)?;
         token.revoked = true;
         storage::set_capability_token(&env, &token);
+        let token_id_bytes = token_id.to_array();
+        let audit_target = u64::from_le_bytes(
+            token_id_bytes[0..8]
+                .try_into()
+                .expect("capability token ID prefix is 8 bytes"),
+        );
+        storage::create_audit_entry(
+            &env,
+            AuditAction::CapabilityRevoked,
+            &admin,
+            audit_target,
+        );
         events::emit_capability_revoked(&env, &token_id, &admin, &token.granted_to);
         Ok(())
     }
