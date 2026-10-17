@@ -88,6 +88,9 @@ const MAX_TAGS: u32 = 10;
 /// Maximum number of attachments per proposal
 const MAX_ATTACHMENTS: u32 = 10;
 
+/// Maximum number of signers in a signer set (Issue #1935)
+const MAX_SIGNERS: u32 = 20;
+
 /// Minimum admin rotation delay: 1440 ledgers ? 24 hours at 5 s/ledger.
 /// Enforced at both vault initialization and `set_admin_rotation_delay`.
 const MIN_ADMIN_ROTATION_DELAY: u64 = 1_440;
@@ -477,6 +480,14 @@ mod test_proposal_ttl_extension_on_read;
 mod test_rbac_consistency;
 #[cfg(test)]
 mod test_recovery_role_revocation;
+#[cfg(test)]
+mod test_recovery_expiry;
+#[cfg(test)]
+mod test_recovery_competing;
+#[cfg(test)]
+mod test_recovery_signer_validation;
+#[cfg(test)]
+mod test_recovery_cancel_votes;
 #[cfg(test)]
 mod test_recurring;
 #[cfg(test)]
@@ -4541,6 +4552,7 @@ impl VaultDAO {
                     guardians: Vec::new(&env),
                     threshold: 0,
                     delay: 0,
+                    recovery_ttl_ledgers: 0,
                 },
                 staking_config: StakingConfig::default(),
                 supported_tokens: Vec::new(&env),
@@ -5490,10 +5502,8 @@ impl VaultDAO {
         }
 
         // ── 2. Input validation ──────────────────────────────────────────────
-        // 2a. Non-empty list.
-        if signers.is_empty() {
-            return Err(VaultError::NoSigners);
-        }
+        // 2a. Non-empty, within MAX_SIGNERS, and no duplicate addresses.
+        Self::validate_signer_set(&signers)?;
 
         let current_config = storage::get_config(&env)?;
 
@@ -5501,15 +5511,6 @@ impl VaultDAO {
         //     so the vault remains executable after the change is applied.
         if signers.len() < current_config.threshold {
             return Err(VaultError::ThresholdTooHigh);
-        }
-
-        // 2c. No duplicate addresses in the proposed signer list.
-        for i in 0..signers.len() {
-            for j in (i + 1)..signers.len() {
-                if signers.get(i).unwrap() == signers.get(j).unwrap() {
-                    return Err(VaultError::SignerAlreadyExists);
-                }
-            }
         }
 
         // ── 3. Build the proposed config and route through governance ────────
@@ -5995,6 +5996,27 @@ impl VaultDAO {
     }
 
     /// Validate a Config struct using the same rules as initialize.
+    /// Validate a proposed signer list (Issue #1935).
+    ///
+    /// Rejects an empty list, more than `MAX_SIGNERS` entries, and duplicate
+    /// addresses. Shared by `update_config_signers` and `initiate_recovery`.
+    fn validate_signer_set(signers: &Vec<Address>) -> Result<(), VaultError> {
+        if signers.is_empty() {
+            return Err(VaultError::NoSigners);
+        }
+        if signers.len() > MAX_SIGNERS {
+            return Err(VaultError::TooManySigners);
+        }
+        for i in 0..signers.len() {
+            for j in (i + 1)..signers.len() {
+                if signers.get(i).unwrap() == signers.get(j).unwrap() {
+                    return Err(VaultError::SignerAlreadyExists);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate_config(config: &Config) -> Result<(), VaultError> {
         if config.signers.is_empty() {
             return Err(VaultError::NoSigners);
@@ -14536,9 +14558,7 @@ impl VaultDAO {
         }
 
         // Validate new config
-        if new_signers.is_empty() {
-            return Err(VaultError::NoSigners);
-        }
+        Self::validate_signer_set(&new_signers)?;
         if new_threshold < 1 {
             return Err(VaultError::ThresholdTooHigh);
         }
@@ -14546,20 +14566,40 @@ impl VaultDAO {
             return Err(VaultError::ThresholdTooHigh);
         }
 
+        // Issue #1934: refuse to open a second recovery while one is still live.
+        if let Some(active_id) = storage::get_active_recovery_id(&env) {
+            if let Ok(active) = storage::get_recovery_proposal(&env, active_id) {
+                if Self::recovery_is_open(&env, &active) {
+                    return Err(VaultError::RecoveryAlreadyActive);
+                }
+            }
+        }
+
         let id = storage::increment_recovery_id(&env);
         let current_ledger = env.ledger().sequence() as u64;
+
+        // Issue #1933: a zero TTL keeps the historical no-expiry behaviour.
+        let ttl = config.recovery_config.recovery_ttl_ledgers;
+        let expires_at = if ttl == 0 {
+            u64::MAX
+        } else {
+            current_ledger.saturating_add(ttl)
+        };
 
         let proposal = RecoveryProposal {
             id,
             new_signers,
             new_threshold,
             approvals: Vec::new(&env),
+            cancel_votes: Vec::new(&env),
             status: RecoveryStatus::Pending,
             created_at: current_ledger,
             execution_after: 0, // Set after approval threshold is met
+            expires_at,
         };
 
         storage::set_recovery_proposal(&env, &proposal);
+        storage::set_active_recovery_id(&env, id);
         events::emit_recovery_proposed(&env, id, new_threshold);
 
         Ok(id)
@@ -14581,6 +14621,9 @@ impl VaultDAO {
         let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
         if proposal.status != RecoveryStatus::Pending {
             return Err(VaultError::ProposalNotPending);
+        }
+        if Self::recovery_is_expired(&env, &proposal) {
+            return Err(VaultError::ProposalExpired);
         }
 
         if proposal.approvals.contains(&guardian) {
@@ -14754,6 +14797,9 @@ impl VaultDAO {
         if proposal.status != RecoveryStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
+        if Self::recovery_is_expired(&env, &proposal) {
+            return Err(VaultError::ProposalExpired);
+        }
 
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger < proposal.execution_after {
@@ -14851,6 +14897,7 @@ impl VaultDAO {
 
         proposal.status = RecoveryStatus::Executed;
         storage::set_recovery_proposal(&env, &proposal);
+        Self::cancel_competing_recoveries(&env, proposal_id);
 
         events::emit_recovery_executed(&env, proposal_id);
         if !invalidated_ids.is_empty() {
@@ -14880,28 +14927,25 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        // For an approved recovery, require guardian quorum to cancel
+        // For an approved recovery, cancellation needs a guardian quorum.
+        // Cancel votes live in their own list (Issue #1936), so an approver
+        // may still cancel and a partial quorum does not cancel the proposal.
         if proposal.status == RecoveryStatus::Approved {
-            // Check if this guardian has already voted to cancel
-            // We reuse the approvals vector to track cancel votes
-            if proposal.approvals.contains(&guardian) {
-                return Err(VaultError::AlreadyApproved);
+            if proposal.cancel_votes.contains(&guardian) {
+                return Err(VaultError::AlreadyCancelVoted);
             }
 
-            proposal.approvals.push_back(guardian.clone());
+            proposal.cancel_votes.push_back(guardian.clone());
 
-            // Require threshold of guardians to approve the cancellation
-            if proposal.approvals.len() >= config.recovery_config.threshold {
+            if proposal.cancel_votes.len() >= config.recovery_config.threshold {
                 proposal.status = RecoveryStatus::Cancelled;
                 storage::set_recovery_proposal(&env, &proposal);
                 events::emit_recovery_cancelled(&env, proposal_id, &guardian);
-                Ok(())
             } else {
-                // Store the partial cancellation votes
                 storage::set_recovery_proposal(&env, &proposal);
-                events::emit_recovery_cancelled(&env, proposal_id, &guardian);
-                Ok(())
+                events::emit_recovery_cancel_voted(&env, proposal_id, &guardian);
             }
+            Ok(())
         } else {
             // For pending recoveries, a single guardian can cancel
             proposal.status = RecoveryStatus::Cancelled;
@@ -14918,8 +14962,54 @@ impl VaultDAO {
     }
 
     /// Get recovery proposal details
+    ///
+    /// A live proposal past its `expires_at` is reported as `Expired`. The
+    /// stored record is not rewritten here because the approve and execute
+    /// paths reject expired proposals, and a failed call reverts its writes.
     pub fn get_recovery_proposal(env: Env, id: u64) -> Result<RecoveryProposal, VaultError> {
-        storage::get_recovery_proposal(&env, id)
+        let mut proposal = storage::get_recovery_proposal(&env, id)?;
+        if Self::recovery_is_expired(&env, &proposal)
+            && (proposal.status == RecoveryStatus::Pending
+                || proposal.status == RecoveryStatus::Approved)
+        {
+            proposal.status = RecoveryStatus::Expired;
+        }
+        Ok(proposal)
+    }
+
+    /// Whether a recovery proposal is past its expiry ledger (Issue #1933).
+    fn recovery_is_expired(env: &Env, proposal: &RecoveryProposal) -> bool {
+        env.ledger().sequence() as u64 > proposal.expires_at
+    }
+
+    /// Whether a recovery proposal can still be approved or executed.
+    /// Expired proposals are not open, so they do not block a new recovery.
+    fn recovery_is_open(env: &Env, proposal: &RecoveryProposal) -> bool {
+        (proposal.status == RecoveryStatus::Pending
+            || proposal.status == RecoveryStatus::Approved)
+            && !Self::recovery_is_expired(env, proposal)
+    }
+
+    /// Cancel every other open recovery once one has executed (Issue #1934).
+    ///
+    /// Competing proposals carry their own signer lists and thresholds, so a
+    /// stale one must not be approvable or executable after a newer recovery
+    /// has replaced the signer set.
+    fn cancel_competing_recoveries(env: &Env, executed_id: u64) {
+        for id in 1..storage::get_next_recovery_id(env) {
+            if id == executed_id {
+                continue;
+            }
+            if let Ok(mut other) = storage::get_recovery_proposal(env, id) {
+                if other.status == RecoveryStatus::Pending
+                    || other.status == RecoveryStatus::Approved
+                {
+                    other.status = RecoveryStatus::Cancelled;
+                    storage::set_recovery_proposal(env, &other);
+                    events::emit_recovery_cancelled(env, id, &env.current_contract_address());
+                }
+            }
+        }
     }
 
     /// Get recovery config change proposal details (Issue #1702)

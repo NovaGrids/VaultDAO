@@ -82,6 +82,7 @@ fn setup<'a>() -> Setup<'a> {
             threshold: 1,
             // no delay — execute immediately after approval
             delay: 0,
+            recovery_ttl_ledgers: 0,
         },
         staking_config: StakingConfig::default(),
     };

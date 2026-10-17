@@ -1819,6 +1819,8 @@ pub struct RecoveryConfig {
     pub threshold: u32,
     /// Delay in ledgers before recovery can be executed
     pub delay: u64,
+    /// Ledgers a recovery proposal stays live after creation. Zero disables expiry.
+    pub recovery_ttl_ledgers: u64,
 }
 
 impl RecoveryConfig {
@@ -1827,6 +1829,7 @@ impl RecoveryConfig {
             guardians: Vec::new(env),
             threshold: 0,
             delay: 0,
+            recovery_ttl_ledgers: 0,
         }
     }
 }
@@ -1840,6 +1843,7 @@ pub enum RecoveryStatus {
     Approved = 1,
     Executed = 2,
     Cancelled = 3,
+    Expired = 4,
 }
 
 /// Proposal to recover wallet access by replacing signers
@@ -1853,12 +1857,16 @@ pub struct RecoveryProposal {
     pub new_threshold: u32,
     /// Guardians who have approved this proposal
     pub approvals: Vec<Address>,
+    /// Guardians who have voted to cancel an Approved proposal (Issue #1936)
+    pub cancel_votes: Vec<Address>,
     /// Current status
     pub status: RecoveryStatus,
     /// Ledger when the proposal was created
     pub created_at: u64,
     /// Earliest ledger when this recovery can be executed
     pub execution_after: u64,
+    /// Last ledger on which this proposal can still be approved or executed
+    pub expires_at: u64,
 }
 
 /// Recovery configuration change proposal (Issue #1702)

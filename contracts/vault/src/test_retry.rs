@@ -61,6 +61,7 @@ mod tests {
                 guardians: soroban_sdk::vec![&env],
                 threshold: 0,
                 delay: 0,
+                recovery_ttl_ledgers: 0,
             },
             staking_config: types::StakingConfig {
                 compound_lock_period: 17280,
@@ -225,6 +226,7 @@ mod tests {
                 guardians: soroban_sdk::vec![&env],
                 threshold: 0,
                 delay: 0,
+                recovery_ttl_ledgers: 0,
             },
             staking_config: types::StakingConfig {
                 compound_lock_period: 17280,

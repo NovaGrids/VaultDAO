@@ -344,6 +344,8 @@ pub enum FeatureKey {
     RecoveryProposal(u64),
     /// Recovery config change proposal by ID -> RecoveryConfigChangeProposal (Issue #1702)
     RecoveryConfigChangeProposal(u64),
+    /// ID of the most recently initiated recovery proposal -> u64 (Issue #1934)
+    ActiveRecoveryId,
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     /// Funding round by ID -> FundingRound
     FundingRound(u64),
@@ -3568,7 +3570,8 @@ pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {
 // Recovery
 // ============================================================================
 
-fn get_next_recovery_id(env: &Env) -> u64 {
+/// Next recovery proposal ID. Every ID below this value has been allocated.
+pub fn get_next_recovery_id(env: &Env) -> u64 {
     env.storage()
         .instance()
         .get(&FeatureKey::Counter(CounterKey::Recovery))
@@ -3596,6 +3599,19 @@ pub fn get_recovery_proposal(env: &Env, id: u64) -> Result<RecoveryProposal, Vau
         .persistent()
         .get(&FeatureKey::RecoveryProposal(id))
         .ok_or(VaultError::ProposalNotFound)
+}
+
+/// Most recently initiated recovery proposal ID, if any (Issue #1934).
+pub fn get_active_recovery_id(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::ActiveRecoveryId)
+}
+
+pub fn set_active_recovery_id(env: &Env, id: u64) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::ActiveRecoveryId, &id);
 }
 
 // ============================================================================
