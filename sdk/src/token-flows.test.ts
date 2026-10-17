@@ -395,6 +395,8 @@ describe("funding rounds", () => {
         rejection_reason: null,
       },
     ]);
+    // proposal_id is passed as None
+    expect(args[5]).toBeNull();
   });
 
   it("createFundingRound validates basis points when percentages are used", async () => {

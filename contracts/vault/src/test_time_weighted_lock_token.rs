@@ -118,9 +118,10 @@ fn test_unsupported_governance_token_cannot_be_locked() {
     env.mock_all_auths();
     let (client, admin, _gov_token) = setup(&env);
 
-    // Governance token pointed at a token the vault does not support
+    // Governance token pointed at a token the vault does not support is rejected
+    // at configuration time (#1904), so the previous config keeps applying.
     let unsupported = new_token(&env);
-    client.set_time_weighted_config(
+    let config_result = client.try_set_time_weighted_config(
         &admin,
         &TimeWeightedConfig {
             enabled: true,
@@ -128,6 +129,8 @@ fn test_unsupported_governance_token_cannot_be_locked() {
             ..TimeWeightedConfig::default()
         },
     );
+    assert_eq!(config_result, Err(Ok(VaultError::TokenNotSupported)));
+
     let owner = Address::generate(&env);
     StellarAssetClient::new(&env, &unsupported).mint(&owner, &1_000);
 
@@ -136,23 +139,26 @@ fn test_unsupported_governance_token_cannot_be_locked() {
 }
 
 #[test]
-fn test_no_governance_token_rejects_all_locks() {
+fn test_enabling_without_governance_token_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, gov_token) = setup(&env);
 
-    client.set_time_weighted_config(
+    // Enabling without a governance token is rejected at configuration time (#1904)
+    let config_result = client.try_set_time_weighted_config(
         &admin,
         &TimeWeightedConfig {
             enabled: true,
             ..TimeWeightedConfig::default()
         },
     );
-    let owner = Address::generate(&env);
-    StellarAssetClient::new(&env, &gov_token).mint(&owner, &1_000);
+    assert_eq!(config_result, Err(Ok(VaultError::TokenNotSupported)));
 
-    let result = client.try_lock_tokens(&owner, &gov_token, &1_000, &LOCK_DURATION);
-    assert_eq!(result, Err(Ok(VaultError::TokenNotSupported)));
+    // The rejected update leaves the previous, valid configuration in force
+    assert_eq!(
+        client.get_time_weighted_config().governance_token,
+        Some(gov_token)
+    );
 }
 
 #[test]

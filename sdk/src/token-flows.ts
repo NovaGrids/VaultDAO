@@ -578,7 +578,9 @@ export async function createFundingRound(
     addressToScVal(recipient),
     addressToScVal(token),
     i128ToScVal(totalAmount),
-    fundingMilestonesToScVal(milestones)
+    fundingMilestonesToScVal(milestones),
+    // proposal_id: None. This SDK call does not link the round to a proposal (#1902).
+    xdr.ScVal.scvVoid()
   );
   return invokeMethod("create_funding_round", proposerPublicKey, op, opts);
 }
