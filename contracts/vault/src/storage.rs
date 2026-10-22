@@ -431,12 +431,16 @@ pub enum FeatureKey {
     EmergencySigners,
     /// Pause cooldown configuration -> PauseCooldownConfig (Issue #1350)
     PauseCooldownConfig,
-    /// Circuit breaker outflow per hour window -> i128
+    /// Legacy circuit breaker outflow per hour window -> i128
     CircuitBreakerOutflow(u64),
+    /// Circuit breaker outflow per token and hour window -> i128
+    TokenCircuitBreakerOutflow(Address, u64),
     /// Proposal content fingerprint -> bool
     ProposalFingerprint(soroban_sdk::BytesN<32>),
     /// Circuit breaker threshold -> i128
     CircuitBreakerThreshold,
+    /// Per-token circuit breaker threshold -> i128
+    CircuitBreakerTokenThreshold(Address),
     /// Compliance rules -> Vec<ComplianceRule>
     ComplianceRules,
     /// Scoped delegation record -> ScopedDelegation
@@ -5331,21 +5335,38 @@ pub fn set_circuit_breaker_threshold(env: &Env, threshold: i128) {
         .set(&FeatureKey::CircuitBreakerThreshold, &threshold);
 }
 
+pub fn get_circuit_breaker_token_threshold(env: &Env, token: &Address) -> Option<i128> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::CircuitBreakerTokenThreshold(token.clone()))
+}
+
+pub fn set_circuit_breaker_token_threshold(env: &Env, token: &Address, threshold: i128) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::CircuitBreakerTokenThreshold(token.clone()), &threshold);
+}
+
+pub fn get_circuit_breaker_threshold_for_token(env: &Env, token: &Address) -> i128 {
+    get_circuit_breaker_token_threshold(env, token)
+        .unwrap_or_else(|| get_circuit_breaker_threshold(env))
+}
+
 /// Returns the 1-hour window index for circuit breaker tracking (~720 ledgers per hour)
 pub fn get_hour_window(env: &Env) -> u64 {
     env.ledger().sequence() as u64 / 720
 }
 
-pub fn get_circuit_breaker_outflow(env: &Env, window: u64) -> i128 {
+pub fn get_circuit_breaker_outflow(env: &Env, token: &Address, window: u64) -> i128 {
     env.storage()
         .temporary()
-        .get(&FeatureKey::CircuitBreakerOutflow(window))
+        .get(&FeatureKey::TokenCircuitBreakerOutflow(token.clone(), window))
         .unwrap_or(0i128)
 }
 
-pub fn add_circuit_breaker_outflow(env: &Env, window: u64, amount: i128) {
-    let current: i128 = get_circuit_breaker_outflow(env, window);
-    let key = FeatureKey::CircuitBreakerOutflow(window);
+pub fn add_circuit_breaker_outflow(env: &Env, token: &Address, window: u64, amount: i128) {
+    let current: i128 = get_circuit_breaker_outflow(env, token, window);
+    let key = FeatureKey::TokenCircuitBreakerOutflow(token.clone(), window);
     env.storage().temporary().set(&key, &(current + amount));
     env.storage().temporary().extend_ttl(&key, 1440, 1440); // 2 hours
 }

@@ -212,6 +212,84 @@ fn test_configure_emergency_requires_admin() {
     assert_eq!(r, Err(Ok(VaultError::InsufficientRole)));
 }
 
+#[test]
+fn test_per_token_circuit_breaker_threshold_requires_admin_and_nonnegative_value() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let member = Address::generate(&env);
+    let token = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
+    client.initialize(&admin, &base_config(&env, signers));
+    client.set_role(&admin, &member, &Role::Member);
+
+    assert_eq!(
+        client.try_set_circuit_breaker_token_threshold(&member, &token, &100i128),
+        Err(Ok(VaultError::InsufficientRole))
+    );
+    assert_eq!(
+        client.try_set_circuit_breaker_token_threshold(&admin, &token, &-1i128),
+        Err(Ok(VaultError::InvalidAmount))
+    );
+
+    client.set_circuit_breaker_token_threshold(&admin, &token, &10_000_000i128);
+    assert_eq!(client.get_circuit_breaker_token_threshold(&token), 10_000_000i128);
+}
+
+#[test]
+fn test_circuit_breaker_budgets_are_independent_for_different_token_decimals() {
+    let (env, client) = make_env();
+    let admin = Address::generate(&env);
+    let token_7_decimals = Address::generate(&env);
+    let token_18_decimals = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
+    client.initialize(&admin, &base_config(&env, signers));
+
+    // The thresholds use each token's native units: 2 tokens at 7 and 18 decimals.
+    client.set_circuit_breaker_token_threshold(&admin, &token_7_decimals, &20_000_000i128);
+    client.set_circuit_breaker_token_threshold(
+        &admin,
+        &token_18_decimals,
+        &2_000_000_000_000_000_000i128,
+    );
+
+    let window = env.as_contract(&client.address, || storage::get_hour_window(&env));
+    env.as_contract(&client.address, || {
+        storage::add_circuit_breaker_outflow(&env, &token_7_decimals, window, 10_000_000);
+        storage::add_circuit_breaker_outflow(
+            &env,
+            &token_18_decimals,
+            window,
+            1_000_000_000_000_000_000,
+        );
+    });
+
+    assert_eq!(
+        env.as_contract(&client.address, || {
+            storage::get_circuit_breaker_outflow(&env, &token_7_decimals, window)
+        }),
+        10_000_000
+    );
+    assert_eq!(
+        env.as_contract(&client.address, || {
+            storage::get_circuit_breaker_outflow(&env, &token_18_decimals, window)
+        }),
+        1_000_000_000_000_000_000
+    );
+    let outflow_7_decimals = env.as_contract(&client.address, || {
+        storage::get_circuit_breaker_outflow(&env, &token_7_decimals, window)
+    });
+    let outflow_18_decimals = env.as_contract(&client.address, || {
+        storage::get_circuit_breaker_outflow(&env, &token_18_decimals, window)
+    });
+    assert!(outflow_7_decimals < client.get_circuit_breaker_token_threshold(&token_7_decimals));
+    assert!(outflow_18_decimals < client.get_circuit_breaker_token_threshold(&token_18_decimals));
+    assert!(outflow_7_decimals + outflow_18_decimals > 20_000_000);
+}
+
 // ── Test 8: configure_emergency needs at least 2 signers ─────────────────
 
 #[test]

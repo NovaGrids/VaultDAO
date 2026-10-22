@@ -4036,6 +4036,48 @@ fn test_retry_schedules_on_retryable_failure() {
 }
 
 #[test]
+fn test_retryable_failure_does_not_consume_circuit_breaker_budget() {
+    setup_retry_test!(env, client, admin, _signer1, token_addr, contract_id);
+
+    let mut emergency_signers = Vec::new(&env);
+    emergency_signers.push_back(Address::generate(&env));
+    emergency_signers.push_back(Address::generate(&env));
+    client.configure_emergency(&admin, &emergency_signers, &2_000i128);
+
+    let recipient = Address::generate(&env);
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token_addr,
+        &1_000_i128,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
+    );
+    client.approve_proposal(&admin, &proposal_id);
+
+    assert!(client.try_execute_proposal(&admin, &proposal_id).is_ok());
+    let retry_state = client.get_retry_state(&proposal_id).unwrap();
+    assert_eq!(retry_state.retry_count, 1);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 11;
+    });
+    assert!(client.try_execute_proposal(&admin, &proposal_id).is_ok());
+    assert_eq!(client.get_retry_state(&proposal_id).unwrap().retry_count, 2);
+
+    let window = env.as_contract(&contract_id, || storage::get_hour_window(&env));
+    assert_eq!(
+        env.as_contract(&contract_id, || {
+            storage::get_circuit_breaker_outflow(&env, &token_addr, window)
+        }),
+        0
+    );
+}
+
+#[test]
 #[ignore = "retry semantics changed; needs update"]
 fn test_retry_backoff_enforced() {
     setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);

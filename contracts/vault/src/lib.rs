@@ -2636,10 +2636,10 @@ impl VaultDAO {
         }
 
         // Circuit breaker check: auto-pause if outflow in current hour exceeds threshold (#1084)
-        let threshold = storage::get_circuit_breaker_threshold(&env);
+        let threshold = storage::get_circuit_breaker_threshold_for_token(&env, &proposal.token);
         if threshold > 0 {
             let window = storage::get_hour_window(&env);
-            let outflow = storage::get_circuit_breaker_outflow(&env, window);
+            let outflow = storage::get_circuit_breaker_outflow(&env, &proposal.token, window);
             if outflow + proposal.amount > threshold {
                 // Auto-trigger pause
                 let cb_cause = Symbol::new(&env, "circuit_breaker");
@@ -2659,7 +2659,6 @@ impl VaultDAO {
                 events::emit_vault_paused(&env, &executor, &cb_cause);
                 return Ok(());
             }
-            storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
         }
 
         // Execute pre-hooks
@@ -2687,6 +2686,16 @@ impl VaultDAO {
 
         let result = match exec_result {
             Ok(()) => {
+                if threshold > 0 {
+                    let window = storage::get_hour_window(&env);
+                    storage::add_circuit_breaker_outflow(
+                        &env,
+                        &proposal.token,
+                        window,
+                        proposal.amount,
+                    );
+                }
+
                 // Execute post-hooks
                 for hook in config.post_execution_hooks.iter() {
                     Self::call_hook(&env, &hook, proposal_id, false);
@@ -13149,14 +13158,13 @@ impl VaultDAO {
         }
 
         // Circuit breaker: same hourly outflow accounting as execute_proposal
-        let threshold = storage::get_circuit_breaker_threshold(&env);
+        let threshold = storage::get_circuit_breaker_threshold_for_token(&env, &proposal.token);
         if threshold > 0 {
             let window = storage::get_hour_window(&env);
-            let outflow = storage::get_circuit_breaker_outflow(&env, window);
+            let outflow = storage::get_circuit_breaker_outflow(&env, &proposal.token, window);
             if outflow + proposal.amount > threshold {
                 return Err(VaultError::VaultPaused);
             }
-            storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
         }
 
         // Get DEX config and swap details
@@ -13169,6 +13177,16 @@ impl VaultDAO {
         // Perform comprehensive swap validation and execution
         let swap_result =
             Self::perform_comprehensive_swap(&env, &dex_config, &swap_proposal, proposal_id)?;
+
+        if threshold > 0 {
+            let window = storage::get_hour_window(&env);
+            storage::add_circuit_breaker_outflow(
+                &env,
+                &proposal.token,
+                window,
+                proposal.amount,
+            );
+        }
 
         // Store result under FeatureKey::SwapResult(proposal_id)
         storage::set_swap_result(&env, proposal_id, &swap_result);
@@ -17018,14 +17036,14 @@ impl VaultDAO {
             }
         }
 
-        let cb_threshold = storage::get_circuit_breaker_threshold(env);
+        let cb_threshold = storage::get_circuit_breaker_threshold_for_token(env, token);
         if cb_threshold > 0 {
             let window = storage::get_hour_window(env);
-            let outflow = storage::get_circuit_breaker_outflow(env, window);
+            let outflow = storage::get_circuit_breaker_outflow(env, token, window);
             if outflow + amount > cb_threshold {
                 return Err(VaultError::VaultPaused);
             }
-            storage::add_circuit_breaker_outflow(env, window, amount);
+            storage::add_circuit_breaker_outflow(env, token, window, amount);
         }
 
         storage::add_daily_spent(env, today, amount);
@@ -20808,6 +20826,33 @@ impl VaultDAO {
 
         events::emit_config_updated(&env, &admin);
         Ok(())
+    }
+
+    /// Set the hourly circuit-breaker threshold for one token (Admin only).
+    pub fn set_circuit_breaker_token_threshold(
+        env: Env,
+        admin: Address,
+        token: Address,
+        threshold: i128,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let _config = storage::get_config(&env)?;
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+        if threshold < 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        storage::set_circuit_breaker_token_threshold(&env, &token, threshold);
+        events::emit_config_updated(&env, &admin);
+        Ok(())
+    }
+
+    /// Get the effective hourly circuit-breaker threshold for a token.
+    pub fn get_circuit_breaker_token_threshold(env: Env, token: Address) -> i128 {
+        storage::get_circuit_breaker_threshold_for_token(&env, &token)
     }
 
     /// Pause the vault (emergency signers only)
