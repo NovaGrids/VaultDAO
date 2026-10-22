@@ -16,6 +16,9 @@ export class DuePaymentsJob implements Job {
   private readonly logger = createLogger("due-payments-job");
   private intervalHandle: NodeJS.Timeout | null = null;
   private running = false;
+  private checkInFlight = false;
+  /** Processed payment IDs within this process to avoid double-pay on overlap. */
+  private readonly processedIds = new Set<string>();
 
   constructor(
     private readonly env: BackendEnv,
@@ -73,6 +76,13 @@ export class DuePaymentsJob implements Job {
    * Perform the due-payments check cycle.
    */
   private async checkDuePayments(): Promise<void> {
+    if (this.checkInFlight) {
+      this.logger.info("due-payments check skipped", {
+        reason: "previous-cycle-in-flight",
+      });
+      return;
+    }
+    this.checkInFlight = true;
     try {
       this.logger.info("due-payments check cycle started");
       const duePayments = await this.recurringService.getDuePayments();
@@ -87,20 +97,35 @@ export class DuePaymentsJob implements Job {
       const notificationTopic = createRealtimeTopic("notification", "events");
 
       for (const payment of duePayments) {
-        await this.notificationQueue.publish({
-          id: randomUUID(),
-          topic: notificationTopic,
-          source: `jobs.${this.name}`,
-          createdAt: new Date().toISOString(),
-          payload: {
-            type: "DUE_PAYMENT_ALERT",
+        if (this.processedIds.has(payment.paymentId)) {
+          this.logger.info("due payment skipped", {
             paymentId: payment.paymentId,
-            recipient: payment.recipient,
-            amount: payment.amount,
-            token: payment.token,
-            message: `Recurring payment ${payment.paymentId} for ${payment.amount} ${payment.token} is currently due.`,
-          },
-        });
+            reason: "already-processed",
+          });
+          continue;
+        }
+        try {
+          await this.notificationQueue.publish({
+            id: randomUUID(),
+            topic: notificationTopic,
+            source: `jobs.${this.name}`,
+            createdAt: new Date().toISOString(),
+            payload: {
+              type: "DUE_PAYMENT_ALERT",
+              paymentId: payment.paymentId,
+              recipient: payment.recipient,
+              amount: payment.amount,
+              token: payment.token,
+              message: `Recurring payment ${payment.paymentId} for ${payment.amount} ${payment.token} is currently due.`,
+            },
+          });
+          this.processedIds.add(payment.paymentId);
+        } catch (itemErr) {
+          this.logger.error("due payment failed", {
+            paymentId: payment.paymentId,
+            error: itemErr instanceof Error ? itemErr.message : String(itemErr),
+          });
+        }
       }
 
       this.logger.info("due-payments check cycle completed");
@@ -108,6 +133,8 @@ export class DuePaymentsJob implements Job {
       this.logger.error("due-payments check cycle failed", {
         error: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      this.checkInFlight = false;
     }
   }
 }

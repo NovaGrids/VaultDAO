@@ -8,6 +8,7 @@ import {
   getReadinessController,
   getStatusController,
   getDetailedHealthController,
+  getApiHealthController,
   getVaultHealthController,
 } from "./health.controller.js";
 import { getMetricsController } from "./metrics.controller.js";
@@ -65,6 +66,8 @@ export function createDetailedHealthRouter(
   runtime: BackendRuntime,
 ) {
   const router = Router();
+  // GET /api/v1/health — operator overview: status + sync lag + queue depth.
+  router.get("/", getApiHealthController(env, runtime));
   router.get("/detailed", getDetailedHealthController(env, runtime));
   return router;
 }
