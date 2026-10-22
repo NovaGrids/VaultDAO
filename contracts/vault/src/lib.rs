@@ -57,6 +57,57 @@ use types::{
 };
 use types_balance_snapshot::BalanceSnapshot;
 
+enum ProposalExpiryCause {
+    Deadline,
+    ExecutionWindow { approved_at: u64, window_ledgers: u64 },
+}
+
+fn expire_approved_proposal(
+    env: &Env,
+    proposal: &mut Proposal,
+    cause: ProposalExpiryCause,
+) {
+    storage::refund_spending_limits(env, proposal.amount, proposal.spend_day, proposal.spend_week);
+    storage::refund_token_spending_limits(
+        env,
+        &proposal.token,
+        proposal.amount,
+        proposal.spend_day,
+        proposal.spend_week,
+    );
+    proposal.status = ProposalStatus::Expired;
+    storage::tag_index_prune_proposal(env, &proposal.tags, proposal.id);
+    storage::pending_expiry_index_remove(env, proposal.id);
+    storage::set_proposal(env, proposal);
+    storage::metrics_on_expiry(env);
+
+    match cause {
+        ProposalExpiryCause::Deadline => {
+            events::emit_proposal_expired(env, proposal.id, proposal.expires_at);
+        }
+        ProposalExpiryCause::ExecutionWindow {
+            approved_at,
+            window_ledgers,
+        } => {
+            events::emit_execution_window_expired(
+                env,
+                proposal.id,
+                approved_at,
+                window_ledgers,
+            );
+        }
+    }
+
+    let metrics = storage::get_metrics(env);
+    events::emit_metrics_updated(
+        env,
+        metrics.executed_count,
+        metrics.rejected_count,
+        metrics.expired_count,
+        metrics.success_rate_bps(),
+    );
+}
+
 /// The main contract structure for VaultDAO.
 ///
 /// Implements a multi-signature treasury with Role-Based Access Control (RBAC),
@@ -2519,38 +2570,8 @@ impl VaultDAO {
         // Check expiration (even approved proposals can expire)
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger > proposal.expires_at {
-            // Only refund once ? guard against double-refund if already Expired
-            if proposal.status != ProposalStatus::Expired {
-                storage::refund_spending_limits(
-                    &env,
-                    proposal.amount,
-                    proposal.spend_day,
-                    proposal.spend_week,
-                );
-                storage::refund_token_spending_limits(
-                    &env,
-                    &proposal.token,
-                    proposal.amount,
-                    proposal.spend_day,
-                    proposal.spend_week,
-                );
-            }
-            proposal.status = ProposalStatus::Expired;
-            storage::tag_index_prune_proposal(&env, &proposal.tags, proposal_id);
-            storage::pending_expiry_index_remove(&env, proposal_id);
-            storage::set_proposal(&env, &proposal);
-            storage::metrics_on_expiry(&env);
-            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
-
-            let metrics = storage::get_metrics(&env);
-            events::emit_metrics_updated(
-                &env,
-                metrics.executed_count,
-                metrics.rejected_count,
-                metrics.expired_count,
-                metrics.success_rate_bps(),
-            );
-            return Err(VaultError::PermissionExpired);
+            expire_approved_proposal(&env, &mut proposal, ProposalExpiryCause::Deadline);
+            return Ok(());
         }
 
         // Check execution window: approved_at + exec_window_ledgers
@@ -2559,42 +2580,16 @@ impl VaultDAO {
             && proposal.approved_at > 0
             && current_ledger > proposal.approved_at + config.exec_window_ledgers
         {
-            // Refund spending limits (same as regular expiry above)
-            if proposal.status != ProposalStatus::Expired {
-                storage::refund_spending_limits(
-                    &env,
-                    proposal.amount,
-                    proposal.spend_day,
-                    proposal.spend_week,
-                );
-                storage::refund_token_spending_limits(
-                    &env,
-                    &proposal.token,
-                    proposal.amount,
-                    proposal.spend_day,
-                    proposal.spend_week,
-                );
-            }
-            proposal.status = ProposalStatus::Expired;
-            storage::tag_index_prune_proposal(&env, &proposal.tags, proposal_id);
-            storage::pending_expiry_index_remove(&env, proposal_id);
-            storage::set_proposal(&env, &proposal);
-            storage::metrics_on_expiry(&env);
-            events::emit_execution_window_expired(
+            let cause = ProposalExpiryCause::ExecutionWindow {
+                approved_at: proposal.approved_at,
+                window_ledgers: config.exec_window_ledgers,
+            };
+            expire_approved_proposal(
                 &env,
-                proposal_id,
-                proposal.approved_at,
-                config.exec_window_ledgers,
+                &mut proposal,
+                cause,
             );
-            let metrics = storage::get_metrics(&env);
-            events::emit_metrics_updated(
-                &env,
-                metrics.executed_count,
-                metrics.rejected_count,
-                metrics.expired_count,
-                metrics.success_rate_bps(),
-            );
-            return Err(VaultError::ProposalExecutionWindowExpired);
+            return Ok(());
         }
 
         // Check Timelock

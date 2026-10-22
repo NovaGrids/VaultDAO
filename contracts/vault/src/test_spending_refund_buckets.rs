@@ -13,10 +13,11 @@ use soroban_sdk::{
 const DAY_SECS: u64 = 86_400;
 const WEEK_SECS: u64 = 604_800;
 
-fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
+fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
     let admin = Address::generate(env);
+    let signer = Address::generate(env);
     let token = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
@@ -24,7 +25,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
 
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
-    signers.push_back(Address::generate(env));
+    signers.push_back(signer.clone());
 
     client.initialize(
         &admin,
@@ -66,7 +67,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
         },
     );
 
-    (client, admin, token, contract_id)
+    (client, admin, signer, token, contract_id)
 }
 
 fn propose(client: &VaultDAOClient<'_>, admin: &Address, token: &Address, amount: i128) -> u64 {
@@ -91,7 +92,7 @@ fn test_cancel_across_day_boundary_refunds_original_day_bucket() {
 
     // Start mid-epoch so day numbers are non-trivial
     env.ledger().set_timestamp(DAY_SECS * 10);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 25_000;
     let creation_day = env.ledger().timestamp() / DAY_SECS;
@@ -132,7 +133,7 @@ fn test_cancel_across_week_boundary_refunds_original_week_bucket() {
     env.mock_all_auths();
 
     env.ledger().set_timestamp(WEEK_SECS * 3);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 40_000;
     let creation_week = env.ledger().timestamp() / WEEK_SECS;
@@ -170,7 +171,7 @@ fn test_multi_day_cancel_does_not_inflate_new_day_capacity() {
     env.mock_all_auths();
 
     env.ledger().set_timestamp(DAY_SECS * 20);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 15_000;
     let day_n = env.ledger().timestamp() / DAY_SECS;
@@ -204,7 +205,7 @@ fn test_rejection_across_day_boundary_refunds_original_day_bucket() {
 
     // Start mid-epoch so day numbers are non-trivial
     env.ledger().set_timestamp(DAY_SECS * 10);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 25_000;
     let creation_day = env.ledger().timestamp() / DAY_SECS;
@@ -242,7 +243,7 @@ fn test_rejection_across_week_boundary_refunds_original_week_bucket() {
     env.mock_all_auths();
 
     env.ledger().set_timestamp(WEEK_SECS * 3);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 40_000;
     let creation_week = env.ledger().timestamp() / WEEK_SECS;
@@ -278,7 +279,7 @@ fn test_auto_expire_across_day_boundary_refunds_original_day_bucket() {
     env.mock_all_auths();
 
     env.ledger().set_timestamp(DAY_SECS * 30);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 30_000;
     let creation_day = env.ledger().timestamp() / DAY_SECS;
@@ -324,7 +325,7 @@ fn test_deadline_rejection_refunds_original_day_bucket() {
     env.mock_all_auths();
 
     env.ledger().set_timestamp(DAY_SECS * 30);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 30_000;
     let creation_day = env.ledger().timestamp() / DAY_SECS;
@@ -357,7 +358,7 @@ fn test_deadline_rejection_refunds_original_week_bucket() {
     env.mock_all_auths();
 
     env.ledger().set_timestamp(WEEK_SECS * 6);
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
 
     let amount: i128 = 45_000;
     let creation_week = env.ledger().timestamp() / WEEK_SECS;
@@ -392,7 +393,7 @@ fn test_proposal_records_spend_buckets_at_creation() {
     env.mock_all_auths();
     env.ledger().set_timestamp(DAY_SECS * 5 + 100);
 
-    let (client, admin, token, _contract) = setup(&env);
+    let (client, admin, _signer, token, _contract) = setup(&env);
     let day = env.ledger().timestamp() / DAY_SECS;
     let week = env.ledger().timestamp() / WEEK_SECS;
     let proposal_id = propose(&client, &admin, &token, 1_000);
@@ -401,4 +402,81 @@ fn test_proposal_records_spend_buckets_at_creation() {
     assert!(proposal.has_spend_buckets);
     assert_eq!(proposal.spend_day, day);
     assert_eq!(proposal.spend_week, week);
+}
+
+#[test]
+fn test_execute_after_proposal_expiry_persists_refunds_and_metrics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|ledger| ledger.sequence_number = 100);
+
+    let (client, admin, signer, token, _contract) = setup(&env);
+    let amount = 30_000;
+    let day = env.ledger().timestamp() / DAY_SECS;
+    let week = env.ledger().timestamp() / WEEK_SECS;
+    let proposal_id = propose(&client, &admin, &token, amount);
+    client.approve_proposal(&signer, &proposal_id);
+    client.approve_proposal(&admin, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, crate::types::ProposalStatus::Approved);
+    assert_eq!(client.get_daily_spent(&day), amount);
+    assert_eq!(client.get_weekly_spent(&week), amount);
+    assert_eq!(crate::storage::get_token_daily_spent(&env, &token, day), amount);
+    assert_eq!(crate::storage::get_token_weekly_spent(&env, &token, week), amount);
+    let expired_before = client.get_metrics().expired_count;
+
+    env.ledger().with_mut(|ledger| {
+        ledger.sequence_number = proposal.expires_at as u32 + 1;
+    });
+    let result = client.try_execute_proposal(&signer, &proposal_id);
+
+    assert!(matches!(result, Ok(Ok(()))));
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        crate::types::ProposalStatus::Expired
+    );
+    assert_eq!(client.get_daily_spent(&day), 0);
+    assert_eq!(client.get_weekly_spent(&week), 0);
+    assert_eq!(crate::storage::get_token_daily_spent(&env, &token, day), 0);
+    assert_eq!(crate::storage::get_token_weekly_spent(&env, &token, week), 0);
+    assert_eq!(client.get_metrics().expired_count, expired_before + 1);
+}
+
+#[test]
+fn test_execute_after_execution_window_persists_refunds_and_metrics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|ledger| ledger.sequence_number = 100);
+
+    let (client, admin, signer, token, _contract) = setup(&env);
+    client.set_exec_window_ledgers(&admin, &10);
+    let amount = 30_000;
+    let day = env.ledger().timestamp() / DAY_SECS;
+    let week = env.ledger().timestamp() / WEEK_SECS;
+    let proposal_id = propose(&client, &admin, &token, amount);
+    client.approve_proposal(&signer, &proposal_id);
+    client.approve_proposal(&admin, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, crate::types::ProposalStatus::Approved);
+    assert_eq!(client.get_daily_spent(&day), amount);
+    assert_eq!(client.get_weekly_spent(&week), amount);
+    assert_eq!(crate::storage::get_token_daily_spent(&env, &token, day), amount);
+    assert_eq!(crate::storage::get_token_weekly_spent(&env, &token, week), amount);
+    let expired_before = client.get_metrics().expired_count;
+
+    env.ledger().with_mut(|ledger| ledger.sequence_number = 111);
+    let result = client.try_execute_proposal(&signer, &proposal_id);
+
+    assert!(matches!(result, Ok(Ok(()))));
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        crate::types::ProposalStatus::Expired
+    );
+    assert_eq!(client.get_daily_spent(&day), 0);
+    assert_eq!(client.get_weekly_spent(&week), 0);
+    assert_eq!(crate::storage::get_token_daily_spent(&env, &token, day), 0);
+    assert_eq!(crate::storage::get_token_weekly_spent(&env, &token, week), 0);
+    assert_eq!(client.get_metrics().expired_count, expired_before + 1);
 }
