@@ -6,7 +6,11 @@
 use super::*;
 use crate::types::{ConditionLogic, Priority};
 use crate::{VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token::StellarAssetClient,
+    Address, Env, Symbol, Vec,
+};
 
 struct Setup<'a> {
     env: Env,
@@ -57,9 +61,9 @@ fn setup<'a>() -> Setup<'a> {
             veto_addresses: Vec::new(&env),
             retry_config: crate::types::RetryConfig {
                 max_retry_delay: 0,
-                enabled: false,
-                max_retries: 0,
-                initial_backoff_ledgers: 0,
+                enabled: true,
+                max_retries: 3,
+                initial_backoff_ledgers: 10,
             },
             recovery_config: crate::types::RecoveryConfig::default(&env),
             staking_config: crate::types::StakingConfig::default(),
@@ -87,11 +91,15 @@ fn setup<'a>() -> Setup<'a> {
 
 /// Propose a 100-token transfer and approve it with both signers.
 fn approved_proposal(s: &Setup) -> u64 {
+    approved_proposal_with_amount(s, 100)
+}
+
+fn approved_proposal_with_amount(s: &Setup, amount: i128) -> u64 {
     let proposal_id = s.client.propose_transfer(
         &s.admin,
         &Address::generate(&s.env),
         &s.token,
-        &100i128,
+        &amount,
         &Symbol::new(&s.env, "memo"),
         &Priority::Normal,
         &Vec::new(&s.env),
@@ -143,6 +151,33 @@ fn test_reentrancy_guard_cleared_after_execution() {
     assert!(
         !in_progress,
         "guard must be cleared once execution finishes"
+    );
+}
+
+#[test]
+fn test_scheduled_retry_clears_guard_and_retries_after_funding() {
+    let s = setup();
+    let proposal_id = approved_proposal_with_amount(&s, 30_000);
+
+    s.client.execute_proposal(&s.admin, &proposal_id);
+    let retry_state = s
+        .client
+        .get_retry_state(&proposal_id)
+        .expect("insufficient balance should schedule a retry");
+    let in_progress = s.env.as_contract(&s.contract_id, || {
+        storage::is_proposal_in_progress(&s.env, proposal_id)
+    });
+    assert!(!in_progress, "scheduled retry must not retain the guard");
+
+    StellarAssetClient::new(&s.env, &s.token).mint(&s.contract_id, &20_000);
+    s.env
+        .ledger()
+        .set_sequence_number(retry_state.next_retry_ledger as u32);
+
+    s.client.retry_execute_proposal(&s.admin, &proposal_id);
+    assert_eq!(
+        s.client.get_proposal(&proposal_id).status,
+        ProposalStatus::Executed
     );
 }
 

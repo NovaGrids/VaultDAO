@@ -2685,7 +2685,7 @@ impl VaultDAO {
         let exec_result =
             Self::try_execute_transfer(&env, &executor, &mut proposal, current_ledger);
 
-        match exec_result {
+        let result = match exec_result {
             Ok(()) => {
                 // Execute post-hooks
                 for hook in config.post_execution_hooks.iter() {
@@ -2780,31 +2780,32 @@ impl VaultDAO {
                     proposal_id,
                 );
 
-                // Clear reentrancy guard after state updates complete (#1414)
-                storage::clear_proposal_in_progress(&env, proposal_id);
-
                 Ok(())
             }
             Err(err) if Self::is_retryable_error(&err) => {
                 // Check if retry is configured
                 if !config.retry_config.enabled {
-                    return Err(err);
+                    Err(err)
+                } else {
+                    // Schedule retry and return Ok ? Soroban rolls back state on Err,
+                    // so we must return Ok to persist the retry state. The proposal
+                    // remains in Approved status, signaling that execution is pending.
+                    Self::schedule_retry(
+                        &env,
+                        proposal_id,
+                        &config.retry_config,
+                        current_ledger,
+                        &err,
+                    )
+                    .map(|()| ())
                 }
-
-                // Schedule retry and return Ok ? Soroban rolls back state on Err,
-                // so we must return Ok to persist the retry state. The proposal
-                // remains in Approved status, signaling that execution is pending.
-                Self::schedule_retry(
-                    &env,
-                    proposal_id,
-                    &config.retry_config,
-                    current_ledger,
-                    &err,
-                )?;
-                Ok(())
             }
             Err(err) => Err(err),
-        }
+        };
+
+        // Keep the guard only while external calls and state updates are running.
+        storage::clear_proposal_in_progress(&env, proposal_id);
+        result
     }
 
     /// Get the retry state for a proposal.

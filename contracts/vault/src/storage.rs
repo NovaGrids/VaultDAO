@@ -5828,20 +5828,20 @@ pub fn increment_subscription_usage(
 
 pub fn set_proposal_in_progress(env: &Env, proposal_id: u64) {
     env.storage()
-        .instance()
+        .temporary()
         .set(&DataKey::ProposalInProgress(proposal_id), &true);
 }
 
 pub fn is_proposal_in_progress(env: &Env, proposal_id: u64) -> bool {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::ProposalInProgress(proposal_id))
         .unwrap_or(false)
 }
 
 pub fn clear_proposal_in_progress(env: &Env, proposal_id: u64) {
     env.storage()
-        .instance()
+        .temporary()
         .remove(&DataKey::ProposalInProgress(proposal_id));
 }
 
