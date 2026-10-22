@@ -6,7 +6,10 @@ use super::*;
 
 use crate::types::*;
 use crate::VaultDAO;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger as _, token::StellarAssetClient, Address, Env,
+    Symbol, Vec,
+};
 
 fn make_env() -> (Env, crate::VaultDAOClient<'static>) {
     let env = Env::default();
@@ -582,4 +585,86 @@ fn test_1937_rejected_pause_writes_no_audit_entry() {
 
     assert!(r.is_err());
     assert_eq!(client.get_audit_entry_count(), count_before);
+}
+
+fn setup_circuit_breaker_proposal(
+    env: &Env,
+) -> (
+    crate::VaultDAOClient<'static>,
+    Address,
+    Address,
+    Address,
+    Address,
+    Address,
+    u64,
+) {
+    let contract_id = env.register(VaultDAO, ());
+    let client = crate::VaultDAOClient::new(env, &contract_id);
+    let (admin, treasurer, em1, em2) = setup_with_emergency(env, &client);
+
+    let mut emergency_signers = Vec::new(env);
+    emergency_signers.push_back(em1.clone());
+    emergency_signers.push_back(em2.clone());
+    client.configure_emergency(&admin, &emergency_signers, &50i128);
+
+    let recipient = Address::generate(env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    StellarAssetClient::new(env, &token).mint(&contract_id, &1_000);
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &100i128,
+        &Symbol::new(env, "breaker_test"),
+        &Priority::Normal,
+        &Vec::new(env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&treasurer, &proposal_id);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Approved);
+
+    (client, admin, em1, em2, recipient, token, proposal_id)
+}
+
+#[test]
+fn test_circuit_breaker_pause_persists_and_preserves_approved_proposal() {
+    let (env, _client) = make_env();
+    let (client, admin, _em1, _em2, _recipient, _token, proposal_id) =
+        setup_circuit_breaker_proposal(&env);
+
+    assert!(client.try_execute_proposal(&admin, &proposal_id).is_ok());
+    assert!(client.get_pause_state().is_paused);
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Approved);
+}
+
+#[test]
+fn test_execution_is_rejected_while_circuit_breaker_paused() {
+    let (env, _client) = make_env();
+    let (client, admin, em1, em2, recipient, token, proposal_id) =
+        setup_circuit_breaker_proposal(&env);
+
+    assert!(client.try_execute_proposal(&admin, &proposal_id).is_ok());
+    assert_eq!(
+        client.try_execute_proposal(&admin, &proposal_id),
+        Err(Ok(VaultError::VaultPaused))
+    );
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Approved);
+
+    client.unpause_vault(&em2);
+    let mut emergency_signers = Vec::new(&env);
+    emergency_signers.push_back(em1);
+    emergency_signers.push_back(em2);
+    client.configure_emergency(&admin, &emergency_signers, &200i128);
+
+    assert!(client.try_execute_proposal(&admin, &proposal_id).is_ok());
+    assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Executed);
+    assert_eq!(
+        soroban_sdk::token::TokenClient::new(&env, &token).balance(&recipient),
+        100
+    );
 }

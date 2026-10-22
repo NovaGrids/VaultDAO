@@ -2635,22 +2635,6 @@ impl VaultDAO {
             }
         }
 
-        // Execute pre-hooks
-        for hook in config.pre_execution_hooks.iter() {
-            Self::call_hook(&env, &hook, proposal_id, true);
-        }
-
-        // Capture snapshot before transfer to enable admin rollback if needed
-        let snapshot = crate::types::ExecutionSnapshot {
-            proposal: proposal.clone(),
-            was_in_priority_queue: storage::is_in_priority_queue(
-                &env,
-                proposal.priority.clone() as u32,
-                proposal_id,
-            ),
-        };
-        storage::set_execution_snapshot(&env, proposal_id, &snapshot);
-
         // Circuit breaker check: auto-pause if outflow in current hour exceeds threshold (#1084)
         let threshold = storage::get_circuit_breaker_threshold(&env);
         if threshold > 0 {
@@ -2673,10 +2657,26 @@ impl VaultDAO {
                     storage::symbol_to_u64_key(&env, &cb_cause),
                 );
                 events::emit_vault_paused(&env, &executor, &cb_cause);
-                return Err(VaultError::VaultPaused);
+                return Ok(());
             }
             storage::add_circuit_breaker_outflow(&env, window, proposal.amount);
         }
+
+        // Execute pre-hooks
+        for hook in config.pre_execution_hooks.iter() {
+            Self::call_hook(&env, &hook, proposal_id, true);
+        }
+
+        // Capture snapshot before transfer to enable admin rollback if needed
+        let snapshot = crate::types::ExecutionSnapshot {
+            proposal: proposal.clone(),
+            was_in_priority_queue: storage::is_in_priority_queue(
+                &env,
+                proposal.priority.clone() as u32,
+                proposal_id,
+            ),
+        };
+        storage::set_execution_snapshot(&env, proposal_id, &snapshot);
 
         // Set reentrancy guard before external calls (#1414)
         storage::set_proposal_in_progress(&env, proposal_id);
