@@ -1508,3 +1508,28 @@ The oracle contract must implement the `lastprice(asset: Address) -> Option<Vaul
 - Very large balances: Saturating arithmetic prevents overflow
 - Oracle not configured: Returns NotInitialized error
 - Stale price data: Returns RetryError; client should retry after staleness window
+
+## Backend REST: `GET /api/v1/health`
+
+Operator overview of indexer and job health.
+
+Response (200):
+
+```json
+{
+  "status": "healthy",
+  "db": "healthy",
+  "syncLag": 0,
+  "currentLedger": 12345,
+  "cursorLedger": 12345,
+  "queueDepth": 0,
+  "jobs": { "total": 3, "running": 3 },
+  "version": "0.1.0",
+  "uptime": 60
+}
+```
+
+- `status`: `healthy` | `degraded` | `unhealthy`
+- `syncLag`: `max(0, currentLedger - cursorLedger)` (Soroban latest ledger vs events cursor)
+- `queueDepth`: pending notification queue size
+- Unhealthy DB (or overall `unhealthy`) returns HTTP 503 with the same payload under `details`.

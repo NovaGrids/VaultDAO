@@ -111,3 +111,55 @@ export function getDetailedHealthController(
     }
   };
 }
+
+/**
+ * GET /api/v1/health — operator overview (Issue #2038).
+ *
+ * Returns `{ status, syncLag, queueDepth, ... }` so indexer and job health
+ * are visible at a glance. Responds non-200 when the DB is unhealthy.
+ */
+export function getApiHealthController(
+  env: BackendEnv,
+  runtime: BackendRuntime,
+): RequestHandler {
+  return async (_request, response) => {
+    try {
+      const detailed = await buildDetailedHealthPayload(env, runtime);
+      const currentLedger = detailed.dependencies.sorobanRpc.ledger ?? 0;
+      const cursorLedger = detailed.eventPolling.lastLedgerPolled ?? 0;
+      const payload = {
+        status: detailed.status,
+        db: detailed.dependencies.database.status,
+        syncLag: Math.max(0, currentLedger - cursorLedger),
+        currentLedger,
+        cursorLedger,
+        queueDepth: detailed.dependencies.notificationQueue.size ?? 0,
+        jobs: detailed.jobRunner,
+        version: detailed.version,
+        uptime: detailed.uptime,
+      };
+      if (
+        detailed.status === "unhealthy" ||
+        detailed.dependencies.database.status === "unhealthy"
+      ) {
+        error(
+          response,
+          { message: "Service unhealthy", status: 503, details: payload },
+          { exposeDetails: true },
+        );
+        return;
+      }
+      success(response, payload);
+    } catch (err) {
+      error(
+        response,
+        {
+          message: "Health check failed",
+          status: 500,
+          details: err instanceof Error ? err.message : String(err),
+        },
+        { exposeDetails: true },
+      );
+    }
+  };
+}
