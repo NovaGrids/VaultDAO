@@ -118,21 +118,33 @@ export function decryptSecret(stored: string, secret?: string): string {
   }
 }
 
+/** One recorded delivery attempt for observability. */
+export interface DeadLetterAttemptMetric {
+  readonly id: string;
+  readonly attempt: number;
+  readonly succeeded: boolean;
+  readonly at: number;
+}
+
 export class DeadLetterService {
   private readonly store = new Map<string, DeadLetterEntry>();
   private readonly maxRetries: number;
   private readonly backoffMs: number[];
   private readonly storage?: DeadLetterStorageAdapter;
+  private readonly maxMetrics: number;
+  private readonly metrics: DeadLetterAttemptMetric[] = [];
   private loaded = false;
 
   constructor(options?: {
     maxRetries?: number;
     backoffMs?: number[];
     storage?: DeadLetterStorageAdapter;
+    maxMetrics?: number;
   }) {
     this.maxRetries = options?.maxRetries ?? 5;
     this.backoffMs = options?.backoffMs ?? [1000, 2000, 4000, 8000, 16000];
     this.storage = options?.storage;
+    this.maxMetrics = options?.maxMetrics ?? 100;
   }
 
   /**
@@ -158,6 +170,32 @@ export class DeadLetterService {
     this.store.set(entry.id, { ...entry, processed: false });
     await this.persist();
     logger.info("dead-letter added to backend store", { id: entry.id, recordId: entry.recordId });
+  }
+
+  /**
+   * Explicitly persist the in-memory store to the storage adapter.
+   * Mutations already persist automatically; this is for callers that want
+   * a synchronization point (e.g. before a restart in tests).
+   */
+  public async flush(): Promise<void> {
+    await this.persist();
+  }
+
+  /** Bounded delivery-attempt history (oldest entries evicted past the cap). */
+  public getMetrics(): DeadLetterAttemptMetric[] {
+    return [...this.metrics];
+  }
+
+  /** Clear the delivery-attempt history. */
+  public resetMetrics(): void {
+    this.metrics.length = 0;
+  }
+
+  private recordMetric(id: string, attempt: number, succeeded: boolean): void {
+    this.metrics.push({ id, attempt, succeeded, at: Date.now() });
+    while (this.metrics.length > this.maxMetrics) {
+      this.metrics.shift();
+    }
   }
 
   public list(): DeadLetterEntry[] {
@@ -190,11 +228,13 @@ export class DeadLetterService {
         // success
         this.store.delete(id);
         await this.persist();
+        this.recordMetric(id, attempt, true);
         logger.info("dead-letter processed successfully", { id, attempt });
         return true;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         logger.warn("dead-letter processing attempt failed", { id, attempt, error: errMsg });
+        this.recordMetric(id, attempt, false);
         if (attempt >= this.maxRetries) break;
         const backoff = this.backoffMs[attempt] ?? this.backoffMs[this.backoffMs.length - 1];
         await sleep(backoff);

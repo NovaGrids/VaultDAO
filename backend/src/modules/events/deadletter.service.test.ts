@@ -40,22 +40,19 @@ test('DeadLetterService: exhausts retries and keeps entry', async () => {
 
 test('DeadLetterService: DLQ entries survive a service restart via storage adapter', async () => {
   // Minimal in-memory storage adapter standing in for the persistent backend.
-  const store = new Map<string, string>();
+  const store = new Map<string, unknown[]>();
   const storage = {
-    async set(key: string, value: string): Promise<void> {
-      store.set(key, value);
+    async save(entries: unknown[]): Promise<void> {
+      store.set('dlq', entries);
     },
-    async get(key: string): Promise<string | undefined> {
-      return store.get(key);
-    },
-    async delete(key: string): Promise<void> {
-      store.delete(key);
+    async load(): Promise<unknown[]> {
+      return store.get('dlq') ?? [];
     },
   };
 
   const first = new DeadLetterService({ maxRetries: 3, backoffMs: [10], storage: storage as any });
   const entry = { id: '44', contractId: 'CXXX', recordId: 44, retryCount: 0, addedAt: Date.now() };
-  first.add(entry as any);
+  await first.add(entry as any);
   await first.flush();
 
   // Simulate a restart: brand new service instance sharing the same storage.
