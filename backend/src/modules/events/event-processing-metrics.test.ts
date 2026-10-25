@@ -88,6 +88,8 @@ test("Event Processing Latency Metrics", async (t) => {
     assert.ok(output.includes("vaultdao_event_queue_depth"), "queue depth metric should be present");
     assert.ok(output.includes('event_type="proposal_created"'), "lag metric should carry event_type label");
     assert.ok(output.includes('queue="default"'), "queue depth metric should carry queue label");
+  });
+
   await t.test("Webhook delivery metrics array is bounded by a ring buffer cap", async () => {
     const { WebhookDeliveryMetrics } = await import("./webhook-delivery-metrics.js");
 

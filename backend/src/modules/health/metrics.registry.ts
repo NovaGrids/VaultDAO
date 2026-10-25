@@ -41,6 +41,19 @@ export interface Histogram {
   labels(...values: string[]): { observe(value: number): void };
 }
 
+/** Options for {@link MetricsRegistry.gauge}. */
+export interface GaugeOptions {
+  help: string;
+  labelNames?: string[];
+}
+
+/** Handle returned by {@link MetricsRegistry.gauge}. */
+export interface Gauge {
+  set(value: number): void;
+  /** Label values, in the order of `labelNames`. */
+  labels(...values: string[]): { set(value: number): void };
+}
+
 /** Default buckets for millisecond latency histograms. */
 export const DEFAULT_LATENCY_BUCKETS_MS = [
   5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000,
@@ -113,6 +126,30 @@ export class MetricsRegistry {
   public incrementCounter(name: string, labels?: Record<string, string>): void {
     const key = this.formatKey(name, labels);
     this.values.set(key, (this.values.get(key) ?? 0) + 1);
+  }
+
+  /**
+   * Register (or fetch) a gauge and return a handle for setting it,
+   * optionally per label set: `gauge(name, opts).labels("x").set(2.5)`.
+   */
+  public gauge(name: string, options: GaugeOptions): Gauge {
+    const labelNames = options.labelNames ?? [];
+    if (!this.metadata.has(name)) {
+      this.metadata.set(name, { help: options.help, type: "gauge" });
+    }
+    const toLabels = (values: string[]): Record<string, string> => {
+      const labels: Record<string, string> = {};
+      labelNames.forEach((labelName, i) => {
+        labels[labelName] = values[i] ?? "";
+      });
+      return labels;
+    };
+    return {
+      set: (value) => this.setGauge(name, value),
+      labels: (...values) => ({
+        set: (value) => this.setGauge(name, value, toLabels(values)),
+      }),
+    };
   }
 
   /**
