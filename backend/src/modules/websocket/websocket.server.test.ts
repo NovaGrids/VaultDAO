@@ -58,6 +58,9 @@ test("WebSocket Server", async (t) => {
     const ws = new WebSocket(wsUrl);
     await new Promise((resolve) => ws.on("open", resolve));
 
+    ws.send(JSON.stringify({ type: "subscribe", topics: ["proposal_created"] }));
+    await waitForMessage(ws, (m) => m.type === "subscribed");
+
     const eventPromise = waitForMessage(ws, (m) => m.type === "contract_event");
 
     const mockEvent: ContractEvent = {
@@ -178,7 +181,7 @@ test("WebSocket Server", async (t) => {
     ws.close();
   });
 
-  await t.test("unsubscribed client receives all events", async () => {
+  await t.test("unsubscribed client receives no events (opt-in delivery)", async () => {
     const ws = new WebSocket(wsUrl);
     await new Promise((resolve) => ws.on("open", resolve));
 
@@ -211,7 +214,7 @@ test("WebSocket Server", async (t) => {
 
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    assert.equal(receivedEvents.length, 2);
+    assert.equal(receivedEvents.length, 0);
 
     ws.close();
   });
@@ -257,8 +260,8 @@ test("WebSocket Server", async (t) => {
       "unsubscribed topic must not appear in remainingTopics",
     );
 
-    // Broadcast the event — after removing all topic subscriptions, this
-    // client reverts to the unfiltered stream and still receives events.
+    // Broadcast the event — after removing all topic subscriptions, the
+    // client is opted out again and receives nothing.
     const receivedEvents: any[] = [];
     ws.on("message", (data: Buffer) => {
       const msg = JSON.parse(data.toString());
@@ -279,8 +282,8 @@ test("WebSocket Server", async (t) => {
 
     assert.equal(
       receivedEvents.length,
-      1,
-      "client should still receive events after removing all topic filters",
+      0,
+      "client should not receive events after removing all topic filters",
     );
     ws.close();
   });
@@ -692,9 +695,17 @@ test("WebSocket State Machine", async (t) => {
       );
       await new Promise((resolve) => ws4.on("open", resolve));
 
-      // State is "authenticated" and NOT subscribed — broadcastEvent should
-      // still deliver (backward-compat path: no subscriptions → deliver all).
-      const eventPromise = waitForMessage(ws4, (m) => m.type === "contract_event");
+      // State is "authenticated" but NOT subscribed — with opt-in delivery
+      // (issue #1952) broadcastEvent must NOT deliver to unsubscribed clients.
+      const received: any[] = [];
+      ws4.on("message", (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === "contract_event") received.push(msg);
+        } catch {
+          // ignore non-JSON frames
+        }
+      });
       const mockEvent: ContractEvent = {
         id: "bc-event-1",
         contractId: "CDTEST",
@@ -704,8 +715,8 @@ test("WebSocket State Machine", async (t) => {
         ledgerClosedAt: new Date().toISOString(),
       };
       rt4.wsServer?.broadcastEvent(mockEvent);
-      const received = await eventPromise;
-      assert.equal(received.payload.id, "bc-event-1");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(received.length, 0);
 
       ws4.close();
       rt4.wsServer?.stop();

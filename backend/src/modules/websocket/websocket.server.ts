@@ -1015,11 +1015,10 @@ export class EventWebSocketServer extends EventEmitter {
         return;
       }
 
-      // If no subscriptions, deliver all events (backward compatible)
+      // Opt-in delivery: clients with no subscriptions receive nothing.
+      // (Firehose-by-default would push every vault event to idle
+      // connections; see issue #1952.)
       if (!sub.subscriptions || sub.subscriptions.size === 0) {
-        if (this.sendOrDrop(ws, sub, message, event.id)) {
-          broadcastCount++;
-        }
         return;
       }
 

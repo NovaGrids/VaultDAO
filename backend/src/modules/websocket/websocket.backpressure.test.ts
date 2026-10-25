@@ -42,6 +42,24 @@ function waitForOpen(ws: WebSocket): Promise<void> {
   });
 }
 
+function waitForMessage(ws: WebSocket, type: string, timeoutMs = 3000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out waiting for ${type}`)),
+      timeoutMs,
+    );
+    const onMessage = (data: Buffer) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === type) {
+        clearTimeout(timer);
+        ws.off("message", onMessage);
+        resolve(msg);
+      }
+    };
+    ws.on("message", onMessage);
+  });
+}
+
 function waitForClose(ws: WebSocket, timeoutMs = CLOSE_TIMEOUT_MS): Promise<number> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
@@ -72,6 +90,8 @@ test("a client that stops reading is closed with an application close code", asy
   try {
     const stalled = new WebSocket(url);
     await waitForOpen(stalled);
+    stalled.send(JSON.stringify({ type: "subscribe", topics: ["proposal_created"] }));
+    await waitForMessage(stalled, "subscribed");
     // Stop reading from the socket so the server's send buffer fills up.
     (stalled as any)._socket.pause();
     const closed = waitForClose(stalled);
@@ -101,6 +121,10 @@ test("healthy clients keep receiving events while a stalled client is dropped", 
     await Promise.all([waitForOpen(stalled), waitForOpen(healthy)]);
     (stalled as any)._socket.pause();
 
+    // The healthy client opts in; the stalled client stays unsubscribed.
+    healthy.send(JSON.stringify({ type: "subscribe", topics: ["proposal_created"] }));
+    await waitForMessage(healthy, "subscribed");
+
     let healthyReceived = 0;
     healthy.on("message", (data: Buffer) => {
       const msg = JSON.parse(data.toString());
@@ -128,6 +152,8 @@ test("messages dropped for slow clients are counted in the metrics registry", as
   try {
     const stalled = new WebSocket(url);
     await waitForOpen(stalled);
+    stalled.send(JSON.stringify({ type: "subscribe", topics: ["proposal_created"] }));
+    await waitForMessage(stalled, "subscribed");
     (stalled as any)._socket.pause();
 
     for (let i = 0; i < FLOOD_EVENT_COUNT; i++) {
