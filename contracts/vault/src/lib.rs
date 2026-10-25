@@ -366,7 +366,7 @@ fn calculate_impact_score(
 // #[cfg(test)]
 // mod test_reentrancy;
 // #[cfg(test)]
-// // TEMP-VALIDATION-DISABLED mod test_regressions;
+// mod test_regressions;
 // #[cfg(test)]
 // // TODO: test module file is corrupted by a bad merge; restore it to re-enable.
 // mod test_retry;
@@ -402,7 +402,7 @@ fn calculate_impact_score(
 #[cfg(test)]
 mod test_spending_limit_invariants_proptest;
 #[cfg(test)]
-// TEMP-VALIDATION-DISABLED mod test_spending_refund_buckets;
+mod test_spending_refund_buckets;
 #[cfg(test)]
 mod test_stream_vesting_invariants_proptest;
 
@@ -441,7 +441,7 @@ mod test_funding_round_proposal_link;
 #[cfg(test)]
 mod test_funding_round_reserve;
 #[cfg(test)]
-// TEMP-VALIDATION-DISABLED mod test_execution_recipient_recheck;
+mod test_execution_recipient_recheck;
 #[cfg(test)]
 mod test_oracle_failure;
 #[cfg(test)]
@@ -569,11 +569,11 @@ mod test_pause_and_governed_withdrawals;
 #[cfg(test)]
 mod test_pause_circuit_breaker;
 // #[cfg(test)]
-// // TEMP-VALIDATION-DISABLED mod test_pending_reservations;  // unparseable upstream; re-enable once repaired
+// mod test_pending_reservations;  // unparseable upstream; re-enable once repaired
 // #[cfg(test)]
 // mod test_proposal_expiration;  // unparseable upstream; re-enable once repaired
 #[cfg(test)]
-// TEMP-VALIDATION-DISABLED mod test_pending_reservations;
+mod test_pending_reservations;
 // TODO: test module file is corrupted by a bad merge; restore it to re-enable.
 // #[cfg(test)]
 // mod test_proposal_expiration;
@@ -600,7 +600,7 @@ mod test_recurring;
 #[cfg(test)]
 mod test_reentrancy;
 #[cfg(test)]
-// TEMP-VALIDATION-DISABLED mod test_regressions;
+mod test_regressions;
 #[cfg(test)]
 mod test_remove_signer_privileges;
 // #[cfg(test)]
