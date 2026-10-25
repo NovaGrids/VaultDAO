@@ -553,8 +553,7 @@ const [accountInfo, configResult, proposalsResult] = await Promise.allSettled([
         const evData = await evRes.json() as { result?: { events?: RawEvent[] } };
         return evData.result?.events ?? [];
     })(),
-    readContractValue('get_config').catch(() => null).then(r =>
-        r ?? readContractValue('get_vault_config').catch(() => null)),
+    readContractValue('get_config').catch(() => null),
     fetchContractEvents().then(({ events }) => events as RawEvent[]),
 ]);
 
