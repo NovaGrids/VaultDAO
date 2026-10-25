@@ -10,6 +10,9 @@ function mockRes() {
       this.statusCode = code;
       return this;
     },
+    set(_field: string, _value: string) {
+      return this;
+    },
     json(body: unknown) {
       this.body = body;
       return this;
