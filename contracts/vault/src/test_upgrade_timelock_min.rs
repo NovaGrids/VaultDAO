@@ -150,7 +150,7 @@ fn test_upgrade_timelock_at_minimum_is_accepted() {
         &make_init_config(&env, signers, MIN_UPGRADE_TIMELOCK),
     );
 
-    let stored = client.get_config().unwrap();
+    let stored = client.get_config();
     assert_eq!(stored.upgrade_timelock_delay, MIN_UPGRADE_TIMELOCK);
 }
 
@@ -171,6 +171,6 @@ fn test_upgrade_timelock_above_minimum_is_accepted() {
     let seven_days = MIN_UPGRADE_TIMELOCK * 7;
     client.initialize(&admin, &make_init_config(&env, signers, seven_days));
 
-    let stored = client.get_config().unwrap();
+    let stored = client.get_config();
     assert_eq!(stored.upgrade_timelock_delay, seven_days);
 }

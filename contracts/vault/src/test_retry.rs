@@ -26,6 +26,7 @@ mod tests {
         let token = Address::generate(&env);
 
         let init_config = types::InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -190,6 +191,7 @@ mod tests {
         let admin = Address::generate(&env);
 
         let init_config = types::InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             proposal_id_prefix: 0,
             whitelist_mode: false,

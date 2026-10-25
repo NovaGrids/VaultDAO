@@ -44,6 +44,7 @@ fn setup<'a>() -> Setup<'a> {
     guardians.push_back(guardian.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,

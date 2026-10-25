@@ -18,6 +18,7 @@ fn make_env() -> (Env, crate::VaultDAOClient<'static>) {
 
 fn default_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         whitelist_mode: false,
         grace_period_ledgers: 100,
         vote_weight: crate::types::VoteWeight::Flat,

@@ -23,6 +23,7 @@ fn setup_comments(env: &Env) -> (VaultDAOClient, Address, Address, Address, u64)
     signers.push_back(author.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -85,7 +86,7 @@ fn test_edit_own_comment() {
 
     let comment_id = client.add_comment(&author, &proposal_id, &Symbol::new(&env, "original"), &0);
 
-    env.ledger().set_sequence_number(10);
+    env.ledger().with_mut(|l| l.sequence_number = 10);
     client.edit_comment(&author, &comment_id, &Symbol::new(&env, "edited"));
 
     let comment = client.get_comment(&comment_id);

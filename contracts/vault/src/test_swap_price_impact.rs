@@ -50,6 +50,7 @@ fn test_price_impact_normal_values() {
 
 fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,
@@ -91,7 +92,7 @@ fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
 fn test_get_asset_price_rejects_non_positive_price() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);

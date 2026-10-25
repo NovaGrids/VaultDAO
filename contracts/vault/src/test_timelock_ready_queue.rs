@@ -28,6 +28,7 @@ use soroban_sdk::{
 /// using a `timelock_delay` of 200 ledgers.
 fn make_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold,
         quorum: 0,
@@ -135,7 +136,7 @@ fn propose(
 fn test_small_proposal_not_in_timelock_queue() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -162,7 +163,7 @@ fn test_small_proposal_not_in_timelock_queue() {
 fn test_large_proposal_enters_timelock_queue_on_approval() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -186,7 +187,7 @@ fn test_large_proposal_enters_timelock_queue_on_approval() {
 fn test_mixed_states_only_timelocked_returned() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -223,7 +224,7 @@ fn test_mixed_states_only_timelocked_returned() {
     client.approve_proposal(&admin, &p4);
     client.approve_proposal(&signer2, &p4);
     // Advance past unlock_ledger to allow execution
-    env.ledger().set_sequence_number(301); // > 300 (100 + 200)
+    env.ledger().with_mut(|l| l.sequence_number = 301); // > 300 (100 + 200)
     client.execute_proposal(&admin, &p4);
     assert_eq!(
         client.get_proposal(&p4).status,
@@ -231,7 +232,7 @@ fn test_mixed_states_only_timelocked_returned() {
     );
 
     // Restore ledger to before unlock so P3 is still in the window
-    env.ledger().set_sequence_number(150);
+    env.ledger().with_mut(|l| l.sequence_number = 150);
 
     let queue = client.get_pending_timelocked_proposals(&0u64, &50u32);
     // Only P3 should be present
@@ -245,7 +246,7 @@ fn test_mixed_states_only_timelocked_returned() {
 fn test_entry_skipped_after_unlock_ledger_passes() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -258,7 +259,7 @@ fn test_entry_skipped_after_unlock_ledger_passes() {
     assert_eq!(queue_before.len(), 1);
 
     // Advance past unlock_ledger (300)
-    env.ledger().set_sequence_number(350);
+    env.ledger().with_mut(|l| l.sequence_number = 350);
 
     let queue_after = client.get_pending_timelocked_proposals(&0u64, &50u32);
     assert_eq!(
@@ -273,7 +274,7 @@ fn test_entry_skipped_after_unlock_ledger_passes() {
 fn test_executed_proposal_removed_from_index() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -282,7 +283,7 @@ fn test_executed_proposal_removed_from_index() {
     client.approve_proposal(&signer2, &pid);
 
     // Advance past unlock_ledger and execute
-    env.ledger().set_sequence_number(301);
+    env.ledger().with_mut(|l| l.sequence_number = 301);
     client.execute_proposal(&admin, &pid);
 
     assert_eq!(
@@ -299,7 +300,7 @@ fn test_executed_proposal_removed_from_index() {
 fn test_cancelled_proposal_removed_from_index() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -326,7 +327,7 @@ fn test_cancelled_proposal_removed_from_index() {
 fn test_pagination() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -364,7 +365,7 @@ fn test_pagination() {
 fn test_limit_cap_at_50() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, admin, signer2, token, recipient, _) = setup(&env);
 
@@ -385,7 +386,7 @@ fn test_limit_cap_at_50() {
 fn test_empty_queue() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let (client, _, _, _, _, _) = setup(&env);
 

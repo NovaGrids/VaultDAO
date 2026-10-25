@@ -35,6 +35,7 @@ fn setup<'a>(ttl_ledgers: u64) -> (Env, VaultDAOClient<'a>, Address) {
     guardians.push_back(guardian.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,
@@ -142,7 +143,7 @@ fn test_initiate_allowed_once_active_recovery_expired() {
     client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
     // The first proposal expires at ledger 10, which releases the lock.
-    env.ledger().set_sequence_number(11);
+    env.ledger().with_mut(|l| l.sequence_number = 11);
 
     let next_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
     assert_eq!(next_id, 2);
@@ -155,7 +156,7 @@ fn test_executing_one_recovery_cancels_competing_proposal() {
     // Proposal 1 is left Pending and then expires, which releases the lock.
     let stale_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
-    env.ledger().set_sequence_number(11);
+    env.ledger().with_mut(|l| l.sequence_number = 11);
     let fresh_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
     client.approve_recovery(&guardian, &fresh_id);

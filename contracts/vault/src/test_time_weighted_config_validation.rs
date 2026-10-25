@@ -14,6 +14,7 @@ const LOCK_DURATION: u64 = 30 * 17_280;
 
 fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,
@@ -53,7 +54,7 @@ fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
 
 /// Vault with a supported governance token and time-weighted locks enabled.
 fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address) {
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
     let admin = Address::generate(env);
@@ -193,7 +194,7 @@ fn test_disabling_is_rejected_while_locks_are_active() {
     );
 
     // Once the lock is withdrawn, disabling is allowed
-    env.ledger().set_sequence_number(100 + LOCK_DURATION as u32);
+    env.ledger().with_mut(|l| l.sequence_number = 100 + LOCK_DURATION as u32);
     assert_eq!(client.unlock_tokens(&owner), 1_000);
     assert_eq!(client.try_set_time_weighted_config(&admin, &disabled), Ok(Ok(())));
 }

@@ -13,6 +13,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
     signers.push_back(Address::generate(env));
 
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         proposal_id_prefix: 0,
@@ -184,6 +185,7 @@ fn test_hooks_with_initialization() {
     post_hooks.push_back(post_hook.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         proposal_id_prefix: 0,

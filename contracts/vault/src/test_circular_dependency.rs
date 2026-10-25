@@ -23,6 +23,7 @@ mod tests {
         signers.push_back(signer2.clone());
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,

@@ -60,6 +60,7 @@ fn setup(
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -179,8 +180,8 @@ fn test_rejection_slashes_ten_percent() {
 
     // Rejection now requires reaching the rejection threshold: a single
     // signer's vote is not enough, so both signers must vote to reject.
-    client.vote_reject(&admin, &id, &Symbol::new(&env, "bad"));
-    client.vote_reject(&proposer, &id, &Symbol::new(&env, "bad"));
+    client.reject_proposal(&admin, &id);
+    client.reject_proposal(&proposer, &id);
 
     assert_eq!(client.get_stake_pool_balance(&token), 10);
     assert_eq!(
@@ -196,8 +197,8 @@ fn test_rejection_slash_is_recorded_on_the_stake_record() {
     let (client, admin, proposer, token, cid) = setup(&env, staking_config(10, 50, false));
     let (id, _stake) = staked_proposal(&env, &client, &proposer, &token, &cid, 1_000);
 
-    client.vote_reject(&admin, &id, &Symbol::new(&env, "bad"));
-    client.vote_reject(&proposer, &id, &Symbol::new(&env, "bad"));
+    client.reject_proposal(&admin, &id);
+    client.reject_proposal(&proposer, &id);
 
     let record = client.get_stake_record(&id).unwrap();
     assert!(record.slashed);
@@ -240,8 +241,8 @@ fn test_cancellation_costs_more_than_rejection() {
     let (rejected, _) = staked_proposal(&env, &client, &proposer, &token, &cid, 1_000);
     let (cancelled, _) = staked_proposal(&env, &client, &proposer, &token, &cid, 1_000);
 
-    client.vote_reject(&admin, &rejected, &Symbol::new(&env, "bad"));
-    client.vote_reject(&proposer, &rejected, &Symbol::new(&env, "bad"));
+    client.reject_proposal(&admin, &rejected);
+    client.reject_proposal(&proposer, &rejected);
     let after_rejection = client.get_stake_pool_balance(&token);
 
     client.cancel_proposal(&proposer, &cancelled, &Symbol::new(&env, "withdrawn"));
@@ -264,7 +265,7 @@ fn test_single_rejection_vote_does_not_slash() {
     let (id, _stake) = staked_proposal(&env, &client, &proposer, &token, &cid, 1_000);
 
     // One vote is below the rejection threshold: nothing is slashed yet.
-    client.vote_reject(&admin, &id, &Symbol::new(&env, "bad"));
+    client.reject_proposal(&admin, &id);
 
     assert_eq!(client.get_stake_pool_balance(&token), 0);
     let record = client.get_stake_record(&id).unwrap();
@@ -277,9 +278,9 @@ fn test_rejection_vote_blocked_while_paused() {
     let (client, admin, proposer, token, cid) = setup(&env, staking_config(10, 50, false));
     let (id, _stake) = staked_proposal(&env, &client, &proposer, &token, &cid, 1_000);
 
-    client.pause(&admin);
+    client.pause_vault(&admin, &Symbol::new(&env, "test"));
 
-    let result = client.try_vote_reject(&admin, &id, &Symbol::new(&env, "bad"));
+    let result = client.try_reject_proposal(&admin, &id);
     assert!(result.is_err(), "rejection votes must be blocked while paused");
 
     assert_eq!(client.get_stake_pool_balance(&token), 0);

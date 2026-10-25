@@ -10,7 +10,7 @@ use soroban_sdk::{
     token, Address, Env,
 };
 
-use crate::{VaultContract, VaultContractClient};
+use crate::{VaultDAO, VaultDAOClient};
 
 fn create_token_contract<'a>(
     env: &Env,
@@ -25,7 +25,7 @@ fn create_token_contract<'a>(
 
 fn setup<'a>() -> (
     Env,
-    VaultContractClient<'a>,
+    VaultDAOClient<'a>,
     token::Client<'a>,
     token::StellarAssetClient<'a>,
     Address,
@@ -36,8 +36,8 @@ fn setup<'a>() -> (
     let admin = Address::generate(&env);
     let (token_client, token_admin) = create_token_contract(&env, &admin);
 
-    let vault_id = env.register(VaultContract, ());
-    let vault = VaultContractClient::new(&env, &vault_id);
+    let vault_id = env.register(VaultDAO, ());
+    let vault = VaultDAOClient::new(&env, &vault_id);
 
     vault.initialize(&admin, &token_client.address);
 

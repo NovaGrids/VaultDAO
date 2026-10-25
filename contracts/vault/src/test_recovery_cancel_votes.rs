@@ -42,6 +42,7 @@ fn setup<'a>() -> (Env, VaultDAOClient<'a>, [Address; 3]) {
     }
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,

@@ -65,6 +65,7 @@ fn make_vault(
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             signers: signers.clone(),
             threshold,
             quorum: 0,
@@ -312,7 +313,7 @@ fn test_update_threshold_rejects_non_admin_caller() {
 #[ignore = "quarantined: auth mock conflict (Auth, ExistingValue) (docs/reference/TESTING.md)"]
 fn test_threshold_reduction_succeeds_after_governance_and_timelock() {
     let env = Env::default();
-    env.ledger().set_sequence_number(1000);
+    env.ledger().with_mut(|l| l.sequence_number = 1000);
 
     // 4 signers, threshold = 3, timelock_delay = 10 ledgers (set in make_vault).
     let (client, admin, signers) = make_vault(&env, 3, 4);
@@ -341,7 +342,7 @@ fn test_threshold_reduction_succeeds_after_governance_and_timelock() {
     );
 
     // Advance past the timelock (timelock_delay = 10 ledgers).
-    env.ledger().set_sequence_number(1011);
+    env.ledger().with_mut(|l| l.sequence_number = 1011);
 
     // Now execute.
     client.execute_proposal(&admin, &proposal_id);

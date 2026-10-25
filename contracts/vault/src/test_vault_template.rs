@@ -7,6 +7,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn init_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 200,
         whitelist_mode: true,
         grace_period_ledgers: 150,

@@ -35,6 +35,7 @@ fn setup<'a>(ttl_ledgers: u64) -> (Env, VaultDAOClient<'a>, Address) {
     guardians.push_back(guardian.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,
@@ -98,7 +99,7 @@ fn test_approve_after_expiry_is_rejected() {
     let proposal_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
     // expires_at = 0 + 10, so ledger 11 is past expiry.
-    env.ledger().set_sequence_number(11);
+    env.ledger().with_mut(|l| l.sequence_number = 11);
 
     let result = client.try_approve_recovery(&guardian, &proposal_id);
     assert_eq!(result, Err(Ok(VaultError::ProposalExpired)));
@@ -111,10 +112,10 @@ fn test_execute_after_expiry_is_rejected() {
     let proposal_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
     // Approve while still live; the threshold of 1 moves it to Approved.
-    env.ledger().set_sequence_number(5);
+    env.ledger().with_mut(|l| l.sequence_number = 5);
     client.approve_recovery(&guardian, &proposal_id);
 
-    env.ledger().set_sequence_number(11);
+    env.ledger().with_mut(|l| l.sequence_number = 11);
 
     let result = client.try_execute_recovery(&proposal_id);
     assert_eq!(result, Err(Ok(VaultError::ProposalExpired)));
@@ -126,7 +127,7 @@ fn test_expired_proposal_reports_expired_status() {
 
     let proposal_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
-    env.ledger().set_sequence_number(11);
+    env.ledger().with_mut(|l| l.sequence_number = 11);
 
     let proposal = client.get_recovery_proposal(&proposal_id);
     assert_eq!(proposal.status, RecoveryStatus::Expired);
@@ -139,7 +140,7 @@ fn test_approve_on_expiry_ledger_is_allowed() {
     let proposal_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
     // expires_at is inclusive: the last live ledger is 10.
-    env.ledger().set_sequence_number(10);
+    env.ledger().with_mut(|l| l.sequence_number = 10);
 
     client.approve_recovery(&guardian, &proposal_id);
 
@@ -153,7 +154,7 @@ fn test_zero_ttl_never_expires() {
 
     let proposal_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
-    env.ledger().set_sequence_number(1_000_000);
+    env.ledger().with_mut(|l| l.sequence_number = 1_000_000);
 
     client.approve_recovery(&guardian, &proposal_id);
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::types::{ConditionLogic, Priority, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Symbol, Vec};
+use soroban_sdk::{testutils::{Address as _, Ledger as _}, token::StellarAssetClient, Address, Env, Symbol, Vec};
 
 fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
@@ -19,6 +19,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             whitelist_mode: false,
             grace_period_ledgers: 100,
             vote_weight: crate::types::VoteWeight::Flat,
@@ -425,21 +426,23 @@ fn test_auto_expire_clears_tag_index_and_restores_spending() {
     client.add_proposal_tag(&admin, &proposal_id, &Symbol::new(&env, "expiring"));
 
     // The proposal reserves 100 against the daily/weekly spending counters.
-    let daily_before = client.get_daily_spent(&token);
-    let weekly_before = client.get_weekly_spent(&token);
+    let day = env.ledger().timestamp() / 86_400;
+    let week = day / 7;
+    let daily_before = client.get_daily_spent(&day);
+    let weekly_before = client.get_weekly_spent(&week);
 
     // Advance past the approval timeout so the proposal becomes expirable.
-    env.ledger().set_sequence_number(env.ledger().sequence() + 200_000);
+    env.ledger().with_mut(|l| l.sequence_number += 200_000);
 
-    client.auto_expire_proposals(&admin);
+    client.auto_expire_proposals(&admin, &100u32);
 
     // Tag index must no longer reference the expired proposal.
     let results = client.get_proposals_by_tag(&Symbol::new(&env, "expiring"), &0, &50);
     assert_eq!(results.len(), 0);
 
     // Reserved spending must be credited back to the daily/weekly counters.
-    let daily_after = client.get_daily_spent(&token);
-    let weekly_after = client.get_weekly_spent(&token);
+    let daily_after = client.get_daily_spent(&day);
+    let weekly_after = client.get_weekly_spent(&week);
     assert_eq!(daily_after, daily_before - 100);
     assert_eq!(weekly_after, weekly_before - 100);
 }

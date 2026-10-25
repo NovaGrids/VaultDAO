@@ -101,6 +101,7 @@ fn setup(
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -430,6 +431,7 @@ fn setup_with_threshold(
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,

@@ -20,6 +20,7 @@ mod testnet_integration_tests {
         let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO));
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             admin: admin.clone(),
             min_signers: 2,
             recovery_addresses: vec![&env, admin.clone()],
@@ -51,6 +52,7 @@ mod testnet_integration_tests {
         let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO));
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             admin: admin.clone(),
             min_signers: 2,
             recovery_addresses: vec![&env, admin.clone()],
@@ -80,6 +82,7 @@ mod testnet_integration_tests {
         let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO));
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             admin: admin.clone(),
             min_signers: 2,
             recovery_addresses: vec![&env, admin.clone()],
@@ -108,6 +111,7 @@ mod testnet_integration_tests {
         let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO));
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             admin: admin.clone(),
             min_signers: 1,
             recovery_addresses: vec![&env, admin.clone()],
@@ -133,6 +137,7 @@ mod testnet_integration_tests {
         let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO));
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             admin: admin.clone(),
             min_signers: 1,
             recovery_addresses: vec![&env, admin.clone()],
@@ -162,6 +167,7 @@ mod testnet_integration_tests {
         let client = VaultDAOClient::new(&env, &env.register_contract(None, VaultDAO));
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             admin: admin.clone(),
             min_signers: 1,
             recovery_addresses: vec![&env, admin.clone()],

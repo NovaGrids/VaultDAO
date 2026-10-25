@@ -18,6 +18,7 @@ const LOCK_DURATION: u64 = 30 * 17_280;
 
 fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,
@@ -66,7 +67,7 @@ struct Ctx {
 /// Vault with time-weighted locks enabled for `gov_token`, which is also a
 /// supported treasury token, and `free` unlocked tokens held by the vault.
 fn setup(env: &Env, free: i128) -> Ctx {
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
     let vault = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &vault);
     let admin = Address::generate(env);

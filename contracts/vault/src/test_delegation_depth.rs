@@ -2,14 +2,15 @@
 #![cfg(test)]
 
 use crate::types::{
-    Permission, RecoveryConfig, RetryConfig, StakingConfig, ThresholdStrategy, VelocityConfig,
-    VoteWeight,
+    ConditionLogic, Permission, Priority, RecoveryConfig, RetryConfig, StakingConfig,
+    ThresholdStrategy, VelocityConfig, VoteWeight,
 };
 use crate::{InitConfig, Role, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, testutils::Events as _, Address, Env, TryIntoVal, Vec};
+use soroban_sdk::{testutils::Address as _, testutils::Events as _, Address, Env, Symbol, TryFromVal, TryIntoVal, Vec};
 
 fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         proposal_id_prefix: 0,
@@ -166,22 +167,26 @@ fn test_delegator_abstains_delegate_approves_still_counts() {
 
     client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
 
-    let proposal_id = client.create_proposal(
+    let proposal_id = client.propose_transfer(
         &delegator,
         &other,
-        &100,
         &Address::generate(&env),
+        &100,
+        &Symbol::new(&env, "delegation"),
+        &Priority::Normal,
         &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
 
     // The delegator abstains directly; the delegate then approves. The
     // delegate's approval must still be counted even though the delegator
     // already cast a conflicting vote.
-    client.abstain(&delegator, &proposal_id);
-    client.approve(&delegate, &proposal_id);
-    client.approve(&other, &proposal_id);
+    client.abstain_proposal(&delegator, &proposal_id);
+    client.approve_proposal(&delegate, &proposal_id);
+    client.approve_proposal(&other, &proposal_id);
 
-    assert!(client.get_proposal(&proposal_id).executed);
+    assert!(client.get_proposal(&proposal_id).status == crate::types::ProposalStatus::Executed);
 }
 
 #[test]
@@ -196,22 +201,26 @@ fn test_delegator_approves_delegate_abstains_still_counts() {
 
     client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
 
-    let proposal_id = client.create_proposal(
+    let proposal_id = client.propose_transfer(
         &delegator,
         &other,
-        &100,
         &Address::generate(&env),
+        &100,
+        &Symbol::new(&env, "delegation"),
+        &Priority::Normal,
         &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
 
     // Symmetric case: the delegator approves directly while the delegate
     // abstains. The delegate's abstention must not cancel the delegator's
     // approval, and the proposal still reaches quorum.
-    client.approve(&delegator, &proposal_id);
-    client.abstain(&delegate, &proposal_id);
-    client.approve(&other, &proposal_id);
+    client.approve_proposal(&delegator, &proposal_id);
+    client.abstain_proposal(&delegate, &proposal_id);
+    client.approve_proposal(&other, &proposal_id);
 
-    assert!(client.get_proposal(&proposal_id).executed);
+    assert!(client.get_proposal(&proposal_id).status == crate::types::ProposalStatus::Executed);
 }
 
 #[test]
@@ -226,28 +235,32 @@ fn test_delegated_vote_skipped_event_emitted() {
 
     client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
 
-    let proposal_id = client.create_proposal(
+    let proposal_id = client.propose_transfer(
         &delegator,
         &other,
-        &100,
         &Address::generate(&env),
+        &100,
+        &Symbol::new(&env, "delegation"),
+        &Priority::Normal,
         &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
 
     // The delegator abstains first, so the delegate's later approval is
     // skipped and a `delegated_vote_skipped` event must be emitted naming the
     // delegate as the voter and the conflicting vote as the reason.
-    client.abstain(&delegator, &proposal_id);
-    client.approve(&delegate, &proposal_id);
+    client.abstain_proposal(&delegator, &proposal_id);
+    client.approve_proposal(&delegate, &proposal_id);
 
     let events = env.events().all();
     let mut found = false;
     for event in events.iter() {
         let (_, topics, data) = event;
-        if topics.len() >= 2 && topics.get(0).unwrap() == soroban_sdk::symbol_short!("delegated_vote_skipped") {
-            let voter: Address = topics.get(1).unwrap().try_into().unwrap();
+        if topics.len() >= 2 && soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap() == soroban_sdk::Symbol::new(&env, "delegated_vote_skipped") {
+            let voter: Address = Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
             assert_eq!(voter, delegate);
-            let reason: soroban_sdk::Symbol = data.try_into().unwrap();
+            let reason: soroban_sdk::Symbol = soroban_sdk::Symbol::try_from_val(&env, &data).unwrap();
             assert_eq!(reason, soroban_sdk::symbol_short!("abstained"));
             found = true;
         }
@@ -266,31 +279,39 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
 
     client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
 
-    let proposal_id = client.create_proposal(
+    let proposal_id = client.propose_transfer(
         &delegator,
         &delegate,
-        &100,
         &Address::generate(&env),
+        &100,
+        &Symbol::new(&env, "delegation"),
+        &Priority::Normal,
         &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
 
     // Every represented voter (the delegator) has already cast the conflicting
     // vote, so the `vote_cast_count == 0` guard must surface the original
     // AlreadyAbstained error rather than silently succeeding.
-    client.abstain(&delegator, &proposal_id);
-    let result = client.try_approve(&delegate, &proposal_id);
+    client.abstain_proposal(&delegator, &proposal_id);
+    let result = client.try_approve_proposal(&delegate, &proposal_id);
     assert!(result.is_err());
 
     // Symmetric: delegator approves, delegate abstains -> AlreadyApproved.
-    let proposal_id2 = client.create_proposal(
+    let proposal_id2 = client.propose_transfer(
         &delegator,
         &delegate,
-        &100,
         &Address::generate(&env),
+        &100,
+        &Symbol::new(&env, "delegation"),
+        &Priority::Normal,
         &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
-    client.approve(&delegator, &proposal_id2);
-    let result2 = client.try_abstain(&delegate, &proposal_id2);
+    client.approve_proposal(&delegator, &proposal_id2);
+    let result2 = client.try_abstain_proposal(&delegate, &proposal_id2);
     assert!(result2.is_err());
 }
 

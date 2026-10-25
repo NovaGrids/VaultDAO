@@ -27,6 +27,7 @@ use soroban_sdk::{
 /// proposals are created with a non-zero `voting_deadline`.
 fn deadline_init_config(env: &Env, signers: Vec<Address>, deadline_offset: u64) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -71,7 +72,7 @@ fn setup_vault_with_deadline_proposal(
     start_ledger: u32,
     deadline_offset: u64,
 ) -> (VaultDAOClient<'_>, Address, u64) {
-    env.ledger().set_sequence_number(start_ledger);
+    env.ledger().with_mut(|l| l.sequence_number = start_ledger);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
@@ -123,7 +124,7 @@ fn test_approve_after_deadline_returns_error() {
     let (client, signer, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
 
     // Advance ledger past the deadline: 1011 > 1010
-    env.ledger().set_sequence_number(1011);
+    env.ledger().with_mut(|l| l.sequence_number = 1011);
 
     let result = client.try_approve_proposal(&signer, &proposal_id);
 
@@ -156,7 +157,7 @@ fn test_abstain_after_deadline_returns_error() {
     let (client, signer, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
 
     // Advance ledger past the deadline: 1200 > 1010
-    env.ledger().set_sequence_number(1200);
+    env.ledger().with_mut(|l| l.sequence_number = 1200);
 
     let result = client.try_abstain_proposal(&signer, &proposal_id);
 
@@ -189,7 +190,7 @@ fn test_approve_at_exact_deadline_succeeds() {
     let (client, signer, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
 
     // Set ledger to exactly the deadline
-    env.ledger().set_sequence_number(1010);
+    env.ledger().with_mut(|l| l.sequence_number = 1010);
 
     let result = client.try_approve_proposal(&signer, &proposal_id);
 
@@ -214,7 +215,7 @@ fn test_approve_one_past_deadline_returns_error() {
     let (client, signer, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
 
     // Advance exactly one ledger past the deadline
-    env.ledger().set_sequence_number(1011);
+    env.ledger().with_mut(|l| l.sequence_number = 1011);
 
     let result = client.try_approve_proposal(&signer, &proposal_id);
 
@@ -242,7 +243,7 @@ fn test_abstain_one_past_deadline_returns_error() {
     let (client, signer, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
 
     // Advance exactly one ledger past the deadline
-    env.ledger().set_sequence_number(1011);
+    env.ledger().with_mut(|l| l.sequence_number = 1011);
 
     let result = client.try_abstain_proposal(&signer, &proposal_id);
 
@@ -277,7 +278,7 @@ fn test_approve_past_expiry_marks_expired_without_recording_vote() {
     );
 
     // Advance past expiry
-    env.ledger().set_sequence_number(expires_at + 1);
+    env.ledger().with_mut(|l| l.sequence_number = expires_at + 1);
 
     let result = client.try_approve_proposal(&signer, &proposal_id);
     assert!(
@@ -318,7 +319,7 @@ fn test_abstain_past_expiry_marks_expired_without_recording_vote() {
     );
 
     // Advance past expiry
-    env.ledger().set_sequence_number(expires_at + 1);
+    env.ledger().with_mut(|l| l.sequence_number = expires_at + 1);
 
     let result = client.try_abstain_proposal(&signer, &proposal_id);
     assert!(
@@ -359,7 +360,7 @@ fn setup_vault_no_deadline(
     env: &Env,
     start_ledger: u32,
 ) -> (VaultDAOClient<'_>, Address, Address, u64) {
-    env.ledger().set_sequence_number(start_ledger);
+    env.ledger().with_mut(|l| l.sequence_number = start_ledger);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
@@ -414,7 +415,7 @@ fn test_approve_zero_deadline_succeeds_at_any_ledger() {
 
     // Advance ledger well past where a deadline would be — no deadline should be enforced.
     // Use a moderate value to avoid TTL/archival issues in the test environment.
-    env.ledger().set_sequence_number(10_000);
+    env.ledger().with_mut(|l| l.sequence_number = 10_000);
 
     let result = client.try_approve_proposal(&signer1, &proposal_id);
     assert!(
@@ -445,7 +446,7 @@ fn test_abstain_zero_deadline_succeeds_at_any_ledger() {
     let (client, signer1, _signer2, proposal_id) = setup_vault_no_deadline(&env, 1000);
 
     // Advance ledger well past where a deadline would be — no deadline should be enforced.
-    env.ledger().set_sequence_number(10_000);
+    env.ledger().with_mut(|l| l.sequence_number = 10_000);
 
     let result = client.try_abstain_proposal(&signer1, &proposal_id);
     assert!(
@@ -478,7 +479,7 @@ fn test_approve_in_window_records_and_transitions() {
     let (client, signer1, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 100);
 
     // Vote well within the window
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
 
     let result = client.try_approve_proposal(&signer1, &proposal_id);
     assert!(
@@ -517,7 +518,7 @@ fn test_abstain_in_window_records_and_contributes_to_quorum() {
     let (client, signer1, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 100);
 
     // Vote well within the window
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
 
     let result = client.try_abstain_proposal(&signer1, &proposal_id);
     assert!(
@@ -548,7 +549,7 @@ fn test_approve_at_deadline_boundary_succeeds() {
     let (client, signer1, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 50);
 
     // Set ledger to exactly the deadline
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
 
     let result = client.try_approve_proposal(&signer1, &proposal_id);
     assert!(
@@ -576,7 +577,7 @@ fn test_abstain_at_deadline_boundary_succeeds() {
     let (client, signer1, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 50);
 
     // Set ledger to exactly the deadline
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
 
     let result = client.try_abstain_proposal(&signer1, &proposal_id);
     assert!(
@@ -607,7 +608,7 @@ fn test_other_rejection_proposal_not_pending() {
     let (client, signer1, signer2, proposal_id) = setup_vault_no_deadline(&env, 1000);
 
     // Approve within window — proposal transitions to Approved
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
     client.approve_proposal(&signer1, &proposal_id);
 
     // Proposal is now Approved; a second approval attempt must return ProposalNotPending
@@ -628,7 +629,7 @@ fn test_other_rejection_already_approved() {
     env.mock_all_auths();
 
     // Use a 2-signer vault with threshold=2 so the proposal stays Pending after one vote
-    env.ledger().set_sequence_number(1000);
+    env.ledger().with_mut(|l| l.sequence_number = 1000);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -650,6 +651,7 @@ fn test_other_rejection_already_approved() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -702,7 +704,7 @@ fn test_other_rejection_already_approved() {
     );
 
     // First approval within window
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
     client.approve_proposal(&signer1, &proposal_id);
 
     // Second approval by same signer must return AlreadyApproved
@@ -731,7 +733,7 @@ fn test_other_rejection_not_a_signer() {
     // A completely new address that was never a signer
     let outsider = Address::generate(&env);
 
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
     let result = client.try_approve_proposal(&outsider, &proposal_id);
     assert_eq!(
         result.err(),
@@ -789,6 +791,7 @@ fn test_time_based_threshold_before_reduction() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -833,7 +836,7 @@ fn test_time_based_threshold_before_reduction() {
     client.set_role(&admin, &signer1, &Role::Treasurer);
 
     // Create proposal at ledger 1000
-    env.ledger().set_sequence_number(1000);
+    env.ledger().with_mut(|l| l.sequence_number = 1000);
     let proposal_id = client.propose_transfer(
         &signer1,
         &recipient,
@@ -886,6 +889,7 @@ fn test_time_based_threshold_respects_quorum() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -930,7 +934,7 @@ fn test_time_based_threshold_respects_quorum() {
     client.set_role(&admin, &signer1, &Role::Treasurer);
 
     // Create proposal at ledger 1000
-    env.ledger().set_sequence_number(1000);
+    env.ledger().with_mut(|l| l.sequence_number = 1000);
     let proposal_id = client.propose_transfer(
         &signer1,
         &recipient,
@@ -944,7 +948,7 @@ fn test_time_based_threshold_respects_quorum() {
     );
 
     // Advance past reduction delay
-    env.ledger().set_sequence_number(1101);
+    env.ledger().with_mut(|l| l.sequence_number = 1101);
 
     // Two approvals should meet reduced threshold but not quorum
     client.approve_proposal(&admin, &proposal_id);
@@ -994,7 +998,7 @@ fn test_approve_after_deadline_preserves_spent() {
     let before_token = token_spent(&client, &token);
 
     // Advance ledger past the deadline: 1011 > 1010
-    env.ledger().set_sequence_number(1011);
+    env.ledger().with_mut(|l| l.sequence_number = 1011);
 
     let result = client.try_approve_proposal(&signer, &proposal_id);
     assert!(
@@ -1029,7 +1033,7 @@ fn test_abstain_after_deadline_preserves_spent() {
     let before_token = token_spent(&client, &token);
 
     // Advance ledger past the deadline: 1011 > 1010
-    env.ledger().set_sequence_number(1011);
+    env.ledger().with_mut(|l| l.sequence_number = 1011);
 
     let result = client.try_abstain_proposal(&signer, &proposal_id);
     assert!(
@@ -1070,7 +1074,7 @@ fn test_change_vote_zero_deadline_succeeds_at_any_ledger() {
     client.approve_proposal(&signer1, &proposal_id);
 
     // Advance ledger well past where a deadline would be — no deadline enforced.
-    env.ledger().set_sequence_number(10_000);
+    env.ledger().with_mut(|l| l.sequence_number = 10_000);
 
     let result = client.try_change_vote(&signer1, &proposal_id, &Vote::Abstain);
     assert!(
@@ -1098,7 +1102,7 @@ fn test_change_vote_before_deadline_succeeds() {
     let (client, signer1, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 100);
 
     // Record an initial approval within the window.
-    env.ledger().set_sequence_number(1050);
+    env.ledger().with_mut(|l| l.sequence_number = 1050);
     client.approve_proposal(&signer1, &proposal_id);
 
     // Change the vote while still before the deadline.
@@ -1128,11 +1132,11 @@ fn test_change_vote_after_deadline_returns_voting_closed() {
     let (client, signer1, proposal_id) = setup_vault_with_deadline_proposal(&env, 1000, 10);
 
     // Record an initial approval within the window.
-    env.ledger().set_sequence_number(1005);
+    env.ledger().with_mut(|l| l.sequence_number = 1005);
     client.approve_proposal(&signer1, &proposal_id);
 
     // Advance past the deadline: 1011 > 1010
-    env.ledger().set_sequence_number(1011);
+    env.ledger().with_mut(|l| l.sequence_number = 1011);
 
     let result = client.try_change_vote(&signer1, &proposal_id, &Vote::Abstain);
     assert_eq!(
@@ -1151,7 +1155,7 @@ fn setup_for_extend_deadline(
     start_ledger: u32,
     deadline_offset: u64,
 ) -> (VaultDAOClient<'_>, Address, u64, u64) {
-    env.ledger().set_sequence_number(start_ledger);
+    env.ledger().with_mut(|l| l.sequence_number = start_ledger);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);

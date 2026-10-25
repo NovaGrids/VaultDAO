@@ -22,6 +22,7 @@ fn default_init_config(
     threshold: u32,
 ) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(_env),
@@ -84,6 +85,7 @@ fn test_multisig_approval() {
 
     // Initialize with 2-of-3 multisig
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -640,7 +642,7 @@ fn test_timelock_violation() {
     let env = Env::default();
     env.mock_all_auths();
 
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -659,6 +661,7 @@ fn test_timelock_violation() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -718,7 +721,7 @@ fn test_timelock_violation() {
     let res = client.try_execute_proposal(&signer1, &proposal_id);
     assert_eq!(res.err(), Some(Ok(VaultError::TimelockNotExpired)));
 
-    env.ledger().set_sequence_number(301);
+    env.ledger().with_mut(|l| l.sequence_number = 301);
     let res = client.try_execute_proposal(&signer1, &proposal_id);
     assert_ne!(res.err(), Some(Ok(VaultError::TimelockNotExpired)));
 }
@@ -976,6 +979,7 @@ fn test_change_priority_unauthorized() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1051,6 +1055,7 @@ fn test_comment_functionality() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1117,7 +1122,7 @@ fn test_comment_functionality() {
     let reply_id = client.add_comment(&admin, &proposal_id, &reply_text, &comment_id);
     assert_eq!(reply_id, 2);
 
-    env.ledger().set_sequence_number(10);
+    env.ledger().with_mut(|l| l.sequence_number = 10);
 
     let new_text = Symbol::new(&env, "Needsreview");
     client.edit_comment(&signer1, &comment_id, &new_text);
@@ -1152,6 +1157,7 @@ fn test_blacklist_mode() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1246,6 +1252,7 @@ fn test_abstention_does_not_count_toward_threshold() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1331,6 +1338,7 @@ fn test_list_management() {
     signers.push_back(address1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1405,6 +1413,7 @@ fn test_cannot_abstain_after_voting() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1485,6 +1494,7 @@ fn test_attachment_unauthorized() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1564,6 +1574,7 @@ fn test_set_and_get_proposal_metadata() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -1648,6 +1659,7 @@ fn test_remove_proposal_metadata() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -1731,6 +1743,7 @@ fn test_proposal_metadata_unauthorized() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -2060,6 +2073,7 @@ fn test_fixed_threshold_strategy() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -2147,6 +2161,7 @@ fn test_percentage_threshold_strategy() {
 
     // 67% of 4 signers = ceil(2.68) = 3 approvals needed
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -2252,6 +2267,7 @@ fn test_amount_based_threshold_strategy() {
     });
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -2388,6 +2404,7 @@ fn test_time_based_threshold_strategy() {
     signers.push_back(signer3.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -2432,7 +2449,7 @@ fn test_time_based_threshold_strategy() {
     client.set_role(&admin, &signer2, &Role::Treasurer);
     client.set_role(&admin, &signer3, &Role::Treasurer);
 
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let proposal_id = client.propose_transfer(
         &signer1,
@@ -2451,7 +2468,7 @@ fn test_time_based_threshold_strategy() {
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
 
-    env.ledger().set_sequence_number(201);
+    env.ledger().with_mut(|l| l.sequence_number = 201);
     client.approve_proposal(&admin, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
@@ -2479,6 +2496,7 @@ fn test_condition_balance_above() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         pre_execution_hooks: Vec::new(&env),
@@ -2563,6 +2581,7 @@ fn test_condition_date_after() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -2602,7 +2621,7 @@ fn test_condition_date_after() {
     client.set_role(&admin, &signer1, &Role::Treasurer);
     client.set_role(&admin, &signer2, &Role::Treasurer);
 
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let mut conditions = Vec::new(&env);
     conditions.push_back(Condition::DateAfter(200));
@@ -2629,7 +2648,7 @@ fn test_condition_date_after() {
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_err());
 
-    env.ledger().set_sequence_number(201);
+    env.ledger().with_mut(|l| l.sequence_number = 201);
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
 }
@@ -2658,6 +2677,7 @@ fn test_condition_multiple_and_logic() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -2697,7 +2717,7 @@ fn test_condition_multiple_and_logic() {
     client.set_role(&admin, &signer1, &Role::Treasurer);
     client.set_role(&admin, &signer2, &Role::Treasurer);
 
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let mut conditions = Vec::new(&env);
     conditions.push_back(Condition::DateAfter(150));
@@ -2726,11 +2746,11 @@ fn test_condition_multiple_and_logic() {
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_err());
 
-    env.ledger().set_sequence_number(200);
+    env.ledger().with_mut(|l| l.sequence_number = 200);
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
 
-    env.ledger().set_sequence_number(260);
+    env.ledger().with_mut(|l| l.sequence_number = 260);
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_err());
 }
@@ -2759,6 +2779,7 @@ fn test_condition_multiple_or_logic() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -2798,7 +2819,7 @@ fn test_condition_multiple_or_logic() {
     client.set_role(&admin, &signer1, &Role::Treasurer);
     client.set_role(&admin, &signer2, &Role::Treasurer);
 
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let mut conditions = Vec::new(&env);
     conditions.push_back(Condition::DateAfter(200));
@@ -2826,7 +2847,7 @@ fn test_condition_multiple_or_logic() {
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_err());
 
-    env.ledger().set_sequence_number(201);
+    env.ledger().with_mut(|l| l.sequence_number = 201);
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
 }
@@ -2854,6 +2875,7 @@ fn test_condition_no_conditions() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -2936,6 +2958,7 @@ fn test_dex_config_setup() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3012,6 +3035,7 @@ fn test_swap_proposal_creation() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3096,6 +3120,7 @@ fn test_dex_not_enabled_error() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3175,6 +3200,7 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
 
     // threshold=1, quorum=0 (disabled)
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3262,6 +3288,7 @@ fn test_quorum_blocks_approval_until_satisfied() {
 
     // threshold=2, quorum=3 out of 4 signers
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3370,6 +3397,7 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
 
     // threshold=3, quorum=2 — quorum is easy to satisfy
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3478,6 +3506,7 @@ fn test_get_quorum_status() {
 
     // quorum = 2 out of 3 signers
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3573,6 +3602,7 @@ fn test_get_quorum_status_quorum_disabled() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3646,6 +3676,7 @@ fn test_update_quorum() {
     signers.push_back(signer1.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3721,6 +3752,7 @@ fn test_execution_rechecks_quorum_requirement() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3809,6 +3841,7 @@ fn test_quorum_satisfied_by_approvals_alone() {
 
     // threshold=2, quorum=2 — two approvals should satisfy both
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3888,6 +3921,7 @@ fn test_initialize_rejects_quorum_too_high() {
 
     // quorum=3 but only 2 signers — should fail
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -3957,6 +3991,7 @@ macro_rules! setup_retry_test {
         signers.push_back($signer1.clone());
 
         let config = InitConfig {
+            upgrade_timelock_delay: 17_280,
             quorum_percentage: 0,
             veto_addresses: Vec::new(&$env),
             veto_window_ledgers: 0,
@@ -4209,6 +4244,7 @@ fn test_retry_not_enabled_passes_through_error() {
 
     // Retry disabled
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -4528,6 +4564,7 @@ fn test_cross_vault_multi_vault_actions() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5042,6 +5079,7 @@ fn test_reputation_initialized_at_neutral() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5114,6 +5152,7 @@ fn test_reputation_increases_on_proposal_creation() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5195,6 +5234,7 @@ fn test_reputation_increases_on_approval() {
     signers.push_back(approver.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5281,6 +5321,7 @@ fn test_participation_tracking_on_abstention() {
     signers.push_back(abstainer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5364,6 +5405,7 @@ fn test_reputation_increases_on_execution() {
     signers.push_back(signer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5449,6 +5491,7 @@ fn test_reputation_decay_over_time() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5552,6 +5595,7 @@ fn test_create_from_template_with_overrides() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5647,6 +5691,7 @@ fn test_create_from_template_amount_out_of_range() {
     signers.push_back(treasurer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5748,6 +5793,7 @@ fn test_create_from_inactive_template() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5842,6 +5888,7 @@ fn test_reputation_based_spending_limit() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -5934,6 +5981,7 @@ fn test_reputation_high_score_get_limits_boost() {
     signers.push_back(signer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -6017,6 +6065,7 @@ fn test_template_not_found() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -6102,6 +6151,7 @@ fn test_retry_not_enabled() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -6199,6 +6249,7 @@ fn test_insurance_posting_and_refund() {
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_addresses: Vec::new(&env),
         veto_window_ledgers: 0,
@@ -7361,17 +7412,19 @@ fn test_validate_limits_pending_auto_cancel_refunds_and_records() {
     assert_eq!(token_client.balance(&proposer), proposer_balance_before - 50);
 
     // Capture the spending counters after the reservation.
-    let daily_after_reserve = client.get_daily_spent(&token);
-    let weekly_after_reserve = client.get_weekly_spent(&token);
+    let day = env.ledger().timestamp() / 86_400;
+    let week = env.ledger().timestamp() / 604_800;
+    let daily_after_reserve = client.get_token_daily_spent(&token, &day);
+    let weekly_after_reserve = client.get_token_weekly_spent(&token, &week);
     assert!(daily_after_reserve > 0);
     assert!(weekly_after_reserve > 0);
 
     // Run the pending-limit validation with auto_cancel enabled.
-    client.validate_limits_pending(&admin, &true);
+    client.validate_limits_pending(&admin, &1u64, &u32::MAX, &true);
 
     // (a) Spending reservation refunded: counters decrease back toward zero.
-    let daily_after_cancel = client.get_daily_spent(&token);
-    let weekly_after_cancel = client.get_weekly_spent(&token);
+    let daily_after_cancel = client.get_token_daily_spent(&token, &day);
+    let weekly_after_cancel = client.get_token_weekly_spent(&token, &week);
     assert!(
         daily_after_cancel < daily_after_reserve,
         "daily counter should decrease after auto-cancel refund"
@@ -7389,16 +7442,16 @@ fn test_validate_limits_pending_auto_cancel_refunds_and_records() {
     );
 
     // (c) Stake record settled (refunded or slashed per cancellation rate).
-    let stake = client.get_stake_record(&proposer);
+    let stake = client.get_stake_record(&proposal_id);
     assert!(
         stake.is_none() || stake.unwrap().amount == 0,
         "stake record should be settled after auto-cancel"
     );
 
     // (d) A cancellation record is stored for the proposal.
-    let cancellation = client.get_cancellation_record(&proposal_id);
+    let cancellation = client.try_get_cancellation_record(&proposal_id);
     assert!(
-        cancellation.is_some(),
+        cancellation.is_ok(),
         "a cancellation record should be stored for the auto-cancelled proposal"
     );
 
@@ -7446,11 +7499,11 @@ fn test_validate_limits_pending_pagination_bounds_scan() {
     assert_eq!(proposal_ids.get(0).unwrap(), 1);
 
     // A bounded scan (offset 0, limit 2) must not scan beyond the limit.
-    client.validate_limits_pending_paginated(&admin, &true, &0u64, &2u32);
+    client.validate_limits_pending(&admin, &0u64, &2u32, &true);
 
     // A scan starting at offset 1 with limit 2 must also succeed and be bounded.
-    client.validate_limits_pending_paginated(&admin, &true, &1u64, &2u32);
+    client.validate_limits_pending(&admin, &1u64, &2u32, &true);
 
     // A zero limit must scan nothing and succeed.
-    client.validate_limits_pending_paginated(&admin, &true, &0u64, &0u32);
+    client.validate_limits_pending(&admin, &0u64, &0u32, &true);
 }

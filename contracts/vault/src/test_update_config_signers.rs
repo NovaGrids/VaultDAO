@@ -50,6 +50,7 @@ fn make_vault(
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,

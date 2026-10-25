@@ -1,7 +1,7 @@
 use super::*;
 use crate::types::{RetryConfig, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, Env, Symbol, Vec};
+use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, Symbol, Vec};
 
 fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
@@ -14,6 +14,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     signers.push_back(user.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -212,11 +213,11 @@ fn test_notification_prefs_v2_respects_quiet_hours() {
     let proposal = Symbol::new(&env, "proposal");
 
     // Inside the window: filtered out.
-    env.ledger().set_sequence_number(150);
+    env.ledger().with_mut(|l| l.sequence_number = 150);
     assert!(helpers::compute_relevant_signers(&env, &proposal, 1_000).is_empty());
 
     // Outside the window: included.
-    env.ledger().set_sequence_number(300);
+    env.ledger().with_mut(|l| l.sequence_number = 300);
     assert_eq!(helpers::compute_relevant_signers(&env, &proposal, 1_000).len(), 1);
 }
 

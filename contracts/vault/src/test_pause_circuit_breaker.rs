@@ -21,6 +21,7 @@ fn make_env() -> (Env, crate::VaultDAOClient<'static>) {
 
 fn base_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         whitelist_mode: false,
         grace_period_ledgers: 100,
         vote_weight: crate::types::VoteWeight::Flat,
@@ -348,7 +349,7 @@ fn test_all_vote_entry_points_blocked_while_paused() {
     assert_eq!(r, Err(Ok(VaultError::VaultPaused)));
 
     // change_vote
-    let r = client.try_change_vote(&admin, &pid, &Vote::Approve);
+    let r = client.try_change_vote(&admin, &pid, &VoteChoice::Approve);
     assert_eq!(r, Err(Ok(VaultError::VaultPaused)));
 
     // Unpause and verify the entry points are restored
@@ -590,7 +591,7 @@ fn test_1353_validate_pending_proposals() {
 
     // Validate pending proposals (should not auto-cancel since it's under the new limit)
     let cancelled_count = client.validate_limits_pending(
-        &admin, &false, // no auto-cancel
+        &admin, &1u64, &u32::MAX, &false, // no auto-cancel
     );
     assert_eq!(cancelled_count, 0u32);
 }

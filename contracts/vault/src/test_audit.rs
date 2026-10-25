@@ -9,6 +9,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn make_audit_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         admin_rotation_delay: 1440,
         signers,
         threshold,
@@ -61,6 +62,7 @@ fn make_checkpoint_config(env: &Env) -> (Address, crate::VaultDAOClient<'_>, Add
     let client = crate::VaultDAOClient::new(env, &contract_id);
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,

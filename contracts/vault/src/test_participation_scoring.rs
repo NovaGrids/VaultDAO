@@ -23,6 +23,7 @@ fn emitted(env: &Env, name: &str) -> bool {
 
 fn base_init_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,

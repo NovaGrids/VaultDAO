@@ -19,6 +19,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address, Addr
     client.initialize(
         &admin,
         &crate::types::InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -477,7 +478,7 @@ fn test_get_proposals_paginated_first_page() {
         make_proposal(&env, &client, &admin, &token, &recipient, 100);
     }
 
-    let page = client.get_proposals_paginated(&0u64, &2u32);
+    let page = client.get_proposals(&0u64, &2u32);
     assert_eq!(page.len(), 2, "first page must respect the limit");
 }
 
@@ -503,7 +504,7 @@ fn test_get_proposals_paginated_cursor_iteration() {
     let mut cursor = 0u64;
     let mut seen = 0u64;
     loop {
-        let page = client.get_proposals_paginated(&cursor, &2u32);
+        let page = client.get_proposals(&cursor, &2u32);
         if page.is_empty() {
             break;
         }
@@ -534,7 +535,7 @@ fn test_get_proposals_paginated_empty_past_end() {
     let recipient = Address::generate(&env);
     let last_id = make_proposal(&env, &client, &admin, &token, &recipient, 100);
 
-    let page = client.get_proposals_paginated(&last_id, &10u32);
+    let page = client.get_proposals(&last_id, &10u32);
     assert!(page.is_empty(), "cursor past the end must return no proposals");
 }
 
@@ -552,7 +553,7 @@ fn test_get_proposals_paginated_zero_limit() {
     let recipient = Address::generate(&env);
     make_proposal(&env, &client, &admin, &token, &recipient, 100);
 
-    let page = client.get_proposals_paginated(&0u64, &0u32);
+    let page = client.get_proposals(&0u64, &0u32);
     assert!(page.is_empty(), "zero limit must return no proposals");
 }
 
@@ -575,7 +576,7 @@ fn test_get_proposals_paginated_limit_cap() {
     }
 
     // Requesting an absurd limit must not error and must not exceed the cap.
-    let page = client.get_proposals_paginated(&0u64, &u32::MAX);
+    let page = client.get_proposals(&0u64, &u32::MAX);
     assert!(page.len() <= 3, "page must not exceed the number of proposals");
 }
 
@@ -597,7 +598,7 @@ fn test_get_executable_proposals_respects_limit() {
         make_proposal(&env, &client, &admin, &token, &recipient, 100);
     }
 
-    let executable = client.get_executable_proposals(&2u32);
+    let executable = client.get_executable_proposals(&0u64, &2u32);
     assert!(
         executable.len() <= 2,
         "get_executable_proposals must respect the requested limit"
@@ -621,7 +622,7 @@ fn test_get_executable_proposals_limit_cap() {
         make_proposal(&env, &client, &admin, &token, &recipient, 100);
     }
 
-    let executable = client.get_executable_proposals(&u32::MAX);
+    let executable = client.get_executable_proposals(&0u64, &u32::MAX);
     assert!(
         executable.len() <= 3,
         "oversized limit must be clamped, not rejected"

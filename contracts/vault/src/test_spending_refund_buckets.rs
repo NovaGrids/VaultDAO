@@ -30,6 +30,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) 
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             whitelist_mode: false,
             grace_period_ledgers: 100,
             vote_weight: crate::types::VoteWeight::Flat,
@@ -221,7 +222,7 @@ fn test_rejection_across_day_boundary_refunds_original_day_bucket() {
     let rejection_day = env.ledger().timestamp() / DAY_SECS;
     assert_ne!(creation_day, rejection_day);
 
-    client.reject_proposal(&admin, &proposal_id, &Symbol::new(&env, "nope"));
+    client.reject_proposal(&admin, &proposal_id);
 
     // Original bucket must be fully credited back
     assert_eq!(
@@ -257,7 +258,7 @@ fn test_rejection_across_week_boundary_refunds_original_week_bucket() {
     let rejection_week = env.ledger().timestamp() / WEEK_SECS;
     assert_ne!(creation_week, rejection_week);
 
-    client.reject_proposal(&admin, &proposal_id, &Symbol::new(&env, "nextwk"));
+    client.reject_proposal(&admin, &proposal_id);
 
     assert_eq!(
         client.get_weekly_spent(&creation_week),
@@ -338,7 +339,7 @@ fn test_deadline_rejection_refunds_original_day_bucket() {
     let reject_day = env.ledger().timestamp() / DAY_SECS;
     assert_ne!(creation_day, reject_day);
 
-    client.reject_proposal(&admin, &proposal_id, &Symbol::new(&env, "expired"));
+    client.reject_proposal(&admin, &proposal_id);
 
     assert_eq!(
         client.get_daily_spent(&creation_day),
@@ -372,7 +373,7 @@ fn test_deadline_rejection_refunds_original_week_bucket() {
     let reject_week = env.ledger().timestamp() / WEEK_SECS;
     assert_ne!(creation_week, reject_week);
 
-    client.reject_proposal(&admin, &proposal_id, &Symbol::new(&env, "expired"));
+    client.reject_proposal(&admin, &proposal_id);
 
     assert_eq!(
         client.get_weekly_spent(&creation_week),

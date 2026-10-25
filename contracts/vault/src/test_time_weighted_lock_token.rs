@@ -18,6 +18,7 @@ const LOCK_DURATION: u64 = 30 * 17_280;
 
 fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,

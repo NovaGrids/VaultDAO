@@ -12,6 +12,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn config_with_threshold(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,

@@ -32,6 +32,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address, Addr
     veto_addresses.push_back(vetoer.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 1000,
         whitelist_mode: false,
         grace_period_ledgers: 100,

@@ -52,6 +52,7 @@ const DURATION: u64 = 20_000;
 
 fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,

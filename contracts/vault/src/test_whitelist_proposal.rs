@@ -18,6 +18,7 @@ use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env,
 
 fn init_config(env: &Env, signers: Vec<Address>, threshold: u32) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -235,7 +236,7 @@ fn test_multi_phase_failure_persists_phase_statuses_and_rejects_proposal() {
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, crate::types::ProposalStatus::Rejected);
 
-    let stored = client.get_proposal_phases(&proposal_id);
+    let stored = client.get_multi_phase_proposal(&proposal_id).phases;
     assert_eq!(stored.len(), 2);
     assert_eq!(stored.get(0).unwrap().status, ProposalPhaseStatus::RolledBack);
     assert_eq!(stored.get(1).unwrap().status, ProposalPhaseStatus::Failed);

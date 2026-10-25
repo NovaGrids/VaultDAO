@@ -20,7 +20,7 @@ use soroban_sdk::{
 /// Returns (client, admin, proposer, token, contract_id).
 fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
     env.mock_all_auths();
-    env.ledger().set_sequence_number(1_000);
+    env.ledger().with_mut(|l| l.sequence_number = 1_000);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
@@ -39,6 +39,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) 
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -272,7 +273,7 @@ fn test_dependency_already_executed_outside_batch_is_accepted() {
     client.execute_proposal(&admin, &prereq);
 
     // Dependency checks require the dependency to have executed in an earlier ledger.
-    env.ledger().set_sequence_number(1_100);
+    env.ledger().with_mut(|l| l.sequence_number = 1_100);
 
     let dependent = approved_proposal(
         &env,

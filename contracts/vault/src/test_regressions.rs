@@ -5,7 +5,7 @@ use crate::types::{
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token::StellarAssetClient,
     Address, Env, Symbol, Vec,
 };
@@ -17,6 +17,7 @@ fn init_config(
     strategy: ThresholdStrategy,
 ) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -465,7 +466,7 @@ fn test_zero_amount_proposal_rejected() {
 fn test_execute_before_timelock_expires_fails() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -485,6 +486,7 @@ fn test_execute_before_timelock_expires_fails() {
     // Use a config where timelock_threshold (500) < spending_limit (10_000) so
     // any proposal with amount >= 500 is subject to the timelock.
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -554,7 +556,7 @@ fn test_execute_before_timelock_expires_fails() {
 fn test_atomic_batch_execution_success() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -701,7 +703,7 @@ fn test_atomic_batch_execution_success() {
 fn test_batch_simulation_failure_aborts_without_execution() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -818,7 +820,7 @@ fn test_batch_simulation_failure_aborts_without_execution() {
 fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -1298,7 +1300,7 @@ fn test_first_phase_failure_marks_rejected() {
 
     // Force the first phase to fail by draining the vault balance.
     let vault_balance = soroban_sdk::token::Client::new(&env, &token).balance(&client.address);
-    StellarAssetClient::new(&env, &token).burn(&client.address, &vault_balance);
+    StellarAssetClient::new(&env, &token).clawback(&client.address, &vault_balance);
 
     let outcome = client.execute_proposal(&signer, &proposal_id);
     assert_eq!(outcome, PhaseExecutionOutcome::Failed);
@@ -1340,7 +1342,7 @@ fn test_middle_phase_failure_marks_rejected() {
 
     // Leave just enough for the first phase but not the second.
     let vault_balance = soroban_sdk::token::Client::new(&env, &token).balance(&client.address);
-    StellarAssetClient::new(&env, &token).burn(&client.address, &(vault_balance - 50));
+    StellarAssetClient::new(&env, &token).clawback(&client.address, &(vault_balance - 50));
 
     let outcome = client.execute_proposal(&signer, &proposal_id);
     assert_eq!(outcome, PhaseExecutionOutcome::Failed);
@@ -1386,7 +1388,7 @@ fn test_last_phase_failure_marks_rejected() {
 
     // Drain everything so the final phase cannot settle.
     let vault_balance = soroban_sdk::token::Client::new(&env, &token).balance(&client.address);
-    StellarAssetClient::new(&env, &token).burn(&client.address, &vault_balance);
+    StellarAssetClient::new(&env, &token).clawback(&client.address, &vault_balance);
 
     let outcome = client.execute_proposal(&signer, &proposal_id);
     assert_eq!(outcome, PhaseExecutionOutcome::Failed);

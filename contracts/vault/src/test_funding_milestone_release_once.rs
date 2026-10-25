@@ -38,6 +38,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -96,7 +97,7 @@ fn test_release_marks_milestone_released() {
     milestones.push_back(fixed_milestone(&env, 1_000));
     milestones.push_back(fixed_milestone(&env, 2_000));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
     client.submit_milestone(&recipient, &round_id, &0);
     client.verify_milestone(&admin, &round_id, &0);
@@ -125,7 +126,7 @@ fn test_second_release_of_same_milestone_fails() {
     milestones.push_back(fixed_milestone(&env, 1_000));
     milestones.push_back(fixed_milestone(&env, 2_000));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
     client.submit_milestone(&recipient, &round_id, &0);
     client.verify_milestone(&admin, &round_id, &0);
@@ -153,7 +154,7 @@ fn test_release_rejects_milestone_not_verified() {
     let mut milestones = Vec::new(&env);
     milestones.push_back(fixed_milestone(&env, 1_000));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
     client.submit_milestone(&recipient, &round_id, &0);
 

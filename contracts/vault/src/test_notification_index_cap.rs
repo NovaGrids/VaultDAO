@@ -11,6 +11,7 @@ use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, E
 
 fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,

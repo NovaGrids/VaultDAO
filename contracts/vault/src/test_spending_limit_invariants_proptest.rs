@@ -63,6 +63,7 @@ pub(crate) fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             whitelist_mode: false,
             grace_period_ledgers: 100,
             vote_weight: VoteWeight::Flat,

@@ -19,6 +19,7 @@ const START_LEDGER: u32 = 100;
 
 fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         quorum_percentage: 0,
         veto_window_ledgers: 0,
         proposal_id_prefix: 0,
@@ -65,7 +66,7 @@ fn setup(
     signer_count: u32,
 ) -> (VaultDAOClient<'_>, Address, Vec<Address>, Address, Address) {
     env.mock_all_auths();
-    env.ledger().set_sequence_number(START_LEDGER);
+    env.ledger().with_mut(|l| l.sequence_number = START_LEDGER);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
@@ -292,7 +293,7 @@ fn test_below_quorum_expires_claim_and_slashes_bond() {
     // Only 1 of 4 signers votes — quorum needs 2.
     client.vote_on_insurance_claim(&admin, &claim_id, &true);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     let status = client.close_insurance_claim_voting(&admin, &claim_id);
 
     assert_eq!(
@@ -323,7 +324,7 @@ fn test_quorum_met_approves_claim() {
     let (voted, required, _) = client.get_insurance_claim_quorum(&claim_id);
     assert!(voted >= required);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     let status = client.close_insurance_claim_voting(&admin, &claim_id);
     assert_eq!(status, InsuranceClaimStatus::Approved);
 
@@ -347,7 +348,7 @@ fn test_quorum_met_but_threshold_missed_rejects() {
     client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &false);
     client.vote_on_insurance_claim(&signers.get(2).unwrap(), &claim_id, &false);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     assert_eq!(
         client.close_insurance_claim_voting(&admin, &claim_id),
         InsuranceClaimStatus::Rejected
@@ -366,7 +367,7 @@ fn test_tie_rejects_on_close() {
     client.vote_on_insurance_claim(&admin, &claim_id, &true);
     client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &false);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     assert_eq!(
         client.close_insurance_claim_voting(&admin, &claim_id),
         InsuranceClaimStatus::Rejected,
@@ -378,7 +379,7 @@ fn test_tie_rejects_on_close() {
 fn test_claimant_excluded_from_eligible_voters() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_sequence_number(START_LEDGER);
+    env.ledger().with_mut(|l| l.sequence_number = START_LEDGER);
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -428,7 +429,7 @@ fn test_vote_on_deadline_ledger_is_accepted() {
         client.submit_insurance_claim(&claimant, &token, &1_000i128, &evidence(&env), &deadline);
 
     // The deadline ledger itself is still inside the window.
-    env.ledger().set_sequence_number(deadline as u32);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32);
     client.vote_on_insurance_claim(&admin, &claim_id, &true);
 
     assert_eq!(client.get_insurance_claim(&claim_id).voter_count, 1);
@@ -443,7 +444,7 @@ fn test_late_vote_is_rejected() {
     let claim_id =
         client.submit_insurance_claim(&claimant, &token, &1_000i128, &evidence(&env), &deadline);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     let res = client.try_vote_on_insurance_claim(&admin, &claim_id, &true);
     assert_eq!(res.err(), Some(Ok(VaultError::ClaimVotingWindowClosed)));
 
@@ -524,7 +525,7 @@ fn test_cannot_close_twice() {
     client.vote_on_insurance_claim(&admin, &claim_id, &true);
     client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &true);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     client.close_insurance_claim_voting(&admin, &claim_id);
 
     let res = client.try_close_insurance_claim_voting(&admin, &claim_id);
@@ -543,7 +544,7 @@ fn test_cannot_vote_after_close() {
     client.vote_on_insurance_claim(&admin, &claim_id, &true);
     client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &true);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     client.close_insurance_claim_voting(&admin, &claim_id);
 
     let res = client.try_vote_on_insurance_claim(&signers.get(2).unwrap(), &claim_id, &false);
@@ -559,7 +560,7 @@ fn test_non_signer_cannot_close_voting() {
     let claim_id =
         client.submit_insurance_claim(&claimant, &token, &1_000i128, &evidence(&env), &deadline);
 
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     let outsider = Address::generate(&env);
     let res = client.try_close_insurance_claim_voting(&outsider, &claim_id);
     assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
@@ -656,7 +657,7 @@ fn test_1983_added_signer_cannot_vote_or_trigger_early_close() {
     );
 
     // After the deadline the claim closes normally with snapshot quorum.
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     let status = client.close_insurance_claim_voting(&admin, &claim_id);
     assert_eq!(status, InsuranceClaimStatus::Expired);
 }
@@ -692,7 +693,7 @@ fn test_1983_removed_signer_cannot_vote_quorum_uses_snapshot() {
     // Two snapshot-eligible votes meet quorum; close after the deadline.
     client.vote_on_insurance_claim(&admin, &claim_id, &true);
     client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &true);
-    env.ledger().set_sequence_number(deadline as u32 + 1);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
     let status = client.close_insurance_claim_voting(&admin, &claim_id);
     assert_eq!(status, InsuranceClaimStatus::Approved);
 }

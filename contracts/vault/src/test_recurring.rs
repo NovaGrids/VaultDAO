@@ -25,6 +25,7 @@ fn default_init_config(env: &Env, admin: &Address) -> InitConfig {
     signers.push_back(Address::generate(env));
 
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -535,37 +536,43 @@ fn test_execute_recurring_payment_three_missed_exceeding_cap() {
 #[test]
 fn test_set_retry_config_rejects_zero_initial_backoff() {
     let env = Env::default();
-    let (client, admin, _, _) = setup(&env);
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
 
-    let result = client.try_set_retry_config(
-        &admin,
-        &RetryConfig {
-            max_retry_delay: 100,
-            enabled: true,
-            max_retries: 3,
-            initial_backoff_ledgers: 0,
-        },
-    );
+    // Zero backoff with retries enabled is rejected at initialization.
+    let mut config = default_init_config(&env, &admin);
+    config.retry_config = RetryConfig {
+        max_retry_delay: 100,
+        enabled: true,
+        max_retries: 3,
+        initial_backoff_ledgers: 0,
+    };
 
-    assert_eq!(result.err(), Some(Ok(VaultError::InvalidRetryConfig)));
+    let result = client.try_initialize(&admin, &config);
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 #[test]
 fn test_set_retry_config_rejects_initial_backoff_above_cap() {
     let env = Env::default();
-    let (client, admin, _, _) = setup(&env);
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
 
-    let result = client.try_set_retry_config(
-        &admin,
-        &RetryConfig {
-            max_retry_delay: 100,
-            enabled: true,
-            max_retries: 3,
-            initial_backoff_ledgers: u32::MAX,
-        },
-    );
+    // Backoff above the absolute cap is rejected at initialization.
+    let mut config = default_init_config(&env, &admin);
+    config.retry_config = RetryConfig {
+        max_retry_delay: 100,
+        enabled: true,
+        max_retries: 3,
+        initial_backoff_ledgers: u64::MAX,
+    };
 
-    assert_eq!(result.err(), Some(Ok(VaultError::InvalidRetryConfig)));
+    let result = client.try_initialize(&admin, &config);
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 // ============================================================================

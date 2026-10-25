@@ -11,6 +11,7 @@ fn default_config(env: &Env, admin: &Address) -> InitConfig {
     signers.push_back(admin.clone());
     signers.push_back(Address::generate(env));
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,

@@ -18,6 +18,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address, Addr
     client.initialize(
         &admin,
         &crate::types::InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,

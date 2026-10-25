@@ -14,6 +14,7 @@ use soroban_sdk::{
 
 fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,
@@ -251,6 +252,6 @@ fn test_multi_phase_execute_fails_when_spending_limit_exceeded_after_first_phase
     client.set_spending_limit(&admin, &150);
 
     let result = client.try_execute_proposal(&admin, &pid);
-    assert_eq!(result, Err(Ok(VaultError::ExceedsSpendingLimit)));
+    assert_eq!(result, Err(Ok(VaultError::ExceedsProposalLimit)));
     assert_eq!(TokenClient::new(&env, &token).balance(&recipient), 100);
 }

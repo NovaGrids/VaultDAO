@@ -15,6 +15,7 @@ use soroban_sdk::{
 
 fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         signers,
         threshold: 2,
         quorum: 0,
@@ -62,7 +63,7 @@ struct Ctx {
 
 /// Vault initialised with `free` unreserved tokens.
 fn setup(env: &Env, free: i128) -> Ctx {
-    env.ledger().set_sequence_number(100);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
     let vault = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &vault);
     let admin = Address::generate(env);
@@ -202,7 +203,7 @@ fn test_escrow_reservation_released_on_refund() {
     let funder = ctx.client.get_escrow_info(&escrow_id).funder;
 
     // Refund on expiry returns the escrowed tokens and frees the reservation
-    env.ledger().set_sequence_number(2_000);
+    env.ledger().with_mut(|l| l.sequence_number = 2_000);
     ctx.client.release_escrow(&funder, &escrow_id);
     assert_eq!(TokenClient::new(&env, &ctx.token).balance(&ctx.vault), 0);
 
@@ -250,12 +251,12 @@ fn test_blacklisted_recipient_cannot_receive_earmarked_funds() {
     let ctx = setup(&env, 1_000);
 
     let blocked = Address::generate(&env);
-    ctx.client.set_blacklist(&ctx.admin, &blocked, &true);
+    ctx.client.add_to_blacklist(&ctx.admin, &blocked);
 
     let pid = approved_transfer(&env, &ctx, &blocked, 100);
     assert_eq!(
         ctx.client.try_execute_proposal(&ctx.admin, &pid),
-        Err(Ok(VaultError::Blacklisted))
+        Err(Ok(VaultError::RecipientBlacklisted))
     );
     assert_eq!(
         ctx.client.get_proposal(&pid).status,
@@ -350,7 +351,7 @@ fn test_last_phase_failure_records_status() {
         ProposalStatus::Executed
     );
 
-    let pid = approved_transfer(&env, &recipient, 1);
+    let pid = approved_transfer(&env, &ctx, &recipient, 1);
     assert_eq!(
         ctx.client.try_execute_proposal(&ctx.admin, &pid),
         Err(Ok(VaultError::InsufficientBalance))
@@ -394,8 +395,8 @@ fn test_expiration_with_many_settled_proposals() {
     ctx.client.approve_proposal(&ctx.admin, &pending);
     ctx.client.approve_proposal(&ctx.signer2, &pending);
 
-    env.ledger().set_sequence_number(10_000);
-    ctx.client.expire_proposal(&ctx.admin, &pending);
+    env.ledger().with_mut(|l| l.sequence_number = 10_000);
+    ctx.client.expire_proposal(&pending);
     assert_eq!(
         ctx.client.get_proposal(&pending).status,
         ProposalStatus::Expired

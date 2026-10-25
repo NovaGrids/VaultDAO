@@ -38,6 +38,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -97,7 +98,7 @@ fn test_release_round_funds_counts_each_payout_once() {
     milestones.push_back(fixed_milestone(&env, 2_000));
     milestones.push_back(fixed_milestone(&env, 3_000));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &6_000, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &6_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
 
     let token_client = TokenClient::new(&env, &token);
@@ -132,7 +133,7 @@ fn test_funding_round_completed_event_matches_transferred_amount() {
     milestones.push_back(fixed_milestone(&env, 1_000));
     milestones.push_back(fixed_milestone(&env, 2_000));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
 
     for index in 0..2u32 {

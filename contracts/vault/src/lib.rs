@@ -483,10 +483,6 @@ mod test_remove_signer_threshold;
 #[cfg(test)]
 mod test_signers_with_roles;
 #[cfg(test)]
-mod test_staking_slashing;
-#[cfg(test)]
-mod test_streaming;
-#[cfg(test)]
 mod test_subscriptions;
 #[cfg(test)]
 mod test_supersession_chain;
@@ -504,8 +500,6 @@ mod test_threshold_unilateral_reduction;
 mod test_timelock_ready_queue;
 #[cfg(test)]
 mod test_upgrade_timelock_min;
-#[cfg(test)]
-mod test_trigger_stream_payment_accrual;
 #[cfg(test)]
 mod test_update_config_signers;
 #[cfg(test)]
@@ -4008,6 +4002,15 @@ impl VaultDAO {
         storage::get_cancellation_history(&env)
     }
 
+    /// Retrieve the multi-phase execution record for a proposal.
+    pub fn get_multi_phase_proposal(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<MultiPhaseProposal, VaultError> {
+        storage::get_multi_phase_proposal(&env, proposal_id)
+            .ok_or(VaultError::MultiPhaseProposalNotFound)
+    }
+
     /// Amend a pending proposal and require fresh re-approval.
     ///
     /// Only the original proposer can amend. Approvals and abstentions are reset,
@@ -6261,6 +6264,10 @@ impl VaultDAO {
     /// both at `initialize` and whenever a config change is proposed, so an
     /// invalid retry config can never be persisted.
     fn validate_retry_config(retry_config: &RetryConfig) -> Result<(), VaultError> {
+        // Disabled retries need no backoff; only validate when retries can fire.
+        if !retry_config.enabled || retry_config.max_retries == 0 {
+            return Ok(());
+        }
         if retry_config.initial_backoff_ledgers == 0
             || retry_config.initial_backoff_ledgers > MAX_RETRY_BACKOFF_LEDGERS
         {
@@ -6398,6 +6405,16 @@ impl VaultDAO {
     /// Get weekly spending for a given week
     pub fn get_weekly_spent(env: Env, week: u64) -> i128 {
         storage::get_weekly_spent(&env, week)
+    }
+
+    /// Get per-token daily spending for a given day
+    pub fn get_token_daily_spent(env: Env, token: Address, day: u64) -> i128 {
+        storage::get_token_daily_spent(&env, &token, day)
+    }
+
+    /// Get per-token weekly spending for a given week
+    pub fn get_token_weekly_spent(env: Env, token: Address, week: u64) -> i128 {
+        storage::get_token_weekly_spent(&env, &token, week)
     }
 
     /// Get today's spending

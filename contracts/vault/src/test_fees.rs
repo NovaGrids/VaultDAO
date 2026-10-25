@@ -1,7 +1,7 @@
 use crate::errors::VaultError;
-use crate::types::{FeeStructure, RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{ConditionLogic, FeeStructure, Priority, RetryConfig, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Vec};
+use soroban_sdk::{testutils::{Address as _, Events as _}, token::StellarAssetClient, Address, Env, Symbol, Vec};
 
 fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
@@ -19,6 +19,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             proposal_id_prefix: 0,
             whitelist_mode: false,
@@ -176,18 +177,21 @@ fn test_fee_only_execution_net_amount_and_liquidity() {
 
     let proposal_id = client.propose_transfer(
         &admin,
-        &token,
         &recipient,
+        &token,
         &amount,
-        &crate::types::TransferCategory::Operational,
-        &None,
+        &Symbol::new(&env, "fee"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
     client.approve_proposal(&admin, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     // 1% fee of 10_000 = 100; recipient receives amount - fee.
     assert_eq!(
-        StellarAssetClient::new(&env, &token).balance(&recipient),
+        soroban_sdk::token::Client::new(&env, &token).balance(&recipient),
         amount - 100
     );
     assert_eq!(client.get_fees_collected(&token), 100);
@@ -207,17 +211,20 @@ fn test_no_fee_execution_full_amount() {
 
     let proposal_id = client.propose_transfer(
         &admin,
-        &token,
         &recipient,
+        &token,
         &amount,
-        &crate::types::TransferCategory::Operational,
-        &None,
+        &Symbol::new(&env, "fee"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
     client.approve_proposal(&admin, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     assert_eq!(
-        StellarAssetClient::new(&env, &token).balance(&recipient),
+        soroban_sdk::token::Client::new(&env, &token).balance(&recipient),
         amount
     );
     assert_eq!(client.get_fees_collected(&token), 0);
@@ -240,18 +247,21 @@ fn test_fee_plus_insurance_execution_balance_check() {
 
     let proposal_id = client.propose_transfer(
         &admin,
-        &token,
         &recipient,
+        &token,
         &amount,
-        &crate::types::TransferCategory::Operational,
-        &Some(insurance_amount),
+        &Symbol::new(&env, "fee"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &insurance_amount,
     );
     client.approve_proposal(&admin, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     // Recipient receives amount - fee (1% of 10_000 = 100).
     assert_eq!(
-        StellarAssetClient::new(&env, &token).balance(&recipient),
+        soroban_sdk::token::Client::new(&env, &token).balance(&recipient),
         amount - 100
     );
     assert_eq!(client.get_fees_collected(&token), 100);
@@ -272,11 +282,14 @@ fn test_proposal_executed_event_carries_net_amount_and_fee() {
 
     let proposal_id = client.propose_transfer(
         &admin,
-        &token,
         &recipient,
+        &token,
         &amount,
-        &crate::types::TransferCategory::Operational,
-        &None,
+        &Symbol::new(&env, "fee"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
     );
     client.approve_proposal(&admin, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);

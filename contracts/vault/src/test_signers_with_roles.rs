@@ -20,6 +20,7 @@ fn setup_vault_three_signers() -> (VaultDAOClient<'static>, Address, Address, Ad
     signers.push_back(signer2.clone());
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -127,6 +128,7 @@ fn test_single_signer_vault() {
     signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,

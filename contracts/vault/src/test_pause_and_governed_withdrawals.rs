@@ -15,7 +15,7 @@
 use super::*;
 use crate::types::{
     DisputeOutcome, DisputeResolution, InitConfig, SubscriptionTier, ThresholdStrategy,
-    VelocityConfig, VoteWeight,
+    VelocityConfig, VoteChoice, VoteWeight,
 };
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -29,6 +29,7 @@ const DAILY_LIMIT: i128 = 50_000;
 
 fn init_config(env: &Env, signers: Vec<Address>) -> InitConfig {
     InitConfig {
+        upgrade_timelock_delay: 17_280,
         veto_window_ledgers: 0,
         whitelist_mode: false,
         grace_period_ledgers: 100,
@@ -273,10 +274,7 @@ paused_test!(test_paused_blocks_reject_proposal, |s| s
     .try_reject_proposal(&s.admin, &1));
 paused_test!(test_paused_blocks_change_vote, |s| s
     .client
-    .try_change_vote(&s.admin, &1, &true));
-paused_test!(test_paused_blocks_reject_proposal, |s| s
-    .client
-    .try_reject_proposal(&s.admin, &1));
+    .try_change_vote(&s.admin, &1, &VoteChoice::Approve));
 
 #[test]
 fn test_unpause_restores_guarded_entry_points() {

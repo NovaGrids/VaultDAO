@@ -42,6 +42,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address) {
     client.initialize(
         &admin,
         &InitConfig {
+            upgrade_timelock_delay: 17_280,
             veto_window_ledgers: 0,
             whitelist_mode: false,
             grace_period_ledgers: 100,
@@ -101,7 +102,7 @@ fn test_percentage_round_derives_milestone_amounts_at_creation() {
     milestones.push_back(percentage_milestone(&env, 2_500));
     milestones.push_back(percentage_milestone(&env, 5_000));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &10_000, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &10_000, &milestones, &None);
     let round = client.get_funding_round(&round_id);
 
     assert_eq!(round.total_amount, 10_000);
@@ -122,7 +123,7 @@ fn test_percentage_round_assigns_truncation_remainder_to_last_milestone() {
     milestones.push_back(percentage_milestone(&env, 3_333));
     milestones.push_back(percentage_milestone(&env, 3_334));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &10_001, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &10_001, &milestones, &None);
     let round = client.get_funding_round(&round_id);
 
     assert_eq!(round.milestones.get(0).unwrap().amount, 3_333);
@@ -143,7 +144,7 @@ fn test_percentage_round_rejects_bps_not_summing_to_10000() {
     milestones.push_back(percentage_milestone(&env, 5_000));
     milestones.push_back(percentage_milestone(&env, 4_000));
 
-    let result = client.try_create_funding_round(&admin, &recipient, &token, &10_000, &milestones);
+    let result = client.try_create_funding_round(&admin, &recipient, &token, &10_000, &milestones, &None);
     assert_eq!(result, Err(Ok(VaultError::FundingRoundError)));
 }
 
@@ -158,7 +159,7 @@ fn test_percentage_round_rejects_milestone_carrying_fixed_amount() {
     milestones.push_back(milestone_with(&env, 2_500, 2_500));
     milestones.push_back(percentage_milestone(&env, 7_500));
 
-    let result = client.try_create_funding_round(&admin, &recipient, &token, &10_000, &milestones);
+    let result = client.try_create_funding_round(&admin, &recipient, &token, &10_000, &milestones, &None);
     assert_eq!(result, Err(Ok(VaultError::FundingRoundError)));
 }
 
@@ -173,7 +174,7 @@ fn test_percentage_round_rejects_mixed_fixed_and_percentage_milestones() {
     milestones.push_back(percentage_milestone(&env, 5_000));
     milestones.push_back(fixed_milestone(&env, 5_000));
 
-    let result = client.try_create_funding_round(&admin, &recipient, &token, &10_000, &milestones);
+    let result = client.try_create_funding_round(&admin, &recipient, &token, &10_000, &milestones, &None);
     assert_eq!(result, Err(Ok(VaultError::FundingRoundError)));
 }
 
@@ -188,6 +189,6 @@ fn test_fixed_round_still_sums_milestone_amounts() {
     milestones.push_back(fixed_milestone(&env, 1_000));
     milestones.push_back(fixed_milestone(&env, 2_000));
 
-    let round_id = client.create_funding_round(&admin, &recipient, &token, &999, &milestones);
+    let round_id = client.create_funding_round(&admin, &recipient, &token, &999, &milestones, &None);
     assert_eq!(client.get_funding_round(&round_id).total_amount, 3_000);
 }
