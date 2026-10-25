@@ -114,6 +114,13 @@ export class TransactionsService {
   private readonly index = new TransactionIndex();
   private readonly indexTTL = 30_000;
   private readonly indexTimestamps = new Map<string, number>();
+  /** Decoded Horizon memos keyed by transaction hash. Content-addressed and
+   * immutable, so entries survive index rebuilds and invalidation. */
+  private readonly memoCache = new Map<
+    string,
+    { decodedProposalId: string | null; decodedMemo: string | null }
+  >();
+  private static readonly MEMO_FETCH_CONCURRENCY = 4;
 
   constructor(
     private readonly persistence: ProposalActivityPersistence,
@@ -160,12 +167,6 @@ export class TransactionsService {
       .filter((record) => record.type === ProposalActivityType.EXECUTED)
       .map((record): IndexedEntry => {
         const tx = TransactionsService.toTransaction(record);
-
-        if (this.horizonUrl && record.metadata.transactionHash) {
-          void this.attachMemoInfo(record.metadata.transactionHash, tx).catch(
-            () => {},
-          );
-        }
 
         return {
           tx,
@@ -239,6 +240,9 @@ export class TransactionsService {
       lastId: data[data.length - 1]?.transactionHash,
     });
 
+    // Enrich only the returned page with Horizon memos, bounded and cached.
+    await this.attachMemosForPage(data);
+
     return {
       data,
       nextCursor,
@@ -295,22 +299,73 @@ export class TransactionsService {
     return txs;
   }
 
-  private async attachMemoInfo(txHash: string, tx: Transaction): Promise<void> {
+  /**
+   * Fetch decoded Horizon memos for exactly the given transactions.
+   * Results are cached by transaction hash and reused across calls and
+   * index rebuilds. At most MEMO_FETCH_CONCURRENCY requests are in flight.
+   */
+  private async attachMemosForPage(txs: Transaction[]): Promise<void> {
+    if (!this.horizonUrl) return;
+    const pending = txs.filter(
+      (tx) => tx.transactionHash && !this.memoCache.has(tx.transactionHash),
+    );
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.min(TransactionsService.MEMO_FETCH_CONCURRENCY, pending.length) },
+      async () => {
+        while (next < pending.length) {
+          const tx = pending[next++]!;
+          const decoded = await this.fetchDecodedMemo(tx.transactionHash);
+          this.memoCache.set(tx.transactionHash, decoded);
+        }
+      },
+    );
+    await Promise.all(workers);
+    for (const tx of txs) {
+      const cached = tx.transactionHash
+        ? this.memoCache.get(tx.transactionHash)
+        : undefined;
+      if (cached) {
+        (tx as any).decodedProposalId = cached.decodedProposalId;
+        (tx as any).decodedMemo = cached.decodedMemo;
+      }
+    }
+  }
+
+  private async fetchDecodedMemo(txHash: string): Promise<{
+    decodedProposalId: string | null;
+    decodedMemo: string | null;
+  }> {
     try {
       const res = await fetch(
         `${this.horizonUrl}/transactions/${encodeURIComponent(txHash)}`,
       );
-      if (!res.ok) return;
+      if (!res.ok) return { decodedProposalId: null, decodedMemo: null };
       const json = await res.json();
       const memoType = json.memo_type as string | undefined;
       const memo = json.memo as string | undefined;
       const decoded = decodeMemo(memoType, memo);
-      (tx as any).decodedProposalId = decoded.decodedProposalId;
-      (tx as any).decodedMemo = decoded.decodedMemo;
+      return {
+        decodedProposalId: decoded.decodedProposalId,
+        decodedMemo: decoded.decodedMemo,
+      };
     } catch {
-      (tx as any).decodedProposalId = null;
-      (tx as any).decodedMemo = null;
+      return { decodedProposalId: null, decodedMemo: null };
     }
+  }
+
+  private async attachMemoInfo(txHash: string, tx: Transaction): Promise<void> {
+    if (!txHash) return;
+    const cached = this.memoCache.get(txHash);
+    if (cached) {
+      (tx as any).decodedProposalId = cached.decodedProposalId;
+      (tx as any).decodedMemo = cached.decodedMemo;
+      return;
+    }
+    const decoded = await this.fetchDecodedMemo(txHash);
+    this.memoCache.set(txHash, decoded);
+    (tx as any).decodedProposalId = decoded.decodedProposalId;
+    (tx as any).decodedMemo = decoded.decodedMemo;
   }
 
   async getTransactionByHash(
