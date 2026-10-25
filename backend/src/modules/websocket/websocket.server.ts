@@ -71,6 +71,18 @@ export const WS_CLOSE_TRY_AGAIN_LATER = 1013;
 /** Application close code: client did not authenticate before the deadline. */
 export const WS_CLOSE_AUTH_TIMEOUT = 4408;
 
+/** Application close code: client stopped reading and its send buffer overflowed. */
+export const WS_CLOSE_SLOW_CONSUMER = 4409;
+
+/** Counter for broadcast messages dropped for pressured clients. */
+export const WS_METRIC_MESSAGES_DROPPED = "ws_messages_dropped_total";
+
+/** Per-client send buffer high-water mark triggering backpressure. */
+export const WS_MAX_CLIENT_BUFFERED_BYTES = 1024 * 1024;
+
+/** Consecutive over-threshold broadcasts before a pressured client is closed. */
+export const WS_SLOW_CONSUMER_CLOSE_AFTER = 5;
+
 // ---------------------------------------------------------------------------
 // Connection limits
 // ---------------------------------------------------------------------------
@@ -116,6 +128,8 @@ interface HeartbeatStats {
 interface ClientSubscription {
   connectionId: string;
   subscriptions: Set<string>;
+  /** Contract IDs this connection is scoped to (empty = all contracts). */
+  contractIds: Set<string>;
   /** room IDs this connection has joined (e.g. "proposal:123", "contract:ABC") */
   rooms: Set<string>;
   /** Current state in the connection lifecycle machine. */
@@ -172,6 +186,8 @@ export declare interface EventWebSocketServer {
 export class EventWebSocketServer extends EventEmitter {
   private wss: WebSocketServer;
   private clients: Map<WebSocket, ClientSubscription> = new Map();
+  /** Consecutive over-threshold broadcasts per client (backpressure strikes). */
+  private backpressureStrikes: Map<WebSocket, number> = new Map();
   /** room → set of WebSocket connections */
   private rooms: Map<string, Set<WebSocket>> = new Map();
   private readonly maxSubscriptionsPerClient: number;
@@ -226,6 +242,11 @@ export class EventWebSocketServer extends EventEmitter {
     registry.register(
       WS_METRIC_TIMEOUTS,
       "Total WebSocket connections closed due to heartbeat timeout",
+      "counter",
+    );
+    registry.register(
+      WS_METRIC_MESSAGES_DROPPED,
+      "Total broadcast messages dropped for pressured WebSocket clients",
       "counter",
     );
     registry.registerHistogram(
@@ -353,6 +374,7 @@ export class EventWebSocketServer extends EventEmitter {
       const sub: ClientSubscription = {
         connectionId,
         subscriptions: new Set(),
+        contractIds: new Set(),
         rooms: new Set(),
         state: initialState,
         heartbeat: {
@@ -784,6 +806,19 @@ export class EventWebSocketServer extends EventEmitter {
       logger.info("client moved to subscribed state", { connectionId });
     }
 
+    // Optional per-contract scoping: a client that names contract IDs only
+    // receives events for those contracts. Absent/empty means all contracts.
+    const rawContractIds: unknown = Array.isArray(message?.contractIds)
+      ? message.contractIds
+      : undefined;
+    if (rawContractIds !== undefined) {
+      for (const id of rawContractIds as unknown[]) {
+        if (typeof id === "string" && id.length > 0) {
+          sub.contractIds.add(id);
+        }
+      }
+    }
+
     logger.info("client subscribed", { connectionId, topics });
     this.clients.set(ws, sub);
     ws.send(JSON.stringify({ type: "subscribed", topics: topics }));
@@ -878,6 +913,66 @@ export class EventWebSocketServer extends EventEmitter {
     return undefined;
   }
 
+  /**
+   * Send a broadcast message to one client, applying backpressure.
+   * When the client's send buffer is over the high-water mark the message
+   * is dropped and counted; a client that stays pressured is closed with
+   * an application close code so one stalled reader cannot exhaust memory.
+   * Returns true when the message was handed to the socket.
+   */
+  private sendOrDrop(
+    ws: WebSocket,
+    sub: ClientSubscription,
+    message: string,
+    eventId: string,
+  ): boolean {
+    if (ws.readyState !== WebSocket.OPEN) {
+      this.backpressureStrikes.delete(ws);
+      return false;
+    }
+    const buffered =
+      typeof ws.bufferedAmount === "number" ? ws.bufferedAmount : 0;
+    if (buffered > WS_MAX_CLIENT_BUFFERED_BYTES) {
+      const strikes = (this.backpressureStrikes.get(ws) ?? 0) + 1;
+      this.metrics?.incrementCounter(WS_METRIC_MESSAGES_DROPPED);
+      logger.warn("dropping broadcast for pressured client", {
+        connectionId: sub.connectionId,
+        eventId,
+        bufferedBytes: buffered,
+        strikes,
+      });
+      if (strikes >= WS_SLOW_CONSUMER_CLOSE_AFTER) {
+        this.backpressureStrikes.delete(ws);
+        try {
+          ws.close(
+            WS_CLOSE_SLOW_CONSUMER,
+            "Slow consumer: send buffer exceeded",
+          );
+        } catch (error) {
+          logger.warn("failed to close pressured client", {
+            connectionId: sub.connectionId,
+            error,
+          });
+        }
+      } else {
+        this.backpressureStrikes.set(ws, strikes);
+      }
+      return false;
+    }
+    this.backpressureStrikes.delete(ws);
+    try {
+      ws.send(message);
+      return true;
+    } catch (error) {
+      logger.warn("failed to send event to client", {
+        connectionId: sub.connectionId,
+        eventId,
+        error,
+      });
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Legacy broadcast (contract events)
   // ---------------------------------------------------------------------------
@@ -911,17 +1006,19 @@ export class EventWebSocketServer extends EventEmitter {
       // Only deliver to authenticated or subscribed clients.
       if (sub.state === "connecting") return;
 
+      // Per-contract scoping: skip events for contracts the client did not ask for.
+      if (
+        sub.contractIds &&
+        sub.contractIds.size > 0 &&
+        !sub.contractIds.has(event.contractId)
+      ) {
+        return;
+      }
+
       // If no subscriptions, deliver all events (backward compatible)
       if (!sub.subscriptions || sub.subscriptions.size === 0) {
-        try {
-          ws.send(message);
+        if (this.sendOrDrop(ws, sub, message, event.id)) {
           broadcastCount++;
-        } catch (error) {
-          logger.warn("failed to send event to client", {
-            connectionId: sub.connectionId,
-            eventId: event.id,
-            error,
-          });
         }
         return;
       }
@@ -940,15 +1037,8 @@ export class EventWebSocketServer extends EventEmitter {
 
       if (!matched) return;
 
-      try {
-        ws.send(message);
+      if (this.sendOrDrop(ws, sub, message, event.id)) {
         broadcastCount++;
-      } catch (error) {
-        logger.warn("failed to send event to client", {
-          connectionId: sub.connectionId,
-          eventId: event.id,
-          error,
-        });
       }
     });
 

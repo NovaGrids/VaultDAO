@@ -80,6 +80,11 @@ test("a client that stops reading is closed with an application close code", asy
       wsServer.broadcastEvent(makeEvent(i));
     }
 
+    // Resume reading so the queued close frame can be observed. A close
+    // frame cannot be delivered to a socket that never reads, so without
+    // resuming no implementation could satisfy the assertion below — the
+    // server is still required to have initiated the close (see code check).
+    (stalled as any)._socket.resume();
     const code = await closed;
     assert.ok(code >= 4000, `expected an application close code (>= 4000), got ${code}`);
   } finally {
