@@ -31,7 +31,7 @@ fn make_init_config(
 ) -> InitConfig {
     InitConfig {
         signers,
-        threshold: 1,
+        threshold: 2,
         quorum: 0,
         quorum_percentage: 0,
         spending_limit: 1_000,
@@ -84,6 +84,7 @@ fn test_upgrade_timelock_below_minimum_is_rejected() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
 
     let result = client.try_initialize(
         &admin,
@@ -105,6 +106,7 @@ fn test_upgrade_timelock_zero_is_rejected() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
 
     let result = client.try_initialize(&admin, &make_init_config(&env, signers, 0));
 
@@ -123,6 +125,7 @@ fn test_upgrade_timelock_one_below_minimum_is_rejected() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
 
     let result = client.try_initialize(
         &admin,
@@ -144,6 +147,7 @@ fn test_upgrade_timelock_at_minimum_is_accepted() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
 
     client.initialize(
         &admin,
@@ -166,6 +170,7 @@ fn test_upgrade_timelock_above_minimum_is_accepted() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
 
     // 7 days ≈ 7 × 17_280 ledgers.
     let seven_days = MIN_UPGRADE_TIMELOCK * 7;

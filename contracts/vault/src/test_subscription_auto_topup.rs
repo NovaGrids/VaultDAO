@@ -57,6 +57,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
             quorum_percentage: 0,
         },
     );
+    client.add_supported_token(&admin, &token, &1_000_000, &5_000_000);
 
     (client, admin, token)
 }

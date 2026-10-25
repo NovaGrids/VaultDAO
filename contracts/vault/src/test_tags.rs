@@ -317,9 +317,10 @@ fn test_tag_index_pruned_on_rejection() {
     let before = client.get_proposals_by_tag(&Symbol::new(&env, "rejectme"), &0, &50);
     assert_eq!(before.len(), 1);
 
-    // Reject the proposal (admin is a signer; threshold is 2, so two rejections).
+    // Reject the proposal (threshold is 2, so two distinct signers must reject).
     client.reject_proposal(&admin, &p1);
-    client.reject_proposal(&admin, &p1);
+    let other = client.get_config().signers.get(1).unwrap();
+    client.reject_proposal(&other, &p1);
 
     // The rejected proposal's tags must be pruned from the flat tag index.
     let after = client.get_proposals_by_tag(&Symbol::new(&env, "rejectme"), &0, &50);
@@ -432,7 +433,9 @@ fn test_auto_expire_clears_tag_index_and_restores_spending() {
     let weekly_before = client.get_weekly_spent(&week);
 
     // Advance past the approval timeout so the proposal becomes expirable.
-    env.ledger().with_mut(|l| l.sequence_number += 200_000);
+    // (Small jump: huge ledger jumps would archive instance storage in tests.)
+    client.update_approval_timeout(&admin, &100u64);
+    env.ledger().with_mut(|l| l.sequence_number += 200);
 
     client.auto_expire_proposals(&admin, &100u32);
 
@@ -446,3 +449,4 @@ fn test_auto_expire_clears_tag_index_and_restores_spending() {
     assert_eq!(daily_after, daily_before - 100);
     assert_eq!(weekly_after, weekly_before - 100);
 }
+

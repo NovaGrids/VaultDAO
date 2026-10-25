@@ -835,10 +835,29 @@ fn test_stop_pause_resume_blocked_while_vault_paused() {
 // Issue #1919: Recurring execution must respect per-token spending limits
 // ============================================================================
 
+/// Setup variant that keeps `admin` as Admin so per-token spending limits
+/// (an Admin-gated configuration) can be installed for the test.
+fn setup_with_admin(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
+    env.mock_all_auths();
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    client.initialize(&admin, &default_init_config(env, &admin));
+
+    let token_admin = Address::generate(env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    StellarAssetClient::new(env, &token).mint(&contract_id, &100_000);
+    client.add_supported_token(&admin, &token, &1_000_000, &5_000_000);
+
+    let recipient = Address::generate(env);
+    (client, admin, token, recipient)
+}
+
 #[test]
 fn test_execute_recurring_payment_above_token_daily_limit_fails() {
     let env = Env::default();
-    let (client, admin, token, recipient) = setup(&env);
+    let (client, admin, token, recipient) = setup_with_admin(&env);
 
     client.set_token_limits(&admin, &token, &150i128, &1_000i128);
 
@@ -863,7 +882,7 @@ fn test_execute_recurring_payment_above_token_daily_limit_fails() {
 #[test]
 fn test_execute_recurring_payment_counts_against_token_daily_limit() {
     let env = Env::default();
-    let (client, admin, token, recipient) = setup(&env);
+    let (client, admin, token, recipient) = setup_with_admin(&env);
 
     client.set_token_limits(&admin, &token, &150i128, &1_000i128);
 

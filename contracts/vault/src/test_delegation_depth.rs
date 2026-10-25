@@ -79,6 +79,8 @@ fn test_delegation_within_max_depth_is_allowed() {
     env.mock_all_auths();
 
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let a = members.get(0).unwrap();
     let b = members.get(1).unwrap();
     let c = members.get(2).unwrap();
@@ -137,6 +139,8 @@ fn test_circular_delegation_is_rejected() {
     env.mock_all_auths();
 
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let a = members.get(0).unwrap();
     let b = members.get(1).unwrap();
     let c = members.get(2).unwrap();
@@ -161,6 +165,8 @@ fn test_delegator_abstains_delegate_approves_still_counts() {
     env.mock_all_auths();
 
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
     let other = members.get(2).unwrap();
@@ -170,7 +176,7 @@ fn test_delegator_abstains_delegate_approves_still_counts() {
     let proposal_id = client.propose_transfer(
         &delegator,
         &other,
-        &Address::generate(&env),
+        &token,
         &100,
         &Symbol::new(&env, "delegation"),
         &Priority::Normal,
@@ -195,6 +201,8 @@ fn test_delegator_approves_delegate_abstains_still_counts() {
     env.mock_all_auths();
 
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
     let other = members.get(2).unwrap();
@@ -204,7 +212,7 @@ fn test_delegator_approves_delegate_abstains_still_counts() {
     let proposal_id = client.propose_transfer(
         &delegator,
         &other,
-        &Address::generate(&env),
+        &token,
         &100,
         &Symbol::new(&env, "delegation"),
         &Priority::Normal,
@@ -229,6 +237,8 @@ fn test_delegated_vote_skipped_event_emitted() {
     env.mock_all_auths();
 
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
     let other = members.get(2).unwrap();
@@ -238,7 +248,7 @@ fn test_delegated_vote_skipped_event_emitted() {
     let proposal_id = client.propose_transfer(
         &delegator,
         &other,
-        &Address::generate(&env),
+        &token,
         &100,
         &Symbol::new(&env, "delegation"),
         &Priority::Normal,
@@ -274,6 +284,8 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
     env.mock_all_auths();
 
     let (client, _admin, members) = setup(&env, 2);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
 
@@ -282,7 +294,7 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
     let proposal_id = client.propose_transfer(
         &delegator,
         &delegate,
-        &Address::generate(&env),
+        &token,
         &100,
         &Symbol::new(&env, "delegation"),
         &Priority::Normal,
@@ -302,7 +314,7 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
     let proposal_id2 = client.propose_transfer(
         &delegator,
         &delegate,
-        &Address::generate(&env),
+        &token,
         &100,
         &Symbol::new(&env, "delegation"),
         &Priority::Normal,
@@ -344,6 +356,8 @@ fn test_1939_delegate_voting_power_emits_delegation_set() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
 
@@ -361,6 +375,8 @@ fn test_1939_delegate_vote_alias_emits_delegation_set() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
 
@@ -374,6 +390,8 @@ fn test_1939_revoke_delegation_emits_delegation_revoked() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, members) = setup(&env, 3);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin).address();
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
     client.delegate_voting_power(&delegator, &delegate, &0u64);
