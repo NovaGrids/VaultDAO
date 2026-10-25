@@ -233,8 +233,8 @@ export async function listVestingIds(
   if (limit < 0) throw new Error("Vesting schedule limit must be non-negative");
   const op = getContract(opts).call(
     "list_vesting_ids",
-    u64ToScVal(offset),
-    u64ToScVal(limit)
+    u64ToScVal(BigInt(offset)),
+    u64ToScVal(BigInt(limit))
   );
   const raw = await simulateReadOnly<unknown[]>(op, opts, callerPublicKey, "listVestingIds");
   return (raw ?? []).map(big);

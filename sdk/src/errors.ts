@@ -341,6 +341,69 @@ export const ERROR_REGISTRY: Readonly<
     example:
       "Creating a 101st active vesting schedule.",
   },
+  [VaultErrorCode.CapabilityNotFound]: {
+    code: VaultErrorCode.CapabilityNotFound,
+    name: "CapabilityNotFound",
+    category: "Capability",
+    description:
+      "The referenced capability token does not exist.",
+    example:
+      "Executing with a capability ID that was never granted.",
+  },
+  [VaultErrorCode.CapabilityExpired]: {
+    code: VaultErrorCode.CapabilityExpired,
+    name: "CapabilityExpired",
+    category: "Capability",
+    description:
+      "The capability token has passed its expiry ledger.",
+    example:
+      "Executing with a capability whose expiry ledger has passed.",
+  },
+  [VaultErrorCode.CapabilityRevoked]: {
+    code: VaultErrorCode.CapabilityRevoked,
+    name: "CapabilityRevoked",
+    category: "Capability",
+    description:
+      "The capability token has been revoked.",
+    example:
+      "Executing with a capability that was revoked after granting.",
+  },
+  [VaultErrorCode.CapabilityMaxUsesReached]: {
+    code: VaultErrorCode.CapabilityMaxUsesReached,
+    name: "CapabilityMaxUsesReached",
+    category: "Capability",
+    description:
+      "The capability token has already been used the maximum number of times.",
+    example:
+      "Reusing a single-use capability token for a second execution.",
+  },
+  [VaultErrorCode.CapabilityNotGranted]: {
+    code: VaultErrorCode.CapabilityNotGranted,
+    name: "CapabilityNotGranted",
+    category: "Capability",
+    description:
+      "The caller was not granted the required capability.",
+    example:
+      "Executing a recurring payment without the matching capability.",
+  },
+  [VaultErrorCode.CapabilityAlreadyExists]: {
+    code: VaultErrorCode.CapabilityAlreadyExists,
+    name: "CapabilityAlreadyExists",
+    category: "Capability",
+    description:
+      "A capability token with the same ID already exists.",
+    example:
+      "Granting a capability with an ID that is already in use.",
+  },
+  [VaultErrorCode.CapabilityInvalid]: {
+    code: VaultErrorCode.CapabilityInvalid,
+    name: "CapabilityInvalid",
+    category: "Capability",
+    description:
+      "The capability token is invalid for the requested operation.",
+    example:
+      "Executing a transfer with a capability scoped to a different payment.",
+  },
 } as const;
 
 // ---------------------------------------------------------------------------

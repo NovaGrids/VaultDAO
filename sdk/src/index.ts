@@ -54,13 +54,9 @@ export type {
 export { Role, ProposalStatus, VaultErrorCode, VaultError } from "./types";
 export { SdkValidationError } from "./validation";
 export {
-  Role,
-  ProposalStatus,
   EscrowStatus,
   FundingRoundStatus,
   FundingMilestoneStatus,
-  VaultErrorCode,
-  VaultError,
 } from "./types";
 
 // Error code registry
