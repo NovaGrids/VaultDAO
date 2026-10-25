@@ -5,6 +5,7 @@
  * Supports multiple lock backends (Redis, in-memory).
  */
 
+import { randomUUID } from "node:crypto";
 import { createLogger } from "../../shared/logging/logger.js";
 
 /**
@@ -84,7 +85,7 @@ export class InMemoryLockBackend implements LockBackend {
     }
 
     // Acquire new lock
-    const lockId = `lock:${contractId}:${now}:${Math.random().toString(36).substring(7)}`;
+    const lockId = `lock:${contractId}:${now}:${randomUUID()}`;
     const expiresAt = now + durationMs;
 
     this.locks.set(contractId, {

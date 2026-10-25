@@ -212,10 +212,10 @@ test("Dead Letter Queue Management API Tests", async (t) => {
   await t.test("DeadLetterService remove deletes an entry", async () => {
     const dlqService = new DeadLetterService();
 
-    dlqService.add({ id: "entry-to-delete", contractId: "C1", recordId: 1, retryCount: 0, addedAt: Date.now() });
+    await dlqService.add({ id: "entry-to-delete", contractId: "C1", recordId: 1, retryCount: 0, addedAt: Date.now() });
     assert.ok(dlqService.get("entry-to-delete"), "entry should exist");
 
-    const removed = dlqService.remove("entry-to-delete");
+    const removed = await dlqService.remove("entry-to-delete");
     assert.strictEqual(removed, true);
     assert.strictEqual(dlqService.get("entry-to-delete"), undefined);
   });
