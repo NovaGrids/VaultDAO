@@ -1036,7 +1036,11 @@ fn test_reactivate_preserves_manual_renew_setting() {
     assert_eq!(reactivated.status, SubscriptionStatus::Active);
     assert!(!reactivated.auto_renew);
 
-    // A third party must still not be able to trigger a charge.
+    // Advance to the renewal ledger (within the grace period) so a renewal
+    // would be due. A third party must still not be able to trigger a charge.
+    env.ledger().with_mut(|l| {
+        l.sequence_number = reactivated.next_renewal_ledger as u32;
+    });
     let res = client.try_renew_subscription(&other, &id);
     assert_eq!(res, Err(Ok(VaultError::NotSubscriberOrAdmin)));
 }
