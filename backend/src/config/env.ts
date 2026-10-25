@@ -548,6 +548,22 @@ export function loadEnv(): BackendEnv {
     );
   }
 
+  // Webhook/execution signatures must be verifiable in production unless the
+  // operator explicitly opts out. A short secret is rejected everywhere it
+  // would give a false sense of security.
+  const hmacDisabled = readString("VAULT_HMAC_DISABLED", "false") === "true";
+  if (!hmacDisabled) {
+    if (nodeEnv === "production" && !hmacSecret) {
+      issues.push(
+        "VAULT_HMAC_SECRET is required in production environment. Set a random value of at least 32 characters, or set VAULT_HMAC_DISABLED=true to explicitly opt out of request signing.",
+      );
+    } else if (hmacSecret && hmacSecret.length < 32) {
+      issues.push(
+        `VAULT_HMAC_SECRET must be at least 32 characters long. Received ${hmacSecret.length} characters.`,
+      );
+    }
+  }
+
   throwIfInvalid(issues);
 
   return {

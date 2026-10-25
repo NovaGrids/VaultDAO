@@ -129,10 +129,13 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       res.set("Access-Control-Allow-Origin", "*");
     }
 
-    res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.set(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    );
     res.set(
       "Access-Control-Allow-Headers",
-      `Content-Type, Authorization, X-API-Key, ${REQUEST_ID_HEADER}`,
+      `Content-Type, Authorization, X-API-Key, ${REQUEST_ID_HEADER}, X-Signature, X-Timestamp`,
     );
     res.set("Access-Control-Expose-Headers", REQUEST_ID_HEADER);
 
