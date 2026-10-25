@@ -466,14 +466,10 @@ function extractFunctionNameLiterals(source: string): string[] {
 // ---------------------------------------------------------------------------
 
 describe('contract function name lint (Issue #1797)', () => {
-  let source: string;
-  let readContractValueNames: string[];
-  let functionNameLiterals: string[];
-
   // Read once; all assertions share the same source snapshot.
-  source = readHookSource();
-  readContractValueNames = extractReadContractValueNames(source);
-  functionNameLiterals = extractFunctionNameLiterals(source);
+  const source: string = readHookSource();
+  const readContractValueNames: string[] = extractReadContractValueNames(source);
+  const functionNameLiterals: string[] = extractFunctionNameLiterals(source);
 
   it('extracts at least one readContractValue call (sanity check)', () => {
     expect(readContractValueNames.length).toBeGreaterThan(0);

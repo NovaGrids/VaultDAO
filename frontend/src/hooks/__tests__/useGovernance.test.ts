@@ -90,6 +90,9 @@ function mockVault(signers: Record<string, SignerFixture>) {
     if (fn === 'get_reputation') return signer?.reputation ?? null;
     if (fn === 'get_participation_score') return signer?.participation ?? null;
     throw new Error(`unexpected call ${fn}`);
+  });
+}
+
 function mockRpcResponses(events: RpcEvent[]) {
   (global.fetch as Mock).mockImplementation(async (_url: string, init: RequestInit) => {
     const body = JSON.parse(init.body as string) as { method: string };
