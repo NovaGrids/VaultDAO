@@ -11,9 +11,13 @@
  * Both the client and server MUST compute HMAC-SHA256 over the identical
  * string. The format is:
  *
- *   `${timestamp}.${rawBody}`
+ *   `${method}.${path}.${timestamp}.${rawBody}`
  *
  * Where:
+ * - `method` — the uppercase HTTP method (e.g. `"GET"`, `"POST"`). Binds the
+ *   signature to the operation so a read signature cannot authorize a write.
+ * - `path` — the request path (no query string, e.g. `"/api/v1/webhooks"`).
+ *   Binds the signature to the route so it cannot be replayed elsewhere.
  * - `timestamp` — a Unix epoch value **in milliseconds**, expressed as a
  *   decimal integer string (e.g. `"1721900000000"`).
  * - `rawBody`   — the exact UTF-8 request body bytes **as sent over the
@@ -26,7 +30,7 @@
  * import { createHmac } from "node:crypto";
  * const timestamp = Date.now().toString();
  * const rawBody   = JSON.stringify(payload); // or "" for bodyless requests
- * const message   = `${timestamp}.${rawBody}`;
+ * const message   = `${"POST"}.${"/api/v1/webhooks"}.${timestamp}.${rawBody}`;
  * const signature = "sha256=" + createHmac("sha256", sharedSecret)
  *   .update(message, "utf8")
  *   .digest("hex");
@@ -45,8 +49,10 @@
  *
  * ## Replay Protection
  * Timestamps more than MAX_SKEW_MS (5 minutes) in either direction — past
- * or future — are rejected. This bounds the window for replay attacks even
- * if an attacker captures a valid signed request.
+ * or future — are rejected. Additionally, each valid signature is remembered
+ * until it expires: presenting the same signature twice within the window
+ * is rejected, so a captured request cannot be replayed verbatim. Clients
+ * that retry a failed request MUST re-sign with a fresh timestamp.
  *
  * ## Timing Safety
  * Signature comparison uses `crypto.timingSafeEqual` to prevent
@@ -80,6 +86,9 @@ export const SIGNATURE_HEADER = "x-signature";
 
 /** Prefix that MUST appear at the start of the X-Signature value. */
 const SIGNATURE_PREFIX = "sha256=";
+
+/** Upper bound on remembered signatures (oldest evicted first). */
+const MAX_REPLAY_ENTRIES = 10_000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -172,6 +181,24 @@ export function createHmacSigningMiddleware(
   options: { maxSkewMs?: number } = {},
 ) {
   const maxSkewMs = options.maxSkewMs ?? MAX_SKEW_MS;
+  // Signatures already accepted within the skew window. A repeated signature
+  // is a verbatim replay and must be rejected.
+  const seenSignatures = new Map<string, number>();
+
+  const pruneSeen = (now: number): void => {
+    for (const [sig, ts] of seenSignatures) {
+      if (now - ts > maxSkewMs) {
+        seenSignatures.delete(sig);
+      } else {
+        break; // insertion-ordered: older entries come first
+      }
+    }
+    while (seenSignatures.size > MAX_REPLAY_ENTRIES) {
+      const oldest = seenSignatures.keys().next();
+      if (oldest.done) break;
+      seenSignatures.delete(oldest.value);
+    }
+  };
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const secret =
@@ -236,12 +263,27 @@ export function createHmacSigningMiddleware(
     // ── 3. Recompute HMAC & compare ───────────────────────────────────────────
     // rawBody is a Buffer attached by createJsonWithRawBody's verify callback.
     // For bodyless requests (GET etc.) rawBody is absent — canonical uses "".
+    // The method and path bind the signature to the route being called.
+    // A declared body without a captured raw copy means the parsers did not
+    // see JSON (e.g. text/plain smuggled under an empty-body signature):
+    // reject rather than verify against "".
+    const rawBody: unknown = (req as any).rawBody;
+    const contentLength = Number(req.get("content-length") ?? 0);
+    const hasBody =
+      (Number.isFinite(contentLength) && contentLength > 0) ||
+      req.get("transfer-encoding") !== undefined;
+    if (hasBody && !(rawBody instanceof Buffer)) {
+      error(res, {
+        message: "Unauthorized: Request body could not be verified",
+        status: 401,
+        code: ErrorCode.UNAUTHORIZED,
+      });
+      return;
+    }
     const rawBodyStr: string =
-      (req as any).rawBody instanceof Buffer
-        ? ((req as any).rawBody as Buffer).toString("utf8")
-        : "";
+      rawBody instanceof Buffer ? rawBody.toString("utf8") : "";
 
-    const canonical = `${tsNumber}.${rawBodyStr}`;
+    const canonical = `${req.method}.${req.path}.${tsNumber}.${rawBodyStr}`;
     const expected = computeSignature(secret, canonical);
 
     // MUST use constant-time comparison — plain === leaks timing information.
@@ -253,6 +295,19 @@ export function createHmacSigningMiddleware(
       });
       return;
     }
+
+    // ── 4. Replay check ───────────────────────────────────────────────────────
+    pruneSeen(Date.now());
+    const seenAt = seenSignatures.get(signatureHeader);
+    if (seenAt !== undefined && Date.now() - seenAt <= maxSkewMs) {
+      error(res, {
+        message: "Unauthorized: Request signature already used (replay rejected)",
+        status: 401,
+        code: ErrorCode.UNAUTHORIZED,
+      });
+      return;
+    }
+    seenSignatures.set(signatureHeader, Date.now());
 
     next();
   };

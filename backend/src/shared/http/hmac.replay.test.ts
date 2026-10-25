@@ -63,9 +63,13 @@ async function startServer(): Promise<{
 }
 
 /** Sign method, path and body the way a legitimate client would. */
-function signedHeaders(body: string): Record<string, string> {
+function signedHeaders(
+  method: string,
+  path: string,
+  body: string,
+): Record<string, string> {
   const ts = Date.now();
-  const sig = computeSignature(TEST_SECRET, `${ts}.${body}`);
+  const sig = computeSignature(TEST_SECRET, `${method}.${path}.${ts}.${body}`);
   return {
     "Content-Type": "application/json",
     [TIMESTAMP_HEADER]: String(ts),
@@ -76,7 +80,7 @@ function signedHeaders(body: string): Record<string, string> {
 test("bodyless GET signature is not accepted for a DELETE on another route", async () => {
   const srv = await startServer();
   try {
-    const headers = signedHeaders("");
+    const headers = signedHeaders("GET", "/admin/a", "");
 
     const ok = await fetch(`${srv.baseUrl}/admin/a`, { method: "GET", headers });
     assert.strictEqual(ok.status, 200, "legitimate GET should succeed");
@@ -100,7 +104,7 @@ test("signed POST body is not accepted for a different POST route", async () => 
   const srv = await startServer();
   try {
     const body = JSON.stringify({ origin: "https://app.example.com" });
-    const headers = signedHeaders(body);
+    const headers = signedHeaders("POST", "/admin/a", body);
 
     const ok = await fetch(`${srv.baseUrl}/admin/a`, {
       method: "POST",
@@ -128,7 +132,7 @@ test("the same signed request replayed within the window is rejected", async () 
   const srv = await startServer();
   try {
     const body = JSON.stringify({ origin: "https://app.example.com" });
-    const headers = signedHeaders(body);
+    const headers = signedHeaders("POST", "/admin/a", body);
 
     const first = await fetch(`${srv.baseUrl}/admin/a`, {
       method: "POST",

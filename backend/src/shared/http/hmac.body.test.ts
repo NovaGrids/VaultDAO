@@ -61,7 +61,7 @@ async function startServer(): Promise<{
  */
 function signEmptyBody(): { ts: string; sig: string } {
   const ts = String(Date.now());
-  return { ts, sig: computeSignature(TEST_SECRET, `${ts}.`) };
+  return { ts, sig: computeSignature(TEST_SECRET, `POST./admin/cors/origins.${ts}.`) };
 }
 
 test("text/plain body cannot ride on a signature over an empty body", async () => {
@@ -115,7 +115,7 @@ test("JSON body with a signature over that exact body is accepted", async () => 
   try {
     const body = JSON.stringify({ origin: "https://app.example.com" });
     const ts = String(Date.now());
-    const sig = computeSignature(TEST_SECRET, `${ts}.${body}`);
+    const sig = computeSignature(TEST_SECRET, `POST./admin/cors/origins.${ts}.${body}`);
     const res = await fetch(`${srv.baseUrl}/admin/cors/origins`, {
       method: "POST",
       headers: {
