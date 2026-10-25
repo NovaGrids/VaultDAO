@@ -44,27 +44,6 @@ const logger = createLogger("snapshot-service");
 
 const REBUILD_BATCH_SIZE = 200;
 
-const TRANSIENT_ERROR_PATTERNS = [
-  /lock/i,
-  /timeout/i,
-  /busy/i,
-  /econnreset/i,
-  /econnrefused/i,
-  /socket/i,
-];
-const PERMANENT_ERROR_PATTERNS = [
-  /validation/i,
-  /schema/i,
-  /invalid/i,
-  /constraint/i,
-];
-
-function isTransientError(err: unknown): boolean {
-  const msg = String(err);
-  if (PERMANENT_ERROR_PATTERNS.some((p) => p.test(msg))) return false;
-  return TRANSIENT_ERROR_PATTERNS.some((p) => p.test(msg));
-}
-
 /**
  * The subset of storage that event replay needs. Rebuilds pass a staging store
  * here so the live snapshot is never touched until the replay has succeeded.
