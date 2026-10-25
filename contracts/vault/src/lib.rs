@@ -43,7 +43,7 @@ use types::{
     HookRegistration, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
     InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
     NotificationPreferencesV2, NotificationPrefs, OptionalProposalOperation,
-    OptionalVaultOracleConfig, PauseCooldownConfig,
+    OptionalVaultOracleConfig, ParticipationConfig, PauseCooldownConfig,
     PauseState, Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase,
     ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig,
     RecoveryConfigChangeProposal, RecoveryProposal, RecoveryStatus, RecurringPayment,
@@ -51,6 +51,7 @@ use types::{
     ScheduledTransferConfig, ScopedDelegation, SignerParticipationScore, SignerTier, StakingConfig,
     StreamRateWindow, StreamStatus, StreamingPayment, Subscription, SubscriptionStatus,
     ExpiryBatch, SubscriptionTier, SwapProposal, SwapResult, TemplateFeeTier, TemplateOverrides,
+    PhaseExecutionOutcome,
     ThresholdStrategy, TokenSpendingConfig, TransferDetails, VaultAction, VaultMetrics,
     VaultOracleConfig, VaultPriceData, VaultTemplate, VelocityConfig, VestingSchedule, VoteChoice,
     VoteWeight, VotingStrategy, WhitelistEntry,
@@ -153,6 +154,9 @@ const MIN_UPGRADE_TIMELOCK: u64 = 17_280;
 
 /// Maximum number of milestones allowed on a single escrow
 const MAX_ESCROW_MILESTONES: u32 = 50;
+
+/// Absolute ceiling for `RetryConfig.initial_backoff_ledgers`: 30 days at ~5 s/ledger.
+const MAX_RETRY_BACKOFF_LEDGERS: u64 = 17_280 * 30;
 
 /// Minimum length for an attachment CID (CIDv0 = 46 chars, CIDv1 base32 = 59+ chars)
 const MIN_ATTACHMENT_LEN: u32 = 46;
@@ -500,6 +504,7 @@ mod test_threshold_unilateral_reduction;
 mod test_timelock_ready_queue;
 #[cfg(test)]
 mod test_upgrade_timelock_min;
+#[cfg(test)]
 mod test_trigger_stream_payment_accrual;
 #[cfg(test)]
 mod test_update_config_signers;
@@ -533,9 +538,13 @@ mod test_escrow_expiration;
 mod test_escrow_milestone_partial_release;
 #[cfg(test)]
 mod test_escrow_dispute_timeout;
+#[cfg(test)]
 mod test_escrow_expiry_precedence;
+#[cfg(test)]
 mod test_hook_failures;
+#[cfg(test)]
 mod test_escrow_milestone_auth;
+#[cfg(test)]
 mod test_escrow_multisig_arbitration;
 #[cfg(test)]
 mod test_escrow_timeout;
@@ -623,6 +632,7 @@ mod test_subscription_auto_topup;
 mod test_subscription_downgrade_grace;
 #[cfg(test)]
 mod test_swap_controls;
+#[cfg(test)]
 mod test_swap_multi_token;
 #[cfg(test)]
 mod test_threshold_reduction;
@@ -794,9 +804,11 @@ impl VaultDAO {
             exec_window_ledgers: 0, // Set via set_exec_window_ledgers post-init (Issue #1349)
             upgrade_timelock_delay: config.upgrade_timelock_delay,
             // Participation scoring defaults; tune via update_participation_config (Issue #1093).
-            min_participation_rate: 50,
-            low_participation_streak_n: 3,
-            participation_rate_window: 20,
+            participation: ParticipationConfig {
+                min_participation_rate: 50,
+                low_participation_streak_n: 3,
+                participation_rate_window: 20,
+            },
         };
 
         // Apply staking config from InitConfig
@@ -1596,8 +1608,8 @@ impl VaultDAO {
                 &proposer,
                 &recipient,
                 &token_addr,
-                amount.saturating_sub(auto_exec_fee),
-                auto_exec_fee,
+                amount.saturating_sub(auto_exec_fee as i128),
+                auto_exec_fee as i128,
                 current_ledger,
             );
             storage::create_audit_entry(&env, AuditAction::ApproveProposal, &proposer, proposal_id);
@@ -1982,7 +1994,7 @@ impl VaultDAO {
                     &env,
                     &voter,
                     rate,
-                    config.min_participation_rate,
+                    config.participation.min_participation_rate,
                     score.consecutive_low_periods,
                 );
             }
@@ -2129,7 +2141,7 @@ impl VaultDAO {
                     proposal_id,
                     &voter,
                     &signer,
-                    Symbol::new(&env, "approved"),
+                    &Symbol::new(&env, "approved"),
                 );
                 continue;
             }
@@ -2155,7 +2167,7 @@ impl VaultDAO {
                     &env,
                     &voter,
                     rate,
-                    config.min_participation_rate,
+                    config.participation.min_participation_rate,
                     score.consecutive_low_periods,
                 );
             }
@@ -2289,10 +2301,10 @@ impl VaultDAO {
         }
 
         // Record the rejection vote (idempotent for repeat callers).
-        if !proposal.rejections.contains(&signer) {
-            proposal.rejections.push_back(signer.clone());
+        if !proposal.rejection_votes.contains(&signer) {
+            proposal.rejection_votes.push_back(signer.clone());
         }
-        let rejection_count = proposal.rejections.len();
+        let rejection_count = proposal.rejection_votes.len();
 
         // Determine the rejection quorum: an explicit configured quorum takes
         // precedence, otherwise fall back to the approval threshold.
@@ -2313,7 +2325,7 @@ impl VaultDAO {
                 &env,
                 proposal_id,
                 &signer,
-                rejection_count,
+                rejection_count as u64,
             );
 
             return Ok(());
@@ -2350,7 +2362,7 @@ impl VaultDAO {
             &env,
             proposal_id,
             &signer,
-            rejection_count,
+            rejection_count as u64,
         );
 
         Ok(())
@@ -2384,7 +2396,7 @@ impl VaultDAO {
 
         let current_ledger = env.ledger().sequence() as u64;
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
-            Self::expire_proposal_internal(&env, &mut proposal, current_ledger);
+            expire_approved_proposal(&env, &mut proposal, ProposalExpiryCause::Deadline);
             return Ok(());
         }
         if proposal.voting_deadline == 0 || current_ledger > proposal.voting_deadline {
@@ -2748,8 +2760,8 @@ impl VaultDAO {
                     &executor,
                     &proposal.recipient,
                     &proposal.token,
-                    proposal.amount.saturating_sub(proposal.gas_used),
-                    proposal.gas_used,
+                    proposal.amount.saturating_sub(proposal.gas_used as i128),
+                    proposal.gas_used as i128,
                     current_ledger,
                 );
 
@@ -2970,8 +2982,6 @@ impl VaultDAO {
 
         // Remove the dead-letter record and decrement the live count.
         storage::remove_dead_letter(&env, record_id);
-        let count = storage::get_dead_letter_count(&env);
-        storage::set_dead_letter_count(&env, count.saturating_sub(1));
 
         storage::extend_instance_ttl(&env);
 
@@ -3876,6 +3886,113 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Shared cancellation path used by admin flows (e.g. limit auto-cancel).
+    ///
+    /// Mirrors the proposer-initiated branch of [`cancel_proposal`] without an
+    /// auth check: refunds reserved spending capacity, marks the proposal
+    /// `Cancelled`, stores a cancellation record, settles insurance and stake,
+    /// and emits the cancellation event. The caller is responsible for
+    /// authorization.
+    fn cancel_proposal_internal(
+        env: &Env,
+        canceller: &Address,
+        proposal_id: u64,
+        reason: Symbol,
+    ) -> Result<(), VaultError> {
+        let mut proposal = storage::get_proposal(env, proposal_id)?;
+
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(VaultError::ProposalAlreadyCancelled);
+        }
+        if proposal.status != ProposalStatus::Pending
+            && proposal.status != ProposalStatus::Approved
+            && proposal.status != ProposalStatus::Scheduled
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Refund reserved spending capacity
+        storage::refund_spending_limits(
+            env,
+            proposal.amount,
+            proposal.spend_day,
+            proposal.spend_week,
+        );
+        storage::refund_token_spending_limits(
+            env,
+            &proposal.token,
+            proposal.amount,
+            proposal.spend_day,
+            proposal.spend_week,
+        );
+
+        proposal.status = ProposalStatus::Cancelled;
+        storage::pending_expiry_index_remove(env, proposal_id);
+        storage::set_proposal(env, &proposal);
+
+        storage::remove_from_priority_queue(
+            env,
+            proposal.priority.clone() as u32,
+            proposal_id,
+        );
+
+        // Store cancellation record (audit trail)
+        let current_ledger = env.ledger().sequence() as u64;
+        let record = crate::CancellationRecord {
+            proposal_id,
+            cancelled_by: canceller.clone(),
+            reason: reason.clone(),
+            cancelled_at_ledger: current_ledger,
+            refunded_amount: proposal.amount,
+        };
+        storage::set_cancellation_record(env, &record);
+        storage::add_to_cancellation_history(env, proposal_id);
+        storage::extend_instance_ttl(env);
+
+        storage::create_audit_entry(env, AuditAction::RejectProposal, canceller, proposal_id);
+
+        events::emit_proposal_cancelled(
+            env,
+            proposal_id,
+            canceller,
+            &reason,
+            proposal.amount,
+        );
+
+        // Refund insurance in full
+        if proposal.insurance_amount > 0 {
+            token::transfer(
+                env,
+                &proposal.token,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+            events::emit_insurance_returned(
+                env,
+                proposal_id,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+        }
+
+        // Settle stake at the cancellation rate (Issue #1360)
+        Self::slash_stake_on_cancellation(env, &proposal);
+
+        // Clear pending config if this was a config change proposal
+        if proposal.memo == Symbol::new(env, "config_change") {
+            if let Some(pending_id) = storage::get_pending_config_proposal(env) {
+                if pending_id == proposal_id {
+                    storage::clear_pending_config_proposal(env);
+                    env.storage()
+                        .persistent()
+                        .remove(&crate::storage::FeatureKey::PendingConfig);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Retrieve the cancellation record for a cancelled proposal.
     ///
     /// Useful for auditing: returns who cancelled, why, when, and how much was refunded.
@@ -4708,9 +4825,11 @@ impl VaultDAO {
                 approval_timeout_ledgers: 0,
                 exec_window_ledgers: 0,
                 upgrade_timelock_delay: MIN_UPGRADE_TIMELOCK,
-                min_participation_rate: 50,
-                low_participation_streak_n: 3,
-                participation_rate_window: 20,
+                participation: ParticipationConfig {
+                    min_participation_rate: 50,
+                    low_participation_streak_n: 3,
+                    participation_rate_window: 20,
+                },
             }
         });
         (config.quorum, config.quorum_percentage)
@@ -4788,7 +4907,7 @@ impl VaultDAO {
             }
         }
 
-        config.threshold_strategy = strategy;
+        config.threshold_strategy = strategy.clone();
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
         storage::create_audit_entry(
@@ -5600,7 +5719,7 @@ impl VaultDAO {
                                         &env,
                                         &eligible,
                                         rate,
-                                        config.min_participation_rate,
+                                        config.participation.min_participation_rate,
                                         score.consecutive_low_periods,
                                     );
                                 }
@@ -5902,9 +6021,9 @@ impl VaultDAO {
         }
 
         let mut config = storage::get_config(&env)?;
-        config.min_participation_rate = min_participation_rate;
-        config.low_participation_streak_n = low_participation_streak_n;
-        config.participation_rate_window = participation_rate_window;
+        config.participation.min_participation_rate = min_participation_rate;
+        config.participation.low_participation_streak_n = low_participation_streak_n;
+        config.participation.participation_rate_window = participation_rate_window;
         storage::set_config(&env, &config);
 
         events::emit_config_updated(&env, &admin);
@@ -6112,6 +6231,7 @@ impl VaultDAO {
             spend_week: storage::get_week_number(&env),
             has_spend_buckets: true,
             approved_at: 0,
+            rejection_votes: Vec::new(&env),
         };
 
         storage::set_proposal(&env, &proposal);
@@ -6523,9 +6643,52 @@ impl VaultDAO {
     /// # Arguments
     /// * `after_id` - Return only IDs greater than this (0 for the first page).
     /// * `limit`    - Maximum number of IDs to return (capped at 100).
-    pub fn get_executable_proposals_paginated(env: Env, after_id: u64, limit: u64) -> Vec<u64> {
-        storage::extend_instance_ttl(&env);
-        storage::get_executable_proposals_paginated(&env, after_id, limit)
+    pub fn get_executable_proposals_after(env: Env, after_id: u64, limit: u64) -> Vec<u64> {
+        const MAX_EXECUTABLE_RESULTS: u64 = 100;
+        let cap = if limit == 0 || limit > MAX_EXECUTABLE_RESULTS {
+            MAX_EXECUTABLE_RESULTS
+        } else {
+            limit
+        };
+
+        let mut executable = Vec::new(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let candidates = storage::get_all_proposals_by_status_uncapped(
+            &env,
+            ProposalStatus::Approved as u32,
+        );
+
+        for proposal_id in candidates.iter() {
+            if executable.len() as u64 >= cap {
+                break;
+            }
+            if proposal_id <= after_id {
+                continue;
+            }
+
+            let proposal = match storage::get_proposal(&env, proposal_id) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if proposal.status != ProposalStatus::Approved {
+                continue;
+            }
+            if current_ledger > proposal.expires_at {
+                continue;
+            }
+            if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
+                continue;
+            }
+            if Self::ensure_dependencies_executable(&env, &proposal).is_err() {
+                continue;
+            }
+
+            executable.push_back(proposal_id);
+        }
+
+        executable
     }
 
     // ========================================================================
@@ -7355,7 +7518,7 @@ impl VaultDAO {
     }
 
     /// Execute a recurring payment using a token scoped to this payment ID.
-    pub fn execute_recurring_payment_with_capability(
+    pub fn execute_recurring_capability(
         env: Env,
         caller: Address,
         payment_id: u64,
@@ -12787,6 +12950,17 @@ impl VaultDAO {
             if storage::get_token_weekly_spent(env, token_in, week) + amount
                 > token_cfg.weekly_limit
             {
+                return Err(VaultError::ExceedsTokenWeeklyLimit);
+            }
+        }
+
+        storage::add_daily_spent(env, today, amount);
+        storage::add_weekly_spent(env, week, amount);
+        storage::add_token_daily_spent(env, token_in, today, amount);
+        storage::add_token_weekly_spent(env, token_in, week, amount);
+        Ok(())
+    }
+
     /// Apply the spending controls that `propose_transfer_internal` enforces to an
     /// outflow of `amount` of `token`, then reserve the amount against the daily,
     /// weekly and per-token counters. Shared by swap proposals (#1926).
@@ -12844,8 +13018,6 @@ impl VaultDAO {
 
         storage::add_daily_spent(env, today, amount);
         storage::add_weekly_spent(env, week, amount);
-        storage::add_token_daily_spent(env, token_in, today, amount);
-        storage::add_token_weekly_spent(env, token_in, week, amount);
         storage::add_token_daily_spent(env, token, today, amount);
         storage::add_token_weekly_spent(env, token, week, amount);
         Ok(())
@@ -12966,11 +13138,6 @@ impl VaultDAO {
         }
 
         let current_ledger = env.ledger().sequence() as u64;
-        let swap_unlock_ledger = match swap_token_in {
-            Some(_) if swap_amount >= config.timelock_threshold => {
-                current_ledger + config.timelock_delay
-            }
-            _ => 0,
         let unlock_ledger = if spend_amount > 0 && spend_amount >= config.timelock_threshold {
             current_ledger + config.timelock_delay
         } else {
@@ -12981,8 +13148,6 @@ impl VaultDAO {
             id: proposal_id,
             proposer: proposer.clone(),
             recipient: env.current_contract_address(),
-            token: env.current_contract_address(),
-            amount: swap_amount,
             token: spend_token,
             amount: spend_amount,
             memo: Symbol::new(&env, "swap"),
@@ -12998,7 +13163,6 @@ impl VaultDAO {
             condition_logic,
             created_at: current_ledger,
             expires_at: calculate_expiration_ledger(&config, &priority, current_ledger),
-            unlock_ledger: swap_unlock_ledger,
             unlock_ledger,
             execution_time: None,
             execution_window_ledgers: 0,
@@ -13205,8 +13369,8 @@ impl VaultDAO {
             &executor,
             &proposal.recipient,
             &proposal.token,
-            proposal.amount.saturating_sub(proposal.gas_used),
-            proposal.gas_used,
+            proposal.amount.saturating_sub(proposal.gas_used as i128),
+            proposal.gas_used as i128,
             current_ledger,
         );
         // Return insurance on success, as execute_proposal does (#1928)
@@ -18338,13 +18502,6 @@ impl VaultDAO {
     ///
     /// Permissionless: anyone may call this to prevent griefing by inaction.
     /// Call again with `start_id = next_cursor` until `done` is true.
-    /// Scan up to `max_scan` subscription IDs starting at `start_id` and expire
-    /// any Active or Paused subscription that is past its grace deadline.
-    /// Permissionless ? anyone may call this to prevent griefing by inaction.
-    ///
-    /// Pass `start_id = 1` for the first page. Returns `(expired_count, next_cursor)`;
-    /// `next_cursor == 0` means the whole ID range has been scanned. Otherwise call
-    /// again with `start_id = next_cursor` to continue.
     ///
     /// Emits `subscription_expired` for each subscription that transitions to
     /// `SubscriptionStatus::Expired`.
@@ -18354,11 +18511,7 @@ impl VaultDAO {
         start_id: u64,
         max_scan: u32,
     ) -> ExpiryBatch {
-    ) -> Result<(u32, u64), VaultError> {
         caller.require_auth();
-        if max_scan == 0 {
-            return Err(VaultError::InvalidAmount);
-        }
         let current_ledger = env.ledger().sequence() as u64;
         let next_id = storage::get_next_subscription_id(&env);
 
@@ -18372,11 +18525,6 @@ impl VaultDAO {
 
         let mut expired_count: u32 = 0;
         for id in from_id..to_id {
-        let first = start_id.max(1);
-        let end = first.saturating_add(max_scan as u64).min(next_id);
-        let mut expired_count: u32 = 0;
-
-        for id in first..end {
             let sub = match storage::get_subscription(&env, id) {
                 Ok(s) => s,
                 Err(_) => continue,
@@ -18409,8 +18557,6 @@ impl VaultDAO {
             next_cursor: to_id,
             done: to_id >= next_id,
         }
-        let next_cursor = if end >= next_id { 0 } else { end };
-        Ok((expired_count, next_cursor))
     }
 
     /// Reactivate an expired subscription by paying the overdue amount.
@@ -19409,10 +19555,25 @@ impl VaultDAO {
         };
         storage::set_proposal(&env, &new_proposal);
 
+        // Cache the committed value so approval-time limit, timelock, and
+        // impact checks can read it without re-walking the phase list.
+        let mut total_amount: i128 = 0;
+        for phase in phases.iter() {
+            match &phase.operation {
+                ProposalOperation::Transfer(_, _, amount, _) => {
+                    total_amount += *amount;
+                }
+                ProposalOperation::CreateVesting(_, _, amount, _, _, _) => {
+                    total_amount += *amount;
+                }
+                _ => {}
+            }
+        }
         let mp = MultiPhaseProposal {
             proposal_id,
             phases,
             last_executed_phase: -1,
+            total_amount,
         };
         storage::set_multi_phase_proposal(&env, &mp);
         storage::extend_instance_ttl(&env);
@@ -20829,7 +20990,7 @@ impl VaultDAO {
     }
 
     /// Set the hourly circuit-breaker threshold for one token (Admin only).
-    pub fn set_circuit_breaker_token_threshold(
+    pub fn set_circuit_token_threshold(
         env: Env,
         admin: Address,
         token: Address,
@@ -20851,7 +21012,7 @@ impl VaultDAO {
     }
 
     /// Get the effective hourly circuit-breaker threshold for a token.
-    pub fn get_circuit_breaker_token_threshold(env: Env, token: Address) -> i128 {
+    pub fn get_circuit_token_threshold(env: Env, token: Address) -> i128 {
         storage::get_circuit_breaker_threshold_for_token(&env, &token)
     }
 
@@ -20995,14 +21156,9 @@ impl VaultDAO {
                     // Check if proposal exceeds current spending limit
                     if proposal.amount > config.spending_limit {
                         if auto_cancel {
-                            // Auto-cancel the proposal
-                            let mut p = proposal.clone();
-                            p.status = ProposalStatus::Cancelled;
-                            storage::pending_expiry_index_remove(&env, proposal_id);
-                            storage::set_proposal(&env, &p);
-                            // Auto-cancel the proposal through the shared
-                            // cancellation path so refunds, records, and events
-                            // stay consistent with a normal cancellation.
+                            // Auto-cancel through the shared cancellation path so
+                            // refunds, records, and events stay consistent with a
+                            // normal cancellation.
                             Self::cancel_proposal_internal(
                                 &env,
                                 &admin,

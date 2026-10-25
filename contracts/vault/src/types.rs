@@ -209,6 +209,14 @@ pub struct Config {
     pub upgrade_timelock_delay: u64,
 
     // ---- Issue #1093: Signer Participation Scoring ----
+    // Grouped so `Config` stays within the 40-field contracttype limit.
+    pub participation: ParticipationConfig,
+}
+
+/// Signer participation scoring thresholds (Issue #1093).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParticipationConfig {
     /// Minimum acceptable participation rate (0-100). Below this for
     /// `low_participation_streak_n` in a row triggers an alert.
     pub min_participation_rate: u32,
@@ -1391,7 +1399,6 @@ pub enum AuditAction {
     ExecuteProposal = 3,
     RejectProposal = 4,
     SetRole = 5,
-    AddSigner = 6,
     RemoveSigner = 7,
     UpdateLimits = 8,
     UpdateThreshold = 9,
@@ -1418,22 +1425,18 @@ pub enum AuditAction {
     PoolWithdrawn = 27,
     /// Collected fees withdrawn directly by an Admin (within the spending limit).
     FeesWithdrawn = 28,
-    /// A single phase of a multi-phase proposal executed successfully.
-    PhaseExecuted = 29,
-    /// A single phase of a multi-phase proposal failed to execute.
-    PhaseFailed = 30,
     /// A bounded page of overdue subscriptions was expired (#1924).
     SubscriptionsExpired = 31,
     /// A capability token was granted.
-    CapabilityGranted = 31,
+    CapabilityGranted = 48,
     /// A capability token was revoked.
     CapabilityRevoked = 32,
     /// Vault paused by an emergency signer or the circuit breaker (#1937).
     /// `target` is the fingerprint of the pause cause.
-    VaultPaused = 31,
+    VaultPaused = 49,
     /// Vault unpaused by an emergency signer (#1937).
     /// `target` is the number of ledgers the vault was paused.
-    VaultUnpaused = 32,
+    VaultUnpaused = 50,
     /// Supported-token list or per-token limits changed (#1938).
     /// `target` is a fingerprint of the setter arguments.
     TokenConfigUpdated = 33,
@@ -1467,7 +1470,7 @@ pub enum AuditAction {
     /// Keeper hook removed (#1938). `target` is a fingerprint of the arguments.
     KeeperHookRemoved = 47,
     /// A milestone of an escrow was marked complete by the funder or arbitrator.
-    MilestoneCompleted = 31,
+    MilestoneCompleted = 51,
 }
 
 /// Audit trail entry with cryptographic verification
@@ -2665,6 +2668,24 @@ pub struct ProposalPhase {
     pub rollback_operation: OptionalProposalOperation,
     /// Execution status
     pub status: ProposalPhaseStatus,
+}
+
+/// Outcome of executing a multi-phase proposal.
+///
+/// Returned instead of an `Err` on phase failure so the attempt is persisted:
+/// each phase status is written back and the base proposal is marked
+/// `Rejected` (`success == false`) or `Executed` (`success == true`).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhaseExecutionOutcome {
+    /// ID of the base proposal that was executed.
+    pub proposal_id: u64,
+    /// Number of phases that executed successfully.
+    pub executed_count: u32,
+    /// Index of the phase that failed, if any.
+    pub failed_phase: Option<u32>,
+    /// True when every phase executed successfully.
+    pub success: bool,
 }
 
 /// Multi-phase proposal stored alongside the base Proposal

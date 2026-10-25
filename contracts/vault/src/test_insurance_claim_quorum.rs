@@ -611,6 +611,8 @@ fn test_claim_deadline_just_past_window_cap_is_rejected() {
     );
 
     assert!(res.is_err(), "deadline 100k ledgers out must be refused");
+}
+
 // Issue #1983: signer-set changes during an open claim
 // ============================================================================
 

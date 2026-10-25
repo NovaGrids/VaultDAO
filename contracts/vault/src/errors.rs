@@ -523,7 +523,7 @@ pub enum VaultError {
     StreamNotFullyClaimed = 1165,
     // Issue #1934: only one recovery proposal may be open at a time
     /// A recovery proposal is already Pending or Approved
-    RecoveryAlreadyActive = 1165,
+    RecoveryAlreadyActive = 1203,
     // Issue #1935: signer set size limit
     /// Signer list exceeds `MAX_SIGNERS`
     TooManySigners = 1166,
@@ -542,22 +542,22 @@ pub enum VaultError {
     // Issue #1750: change_vote deadline distinction
     // =========================================================
     /// Voting window for the proposal has already closed
-    VotingClosed = 1141,
+    VotingClosed = 1204,
     // Dead-letter queue capacity
     /// Dead-letter queue has reached its maximum capacity
-    DeadLetterQueueFull = 1141,
+    DeadLetterQueueFull = 1205,
 
     // =========================================================
     // Rejection voting
     // =========================================================
     /// A reject vote was recorded but the rejection threshold has not been met
-    RejectionThresholdNotReached = 1141,
+    RejectionThresholdNotReached = 1206,
     /// Signer has already rejected this proposal
     AlreadyRejected = 1142,
     // Per-proposer pending reservation cap
     // =========================================================
     /// A single proposer's pending reservations would exceed the per-proposer cap
-    ExceedsProposerPendingLimit = 1141,
+    ExceedsProposerPendingLimit = 1207,
 }
 
 // Compatibility markers for CI source checks:

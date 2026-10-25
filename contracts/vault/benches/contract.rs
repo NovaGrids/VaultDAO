@@ -222,6 +222,8 @@ fn benchmark_proposals(
         memory_bytes: median(&mut memory_samples),
         wall_time_ns: median(&mut wall_samples),
     }
+}
+
 fn seed_proposals(context: &Context, n: u32) {
     for _ in 0..n {
         let _proposal_id = propose(context);
@@ -484,6 +486,7 @@ fn main() {
             "read_write",
             5_000,
             scenario_auto_expire_proposals,
+        ),
         benchmark(
             "list_proposals_offset_first_100",
             "read_only",

@@ -229,6 +229,65 @@ pub fn emit_proposal_scheduled(
     );
 }
 
+// ============================================================================
+// Governed pool and fee withdrawals
+// ============================================================================
+
+/// Emit when a governed withdrawal proposal moves funds out of a vault pool.
+///
+/// Topics: `("pool_withdrawn", pool)` where pool is `ins_withdraw`, `stk_withdraw` or `fee_withdraw`
+/// Data:   `(proposal_id, token, recipient, amount, executor)`
+pub fn emit_pool_withdrawn(
+    env: &Env,
+    pool: &Symbol,
+    proposal_id: u64,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+    executor: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "pool_withdrawn"), pool.clone()),
+        (
+            proposal_id,
+            token.clone(),
+            recipient.clone(),
+            amount,
+            executor.clone(),
+        ),
+    );
+}
+
+/// Emit when collected fees are withdrawn directly by an admin.
+pub fn emit_fees_withdrawn(
+    env: &Env,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+    admin: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "fees_withdrawn"),),
+        (token.clone(), recipient.clone(), amount, admin.clone()),
+    );
+}
+
+/// Emit a summary after `validate_limits_pending` auto-cancels proposals.
+///
+/// Topics: `("limits_auto_cancel",)`
+/// Data:   `(admin, cancelled_ids, cancelled_count)`
+pub fn emit_limits_pending_summary(
+    env: &Env,
+    admin: &Address,
+    cancelled_ids: &Vec<u64>,
+    cancelled_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "limits_auto_cancel"),),
+        (admin.clone(), cancelled_ids.clone(), cancelled_count),
+    );
+}
+
 /// Emit when a proposal is rejected (enhanced: includes proposer)
 pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address, proposer: &Address) {
     env.events().publish(
@@ -273,28 +332,6 @@ pub fn emit_proposal_explicit_rejection(
     env.events().publish(
         (Symbol::new(env, "proposal_rejected"), proposal_id),
         (rejector.clone(), total_rejection_count),
-    );
-}
-
-/// Emit each time a rejection vote is accumulated on a proposal, before the
-/// proposal has necessarily reached its final rejected state.
-///
-/// This lets indexers observe partial rejection progress (how many rejection
-/// votes have been cast so far and how many are still needed) rather than only
-/// seeing the terminal `proposal_rejected` transition.
-///
-/// Topics: `("proposal_rejection_vote", proposal_id)`
-/// Data:   `(rejector, rejection_count, rejection_threshold)`
-pub fn emit_proposal_rejection_vote(
-    env: &Env,
-    proposal_id: u64,
-    rejector: &Address,
-    rejection_count: u32,
-    rejection_threshold: u32,
-) {
-    env.events().publish(
-        (Symbol::new(env, "proposal_rejection_vote"), proposal_id),
-        (rejector.clone(), rejection_count, rejection_threshold),
     );
 }
 
@@ -2620,18 +2657,11 @@ pub fn emit_vesting_cancelled(
 ///
 /// Topics: `("phase_executed", proposal_id)`
 /// Data:   `(phase_index, executor)`
-pub fn emit_phase_executed(env: &Env, proposal_id: u64, phase_index: u32, executor: &Address) {
 /// Emit when a proposal phase executes successfully.
 ///
 /// Topics: `("phase_executed", proposal_id)`
-/// Data:   `(phase_index, status, error_code)`
-pub fn emit_phase_executed(
-    env: &Env,
-    proposal_id: u64,
-    phase_index: u32,
-    executor: &Address,
-    ledger: u64,
-) {
+/// Data:   `(phase_index, executor)`
+pub fn emit_phase_executed(env: &Env, proposal_id: u64, phase_index: u32, executor: &Address) {
     env.events().publish(
         (Symbol::new(env, "phase_executed"), proposal_id),
         (phase_index, executor.clone()),
@@ -2641,26 +2671,7 @@ pub fn emit_phase_executed(
 /// Emit when a phase of a multi-phase proposal execution fails.
 ///
 /// Topics: `("phase_failed", proposal_id)`
-/// Data:   `(phase_index, status, error_code)`
-pub fn emit_phase_failed(
-    env: &Env,
-    proposal_id: u64,
-    phase_index: u32,
-    status: u32,
-    error_code: u32,
-) {
-    env.events().publish(
-        (Symbol::new(env, "phase_failed"), proposal_id),
-        (phase_index, status, error_code),
-    );
-}
-
 /// Data:   `(phase_index, error_code, executor)`
-/// Data:   `(phase_index, executor, error_code)`
-/// Emit when a proposal phase fails.
-///
-/// Topics: `("phase_failed", proposal_id)`
-/// Data:   `(phase_index, status, error_code)`
 pub fn emit_phase_failed(
     env: &Env,
     proposal_id: u64,
@@ -2682,7 +2693,6 @@ pub fn emit_phase_rolled_back(env: &Env, proposal_id: u64, phase_index: u32, exe
     env.events().publish(
         (Symbol::new(env, "phase_rolled_back"), proposal_id),
         (phase_index, executor.clone()),
-        (phase_index, executor.clone(), error_code),
     );
 }
 

@@ -225,6 +225,8 @@ pub enum DataKey {
     RejectionVotes(u64),
     /// Failed hook calls recorded for a proposal -> Vec<HookFailure> (#1892)
     HookFailures(u64),
+    /// Sorted pending-expiry index -> Vec<(u64, u64)> of (expiry_ledger, proposal_id)
+    PendingExpiryIndex,
 }
 
 #[contracttype(export = false)]
@@ -2304,8 +2306,9 @@ pub fn commit_pending_to_executed(env: &Env, proposal: &Proposal) {
     add_daily_spent(env, spend_day, amount);
     add_weekly_spent(env, spend_week, amount);
 
-    // Move per-token pending spend into executed spend when a token is set.
-    if let Some(token) = proposal.token.clone() {
+    // Move per-token pending spend into executed spend.
+    {
+        let token = proposal.token.clone();
         let current_daily = get_token_daily_spent(env, &token, spend_day);
         let refunded_daily = current_daily.saturating_sub(amount).max(0);
         let key_daily = DataKey::TokenDailySpent(token.clone(), spend_day);
@@ -2619,8 +2622,8 @@ fn update_low_participation_state(
     score: &mut SignerParticipationScore,
     config: &Config,
 ) -> (u32, bool) {
-    let rate = compute_participation_rate(score, config.participation_rate_window);
-    if rate < config.min_participation_rate {
+    let rate = compute_participation_rate(score, config.participation.participation_rate_window);
+    if rate < config.participation.min_participation_rate {
         score.consecutive_low_periods += 1;
         if score.low_participation_since_ledger.is_none() {
             score.low_participation_since_ledger = Some(env.ledger().sequence());
@@ -2631,7 +2634,7 @@ fn update_low_participation_state(
     }
 
     let should_alert = score.low_participation_since_ledger.is_some()
-        && score.consecutive_low_periods >= config.low_participation_streak_n;
+        && score.consecutive_low_periods >= config.participation.low_participation_streak_n;
     (rate, should_alert)
 }
 

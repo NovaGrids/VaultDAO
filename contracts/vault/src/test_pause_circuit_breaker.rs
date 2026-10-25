@@ -225,16 +225,16 @@ fn test_per_token_circuit_breaker_threshold_requires_admin_and_nonnegative_value
     client.set_role(&admin, &member, &Role::Member);
 
     assert_eq!(
-        client.try_set_circuit_breaker_token_threshold(&member, &token, &100i128),
+        client.try_set_circuit_token_threshold(&member, &token, &100i128),
         Err(Ok(VaultError::InsufficientRole))
     );
     assert_eq!(
-        client.try_set_circuit_breaker_token_threshold(&admin, &token, &-1i128),
+        client.try_set_circuit_token_threshold(&admin, &token, &-1i128),
         Err(Ok(VaultError::InvalidAmount))
     );
 
-    client.set_circuit_breaker_token_threshold(&admin, &token, &10_000_000i128);
-    assert_eq!(client.get_circuit_breaker_token_threshold(&token), 10_000_000i128);
+    client.set_circuit_token_threshold(&admin, &token, &10_000_000i128);
+    assert_eq!(client.get_circuit_token_threshold(&token), 10_000_000i128);
 }
 
 #[test]
@@ -249,8 +249,8 @@ fn test_circuit_breaker_budgets_are_independent_for_different_token_decimals() {
     client.initialize(&admin, &base_config(&env, signers));
 
     // The thresholds use each token's native units: 2 tokens at 7 and 18 decimals.
-    client.set_circuit_breaker_token_threshold(&admin, &token_7_decimals, &20_000_000i128);
-    client.set_circuit_breaker_token_threshold(
+    client.set_circuit_token_threshold(&admin, &token_7_decimals, &20_000_000i128);
+    client.set_circuit_token_threshold(
         &admin,
         &token_18_decimals,
         &2_000_000_000_000_000_000i128,
@@ -285,8 +285,8 @@ fn test_circuit_breaker_budgets_are_independent_for_different_token_decimals() {
     let outflow_18_decimals = env.as_contract(&client.address, || {
         storage::get_circuit_breaker_outflow(&env, &token_18_decimals, window)
     });
-    assert!(outflow_7_decimals < client.get_circuit_breaker_token_threshold(&token_7_decimals));
-    assert!(outflow_18_decimals < client.get_circuit_breaker_token_threshold(&token_18_decimals));
+    assert!(outflow_7_decimals < client.get_circuit_token_threshold(&token_7_decimals));
+    assert!(outflow_18_decimals < client.get_circuit_token_threshold(&token_18_decimals));
     assert!(outflow_7_decimals + outflow_18_decimals > 20_000_000);
 }
 
