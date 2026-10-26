@@ -7,8 +7,7 @@ mod tests {
     use crate::{VaultDAO, VaultDAOClient};
     use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
 
-    fn setup_vault() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
-        let env = Env::default();
+    fn setup_vault(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
         env.mock_all_auths();
 
         let contract_id = env.register(VaultDAO, ());
@@ -67,6 +66,10 @@ mod tests {
         (client, admin, signer1, signer2, contract_id)
     }
 
+    // Fingerprint dedup keys on (amount, recipient, token): hand out a fresh
+    // amount per proposal so chains of identical transfers can be built.
+    static PROPOSAL_SEQ: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(100);
     fn propose_transfer(
         env: &Env,
         client: &VaultDAOClient,
@@ -75,11 +78,13 @@ mod tests {
         token: &Address,
         dependencies: &Vec<u64>,
     ) -> u64 {
+        let amount =
+            PROPOSAL_SEQ.fetch_add(1, core::sync::atomic::Ordering::SeqCst) as i128;
         client.propose_transfer_with_deps(
             proposer,
             recipient,
             token,
-            &100i128,
+            &amount,
             &Symbol::new(env, "test"),
             &Priority::Normal,
             &Vec::new(env),
@@ -90,11 +95,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_linear_dependency_chain_allowed() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -127,11 +131,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_tree_dependency_structure_allowed() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -168,11 +171,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_direct_circular_dependency_a_to_b_back_to_a() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -206,11 +208,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_self_dependency_not_allowed() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -229,11 +230,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_complex_circular_dependency_chain() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -273,11 +273,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_deep_dependency_chain_within_limits() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -302,11 +301,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_dependency_graph_acyclicity_check_at_creation() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -337,11 +335,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_dfs_cycle_detection_multiple_paths() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -385,11 +382,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_circular_dependency_detection_stores_result() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env

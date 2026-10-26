@@ -11,8 +11,7 @@ mod tests {
         Address, BytesN, Env, Symbol, Vec,
     };
 
-    fn setup_vault() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
-        let env = Env::default();
+    fn setup_vault(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
         env.mock_all_auths();
 
         let contract_id = env.register(VaultDAO, ());
@@ -71,6 +70,10 @@ mod tests {
         (client, admin, signer1, signer2, contract_id)
     }
 
+    // Fingerprint dedup keys on (amount, recipient, token): hand out a fresh
+    // amount per proposal so repeated identical transfers can be built.
+    static PROPOSAL_SEQ: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(100);
     fn propose_transfer(
         env: &Env,
         client: &VaultDAOClient,
@@ -78,11 +81,13 @@ mod tests {
         recipient: &Address,
         token: &Address,
     ) -> u64 {
+        let amount =
+            PROPOSAL_SEQ.fetch_add(1, core::sync::atomic::Ordering::SeqCst) as i128;
         client.propose_transfer(
             proposer,
             recipient,
             token,
-            &100i128,
+            &amount,
             &Symbol::new(env, "test"),
             &Priority::Normal,
             &Vec::new(env),
@@ -100,11 +105,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cold_signature_submission_on_proposal() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -126,7 +130,7 @@ mod tests {
     fn test_multiple_cold_signatures_per_proposal_allowed() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -146,11 +150,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cold_signature_cannot_be_reused_across_proposals() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -180,11 +183,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cold_signature_tracked_globally() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -214,11 +216,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cold_signature_prevents_duplicate_on_same_proposal() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -236,17 +237,17 @@ mod tests {
         assert_eq!(proposal.approvals.len(), 1);
 
         // Try to approve again - should not add duplicate
-        client.approve_proposal(&signer1, &proposal_id);
+        let res = client.try_approve_proposal(&signer1, &proposal_id);
+        assert_eq!(res.err(), Some(Ok(VaultError::AlreadyApproved)));
         let proposal_after = client.get_proposal(&proposal_id);
         assert_eq!(proposal_after.approvals.len(), 1);
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cold_signature_with_expiry_check() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -270,11 +271,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cold_signature_events_emitted_with_hash_and_proposal() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -297,7 +297,7 @@ mod tests {
     fn test_multiple_signers_prevent_cross_proposal_signature_replay() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -322,11 +322,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cold_signature_ledger_time_tracking() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env

@@ -13,8 +13,7 @@ mod tests {
     };
 
     // Helper with threshold=2 so proposals reach Approved state (not immediately executed)
-    fn setup_vault_threshold_2() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
-        let env = Env::default();
+    fn setup_vault_threshold_2(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
         env.mock_all_auths();
 
         let contract_id = env.register(VaultDAO, ());
@@ -73,8 +72,7 @@ mod tests {
         (client, admin, signer1, signer2, contract_id)
     }
 
-    fn setup_vault() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
-        let env = Env::default();
+    fn setup_vault(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
         env.mock_all_auths();
 
         let contract_id = env.register(VaultDAO, ());
@@ -154,11 +152,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_proposal_expiration_status() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -195,11 +192,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_expired_proposals_can_be_archived() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -233,11 +229,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_archival_threshold_configurable() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -263,11 +258,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_archival_separate_storage_key() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -304,11 +298,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_cleanup_preserves_recent_proposals() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -334,11 +327,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_archival_returns_count_of_archived() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -366,11 +358,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_archival_event_lists_proposal_ids() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -399,11 +390,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_mixed_old_new_proposals_archival() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -440,11 +430,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_archival_efficiency_reduces_storage() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -475,11 +464,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_execution_window_allows_execution_within_window() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -519,11 +507,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_execution_window_rejects_execution_outside_window() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -564,11 +551,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_execution_window_zero_disabled() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -604,7 +590,7 @@ mod tests {
     fn test_auto_expire_scan_cost_proportional_to_pending() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -683,7 +669,7 @@ mod tests {
     fn test_auto_expire_respects_max_scan_bound() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -728,7 +714,7 @@ mod tests {
     fn test_auto_expire_refunds_reservation_and_prunes_tags() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -803,11 +789,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_proposal_not_deleted_immediately_on_expiry() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -855,7 +840,7 @@ mod tests {
         Address,
         u64,
     ) {
-        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2();
+        let (client, admin, signer1, signer2, _contract_id) = setup_vault_threshold_2(&env);
 
         let token_admin = Address::generate(env);
         let token = env

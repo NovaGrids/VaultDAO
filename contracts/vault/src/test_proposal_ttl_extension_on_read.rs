@@ -12,8 +12,7 @@ mod tests {
         Address, Env, Symbol, Vec,
     };
 
-    fn setup_vault() -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
-        let env = Env::default();
+    fn setup_vault(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address, Address) {
         env.mock_all_auths();
 
         let contract_id = env.register(VaultDAO, ());
@@ -72,6 +71,10 @@ mod tests {
         (client, admin, signer1, signer2, contract_id)
     }
 
+    // Fingerprint dedup keys on (amount, recipient, token): hand out a fresh
+    // amount per proposal.
+    static PROPOSAL_SEQ: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(100);
     fn create_test_proposal(
         env: &Env,
         client: &VaultDAOClient,
@@ -79,11 +82,13 @@ mod tests {
         recipient: &Address,
         token: &Address,
     ) -> u64 {
+        let amount =
+            PROPOSAL_SEQ.fetch_add(1, core::sync::atomic::Ordering::SeqCst) as i128;
         client.propose_transfer(
             proposer,
             recipient,
             token,
-            &100i128,
+            &amount,
             &Symbol::new(env, "test"),
             &Priority::Normal,
             &Vec::new(env),
@@ -93,11 +98,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_proposal_ttl_extended_on_read() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -129,11 +133,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_proposal_ttl_prevented_eviction_on_repeated_reads() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -166,11 +169,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_proposal_ttl_extended_with_proper_ledger_range() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -202,11 +204,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_proposal_ttl_honored_across_ledgers() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
@@ -246,11 +247,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
     fn test_multiple_proposals_ttl_independently_extended() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, signer1, _signer2, _contract_id) = setup_vault();
+        let (client, admin, signer1, _signer2, _contract_id) = setup_vault(&env);
 
         let token_admin = Address::generate(&env);
         let token = env
