@@ -547,6 +547,10 @@ fn test_vesting_total_above_daily_limit_is_rejected() {
     let result = s
         .client
         .try_execute_multi_phase_proposal(&s.signer1, &proposal_id);
-    assert_eq!(result, Err(Ok(VaultError::PhaseExecutionFailed)));
+    // Phase failures surface as Ok(outcome) with success=false; the failed
+    // vesting phase persists as Failed and no schedule is created.
+    let outcome = result.unwrap().unwrap();
+    assert!(!outcome.success);
+    assert_eq!(outcome.failed_phase, Some(0));
     assert!(s.client.get_vesting_schedule(&1).is_none());
 }

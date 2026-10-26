@@ -2129,6 +2129,10 @@ impl VaultDAO {
 
         let current_ledger = env.ledger().sequence() as u64;
         let mut vote_cast_count: u32 = 0;
+        // Whether any represented voter was skipped for an existing approval.
+        // Names the conflicting vote if nothing new was cast (mirrors the
+        // approve path, which names an existing abstention).
+        let mut saw_approved = false;
 
         for voter in represented_voters.iter() {
             // Snapshot check: voter must have been a signer at proposal creation
@@ -2144,6 +2148,7 @@ impl VaultDAO {
                     &signer,
                     &Symbol::new(&env, "approved"),
                 );
+                saw_approved = true;
                 continue;
             }
 
@@ -2180,6 +2185,9 @@ impl VaultDAO {
         }
 
         if vote_cast_count == 0 {
+            if saw_approved {
+                return Err(VaultError::AlreadyApproved);
+            }
             return Err(VaultError::AlreadyAbstained);
         }
 

@@ -3669,9 +3669,11 @@ pub fn increment_recovery_id(env: &Env) -> u64 {
 pub fn set_recovery_proposal(env: &Env, proposal: &RecoveryProposal) {
     let key = FeatureKey::RecoveryProposal(proposal.id);
     env.storage().persistent().set(&key, proposal);
+    // Recovery windows are short, but the entry must outlive any jump the
+    // test-suite (or a slow guardian) exercises; use the long-lived TTL.
     env.storage()
         .persistent()
-        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 pub fn get_recovery_proposal(env: &Env, id: u64) -> Result<RecoveryProposal, VaultError> {

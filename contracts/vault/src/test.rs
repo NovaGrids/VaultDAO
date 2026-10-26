@@ -513,7 +513,10 @@ fn test_reject_proposal_transitions_to_rejected() {
 
     let metrics_before = client.get_metrics();
 
+    // Rejection accumulates: quorum is threshold (2) with quorum 0, so two
+    // distinct rejecters are needed to reach Rejected.
     client.reject_proposal(&signer2, &proposal_id);
+    client.reject_proposal(&signer1, &proposal_id);
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Rejected);
@@ -629,6 +632,7 @@ fn test_reject_proposal_non_pending_fails() {
         &0i128,
     );
     client.reject_proposal(&signer2, &proposal_id_2);
+    client.reject_proposal(&signer1, &proposal_id_2);
     let proposal = client.get_proposal(&proposal_id_2);
     assert_eq!(proposal.status, ProposalStatus::Rejected);
 
@@ -4072,7 +4076,7 @@ fn test_retry_schedules_on_retryable_failure() {
 
 #[test]
 fn test_retryable_failure_does_not_consume_circuit_breaker_budget() {
-    setup_retry_test!(env, client, admin, _signer1, token_addr, contract_id);
+    setup_retry_test!(env, client, admin, signer1, token_addr, contract_id);
 
     let mut emergency_signers = Vec::new(&env);
     emergency_signers.push_back(Address::generate(&env));
@@ -4092,6 +4096,7 @@ fn test_retryable_failure_does_not_consume_circuit_breaker_budget() {
         &0_i128,
     );
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
 
     assert!(client.try_execute_proposal(&admin, &proposal_id).is_ok());
     let retry_state = client.get_retry_state(&proposal_id).unwrap();
@@ -7411,6 +7416,11 @@ fn test_validate_limits_pending_auto_cancel_refunds_and_records() {
     // The insurance deposit should have been taken from the proposer.
     assert_eq!(token_client.balance(&proposer), proposer_balance_before - 50);
 
+    // Lower the spending limit below the proposal amount so the pending
+    // proposal exceeds the new limit (creation itself caps amount <= limit,
+    // so only a later reduction can trigger the auto-cancel path).
+    client.update_limits(&admin, &500, &5000, &10000);
+
     // Capture the spending counters after the reservation.
     let day = env.ledger().timestamp() / 86_400;
     let week = env.ledger().timestamp() / 604_800;
@@ -7421,6 +7431,22 @@ fn test_validate_limits_pending_auto_cancel_refunds_and_records() {
 
     // Run the pending-limit validation with auto_cancel enabled.
     client.validate_limits_pending(&admin, &1u64, &u32::MAX, &true);
+    // NOTE: in this SDK test env, published events are only visible via
+    // env.events().all() until the next contract call, so scan for the
+    // summary event immediately, before the read-back asserts below.
+    let expected_topic = Symbol::new(&env, "limits_auto_cancel");
+    let mut found = false;
+    for (_, topics, _) in env.events().all().iter() {
+        let is_match = topics
+            .first()
+            .and_then(|t| Symbol::try_from_val(&env, &t).ok())
+            .map(|s| s == expected_topic)
+            .unwrap_or(false);
+        if is_match {
+            found = true;
+            break;
+        }
+    }
 
     // (a) Spending reservation refunded: counters decrease back toward zero.
     let daily_after_cancel = client.get_token_daily_spent(&token, &day);
@@ -7455,20 +7481,7 @@ fn test_validate_limits_pending_auto_cancel_refunds_and_records() {
         "a cancellation record should be stored for the auto-cancelled proposal"
     );
 
-    // (e) The summary event is emitted.
-    let expected_topic = Symbol::new(&env, "limits_auto_cancel");
-    let mut found = false;
-    for (_, topics, _) in env.events().all().iter() {
-        let is_match = topics
-            .first()
-            .and_then(|t| Symbol::try_from_val(&env, &t).ok())
-            .map(|s| s == expected_topic)
-            .unwrap_or(false);
-        if is_match {
-            found = true;
-            break;
-        }
-    }
+    // (e) The summary event was emitted (scanned above).
     assert!(found, "limits_auto_cancel summary event should be emitted");
 }
 
@@ -7478,14 +7491,15 @@ fn test_validate_limits_pending_pagination_bounds_scan() {
     let env = Env::default();
     let (client, admin, proposer, recipient, token, _contract_id) = setup_auto_cancel_vault(&env);
 
-    // Create several proposals so there is something to scan.
+    // Create several proposals so there is something to scan. Amounts vary
+    // to dodge the fingerprint dedup (amount, recipient, token).
     let mut proposal_ids = Vec::new(&env);
-    for _ in 0..5 {
+    for i in 0..5u32 {
         let pid = client.propose_transfer(
             &proposer,
             &recipient,
             &token,
-            &100i128,
+            &(100 + i as i128),
             &Symbol::new(&env, "page"),
             &Priority::Normal,
             &Vec::new(&env),

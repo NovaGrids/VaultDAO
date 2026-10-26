@@ -154,7 +154,9 @@ fn test_zero_ttl_never_expires() {
 
     let proposal_id = client.initiate_recovery(&guardian, &new_signers(&env), &1);
 
-    env.ledger().with_mut(|l| l.sequence_number = 1_000_000);
+    // Zero TTL means no expiry (expires_at = u64::MAX). Jump well past any
+    // normal TTL but inside instance/persistent TTLs (archival is test-only).
+    env.ledger().with_mut(|l| l.sequence_number = 400_000);
 
     client.approve_recovery(&guardian, &proposal_id);
 

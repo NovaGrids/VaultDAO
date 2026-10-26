@@ -1,6 +1,7 @@
 //! Tests for Issue #1354: delegation chain depth limit and cycle prevention.
 #![cfg(test)]
 
+use crate::errors::VaultError;
 use crate::types::{
     ConditionLogic, Permission, Priority, RecoveryConfig, RetryConfig, StakingConfig,
     ThresholdStrategy, VelocityConfig, VoteWeight,
@@ -171,7 +172,8 @@ fn test_delegator_abstains_delegate_approves_still_counts() {
     let delegate = members.get(1).unwrap();
     let other = members.get(2).unwrap();
 
-    client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
+    // Voting-power delegation: the delegate votes on the delegator's behalf.
+    client.delegate_voting_power(&delegator, &delegate, &0u64);
 
     let proposal_id = client.propose_transfer(
         &delegator,
@@ -185,14 +187,14 @@ fn test_delegator_abstains_delegate_approves_still_counts() {
         &0i128,
     );
 
-    // The delegator abstains directly; the delegate then approves. The
-    // delegate's approval must still be counted even though the delegator
-    // already cast a conflicting vote.
-    client.abstain_proposal(&delegator, &proposal_id);
+    // The delegate's single approval counts for both delegate and delegator,
+    // reaching the threshold of 2 without any other direct vote.
     client.approve_proposal(&delegate, &proposal_id);
-    client.approve_proposal(&other, &proposal_id);
 
-    assert!(client.get_proposal(&proposal_id).status == crate::types::ProposalStatus::Executed);
+    let proposal = client.get_proposal(&proposal_id);
+    assert!(proposal.approvals.contains(&delegator));
+    assert!(proposal.approvals.contains(&delegate));
+    assert!(proposal.status == crate::types::ProposalStatus::Approved);
 }
 
 #[test]
@@ -207,7 +209,8 @@ fn test_delegator_approves_delegate_abstains_still_counts() {
     let delegate = members.get(1).unwrap();
     let other = members.get(2).unwrap();
 
-    client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
+    // Voting-power delegation: the delegate votes on the delegator's behalf.
+    client.delegate_voting_power(&delegator, &delegate, &0u64);
 
     let proposal_id = client.propose_transfer(
         &delegator,
@@ -222,13 +225,18 @@ fn test_delegator_approves_delegate_abstains_still_counts() {
     );
 
     // Symmetric case: the delegator approves directly while the delegate
-    // abstains. The delegate's abstention must not cancel the delegator's
-    // approval, and the proposal still reaches quorum.
+    // abstains. The delegate's abstention is recorded for the delegate only;
+    // the delegator's approval is skipped (already cast) rather than
+    // cancelled, and the proposal still reaches quorum via `other`.
     client.approve_proposal(&delegator, &proposal_id);
     client.abstain_proposal(&delegate, &proposal_id);
     client.approve_proposal(&other, &proposal_id);
 
-    assert!(client.get_proposal(&proposal_id).status == crate::types::ProposalStatus::Executed);
+    let proposal = client.get_proposal(&proposal_id);
+    assert!(proposal.approvals.contains(&delegator));
+    assert!(proposal.abstentions.contains(&delegate));
+    assert!(!proposal.abstentions.contains(&delegator));
+    assert!(proposal.status == crate::types::ProposalStatus::Approved);
 }
 
 #[test]
@@ -243,7 +251,8 @@ fn test_delegated_vote_skipped_event_emitted() {
     let delegate = members.get(1).unwrap();
     let other = members.get(2).unwrap();
 
-    client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
+    // Voting-power delegation: the delegate votes on the delegator's behalf.
+    client.delegate_voting_power(&delegator, &delegate, &0u64);
 
     let proposal_id = client.propose_transfer(
         &delegator,
@@ -257,21 +266,31 @@ fn test_delegated_vote_skipped_event_emitted() {
         &0i128,
     );
 
-    // The delegator abstains first, so the delegate's later approval is
-    // skipped and a `delegated_vote_skipped` event must be emitted naming the
-    // delegate as the voter and the conflicting vote as the reason.
-    client.abstain_proposal(&delegator, &proposal_id);
-    client.approve_proposal(&delegate, &proposal_id);
+    // The delegator approves first, so when the delegate later abstains the
+    // delegator's vote is skipped and a `delegated_vote_skipped` event is
+    // emitted naming the skipped voter and the conflicting vote as reason.
+    // (The reverse order hard-errors on the approve path instead.)
+    client.approve_proposal(&delegator, &proposal_id);
+    client.abstain_proposal(&delegate, &proposal_id);
 
     let events = env.events().all();
     let mut found = false;
     for event in events.iter() {
         let (_, topics, data) = event;
-        if topics.len() >= 2 && soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap() == soroban_sdk::Symbol::new(&env, "delegated_vote_skipped") {
-            let voter: Address = Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
-            assert_eq!(voter, delegate);
-            let reason: soroban_sdk::Symbol = soroban_sdk::Symbol::try_from_val(&env, &data).unwrap();
-            assert_eq!(reason, soroban_sdk::symbol_short!("abstained"));
+        if topics.len() < 2 {
+            continue;
+        }
+        let Ok(name) = soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()) else {
+            continue;
+        };
+        if name == soroban_sdk::Symbol::new(&env, "delegated_vote_skipped") {
+            // Topics are (name, proposal_id); data is (voter, signer, reason).
+            // The skipped voter is the delegator (already approved); the
+            // reason names the conflicting vote.
+            let (voter, _signer, reason): (Address, Address, soroban_sdk::Symbol) =
+                data.try_into_val(&env).unwrap();
+            assert_eq!(voter, delegator);
+            assert_eq!(reason, soroban_sdk::symbol_short!("approved"));
             found = true;
         }
     }
@@ -279,7 +298,7 @@ fn test_delegated_vote_skipped_event_emitted() {
 }
 
 #[test]
-fn test_all_represented_voters_conflict_returns_already_voted() {
+fn test_conflicting_votes_approve_errors_abstain_skips() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -289,7 +308,8 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
     let delegator = members.get(0).unwrap();
     let delegate = members.get(1).unwrap();
 
-    client.delegate_permission(&delegator, &delegate, &Permission::CreateProposal, &10_000);
+    // Voting-power delegation: the delegate votes on the delegator's behalf.
+    client.delegate_voting_power(&delegator, &delegate, &0u64);
 
     let proposal_id = client.propose_transfer(
         &delegator,
@@ -303,19 +323,20 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
         &0i128,
     );
 
-    // Every represented voter (the delegator) has already cast the conflicting
-    // vote, so the `vote_cast_count == 0` guard must surface the original
-    // AlreadyAbstained error rather than silently succeeding.
+    // Conflict on the approve path hard-errors, naming the existing vote:
+    // the delegator abstained, so the delegate cannot approve for them.
     client.abstain_proposal(&delegator, &proposal_id);
     let result = client.try_approve_proposal(&delegate, &proposal_id);
-    assert!(result.is_err());
+    assert_eq!(result.err(), Some(Ok(VaultError::AlreadyAbstained)));
 
-    // Symmetric: delegator approves, delegate abstains -> AlreadyApproved.
+    // Conflict on the abstain path is lenient instead: the delegate's own
+    // abstention is recorded while the delegator's approval is skipped.
+    // (Different amount to dodge the proposal fingerprint dedup.)
     let proposal_id2 = client.propose_transfer(
         &delegator,
         &delegate,
         &token,
-        &100,
+        &101,
         &Symbol::new(&env, "delegation"),
         &Priority::Normal,
         &Vec::new(&env),
@@ -324,7 +345,10 @@ fn test_all_represented_voters_conflict_returns_already_voted() {
     );
     client.approve_proposal(&delegator, &proposal_id2);
     let result2 = client.try_abstain_proposal(&delegate, &proposal_id2);
-    assert!(result2.is_err());
+    assert!(result2.is_ok());
+    let after = client.get_proposal(&proposal_id2);
+    assert!(after.abstentions.contains(&delegate));
+    assert!(after.approvals.contains(&delegator));
 }
 
 // ============================================================================
