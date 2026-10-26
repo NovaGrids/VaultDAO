@@ -2,9 +2,11 @@ use super::*;
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Env, Vec};
 
-fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold: u32) {
+fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold: u32) -> Address {
+    let signer2 = Address::generate(env);
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
+    signers.push_back(signer2.clone());
 
     client.initialize(
         admin,
@@ -46,10 +48,11 @@ fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold
             post_execution_hooks: Vec::new(env),
         },
     );
+
+    signer2
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_set_and_get_cross_vault_config() {
     let env = Env::default();
     env.mock_all_auths();
@@ -57,7 +60,7 @@ fn test_set_and_get_cross_vault_config() {
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    init_vault(&env, &client, &admin, 1);
+    init_vault(&env, &client, &admin, 2);
 
     let coordinator = Address::generate(&env);
     let mut authorized = Vec::new(&env);
@@ -79,7 +82,6 @@ fn test_set_and_get_cross_vault_config() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_propose_cross_vault_creates_proposal_and_cv_record() {
     let env = Env::default();
     env.mock_all_auths();
@@ -89,8 +91,7 @@ fn test_propose_cross_vault_creates_proposal_and_cv_record() {
 
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
-    init_vault(&env, &coordinator, &admin, 1);
-    coordinator.set_role(&admin, &admin, &Role::Treasurer);
+    init_vault(&env, &coordinator, &admin, 2);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -128,7 +129,6 @@ fn test_propose_cross_vault_creates_proposal_and_cv_record() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_execute_cross_vault_success() {
     let env = Env::default();
     env.mock_all_auths();
@@ -141,10 +141,10 @@ fn test_execute_cross_vault_success() {
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    init_vault(&env, &coordinator, &admin, 1);
-    init_vault(&env, &participant, &admin, 1);
+    let coord_signer2 = init_vault(&env, &coordinator, &admin, 2);
+    init_vault(&env, &participant, &admin, 2);
 
-    coordinator.set_role(&admin, &admin, &Role::Treasurer);
+    coordinator.set_role(&admin, &coord_signer2, &Role::Treasurer);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -185,6 +185,7 @@ fn test_execute_cross_vault_success() {
     );
 
     coordinator.approve_proposal(&admin, &proposal_id);
+    coordinator.approve_proposal(&coord_signer2, &proposal_id);
 
     let proposal = coordinator.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
@@ -201,7 +202,6 @@ fn test_execute_cross_vault_success() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_execute_cross_vault_unauthorized_target_records_failure() {
     let env = Env::default();
     env.mock_all_auths();
@@ -214,9 +214,9 @@ fn test_execute_cross_vault_unauthorized_target_records_failure() {
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    init_vault(&env, &coordinator, &admin, 1);
-    init_vault(&env, &participant, &admin, 1);
-    coordinator.set_role(&admin, &admin, &Role::Treasurer);
+    let coord_signer2 = init_vault(&env, &coordinator, &admin, 2);
+    init_vault(&env, &participant, &admin, 2);
+    coordinator.set_role(&admin, &coord_signer2, &Role::Treasurer);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -254,6 +254,7 @@ fn test_execute_cross_vault_unauthorized_target_records_failure() {
     );
 
     coordinator.approve_proposal(&admin, &proposal_id);
+    coordinator.approve_proposal(&coord_signer2, &proposal_id);
     coordinator.execute_cross_vault(&admin, &proposal_id);
 
     let cv = coordinator.get_cross_vault_proposal(&proposal_id).unwrap();
@@ -262,7 +263,6 @@ fn test_execute_cross_vault_unauthorized_target_records_failure() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_execute_cross_vault_requires_approved_proposal() {
     let env = Env::default();
     env.mock_all_auths();
@@ -272,8 +272,7 @@ fn test_execute_cross_vault_requires_approved_proposal() {
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    init_vault(&env, &coordinator, &admin, 1);
-    coordinator.set_role(&admin, &admin, &Role::Treasurer);
+    init_vault(&env, &coordinator, &admin, 2);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -305,7 +304,6 @@ fn test_execute_cross_vault_requires_approved_proposal() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_bridge_to_vault_success() {
     let env = Env::default();
     env.mock_all_auths();
@@ -316,9 +314,8 @@ fn test_bridge_to_vault_success() {
     let target_client = VaultDAOClient::new(&env, &target_vault_id);
     let admin = Address::generate(&env);
 
-    init_vault(&env, &source_client, &admin, 1);
-    init_vault(&env, &target_client, &admin, 1);
-    source_client.set_role(&admin, &admin, &Role::Treasurer);
+    init_vault(&env, &source_client, &admin, 2);
+    init_vault(&env, &target_client, &admin, 2);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -350,7 +347,6 @@ fn test_bridge_to_vault_success() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_bridge_amount_exceeds_limit() {
     let env = Env::default();
     env.mock_all_auths();
@@ -360,8 +356,7 @@ fn test_bridge_amount_exceeds_limit() {
     let source_client = VaultDAOClient::new(&env, &source_vault_id);
     let admin = Address::generate(&env);
 
-    init_vault(&env, &source_client, &admin, 1);
-    source_client.set_role(&admin, &admin, &Role::Treasurer);
+    init_vault(&env, &source_client, &admin, 2);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -385,7 +380,6 @@ fn test_bridge_amount_exceeds_limit() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_bridge_invalid_min_received() {
     let env = Env::default();
     env.mock_all_auths();
@@ -395,8 +389,7 @@ fn test_bridge_invalid_min_received() {
     let source_client = VaultDAOClient::new(&env, &source_vault_id);
     let admin = Address::generate(&env);
 
-    init_vault(&env, &source_client, &admin, 1);
-    source_client.set_role(&admin, &admin, &Role::Treasurer);
+    init_vault(&env, &source_client, &admin, 2);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -420,7 +413,6 @@ fn test_bridge_invalid_min_received() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_bridge_invalid_deadline() {
     let env = Env::default();
     env.mock_all_auths();
@@ -430,8 +422,7 @@ fn test_bridge_invalid_deadline() {
     let source_client = VaultDAOClient::new(&env, &source_vault_id);
     let admin = Address::generate(&env);
 
-    init_vault(&env, &source_client, &admin, 1);
-    source_client.set_role(&admin, &admin, &Role::Treasurer);
+    init_vault(&env, &source_client, &admin, 2);
 
     let token_admin = Address::generate(&env);
     let token = env

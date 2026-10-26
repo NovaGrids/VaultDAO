@@ -126,7 +126,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
     fn test_multiple_cold_signatures_per_proposal_allowed() {
         let env = Env::default();
         env.mock_all_auths();
@@ -293,7 +292,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
     fn test_multiple_signers_prevent_cross_proposal_signature_replay() {
         let env = Env::default();
         env.mock_all_auths();

@@ -168,10 +168,9 @@ fn test_update_config_signers_rejects_duplicate_addresses() {
 /// A plain signer (Member role) must not be able to initiate a signer-set
 /// replacement even with valid inputs.
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_update_config_signers_rejects_insufficient_role() {
     let env = Env::default();
-    let (client, _admin, signers) = make_vault(&env, 1, 3);
+    let (client, _admin, signers) = make_vault(&env, 2, 3);
 
     // Use the second signer (index 1) which has no elevated role.
     let plain_member = signers.get(1).unwrap();
@@ -195,10 +194,9 @@ fn test_update_config_signers_rejects_insufficient_role() {
 /// If a config-change proposal is already pending, a second call to
 /// `update_config_signers` must fail with `ConfigChangeInProgress`.
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_update_config_signers_blocked_while_config_change_in_progress() {
     let env = Env::default();
-    let (client, admin, _signers) = make_vault(&env, 1, 3);
+    let (client, admin, _signers) = make_vault(&env, 2, 3);
 
     // First proposal — valid, should create a governance proposal.
     let mut new_list: Vec<Address> = Vec::new(&env);
@@ -331,10 +329,9 @@ fn test_update_config_signers_happy_path_requires_governance_and_applies() {
 /// After execution the audit trail must contain an entry with
 /// `AuditAction::SignersReplaced`.
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_update_config_signers_creates_audit_entry_on_execution() {
     let env = Env::default();
-    let (client, admin, initial_signers) = make_vault(&env, 1, 2);
+    let (client, admin, initial_signers) = make_vault(&env, 2, 2);
     let signer1 = initial_signers.get(1).unwrap();
 
     let new_s1 = Address::generate(&env);
@@ -343,9 +340,10 @@ fn test_update_config_signers_creates_audit_entry_on_execution() {
     new_list.push_back(new_s1.clone());
     new_list.push_back(new_s2.clone());
 
-    // Threshold = 1: a single admin approval is enough.
+    // Threshold is 2: admin plus the second signer must approve.
     let proposal_id = client.update_config_signers(&admin, &new_list);
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     // Walk the audit trail looking for SignersReplaced.
@@ -377,10 +375,9 @@ fn test_update_config_signers_creates_audit_entry_on_execution() {
 /// new config should also be rejected — the duplicate check lives in
 /// `validate_config` which is invoked by that path too.
 #[test]
-#[ignore = "quarantined: fixture initialises with threshold 1; minimum is 2 since #1523 (docs/reference/TESTING.md)"]
 fn test_propose_vault_config_change_rejects_duplicate_signers() {
     let env = Env::default();
-    let (client, admin, _signers) = make_vault(&env, 1, 2);
+    let (client, admin, _signers) = make_vault(&env, 2, 2);
 
     let dup = Address::generate(&env);
 
