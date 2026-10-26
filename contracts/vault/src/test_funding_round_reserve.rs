@@ -77,7 +77,10 @@ fn setup(env: &Env, free: i128) -> Ctx {
         StellarAssetClient::new(env, &token).mint(&vault, &free);
     }
     client.initialize(&admin, &init_config(env, signers));
-    client.set_role(&admin, &signer2, &Role::Admin);
+    // Treasurer quorum: set_role upholds a single-Admin invariant, so the
+    // second signer approves funding rounds as Treasurer (see
+    // approve_funding_round).
+    client.set_role(&admin, &signer2, &Role::Treasurer);
     Ctx {
         client,
         admin,

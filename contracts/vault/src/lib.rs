@@ -17056,10 +17056,16 @@ impl VaultDAO {
 
     /// Approve a funding round, transitioning it from Pending to Active.
     ///
-    /// Access: Admin role required, and the approver must be a vault signer.
+    /// Access: Treasurer role (or Admin, which satisfies it) required, and
+    /// the approver must be a vault signer.
     ///
-    /// Activation needs `threshold` distinct Admin approvals (#1901). Once reached,
+    /// Activation needs `threshold` distinct approvals (#1901). Once reached,
     /// the round total is reserved so that no other spend can take it.
+    ///
+    /// Note: Admin-only approval is unsatisfiable — `set_role` upholds a
+    /// single-Admin invariant (#940) while `threshold` is at least 2 — so
+    /// the quorum is drawn from the operational (Treasurer+) role, the same
+    /// standard transfer proposals use.
     pub fn approve_funding_round(
         env: Env,
         approver: Address,
@@ -17068,7 +17074,7 @@ impl VaultDAO {
         approver.require_auth();
 
         let role = storage::get_role(&env, &approver);
-        if role != Role::Admin {
+        if !Role::role_satisfies(Role::Treasurer, role) {
             return Err(VaultError::InsufficientRole);
         }
 
@@ -17337,11 +17343,8 @@ impl VaultDAO {
         paid_milestone.amount = amount;
         round.milestones.set(milestone_index, paid_milestone);
 
-        // Release proportional tranche to recipient
-        token::transfer(&env, &round.token, &round.recipient, amount);
-        round.released_amount = round.released_amount.saturating_add(amount);
-
-        // Every payout is subject to the recipient list, spending limits and circuit breaker (#1901)
+        // Every payout is subject to the recipient list, spending limits and circuit breaker (#1901).
+        // These checks run before any transfer so a rejected payout moves no funds.
         Self::validate_recipient(&env, &round.recipient)?;
         Self::enforce_funding_release_limits(
             &env,

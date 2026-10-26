@@ -1,7 +1,7 @@
 use super::*;
 use crate::types::{
     FundingMilestone, FundingMilestoneStatus, InitConfig, RecoveryConfig, RetryConfig,
-    StakingConfig, VelocityConfig,
+    Role, StakingConfig, VelocityConfig,
 };
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -26,14 +26,17 @@ fn fixed_milestone(env: &Env, amount: i128) -> FundingMilestone {
 
 /// Initializes a vault whose admin is also a signer, and returns the client,
 /// the admin, the vault contract address and a funded token.
-fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address) {
+fn setup(
+    env: &Env,
+) -> (VaultDAOClient<'static>, Address, Address, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
     let admin = Address::generate(env);
 
+    let signer2 = Address::generate(env);
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
-    signers.push_back(Address::generate(env));
+    signers.push_back(signer2.clone());
 
     client.initialize(
         &admin,
@@ -82,15 +85,16 @@ fn setup(env: &Env) -> (VaultDAOClient<'static>, Address, Address, Address) {
         .address();
     client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
     StellarAssetClient::new(env, &token).mint(&contract_id, &10_000);
+    client.set_role(&admin, &signer2, &Role::Treasurer);
 
-    (client, admin, contract_id, token)
+    (client, admin, signer2, contract_id, token)
 }
 
 #[test]
 fn test_release_marks_milestone_released() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, _contract_id, token) = setup(&env);
+    let (client, admin, signer2, _contract_id, token) = setup(&env);
     let recipient = Address::generate(&env);
 
     let mut milestones = Vec::new(&env);
@@ -99,6 +103,7 @@ fn test_release_marks_milestone_released() {
 
     let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
+    client.approve_funding_round(&signer2, &round_id);
     client.submit_milestone(&recipient, &round_id, &0);
     client.verify_milestone(&admin, &round_id, &0);
     client.release_round_funds(&admin, &round_id, &0);
@@ -119,7 +124,7 @@ fn test_release_marks_milestone_released() {
 fn test_second_release_of_same_milestone_fails() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, contract_id, token) = setup(&env);
+    let (client, admin, signer2, contract_id, token) = setup(&env);
     let recipient = Address::generate(&env);
 
     let mut milestones = Vec::new(&env);
@@ -128,6 +133,7 @@ fn test_second_release_of_same_milestone_fails() {
 
     let round_id = client.create_funding_round(&admin, &recipient, &token, &3_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
+    client.approve_funding_round(&signer2, &round_id);
     client.submit_milestone(&recipient, &round_id, &0);
     client.verify_milestone(&admin, &round_id, &0);
     client.release_round_funds(&admin, &round_id, &0);
@@ -148,7 +154,7 @@ fn test_second_release_of_same_milestone_fails() {
 fn test_release_rejects_milestone_not_verified() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, _contract_id, token) = setup(&env);
+    let (client, admin, signer2, _contract_id, token) = setup(&env);
     let recipient = Address::generate(&env);
 
     let mut milestones = Vec::new(&env);
@@ -156,6 +162,7 @@ fn test_release_rejects_milestone_not_verified() {
 
     let round_id = client.create_funding_round(&admin, &recipient, &token, &1_000, &milestones, &None);
     client.approve_funding_round(&admin, &round_id);
+    client.approve_funding_round(&signer2, &round_id);
     client.submit_milestone(&recipient, &round_id, &0);
 
     let result = client.try_release_round_funds(&admin, &round_id, &0);
