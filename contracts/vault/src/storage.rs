@@ -1107,6 +1107,10 @@ pub fn increment_proposal_id(env: &Env) -> u64 {
 /// A vector of proposal IDs in ascending order, paginated by offset/limit.
 pub fn get_proposal_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64> {
     let cap: u64 = if limit > 100 { 100 } else { limit };
+    let mut ids: Vec<u64> = Vec::new(env);
+    if cap == 0 {
+        return ids;
+    }
     let next_id = get_next_proposal_id(env);
     let mut ids: Vec<u64> = Vec::new(env);
     let mut skipped: u64 = 0;
