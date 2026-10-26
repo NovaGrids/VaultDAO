@@ -92,7 +92,7 @@ function signRequest(
   } = {},
 ): Record<string, string> {
   const ts = opts.timestamp ?? Date.now();
-  const canonical = `${ts}.${body}`;
+  const canonical = `POST./echo.${ts}.${body}`;
   const sig = computeSignature(opts.secret ?? TEST_SECRET, canonical);
 
   const headers: Record<string, string> = {
@@ -195,7 +195,7 @@ test("HMAC middleware — 3. tampered timestamp → 401", async (t) => {
 
   const body = JSON.stringify({ action: "transfer" });
   const realTs = Date.now();
-  const canonical = `${realTs}.${body}`;
+  const canonical = `POST./echo.${realTs}.${body}`;
   const sig = computeSignature(TEST_SECRET, canonical);
 
   // Send a different timestamp value in the header — sig won't match
@@ -356,7 +356,7 @@ test("HMAC middleware — 10. GET request with no body uses empty canonical body
   t.after(close);
 
   const ts = Date.now();
-  const canonical = `${ts}.`; // empty body
+  const canonical = `GET./ping.${ts}.`; // empty body
   const sig = computeSignature(TEST_SECRET, canonical);
 
   const res = await fetch(`${baseUrl}/ping`, {
@@ -376,7 +376,7 @@ test("HMAC middleware — 10b. GET request with wrong body assumption → 401", 
 
   const ts = Date.now();
   // Client incorrectly signs with a non-empty body for a bodyless GET
-  const canonical = `${ts}.{"wrong":"assumption"}`;
+  const canonical = `GET./ping.${ts}.{"wrong":"assumption"}`;
   const sig = computeSignature(TEST_SECRET, canonical);
 
   const res = await fetch(`${baseUrl}/ping`, {

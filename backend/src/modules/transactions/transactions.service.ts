@@ -118,7 +118,7 @@ export class TransactionsService {
    * immutable, so entries survive index rebuilds and invalidation. */
   private readonly memoCache = new Map<
     string,
-    { decodedProposalId: string | null; decodedMemo: string | null }
+    { decodedProposalId: number | null; decodedMemo: string | null }
   >();
   private static readonly MEMO_FETCH_CONCURRENCY = 4;
 
@@ -333,7 +333,7 @@ export class TransactionsService {
   }
 
   private async fetchDecodedMemo(txHash: string): Promise<{
-    decodedProposalId: string | null;
+    decodedProposalId: number | null;
     decodedMemo: string | null;
   }> {
     try {
