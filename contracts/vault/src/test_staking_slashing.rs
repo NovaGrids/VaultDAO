@@ -278,7 +278,13 @@ fn test_rejection_vote_blocked_while_paused() {
     let (client, admin, proposer, token, cid) = setup(&env, staking_config(10, 50, false));
     let (id, _stake) = staked_proposal(&env, &client, &proposer, &token, &cid, 1_000);
 
-    client.pause_vault(&admin, &Symbol::new(&env, "test"));
+    let em1 = Address::generate(&env);
+    let em2 = Address::generate(&env);
+    let mut esigners = Vec::new(&env);
+    esigners.push_back(em1.clone());
+    esigners.push_back(em2.clone());
+    client.configure_emergency(&admin, &esigners, &999_999_999i128);
+    client.pause_vault(&em1, &Symbol::new(&env, "test"));
 
     let result = client.try_reject_proposal(&admin, &id);
     assert!(result.is_err(), "rejection votes must be blocked while paused");

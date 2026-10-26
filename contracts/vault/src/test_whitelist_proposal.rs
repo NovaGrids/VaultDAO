@@ -180,8 +180,13 @@ fn test_whitelist_proposal_rejects_duplicate_add() {
     client.approve_proposal(&admin, &proposal_id);
     client.approve_proposal(&signer1, &proposal_id);
 
-    let result = client.try_execute_multi_phase_proposal(&admin, &proposal_id);
-    assert_eq!(result, Err(Ok(VaultError::PhaseExecutionFailed)));
+    // Phase failures surface as Ok(outcome) with success=false; statuses persist.
+    let outcome = client.try_execute_multi_phase_proposal(&admin, &proposal_id)
+        .unwrap()
+        .unwrap();
+    assert!(!outcome.success);
+    assert_eq!(outcome.failed_phase, Some(0));
+    assert_eq!(outcome.executed_count, 0);
 }
 
 /// Removing an address that is not on the list fails the phase.
@@ -196,8 +201,13 @@ fn test_whitelist_proposal_rejects_removing_absent_address() {
     client.approve_proposal(&admin, &proposal_id);
     client.approve_proposal(&signer1, &proposal_id);
 
-    let result = client.try_execute_multi_phase_proposal(&admin, &proposal_id);
-    assert_eq!(result, Err(Ok(VaultError::PhaseExecutionFailed)));
+    // Phase failures surface as Ok(outcome) with success=false; statuses persist.
+    let outcome = client.try_execute_multi_phase_proposal(&admin, &proposal_id)
+        .unwrap()
+        .unwrap();
+    assert!(!outcome.success);
+    assert_eq!(outcome.failed_phase, Some(0));
+    assert_eq!(outcome.executed_count, 0);
 }
 
 /// When a phase fails mid-execution, the failing phase is persisted as
@@ -230,8 +240,14 @@ fn test_multi_phase_failure_persists_phase_statuses_and_rejects_proposal() {
     client.approve_proposal(&admin, &proposal_id);
     client.approve_proposal(&signer1, &proposal_id);
 
-    let result = client.try_execute_multi_phase_proposal(&admin, &proposal_id);
-    assert_eq!(result, Err(Ok(VaultError::PhaseExecutionFailed)));
+    // Phase failures surface as Ok(outcome) with success=false; statuses persist.
+    // Here the second phase fails, so the first is rolled back.
+    let outcome = client.try_execute_multi_phase_proposal(&admin, &proposal_id)
+        .unwrap()
+        .unwrap();
+    assert!(!outcome.success);
+    assert_eq!(outcome.failed_phase, Some(1));
+    assert_eq!(outcome.executed_count, 1);
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, crate::types::ProposalStatus::Rejected);

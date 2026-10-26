@@ -224,7 +224,8 @@ fn test_removed_signer_capability_tokens_revoked() {
             granted_to: s.treasurer.clone(),
             capabilities,
             expires_at: 0,
-            max_uses: 0,
+            // An explicit bound is required: 0/0 (unlimited) is rejected.
+            max_uses: 1,
             uses_count: 0,
             revoked: false,
         },

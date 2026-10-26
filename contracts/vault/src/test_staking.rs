@@ -453,6 +453,12 @@ fn test_compounding_is_backed_by_stake_pool() {
         create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
     client.enable_auto_compound(&proposer, &proposal_id);
 
+    // The pool is normally fed by slash proceeds; seed it here so the test
+    // exercises the funded path (an empty pool yields no reward, no credit).
+    env.as_contract(&contract_id, || {
+        storage::add_to_stake_pool(&env, &token, 10_000);
+    });
+
     // Any address may call compound_stake; it must not mint unbacked credit.
     let keeper = Address::generate(&env);
     for _ in 0..5 {
@@ -480,8 +486,13 @@ fn test_vault_balance_covers_all_stake_records_after_compounding() {
     client.enable_auto_compound(&proposer, &proposal_id);
 
     let keeper = Address::generate(&env);
-    for _ in 0..20 {
+    for i in 0..20 {
         advance_epochs(&env, 1);
+        // Touch the token contract every few epochs so its instance storage
+        // survives the long jump (archival is test-only).
+        if i % 5 == 4 {
+            StellarAssetClient::new(&env, &token).mint(&Address::generate(&env), &1);
+        }
         client.compound_stake(&keeper, &proposal_id);
     }
 

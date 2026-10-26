@@ -3128,9 +3128,10 @@ pub fn get_stake_record(env: &Env, proposal_id: u64) -> Option<StakeRecord> {
 pub fn set_stake_record(env: &Env, record: &StakeRecord) {
     let key = FeatureKey::StakeRecord(record.proposal_id);
     env.storage().persistent().set(&key, record);
+    // Records must survive the whole compounding horizon (weeks, not days).
     env.storage()
         .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 pub fn get_bridge_record(

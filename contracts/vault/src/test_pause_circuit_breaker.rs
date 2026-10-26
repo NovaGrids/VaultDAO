@@ -320,7 +320,10 @@ fn test_all_vote_entry_points_blocked_while_paused() {
     let (env, client) = make_env();
     let (admin, treasurer, em1, em2) = setup_with_emergency(&env, &client);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    // The balance probe in propose_transfer needs a real token contract.
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let pid = client.propose_transfer(
         &treasurer,

@@ -2098,6 +2098,11 @@ impl VaultDAO {
         // Verify identity
         signer.require_auth();
 
+        // Check if vault is paused
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
         // Get config and validate signer
         let config = storage::get_config(&env)?;
         if !config.signers.contains(&signer) {
@@ -2373,6 +2378,11 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         signer.require_auth();
 
+        // Check if vault is paused
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
         let config = storage::get_config(&env)?;
         if !config.signers.contains(&signer) {
             return Err(VaultError::NotASigner);
@@ -2529,7 +2539,18 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         // Executor must authorize (to prevent griefing)
         executor.require_auth();
+        Self::execute_proposal_internal(env, executor, proposal_id)
+    }
 
+    /// Execution body without authorization.
+    ///
+    /// `retry_execute_proposal` authenticates the executor itself and routes
+    /// here so the same address is not authorized twice in one frame.
+    fn execute_proposal_internal(
+        env: Env,
+        executor: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
         // Apply reputation decay for the executor at the start of execute
         {
             let mut rep = storage::get_reputation(&env, &executor);
@@ -2911,9 +2932,9 @@ impl VaultDAO {
             return Err(VaultError::RetryError);
         }
 
-        // Delegate to execute_proposal which handles the full execution path
-        // including retry scheduling on failure
-        Self::execute_proposal(env, executor, proposal_id)
+        // Delegate to the internal execution path (already authenticated
+        // above): the full path including retry scheduling on failure.
+        Self::execute_proposal_internal(env, executor, proposal_id)
     }
 
     pub fn process_dead_letter(env: Env, admin: Address, record_id: u64) -> Result<(), VaultError> {
@@ -5052,12 +5073,19 @@ impl VaultDAO {
 
         // Calculate reward (let's assume a simple 1% per epoch for now, we can adjust based on the design)
         // For this implementation, let's calculate reward as 1% of current stake per epoch
-        let reward_amount = stake_record.amount / 100;
+        let computed_reward = stake_record.amount / 100;
+
+        // Rewards must be funded (#1906): only credit what the stake pool
+        // covers. An unfunded pool yields no reward rather than unbacked
+        // credit; the pool is normally fed by slash proceeds.
+        let pool = storage::get_stake_pool(&env, &stake_record.token);
+        let reward_amount = computed_reward.min(pool);
 
         if reward_amount <= 0 {
-            // No reward, no-op
+            // No funded reward, no-op
             return Ok(());
         }
+        storage::subtract_from_stake_pool(&env, &stake_record.token, reward_amount);
 
         // Compound the reward
         stake_record.amount += reward_amount;
@@ -7685,27 +7713,61 @@ impl VaultDAO {
 
         let today = storage::get_day_number(&env);
         let spent_today = storage::get_daily_spent(&env, today);
-        if spent_today + total_amount > config.daily_limit {
-            return Err(VaultError::ExceedsDailyLimit);
-        }
-
         let week = storage::get_week_number(&env);
         let spent_week = storage::get_weekly_spent(&env, week);
-        if spent_week + total_amount > config.weekly_limit {
-            return Err(VaultError::ExceedsWeeklyLimit);
-        }
-
-        // Same per-token caps that propose_transfer_internal enforces (#1440).
+        let mut token_cap_days: Option<(i128, i128, i128, i128)> = None;
         if let Some(token_cfg) = storage::get_token_spending_config(&env, &payment.token) {
             let token_spent_today = storage::get_token_daily_spent(&env, &payment.token, today);
-            if token_spent_today + total_amount > token_cfg.daily_limit {
-                return Err(VaultError::ExceedsTokenDailyLimit);
-            }
             let token_spent_week = storage::get_token_weekly_spent(&env, &payment.token, week);
-            if token_spent_week + total_amount > token_cfg.weekly_limit {
-                return Err(VaultError::ExceedsTokenWeeklyLimit);
-            }
+            token_cap_days = Some((
+                token_cfg.daily_limit,
+                token_spent_today,
+                token_cfg.weekly_limit,
+                token_spent_week,
+            ));
         }
+
+        // Bounded catch-up (#1916): a long outage must not wedge the schedule
+        // with a lump sum over the budgets. Pay as many whole periods as fit
+        // within the remaining daily/weekly/token budgets instead.
+        let mut payable = total_payments;
+        if payment.amount > 0 {
+            let mut fit = total_payments;
+            fit = fit.min(
+                ((config.daily_limit.saturating_sub(spent_today)) / payment.amount).max(0) as u64,
+            );
+            fit = fit.min(
+                ((config.weekly_limit.saturating_sub(spent_week)) / payment.amount).max(0) as u64,
+            );
+            if let Some((tok_daily, tok_spent_day, tok_weekly, tok_spent_week)) = token_cap_days {
+                fit = fit.min(
+                    ((tok_daily.saturating_sub(tok_spent_day)) / payment.amount).max(0) as u64,
+                );
+                fit = fit.min(
+                    ((tok_weekly.saturating_sub(tok_spent_week)) / payment.amount).max(0) as u64,
+                );
+            }
+            payable = fit;
+        }
+        if payable == 0 {
+            // Nothing fits: preserve the original precise limit error.
+            if spent_today + total_amount > config.daily_limit {
+                return Err(VaultError::ExceedsDailyLimit);
+            }
+            if spent_week + total_amount > config.weekly_limit {
+                return Err(VaultError::ExceedsWeeklyLimit);
+            }
+            if let Some((tok_daily, tok_spent_day, tok_weekly, tok_spent_week)) = token_cap_days {
+                if tok_spent_day + total_amount > tok_daily {
+                    return Err(VaultError::ExceedsTokenDailyLimit);
+                }
+                if tok_spent_week + total_amount > tok_weekly {
+                    return Err(VaultError::ExceedsTokenWeeklyLimit);
+                }
+            }
+            return Err(VaultError::ExceedsDailyLimit);
+        }
+        let total_amount = payment.amount * payable as i128;
 
         // Revalidate recipient against current whitelist/blacklist policies.
         Self::validate_recipient(&env, &payment.recipient)?;
@@ -7721,8 +7783,8 @@ impl VaultDAO {
             return Ok(());
         }
 
-        // Emit an event for each payment with sequential ledger timestamp.
-        for i in 0..total_payments {
+        // Emit an event for each paid period with sequential ledger timestamp.
+        for i in 0..payable {
             let payment_ledger = if i == 0 {
                 due_ledger
             } else {
@@ -7752,7 +7814,7 @@ impl VaultDAO {
         // Update payment schedule.
         // After the first payment (payment_count was 0), apply jitter to all subsequent cycles.
         let was_first_payment = payment.payment_count == 0;
-        let nominal_next_ledger = payment.next_payment_ledger + total_payments * payment.interval;
+        let nominal_next_ledger = payment.next_payment_ledger + payable * payment.interval;
         payment.next_payment_ledger = nominal_next_ledger;
         if !was_first_payment && payment.jitter_window > 0 {
             payment.next_payment_ledger = payment
@@ -7777,7 +7839,7 @@ impl VaultDAO {
                 payment.status = crate::types::RecurringStatus::Stopped;
             }
         }
-        payment.payment_count += total_payments as u32;
+        payment.payment_count += payable as u32;
         storage::set_recurring_payment(&env, &payment);
         storage::extend_instance_ttl(&env);
 
@@ -13024,52 +13086,6 @@ impl VaultDAO {
     pub fn get_dex_config(env: Env) -> Option<DexConfig> {
         storage::get_dex_config(&env)
     }
-
-    /// Apply the transfer-equivalent spending controls to a swap's input amount and
-    /// reserve it against the daily, weekly and per-token counters.
-    fn check_and_reserve_swap_spend(
-        env: &Env,
-        config: &Config,
-        proposer: &Address,
-        token_in: &Address,
-        amount: i128,
-    ) -> Result<(), VaultError> {
-        if amount <= 0 {
-            return Err(VaultError::InvalidAmount);
-        }
-        if !storage::check_and_update_velocity(env, proposer, token_in, &config.velocity_limit) {
-            return Err(VaultError::VelocityLimitExceeded);
-        }
-        if amount > config.spending_limit {
-            return Err(VaultError::ExceedsProposalLimit);
-        }
-        let today = storage::get_day_number(env);
-        let week = storage::get_week_number(env);
-        if storage::get_daily_spent(env, today) + amount > config.daily_limit {
-            return Err(VaultError::ExceedsDailyLimit);
-        }
-        if storage::get_weekly_spent(env, week) + amount > config.weekly_limit {
-            return Err(VaultError::ExceedsWeeklyLimit);
-        }
-        if let Some(token_cfg) = storage::get_token_spending_config(env, token_in) {
-            if storage::get_token_daily_spent(env, token_in, today) + amount > token_cfg.daily_limit
-            {
-                return Err(VaultError::ExceedsTokenDailyLimit);
-            }
-            if storage::get_token_weekly_spent(env, token_in, week) + amount
-                > token_cfg.weekly_limit
-            {
-                return Err(VaultError::ExceedsTokenWeeklyLimit);
-            }
-        }
-
-        storage::add_daily_spent(env, today, amount);
-        storage::add_weekly_spent(env, week, amount);
-        storage::add_token_daily_spent(env, token_in, today, amount);
-        storage::add_token_weekly_spent(env, token_in, week, amount);
-        Ok(())
-    }
-
     /// Apply the spending controls that `propose_transfer_internal` enforces to an
     /// outflow of `amount` of `token`, then reserve the amount against the daily,
     /// weekly and per-token counters. Shared by swap proposals (#1926).
@@ -13176,7 +13192,8 @@ impl VaultDAO {
                 {
                     return Err(VaultError::TokenNotSupported);
                 }
-                Self::check_and_reserve_swap_spend(&env, &config, &proposer, token_in, *amount_in)?;
+                // Spending limits are reserved once below via
+                // reserve_outflow_limits; do not reserve here as well (#1926).
                 (Some(token_in.clone()), *amount_in)
             }
             _ => (None, 0),

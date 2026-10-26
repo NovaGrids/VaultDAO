@@ -244,7 +244,13 @@ fn test_propose_swap_rejected_while_paused() {
     let token_out = Address::generate(&env);
     ctx.client.add_supported_token(&ctx.admin, &token_in, &1_000_000, &1_000_000);
     ctx.client.add_supported_token(&ctx.admin, &token_out, &1_000_000, &1_000_000);
-    ctx.client.pause_vault(&ctx.admin, &Symbol::new(&env, "manual"));
+    let em1 = Address::generate(&env);
+    let em2 = Address::generate(&env);
+    let mut esigners = Vec::new(&env);
+    esigners.push_back(em1.clone());
+    esigners.push_back(em2.clone());
+    ctx.client.configure_emergency(&ctx.admin, &esigners, &999_999_999i128);
+    ctx.client.pause_vault(&em1, &Symbol::new(&env, "manual"));
 
     let res = ctx.client.try_propose_swap(
         &ctx.treasurer,

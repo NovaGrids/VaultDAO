@@ -191,12 +191,16 @@ fn test_remove_signer_via_proposal_operation_still_enforces_threshold() {
     let approved = client.get_proposal(&proposal_id);
     assert_eq!(approved.status, crate::types::ProposalStatus::Approved);
 
-    let result = client.try_execute_multi_phase_proposal(&admin, &proposal_id);
-    assert_eq!(result, Err(Ok(VaultError::PhaseExecutionFailed)));
+    // Phase failures surface as Ok(outcome) with success=false; the failure
+    // persists (failed phase Failed, base proposal Rejected).
+    let outcome = client.try_execute_multi_phase_proposal(&admin, &proposal_id)
+        .unwrap()
+        .unwrap();
+    assert!(!outcome.success);
+    assert_eq!(outcome.failed_phase, Some(0));
+    assert_eq!(outcome.executed_count, 0);
     assert!(client.is_signer(&signer1));
 
-    // A failed invocation rolls back all of its writes, so the proposal is left
-    // exactly as it was (still Approved) rather than marked Rejected.
     let after = client.get_proposal(&proposal_id);
-    assert_eq!(after.status, crate::types::ProposalStatus::Approved);
+    assert_eq!(after.status, crate::types::ProposalStatus::Rejected);
 }
