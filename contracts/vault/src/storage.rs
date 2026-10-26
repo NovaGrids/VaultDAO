@@ -1268,12 +1268,19 @@ pub fn pending_expiry_index_remove(env: &Env, proposal_id: u64) {
         .unwrap_or_else(|| Vec::new(env));
 
     let mut updated: Vec<(u64, u64)> = Vec::new(env);
+    let mut removed = false;
     for entry in index.iter() {
         if entry.1 != proposal_id {
             updated.push_back(entry);
+        } else {
+            removed = true;
         }
     }
 
+    if !removed {
+        // Nothing to remove: do not touch storage (see above).
+        return;
+    }
     env.storage()
         .persistent()
         .set(&DataKey::PendingExpiryIndex, &updated);
@@ -1334,8 +1341,8 @@ pub fn add_to_timelock_ready_index(env: &Env, proposal_id: u64) {
             .set(&DataKey::TimelockReady, &ids);
         env.storage().persistent().extend_ttl(
             &DataKey::TimelockReady,
-            PROPOSAL_TTL / 2,
-            PROPOSAL_TTL,
+            INSTANCE_TTL_THRESHOLD,
+            PERSISTENT_TTL,
         );
     }
 }
@@ -1350,6 +1357,11 @@ pub fn remove_from_timelock_ready_index(env: &Env, proposal_id: u64) {
         .persistent()
         .get(&DataKey::TimelockReady)
         .unwrap_or_else(|| Vec::new(env));
+    if !ids.contains(proposal_id) {
+        // Nothing to remove: do not touch storage. An unconditional `set`
+        // would create the entry with the minimum TTL and poison later reads.
+        return;
+    }
     let mut new_ids: Vec<u64> = Vec::new(env);
     for id in ids.iter() {
         if id != proposal_id {
@@ -1362,8 +1374,8 @@ pub fn remove_from_timelock_ready_index(env: &Env, proposal_id: u64) {
     if !new_ids.is_empty() {
         env.storage().persistent().extend_ttl(
             &DataKey::TimelockReady,
-            PROPOSAL_TTL / 2,
-            PROPOSAL_TTL,
+            INSTANCE_TTL_THRESHOLD,
+            PERSISTENT_TTL,
         );
     }
 }

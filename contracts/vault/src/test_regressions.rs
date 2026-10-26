@@ -6,10 +6,33 @@ use crate::types::{
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::{Address as _, Events as _, Ledger},
     token::StellarAssetClient,
     Address, Env, Symbol, Vec,
 };
+
+/// Stand-in token whose balance reads succeed but whose transfers always
+/// trap. Lets a batch pass simulation yet fail at commit time, exercising
+/// the best-effort rollback path (a deauthorized SAC recipient would need
+/// AUTH_REVOCABLE, which the test SAC lacks).
+mod trapping_token {
+    use super::*;
+
+    #[contract]
+    pub struct TrappingToken;
+
+    #[contractimpl]
+    impl TrappingToken {
+        pub fn balance(_env: Env, _id: Address) -> i128 {
+            1_000_000
+        }
+
+        pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {
+            panic!("trapped transfer");
+        }
+    }
+}
 
 fn init_config(
     env: &Env,
@@ -150,7 +173,6 @@ fn test_role_assignments_query_returns_deterministic_order() {
 }
 
 #[test]
-#[ignore = "quarantined: host storage error: Storage InternalError (docs/reference/TESTING.md)"]
 fn test_expiry_refund_is_idempotent() {
     // Triggering expiry twice (e.g. approve then execute on an already-expired
     // proposal) must not refund the spending limit a second time.
@@ -201,8 +223,14 @@ fn test_expiry_refund_is_idempotent() {
         );
         crate::storage::extend_instance_ttl(&env);
     });
+    // Hop in TTL-safe steps, touching the token contract each hop so its
+    // instance storage survives the jump (archival is test-only).
     env.ledger().with_mut(|li| {
-        li.sequence_number += 121_000;
+        li.sequence_number += 60_000;
+    });
+    StellarAssetClient::new(&env, &token).mint(&Address::generate(&env), &1);
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 61_000;
     });
 
     // First expiry trigger — refunds the limit
@@ -227,7 +255,6 @@ fn test_expiry_refund_is_idempotent() {
 /// Regression: calling `initialize` a second time must fail with
 /// `VaultError::AlreadyInitialized` and leave the contract state intact.
 #[test]
-#[ignore = "quarantined: fixture has fewer signers than its threshold (ThresholdTooHigh) (docs/reference/TESTING.md)"]
 fn test_reinit_fails_with_already_initialized() {
     let env = Env::default();
     env.mock_all_auths();
@@ -237,6 +264,7 @@ fn test_reinit_fails_with_already_initialized() {
     let admin = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
 
     client.initialize(
         &admin,
@@ -425,7 +453,6 @@ fn test_threshold_above_signers_count_rejected() {
 /// Regression: proposing a transfer with amount = 0 must fail immediately
 /// with `VaultError::InvalidAmount`.
 #[test]
-#[ignore = "quarantined: fixture has fewer signers than its threshold (ThresholdTooHigh) (docs/reference/TESTING.md)"]
 fn test_zero_amount_proposal_rejected() {
     let env = Env::default();
     env.mock_all_auths();
@@ -440,6 +467,7 @@ fn test_zero_amount_proposal_rejected() {
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
+    signers.push_back(Address::generate(&env));
 
     client.initialize(
         &admin,
@@ -463,7 +491,6 @@ fn test_zero_amount_proposal_rejected() {
 /// Regression: executing an Approved proposal before its `unlock_ledger` has
 /// been reached must fail with `VaultError::TimelockNotExpired`.
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_execute_before_timelock_expires_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -541,6 +568,7 @@ fn test_execute_before_timelock_expires_fails() {
     );
 
     client.approve_proposal(&signer, &proposal_id);
+    client.approve_proposal(&admin, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
     assert_eq!(proposal.unlock_ledger, 300); // 100 + 200
@@ -553,7 +581,6 @@ fn test_execute_before_timelock_expires_fails() {
 /// Verifies all proposals in a batch execute together when every transfer
 /// simulates successfully.
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_atomic_batch_execution_success() {
     let env = Env::default();
     env.mock_all_auths();
@@ -618,10 +645,11 @@ fn test_atomic_batch_execution_success() {
 
     assert_eq!(proposal_ids.len(), 3);
 
-    // Approve all proposals
+    // Approve all proposals (threshold 2: admin + treasurer)
     for i in 0..proposal_ids.len() {
         let pid = proposal_ids.get(i).unwrap();
         client.approve_proposal(&admin, &pid);
+        client.approve_proposal(&treasurer, &pid);
         let proposal = client.get_proposal(&pid);
         assert_eq!(proposal.status, ProposalStatus::Approved);
     }
@@ -700,7 +728,6 @@ fn test_atomic_batch_execution_success() {
 /// With pre-commit simulation, the vault balance shortfall is detected up
 /// front and no funds ever move.
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_batch_simulation_failure_aborts_without_execution() {
     let env = Env::default();
     env.mock_all_auths();
@@ -757,6 +784,7 @@ fn test_batch_simulation_failure_aborts_without_execution() {
     for i in 0..proposal_ids.len() {
         let pid = proposal_ids.get(i).unwrap();
         client.approve_proposal(&admin, &pid);
+        client.approve_proposal(&treasurer, &pid);
     }
 
     let batch_id = 1u64;
@@ -767,9 +795,11 @@ fn test_batch_simulation_failure_aborts_without_execution() {
         soroban_sdk::token::Client::new(&env, &token1).balance(&recipient1);
 
     // The batch must abort entirely - simulation catches the shortfall before
-    // any transfer is committed.
+    // any transfer is committed. Like the commit-failure path, the abort is
+    // recorded and Ok is returned (returning Err would roll back the
+    // RolledBack marking just written).
     let result = client.try_execute_batch(&admin, &batch_id);
-    assert_eq!(result, Err(Ok(VaultError::InsufficientBalance)));
+    assert_eq!(result, Ok(Ok(())));
 
     let batch_after = client.get_batch(&batch_id);
     assert_eq!(batch_after.status, BatchStatus::RolledBack);
@@ -817,7 +847,6 @@ fn test_batch_simulation_failure_aborts_without_execution() {
 /// call's root invocation), so it is expected to fail here - the rollback
 /// state is still persisted for off-chain reconciliation.
 #[test]
-#[ignore = "quarantined: fails with VaultError::NotInitialized against the current contract (docs/reference/TESTING.md)"]
 fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
     let env = Env::default();
     env.mock_all_auths();
@@ -834,6 +863,7 @@ fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
     let token1 = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    let trap_token = env.register(trapping_token::TrappingToken, ());
 
     StellarAssetClient::new(&env, &token1).mint(&contract_id, &100_000);
 
@@ -844,6 +874,7 @@ fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
     let config = init_config(&env, signers, 2, ThresholdStrategy::Fixed);
     client.initialize(&admin, &config);
     client.set_role(&admin, &treasurer, &Role::Treasurer);
+    client.add_supported_token(&admin, &trap_token, &1_000_000, &1_000_000);
 
     let mut transfers = Vec::new(&env);
     transfers.push_back(TransferDetails {
@@ -851,9 +882,11 @@ fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
         token: token1.clone(),
         amount: 500,
     });
+    // The trapping token reports a healthy balance (simulation passes) but
+    // its transfer always traps, so this leg fails only at commit time.
     transfers.push_back(TransferDetails {
         recipient: recipient2.clone(),
-        token: token1.clone(),
+        token: trap_token.clone(),
         amount: 700,
     });
 
@@ -870,14 +903,14 @@ fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
     for i in 0..proposal_ids.len() {
         let pid = proposal_ids.get(i).unwrap();
         client.approve_proposal(&admin, &pid);
+        client.approve_proposal(&treasurer, &pid);
     }
 
     let batch_id = 1u64;
 
-    // Vault comfortably holds enough token1 for both transfers, so
-    // simulation passes. Deauthorize recipient2 so the SECOND transfer
-    // fails only once the batch actually tries to commit it.
-    StellarAssetClient::new(&env, &token1).set_authorized(&recipient2, &false);
+    // Vault comfortably holds enough for both transfers and the trapping
+    // token reports a healthy balance, so simulation passes. The second
+    // transfer fails only once the batch actually tries to commit it.
 
     let pre_fail_vault_balance =
         soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id);
@@ -887,6 +920,7 @@ fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
     // Commit-phase failures return Ok(()) - the rollback state is what
     // reports the outcome, not the call result.
     client.execute_batch(&admin, &batch_id);
+
 
     let batch_after = client.get_batch(&batch_id);
     assert_eq!(batch_after.status, BatchStatus::RolledBack);
@@ -900,9 +934,10 @@ fn test_batch_commit_failure_falls_back_to_best_effort_rollback() {
     assert_eq!(rolled_back_recipient, recipient1);
     assert_eq!(rolled_back_amount, 500);
 
-    // The reverse-transfer requires recipient1's own authorization, which
-    // was never granted here, so the best-effort rollback does not actually
-    // restore funds - recipient1 keeps the 500 tokens.
+    // The reverse transfer needs the recipient's own authorization, which a
+    // nested try_ call cannot mock: the best-effort rollback fails here and
+    // recipient1 keeps the 500 tokens. The rollback state is still persisted
+    // for off-chain reconciliation.
     assert_eq!(
         soroban_sdk::token::Client::new(&env, &token1).balance(&contract_id),
         pre_fail_vault_balance - 500
@@ -971,7 +1006,6 @@ fn test_batch_size_limit_enforced() {
 
 /// Test batch status transitions
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_batch_status_transitions() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1019,8 +1053,9 @@ fn test_batch_status_transitions() {
     let batch = client.get_batch(&batch_id);
     assert_eq!(batch.status, BatchStatus::Pending);
 
-    // Approve proposal
+    // Approve proposal (threshold 2: admin + treasurer)
     client.approve_proposal(&admin, &proposal_ids.get(0).unwrap());
+    client.approve_proposal(&treasurer, &proposal_ids.get(0).unwrap());
 
     // Execute batch successfully
     client.execute_batch(&admin, &batch_id);

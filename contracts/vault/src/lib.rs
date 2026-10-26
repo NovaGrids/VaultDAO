@@ -3202,6 +3202,9 @@ impl VaultDAO {
 
         // If validation or simulation failed, abort the entire batch without
         // executing a single transfer - there is nothing to roll back.
+        // NOTE: this returns Ok (like the commit-failure path below) because
+        // returning Err would roll back the RolledBack marking just recorded,
+        // leaving callers unable to observe the outcome.
         if let Some(reason) = abort_reason {
             let failed_count = batch.proposal_ids.len();
             batch.status = BatchStatus::RolledBack;
@@ -3217,7 +3220,7 @@ impl VaultDAO {
                 },
             );
             events::emit_batch_rolled_back(&env, &executor, 0, reason as u32);
-            return Err(reason);
+            return Ok(());
         }
 
         // Phase 3: Every proposal validated and every transfer simulated
