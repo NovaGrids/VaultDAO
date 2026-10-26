@@ -74,6 +74,7 @@ pub(crate) fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     );
 
     StellarAssetClient::new(env, &token).mint(&admin, &5_000_000i128);
+    client.add_supported_token(&admin, &token, &100_000, &1_000_000);
     (client, admin, token)
 }
 
@@ -184,8 +185,32 @@ fn test_duplicate_milestone_completion_rejected() {
     let (client, funder, token) = setup(&env);
     let recipient = Address::generate(&env);
     let arbitrator = Address::generate(&env);
-    let escrow_id =
-        create_escrow_with_arbitrator(&env, &client, &funder, &recipient, &arbitrator, &token);
+    // Two milestones so the escrow stays Active after the first completion;
+    // the duplicate of milestone 1 must then hit the per-milestone guard.
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(Milestone {
+        id: 1,
+        percentage: 50,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    milestones.push_back(Milestone {
+        id: 2,
+        percentage: 50,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &2000i128,
+        &milestones,
+        &1000u64,
+        &arbitrator,
+    );
 
     client.complete_milestone(&funder, &escrow_id, &1u64);
 

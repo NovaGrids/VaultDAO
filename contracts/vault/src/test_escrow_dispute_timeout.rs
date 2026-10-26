@@ -43,6 +43,7 @@ fn test_auto_resolve_timeout_measured_from_dispute() {
         .register_stellar_asset_contract_v2(Address::generate(&env))
         .address();
     StellarAssetClient::new(&env, &token).mint(&funder, &10_000);
+    client.add_supported_token(&funder, &token, &100_000, &1_000_000);
 
     let recipient = Address::generate(&env);
     let arbitrator = Address::generate(&env);
@@ -97,6 +98,7 @@ fn test_legacy_disputed_escrow_falls_back_to_created_at() {
         .register_stellar_asset_contract_v2(Address::generate(&env))
         .address();
     StellarAssetClient::new(&env, &token).mint(&funder, &10_000);
+    client.add_supported_token(&funder, &token, &100_000, &1_000_000);
 
     let recipient = Address::generate(&env);
     let arbitrator = Address::generate(&env);
