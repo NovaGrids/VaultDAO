@@ -68,7 +68,8 @@ fn make_proposal(
     recipient: &Address,
     amount: i128,
 ) -> u64 {
-    client.set_role(proposer, proposer, &Role::Treasurer);
+    // Admin already satisfies Treasurer via role hierarchy; do not self-demote
+    // via set_role (that would strip Admin on first call and break later calls).
     client.propose_transfer(
         proposer,
         recipient,

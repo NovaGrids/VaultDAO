@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use crate::types::{Priority, Role};
+use crate::types::Priority;
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
 
@@ -69,7 +69,7 @@ fn make_proposal(
     recipient: &Address,
     amount: i128,
 ) -> u64 {
-    client.set_role(proposer, proposer, &Role::Treasurer);
+    // Admin already satisfies Treasurer via role hierarchy; do not self-demote.
     client.propose_transfer(
         proposer,
         recipient,
