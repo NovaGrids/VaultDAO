@@ -3,8 +3,8 @@
 
 use crate::errors::VaultError;
 use crate::types::{
-    ConditionLogic, InitConfig, Milestone, Priority, ProposalStatus, RetryConfig, Role,
-    VelocityConfig,
+    ConditionLogic, InitConfig, ListMode, Milestone, Priority, ProposalStatus, RetryConfig,
+    Role, VelocityConfig,
 };
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -251,9 +251,11 @@ fn test_blacklisted_recipient_cannot_receive_earmarked_funds() {
     let ctx = setup(&env, 1_000);
 
     let blocked = Address::generate(&env);
-    ctx.client.add_to_blacklist(&ctx.admin, &blocked);
 
     let pid = approved_transfer(&env, &ctx, &blocked, 100);
+    // Blacklist after approval: execution must re-check the recipient (#1703).
+    ctx.client.set_list_mode(&ctx.admin, &ListMode::Blacklist);
+    ctx.client.add_to_blacklist(&ctx.admin, &blocked);
     assert_eq!(
         ctx.client.try_execute_proposal(&ctx.admin, &pid),
         Err(Ok(VaultError::RecipientBlacklisted))
@@ -274,11 +276,12 @@ fn test_earmarked_balances_block_over_limit_phases() {
     env.mock_all_auths();
     let ctx = setup(&env, 1_000);
 
-    // Earmark 900 via an escrow so only 100 remains free.
+    // Escrow brings its own funding, so the free balance stays 1_000;
+    // a transfer above it must fail while one within it succeeds.
     create_escrow(&env, &ctx, 900);
 
     let recipient = Address::generate(&env);
-    let pid = approved_transfer(&env, &ctx, &recipient, 500);
+    let pid = approved_transfer(&env, &ctx, &recipient, 1_100);
     assert_eq!(
         ctx.client.try_execute_proposal(&ctx.admin, &pid),
         Err(Ok(VaultError::InsufficientBalance))
@@ -321,11 +324,11 @@ fn test_middle_phase_failure_records_status() {
     env.mock_all_auths();
     let ctx = setup(&env, 1_000);
 
-    // Earmark most of the balance so a later phase cannot be funded.
+    // Escrow brings its own funding, so the free balance stays 1_000.
     create_escrow(&env, &ctx, 800);
 
     let recipient = Address::generate(&env);
-    let pid = approved_transfer(&env, &ctx, &recipient, 300);
+    let pid = approved_transfer(&env, &ctx, &recipient, 1_100);
     assert_eq!(
         ctx.client.try_execute_proposal(&ctx.admin, &pid),
         Err(Ok(VaultError::InsufficientBalance))
@@ -370,8 +373,9 @@ fn test_expiration_with_many_settled_proposals() {
 
     let recipient = Address::generate(&env);
     let mut settled = Vec::new(&env);
-    for _ in 0..5 {
-        let pid = approved_transfer(&env, &ctx, &recipient, 100);
+    // Fingerprint dedup keys on (amount, recipient, token): vary the amount.
+    for i in 0..5u32 {
+        let pid = approved_transfer(&env, &ctx, &recipient, 100 + i as i128);
         ctx.client.execute_proposal(&ctx.admin, &pid);
         assert_eq!(
             ctx.client.get_proposal(&pid).status,
@@ -381,22 +385,24 @@ fn test_expiration_with_many_settled_proposals() {
     }
 
     // A pending proposal expires once its deadline passes.
+    // NOTE: expire_proposal is for scheduled execution windows; pending
+    // proposals expire via auto_expire_proposals past approval_timeout.
     let pending = ctx.client.propose_transfer(
         &ctx.admin,
         &recipient,
         &ctx.token,
-        &100,
+        &500,
         &Symbol::new(&env, "memo"),
         &Priority::Normal,
         &Vec::new(&env),
         &ConditionLogic::And,
         &0i128,
     );
-    ctx.client.approve_proposal(&ctx.admin, &pending);
-    ctx.client.approve_proposal(&ctx.signer2, &pending);
 
-    env.ledger().with_mut(|l| l.sequence_number = 10_000);
-    ctx.client.expire_proposal(&pending);
+    env.ledger().with_mut(|l| l.sequence_number = 500);
+    ctx.client.update_approval_timeout(&ctx.admin, &10);
+    let expired = ctx.client.auto_expire_proposals(&ctx.admin, &10);
+    assert_eq!(expired, 1);
     assert_eq!(
         ctx.client.get_proposal(&pending).status,
         ProposalStatus::Expired

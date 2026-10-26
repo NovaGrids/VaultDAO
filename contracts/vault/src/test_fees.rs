@@ -1,9 +1,9 @@
 use crate::errors::VaultError;
-use crate::types::{ConditionLogic, FeeStructure, Priority, RetryConfig, ThresholdStrategy, VelocityConfig};
+use crate::types::{ConditionLogic, FeeStructure, Priority, RetryConfig, Role, ThresholdStrategy, VelocityConfig};
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{testutils::{Address as _, Events as _}, token::StellarAssetClient, Address, Env, Symbol, Vec};
 
-fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
+fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
     let admin = Address::generate(env);
@@ -12,9 +12,10 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
 
+    let signer2 = Address::generate(env);
     let mut signers = Vec::new(env);
     signers.push_back(admin.clone());
-    signers.push_back(Address::generate(env));
+    signers.push_back(signer2.clone());
 
     client.initialize(
         &admin,
@@ -57,7 +58,9 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
         },
     );
 
-    (client, admin, token)
+    client.set_role(&admin, &signer2, &Role::Treasurer);
+
+    (client, admin, signer2, token)
 }
 
 fn enable_fees(env: &Env, client: &VaultDAOClient, admin: &Address) {
@@ -81,7 +84,7 @@ fn test_fee_disabled_returns_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _admin, token) = setup(&env);
+    let (client, _admin, _signer2, token) = setup(&env);
     let user = Address::generate(&env);
 
     // FeeStructure::enabled = false by default — no fee collected
@@ -95,7 +98,7 @@ fn test_fee_no_discount_base_rate() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let user = Address::generate(&env);
 
     // Mint tokens to user so the transfer succeeds
@@ -114,7 +117,7 @@ fn test_fee_reputation_discount() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let user = Address::generate(&env);
 
     StellarAssetClient::new(&env, &token).mint(&user, &1_000_000);
@@ -142,7 +145,7 @@ fn test_fees_collected_queryable() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let user = Address::generate(&env);
 
     StellarAssetClient::new(&env, &token).mint(&user, &1_000_000);
@@ -166,14 +169,14 @@ fn test_fee_only_execution_net_amount_and_liquidity() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let recipient = Address::generate(&env);
 
     enable_fees(&env, &client, &admin);
 
     let amount = 10_000i128;
-    // Vault only needs `amount` of liquidity for a fee-only execution.
-    StellarAssetClient::new(&env, &token).mint(&client.address, &amount);
+    // Execution pays amount + 1% fee from vault liquidity.
+    StellarAssetClient::new(&env, &token).mint(&client.address, &(amount + 100));
 
     let proposal_id = client.propose_transfer(
         &admin,
@@ -187,6 +190,7 @@ fn test_fee_only_execution_net_amount_and_liquidity() {
         &0i128,
     );
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     // 1% fee of 10_000 = 100; recipient receives amount - fee.
@@ -202,7 +206,7 @@ fn test_no_fee_execution_full_amount() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let recipient = Address::generate(&env);
 
     // Fees disabled (default) — recipient receives the full amount.
@@ -221,6 +225,7 @@ fn test_no_fee_execution_full_amount() {
         &0i128,
     );
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     assert_eq!(
@@ -235,7 +240,7 @@ fn test_fee_plus_insurance_execution_balance_check() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let recipient = Address::generate(&env);
 
     enable_fees(&env, &client, &admin);
@@ -244,6 +249,8 @@ fn test_fee_plus_insurance_execution_balance_check() {
     let insurance_amount = 2_000i128;
     // Balance check must require only `amount + insurance_amount`.
     StellarAssetClient::new(&env, &token).mint(&client.address, &(amount + insurance_amount));
+    // Insurance is locked from the proposer's funds at creation time.
+    StellarAssetClient::new(&env, &token).mint(&admin, &insurance_amount);
 
     let proposal_id = client.propose_transfer(
         &admin,
@@ -257,6 +264,7 @@ fn test_fee_plus_insurance_execution_balance_check() {
         &insurance_amount,
     );
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     // Recipient receives amount - fee (1% of 10_000 = 100).
@@ -272,13 +280,13 @@ fn test_proposal_executed_event_carries_net_amount_and_fee() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let recipient = Address::generate(&env);
 
     enable_fees(&env, &client, &admin);
 
     let amount = 10_000i128;
-    StellarAssetClient::new(&env, &token).mint(&client.address, &amount);
+    StellarAssetClient::new(&env, &token).mint(&client.address, &(amount + 100));
 
     let proposal_id = client.propose_transfer(
         &admin,
@@ -292,6 +300,7 @@ fn test_proposal_executed_event_carries_net_amount_and_fee() {
         &0i128,
     );
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer2, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     let events = env.events().all();
@@ -309,7 +318,7 @@ fn test_withdraw_fees_admin_only() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, admin, token) = setup(&env);
+    let (client, admin, signer2, token) = setup(&env);
     let user = Address::generate(&env);
     let non_admin = Address::generate(&env);
 
