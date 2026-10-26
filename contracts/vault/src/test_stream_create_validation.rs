@@ -4,7 +4,7 @@
 #![cfg(test)]
 
 use crate::test_spending_limit_invariants_proptest::setup;
-use soroban_sdk::{testutils::Address as _, Address, Symbol};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Symbol, Vec};
 
 const RATE: i128 = 10;
 const DURATION: u64 = 1_000;
@@ -17,6 +17,7 @@ fn test_create_stream_accepts_matching_rate_and_duration() {
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
     client.add_supported_token(&admin, &token, &1_000_000_000, &1_000_000_000);
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
 
     let result = client.try_create_stream(&admin, &recipient, &token, &RATE, &TOTAL, &DURATION);
     assert!(result.is_ok());
@@ -74,7 +75,13 @@ fn test_create_stream_is_blocked_while_vault_paused() {
     let recipient = Address::generate(&env);
     client.add_supported_token(&admin, &token, &1_000_000_000, &1_000_000_000);
 
-    client.pause_vault(&admin, &Symbol::new(&env, "test_pause"));
+    let em1 = Address::generate(&env);
+    let em2 = Address::generate(&env);
+    let mut esigners = Vec::new(&env);
+    esigners.push_back(em1.clone());
+    esigners.push_back(em2.clone());
+    client.configure_emergency(&admin, &esigners, &999_999_999i128);
+    client.pause_vault(&em1, &Symbol::new(&env, "test_pause"));
 
     let result = client.try_create_stream(&admin, &recipient, &token, &RATE, &TOTAL, &DURATION);
     assert!(result.is_err());
@@ -87,6 +94,8 @@ fn test_create_stream_writes_audit_entry() {
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
     client.add_supported_token(&admin, &token, &1_000_000_000, &1_000_000_000);
+
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
 
     let before = client.get_audit_entry_count();
     client.create_stream(&admin, &recipient, &token, &RATE, &TOTAL, &DURATION);

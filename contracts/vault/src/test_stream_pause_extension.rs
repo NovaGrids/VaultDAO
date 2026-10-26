@@ -4,7 +4,7 @@
 #![cfg(test)]
 
 use crate::test_spending_limit_invariants_proptest::setup;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, token::StellarAssetClient, Address};
 
 const RATE: i128 = 1;
 const DURATION: u64 = 1_000;
@@ -16,6 +16,8 @@ fn test_pause_for_half_duration_still_vests_full_amount() {
     env.mock_all_auths();
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
+
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
 
     let stream_id = client.create_stream(&admin, &recipient, &token, &RATE, &TOTAL, &DURATION);
 
@@ -39,6 +41,8 @@ fn test_resume_extends_end_timestamp_by_pause_length() {
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
 
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
+
     let stream_id = client.create_stream(&admin, &recipient, &token, &RATE, &TOTAL, &DURATION);
     let original_end = client.get_stream(&stream_id).end_timestamp;
 
@@ -59,6 +63,8 @@ fn test_accrual_never_exceeds_total_after_long_wait() {
     env.mock_all_auths();
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
+
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
 
     let stream_id = client.create_stream(&admin, &recipient, &token, &RATE, &TOTAL, &DURATION);
 

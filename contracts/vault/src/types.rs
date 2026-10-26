@@ -1471,6 +1471,9 @@ pub enum AuditAction {
     KeeperHookRemoved = 47,
     /// A milestone of an escrow was marked complete by the funder or arbitrator.
     MilestoneCompleted = 51,
+    /// A streaming payment was created (#1914).
+    /// `target` is the stream id.
+    StreamCreated = 52,
 }
 
 /// Audit trail entry with cryptographic verification

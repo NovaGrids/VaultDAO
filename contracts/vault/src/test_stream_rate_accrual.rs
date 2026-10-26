@@ -13,6 +13,7 @@ use proptest::collection::vec as prop_vec;
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
+    token::StellarAssetClient,
     Address, Env,
 };
 
@@ -27,6 +28,8 @@ fn test_adjust_rate_settles_accrual_at_old_rate() {
     env.mock_all_auths();
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
+
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
 
     let stream_id = client.create_stream(&admin, &recipient, &token, &OLD_RATE, &TOTAL, &DURATION);
 
@@ -47,6 +50,8 @@ fn test_lowering_rate_after_claim_does_not_fail_claims() {
     env.mock_all_auths();
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
+
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
 
     let stream_id = client.create_stream(&admin, &recipient, &token, &OLD_RATE, &TOTAL, &DURATION);
 
@@ -69,6 +74,8 @@ fn test_raising_rate_does_not_reprice_past_seconds() {
     let (client, admin, token) = setup(&env);
     let recipient = Address::generate(&env);
 
+    StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
+
     let stream_id = client.create_stream(&admin, &recipient, &token, &NEW_RATE, &TOTAL, &DURATION);
 
     env.ledger().with_mut(|li| li.timestamp += 100);
@@ -90,6 +97,7 @@ proptest! {
         env.mock_all_auths();
         let (client, admin, token) = setup(&env);
         let recipient = Address::generate(&env);
+        StellarAssetClient::new(&env, &token).mint(&admin, &1_000_000);
         let stream_id =
             client.create_stream(&admin, &recipient, &token, &OLD_RATE, &TOTAL, &DURATION);
 

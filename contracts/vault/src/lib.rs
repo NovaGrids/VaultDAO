@@ -8044,6 +8044,11 @@ impl VaultDAO {
     ) -> Result<u64, VaultError> {
         sender.require_auth();
 
+        // Reject creation while the vault is paused (#1084).
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
         if let Some(id) = capability_id {
             Self::consume_capability(
                 &env,
@@ -8102,6 +8107,7 @@ impl VaultDAO {
         );
         storage::extend_instance_ttl(&env);
 
+        storage::create_audit_entry(&env, AuditAction::StreamCreated, &sender, id);
         events::emit_stream_created(
             &env,
             id,
@@ -8337,6 +8343,12 @@ impl VaultDAO {
         }
 
         let now = env.ledger().timestamp();
+        // Paused time is free: extend the schedule by the pause length (#1915)
+        // and record the pause for introspection.
+        let paused_for = now.saturating_sub(stream.last_update_timestamp);
+        stream.end_timestamp = stream.end_timestamp.saturating_add(paused_for);
+        stream.pause_duration = stream.pause_duration.saturating_add(paused_for);
+        stream.pause_cycles = stream.pause_cycles.saturating_add(1);
         // Reset the update timestamp so elapsed time starts from now
         stream.last_update_timestamp = now;
         stream.status = StreamStatus::Active;
@@ -8498,6 +8510,14 @@ impl VaultDAO {
         stream.last_update_timestamp = now;
 
         let old_rate = stream.rate;
+        // Preserve already-banked value across the rate change (#1913):
+        // pre-adjustment seconds earned old_rate, so rescale the accumulated
+        // seconds into new-rate seconds covering the same lifetime earnings.
+        // Without this, past seconds would be repriced at the new rate.
+        // Note: rescale against lifetime earnings (not earnings-minus-paid),
+        // since `claimed_amount` is subtracted separately at claim time.
+        let earned = (old_rate as i128).saturating_mul(stream.accumulated_seconds as i128);
+        stream.accumulated_seconds = (earned.max(0) / new_rate) as u64;
         stream.rate = new_rate;
 
         // Recalculate end_timestamp: remaining = total - claimed, new_duration = remaining / new_rate
