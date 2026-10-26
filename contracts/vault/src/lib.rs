@@ -5815,8 +5815,10 @@ impl VaultDAO {
         new_config.signers = signers;
 
         // propose_vault_config_change runs validate_config internally and also
-        // enforces the "only one config change at a time" guard.
-        let proposal_id = Self::propose_vault_config_change(env, admin, new_config)?;
+        // enforces the "only one config change at a time" guard. Route via
+        // the internal builder: this function already authenticated admin.
+        let proposal_id =
+            Self::propose_vault_config_change_internal(env, admin, new_config)?;
 
         Ok(proposal_id)
     }
@@ -6191,6 +6193,18 @@ impl VaultDAO {
         new_config: Config,
     ) -> Result<u64, VaultError> {
         proposer.require_auth();
+        Self::propose_vault_config_change_internal(env, proposer, new_config)
+    }
+
+    /// Internal config-change proposal builder without authorization.
+    ///
+    /// `update_config_signers` authenticates the caller itself and routes here
+    /// so the same address is not authorized twice in one frame.
+    fn propose_vault_config_change_internal(
+        env: Env,
+        proposer: Address,
+        new_config: Config,
+    ) -> Result<u64, VaultError> {
 
         let role = storage::get_role(&env, &proposer);
         if role != Role::Treasurer && role != Role::Admin {
@@ -6886,6 +6900,17 @@ impl VaultDAO {
             return Err(VaultError::ClaimVoteDeadlineTooShort);
         }
 
+        // Upper bound (#1907): a caller-chosen deadline far beyond any
+        // configured voting window would lock the bond and stall the claim
+        // indefinitely. Cap at twice the longest configured window, which
+        // leaves generous slack for legitimate scheduling.
+        let max_window = voting_window.max(voting_config.large_claim_voting_window);
+        if max_window > 0
+            && vote_deadline > current_ledger.saturating_add(max_window.saturating_mul(2))
+        {
+            return Err(VaultError::ClaimVoteDeadlineTooShort);
+        }
+
         // Signers eligible to vote, snapshotted so later membership changes cannot
         // retroactively move the quorum for this claim. The claimant is excluded when
         // they are themselves a signer — they may not vote on their own claim, so
@@ -7320,7 +7345,8 @@ impl VaultDAO {
     /// Remove a supported token from the vault.
     ///
     /// The default token (first added) is never removable.
-    /// Removal is blocked if any active recurring payment uses this token.
+    /// Removal is blocked if any active recurring payment, live stream, or
+    /// live proposal uses this token.
     ///
     /// # Arguments
     /// * `admin` - Admin address (must authorize).
@@ -7360,6 +7386,34 @@ impl VaultDAO {
         for payment_id in 1..next_id {
             if let Ok(payment) = storage::get_recurring_payment(&env, payment_id) {
                 if payment.status == RecurringStatus::Active && payment.token == token {
+                    return Err(VaultError::TokenHasActivePayments);
+                }
+            }
+        }
+
+        // Check for live streams that escrow this token (#1908)
+        let next_stream_id = storage::get_next_stream_id(&env);
+        for stream_id in 1..next_stream_id {
+            if let Ok(stream) = storage::get_streaming_payment(&env, stream_id) {
+                let live = stream.status == StreamStatus::Active
+                    || stream.status == StreamStatus::Paused;
+                if live && stream.token_addr == token {
+                    return Err(VaultError::TokenHasActivePayments);
+                }
+            }
+        }
+
+        // Check for live proposals that reference this token (#1908)
+        let next_proposal_id = storage::get_next_proposal_id(&env);
+        for proposal_id in 1..next_proposal_id {
+            if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                let live = matches!(
+                    proposal.status,
+                    ProposalStatus::Pending
+                        | ProposalStatus::Approved
+                        | ProposalStatus::Scheduled
+                );
+                if live && proposal.token == token {
                     return Err(VaultError::TokenHasActivePayments);
                 }
             }
@@ -14193,6 +14247,13 @@ impl VaultDAO {
             Self::evaluate_conditions(env, proposal)?;
         }
 
+        // Nothing to move (e.g. config-change proposals carry amount 0 and a
+        // placeholder token): skip the balance/fee/transfer path entirely.
+        // Probing a token balance here would panic on the placeholder address.
+        if proposal.amount == 0 && proposal.insurance_amount == 0 {
+            return Ok(());
+        }
+
         // Compute the execution fee estimate (base_cost + condition_cost * operations)
         let fee_estimate = Self::calculate_execution_fee(env, proposal);
 
@@ -15427,6 +15488,10 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         owner.require_auth();
 
+        // No new deposits or extensions while paused; mature unlocks stay
+        // available (#1705).
+        require_not_paused(&env)?;
+
         let config = storage::get_time_weighted_config(&env);
 
         if !config.enabled {
@@ -15500,6 +15565,10 @@ impl VaultDAO {
         additional_duration: u64,
     ) -> Result<(), VaultError> {
         owner.require_auth();
+
+        // No new deposits or extensions while paused; mature unlocks stay
+        // available (#1705).
+        require_not_paused(&env)?;
 
         let config = storage::get_time_weighted_config(&env);
 

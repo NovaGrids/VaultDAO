@@ -3606,17 +3606,20 @@ pub fn get_token_lock(env: &Env, owner: &Address) -> Option<TokenLock> {
 pub fn set_token_lock(env: &Env, lock: &TokenLock) {
     let key = FeatureKey::TokenLock(lock.owner.clone());
     env.storage().persistent().set(&key, lock);
+    // Locks routinely span 30+ days (max 2 years); the 7-day proposal TTL
+    // would archive them mid-lock. Use the long-lived persistent TTL.
     env.storage()
         .persistent()
-        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 pub fn set_total_locked(env: &Env, owner: &Address, amount: i128) {
     let key = FeatureKey::TotalLocked(owner.clone());
     env.storage().persistent().set(&key, &amount);
+    // Same lifetime requirement as the TokenLock entry itself.
     env.storage()
         .persistent()
-        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {

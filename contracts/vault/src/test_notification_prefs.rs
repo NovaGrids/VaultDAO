@@ -195,11 +195,17 @@ fn test_notification_prefs_v2_filters_by_min_amount_threshold() {
     client.set_notification_preferences_v2(&user, &v2_prefs(500, 0, 0));
     let proposal = Symbol::new(&env, "proposal");
 
-    // Below the threshold: filtered out.
-    assert!(helpers::compute_relevant_signers(&env, &proposal, 499).is_empty());
+    // Below the threshold: filtered out. (Contract-context call: the helper
+    // reads instance/persistent storage.)
+    let as_signers = |amount: i128| {
+        env.as_contract(&client.address, || {
+            helpers::compute_relevant_signers(&env, &proposal, amount)
+        })
+    };
+    assert!(as_signers(499).is_empty());
     // At and above the threshold: included.
-    assert_eq!(helpers::compute_relevant_signers(&env, &proposal, 500).len(), 1);
-    assert_eq!(helpers::compute_relevant_signers(&env, &proposal, 5_000).len(), 1);
+    assert_eq!(as_signers(500).len(), 1);
+    assert_eq!(as_signers(5_000).len(), 1);
 }
 
 #[test]
@@ -212,13 +218,18 @@ fn test_notification_prefs_v2_respects_quiet_hours() {
     client.set_notification_preferences_v2(&user, &v2_prefs(0, 100, 200));
     let proposal = Symbol::new(&env, "proposal");
 
+    let as_signers = || {
+        env.as_contract(&client.address, || {
+            helpers::compute_relevant_signers(&env, &proposal, 1_000)
+        })
+    };
     // Inside the window: filtered out.
     env.ledger().with_mut(|l| l.sequence_number = 150);
-    assert!(helpers::compute_relevant_signers(&env, &proposal, 1_000).is_empty());
+    assert!(as_signers().is_empty());
 
     // Outside the window: included.
     env.ledger().with_mut(|l| l.sequence_number = 300);
-    assert_eq!(helpers::compute_relevant_signers(&env, &proposal, 1_000).len(), 1);
+    assert_eq!(as_signers().len(), 1);
 }
 
 #[test]

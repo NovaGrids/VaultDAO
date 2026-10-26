@@ -141,15 +141,18 @@ fn assert_latest_audit(client: &crate::VaultDAOClient, expected: AuditAction, ac
 fn test_1938_token_setters_write_audit_entries() {
     let env = Env::default();
     let (admin, client, _) = make_checkpoint_config(&env);
-    let token = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
 
-    client.add_supported_token(&admin, &token, &1_000, &5_000);
+    client.add_supported_token(&admin, &token_a, &1_000, &5_000);
+    client.add_supported_token(&admin, &token_b, &1_000, &5_000);
     assert_latest_audit(&client, AuditAction::TokenConfigUpdated, &admin);
 
-    client.set_token_limits(&admin, &token, &2_000, &6_000);
+    client.set_token_limits(&admin, &token_a, &2_000, &6_000);
     assert_latest_audit(&client, AuditAction::TokenConfigUpdated, &admin);
 
-    client.remove_supported_token(&admin, &token);
+    // The index-0 token is the immutable default; remove the second one.
+    client.remove_supported_token(&admin, &token_b);
     assert_latest_audit(&client, AuditAction::TokenConfigUpdated, &admin);
 }
 
@@ -218,11 +221,8 @@ fn test_1938_dex_and_time_weighted_setters_write_audit_entries() {
         &admin,
         &crate::types::TimeWeightedConfig {
             enabled: false,
-            min_lock_duration: 0,
-            max_lock_duration: 0,
-            apply_decay: false,
-            early_unlock_penalty_bps: 0,
             governance_token: None,
+            ..crate::types::TimeWeightedConfig::default()
         },
     );
     assert_latest_audit(&client, AuditAction::TimeWeightedConfigUpdated, &admin);

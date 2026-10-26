@@ -153,8 +153,17 @@ fn test_locked_governance_tokens_cannot_be_spent_by_execution() {
     );
 
     // The locker still gets the full amount back after the lock period
-    env.ledger()
-        .set_sequence_number(100 + LOCK_DURATION as u32);
+
+    // Advance in TTL-safe hops, touching the token contract each hop so its
+    // instance storage survives the 30-day jump (archival is test-only).
+    let mut ledger = env.ledger().sequence();
+    let target = 100 + LOCK_DURATION as u32;
+    while ledger + 100_000 < target {
+        ledger += 100_000;
+        env.ledger().with_mut(|l| l.sequence_number = ledger);
+        StellarAssetClient::new(&env, &ctx.gov_token).mint(&Address::generate(&env), &1);
+    }
+    env.ledger().with_mut(|l| l.sequence_number = target);
     assert_eq!(ctx.client.unlock_tokens(&owner), 1_000);
     assert_eq!(TokenClient::new(&env, &ctx.gov_token).balance(&owner), 1_000);
     assert_eq!(TokenClient::new(&env, &ctx.gov_token).balance(&ctx.vault), 0);

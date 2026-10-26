@@ -262,8 +262,17 @@ fn test_paused_vault_allows_unlock_after_expiry() {
     lock_before_pause(&env, &client, &gov_token, &owner, 1_000);
 
     pause(&env, &client, &admin);
-    env.ledger()
-        .with_mut(|li| li.sequence_number += LOCK_DURATION as u32 + 1);
+
+    // Advance in TTL-safe hops, touching the token contract each hop so its
+    // instance storage survives the 30-day jump (archival is test-only).
+    let target = env.ledger().sequence() + LOCK_DURATION as u32;
+    let mut ledger = env.ledger().sequence();
+    while ledger + 100_000 < target {
+        ledger += 100_000;
+        env.ledger().with_mut(|l| l.sequence_number = ledger);
+        StellarAssetClient::new(&env, &gov_token).mint(&Address::generate(&env), &1);
+    }
+    env.ledger().with_mut(|l| l.sequence_number = target);
 
     let returned = client.unlock_tokens(&owner);
     assert_eq!(returned, 1_000);

@@ -336,6 +336,8 @@ fn test_remove_token_blocked_by_active_stream() {
     let (client, admin, _token_a, token_b) = setup_removable_token(&env);
     let recipient = Address::generate(&env);
 
+    // The stream escrows from the sender: fund admin first.
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&admin, &1_000);
     client.create_stream(&admin, &recipient, &token_b, &10i128, &1_000i128, &100u64);
 
     let res = client.try_remove_supported_token(&admin, &token_b);

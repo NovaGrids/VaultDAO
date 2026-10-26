@@ -194,7 +194,17 @@ fn test_disabling_is_rejected_while_locks_are_active() {
     );
 
     // Once the lock is withdrawn, disabling is allowed
-    env.ledger().with_mut(|l| l.sequence_number = 100 + LOCK_DURATION as u32);
+
+    // Advance in TTL-safe hops, touching the token contract each hop so its
+    // instance storage survives the 30-day jump (archival is test-only).
+    let mut ledger = env.ledger().sequence();
+    let target = 100 + LOCK_DURATION as u32;
+    while ledger + 100_000 < target {
+        ledger += 100_000;
+        env.ledger().with_mut(|l| l.sequence_number = ledger);
+        StellarAssetClient::new(&env, &gov_token).mint(&Address::generate(&env), &1);
+    }
+    env.ledger().with_mut(|l| l.sequence_number = target);
     assert_eq!(client.unlock_tokens(&owner), 1_000);
     assert_eq!(client.try_set_time_weighted_config(&admin, &disabled), Ok(Ok(())));
 }
