@@ -572,9 +572,8 @@ mod test_pause_circuit_breaker;
 // mod test_pending_reservations;  // unparseable upstream; re-enable once repaired
 // #[cfg(test)]
 // mod test_proposal_expiration;  // unparseable upstream; re-enable once repaired
-// PARKED: test_pending_reservations uses removed 2-arg initialize + get_pending_reserved API; re-enable after repair.
-// #[cfg(test)]
-// mod test_pending_reservations;
+#[cfg(test)]
+mod test_pending_reservations;
 // TODO: test module file is corrupted by a bad merge; restore it to re-enable.
 // #[cfg(test)]
 // mod test_proposal_expiration;

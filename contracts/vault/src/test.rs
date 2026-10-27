@@ -4042,7 +4042,7 @@ macro_rules! setup_retry_test {
 
 #[test]
 fn test_retry_schedules_on_retryable_failure() {
-    setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);
+    setup_retry_test!(env, client, admin, signer1, token_addr, _contract_id);
 
     // Propose transfer of 1000 but vault only has 500 → InsufficientBalance (retryable)
     let recipient = Address::generate(&env);
@@ -4058,8 +4058,9 @@ fn test_retry_schedules_on_retryable_failure() {
         &0_i128,
     );
 
-    // Approve to reach threshold
+    // Approve to reach threshold (2-of-N)
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
 
     // Execute — should schedule retry (returns Ok) instead of failing
     let result = client.try_execute_proposal(&admin, &proposal_id);
@@ -4117,9 +4118,8 @@ fn test_retryable_failure_does_not_consume_circuit_breaker_budget() {
 }
 
 #[test]
-#[ignore = "retry semantics changed; needs update"]
 fn test_retry_backoff_enforced() {
-    setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);
+    setup_retry_test!(env, client, admin, signer1, token_addr, _contract_id);
 
     let recipient = Address::generate(&env);
     let proposal_id = client.propose_transfer(
@@ -4135,6 +4135,7 @@ fn test_retry_backoff_enforced() {
     );
 
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
 
     // First execution — schedules retry
     client.execute_proposal(&admin, &proposal_id);
@@ -4145,9 +4146,8 @@ fn test_retry_backoff_enforced() {
 }
 
 #[test]
-#[ignore = "retry semantics changed; needs update"]
 fn test_retry_max_retries_exhausted() {
-    setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);
+    setup_retry_test!(env, client, admin, signer1, token_addr, _contract_id);
 
     let recipient = Address::generate(&env);
     let proposal_id = client.propose_transfer(
@@ -4163,6 +4163,7 @@ fn test_retry_max_retries_exhausted() {
     );
 
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
 
     // Exhaust all 3 retries by advancing ledger past backoff each time
     for i in 0..3u32 {
@@ -4182,9 +4183,8 @@ fn test_retry_max_retries_exhausted() {
 }
 
 #[test]
-#[ignore = "retry semantics changed; needs update"]
 fn test_retry_exponential_backoff_increases() {
-    setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);
+    setup_retry_test!(env, client, admin, signer1, token_addr, _contract_id);
 
     let recipient = Address::generate(&env);
     let proposal_id = client.propose_transfer(
@@ -4200,6 +4200,7 @@ fn test_retry_exponential_backoff_increases() {
     );
 
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
 
     // First retry — backoff = 10
     client.execute_proposal(&admin, &proposal_id);
@@ -4311,9 +4312,8 @@ fn test_retry_not_enabled_passes_through_error() {
 }
 
 #[test]
-#[ignore = "retry semantics changed; needs update"]
 fn test_retry_execution_function() {
-    setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);
+    setup_retry_test!(env, client, admin, signer1, token_addr, _contract_id);
 
     let recipient = Address::generate(&env);
     let proposal_id = client.propose_transfer(
@@ -4329,6 +4329,7 @@ fn test_retry_execution_function() {
     );
 
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
 
     // Trigger initial failure → schedules retry
     client.execute_proposal(&admin, &proposal_id);
@@ -4351,9 +4352,8 @@ fn test_retry_execution_function() {
 }
 
 #[test]
-#[ignore = "retry semantics changed; needs update"]
 fn test_retry_succeeds_after_balance_funded() {
-    setup_retry_test!(env, client, admin, _signer1, token_addr, contract_id);
+    setup_retry_test!(env, client, admin, signer1, token_addr, contract_id);
 
     let sac_admin_client = StellarAssetClient::new(&env, &token_addr);
 
@@ -4371,6 +4371,7 @@ fn test_retry_succeeds_after_balance_funded() {
     );
 
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signer1, &proposal_id);
 
     // First attempt fails — insufficient balance (vault has 500, need 1000)
     client.execute_proposal(&admin, &proposal_id);
@@ -6224,9 +6225,60 @@ fn test_retry_not_enabled() {
 }
 
 #[test]
-#[ignore] // Escrow test - system working but complex initialization in test environment
 fn test_escrow_basic_flow() {
-    // Full integration tested in production deploy
+    // Basic escrow lifecycle: fund, create, complete the milestone, release.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let funder = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbitrator = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(funder.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 2));
+    client.add_supported_token(&admin, &token, &1_000_000, &10_000_000);
+    StellarAssetClient::new(&env, &token).mint(&funder, &5_000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(crate::types::Milestone {
+        id: 1,
+        percentage: 100,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    });
+    let escrow_id = client.create_escrow(
+        &funder,
+        &recipient,
+        &token,
+        &2000i128,
+        &milestones,
+        &1000u64,
+        &arbitrator,
+    );
+    assert_eq!(
+        client.get_escrow_info(&escrow_id).status,
+        crate::types::EscrowStatus::Active
+    );
+
+    client.complete_milestone(&funder, &escrow_id, &1u64);
+    let released = client.release_escrow(&funder, &escrow_id);
+    assert_eq!(released, 2000);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &token).balance(&recipient),
+        2000
+    );
 }
 
 #[test]
