@@ -140,7 +140,6 @@ fn test_get_signer_snapshot_for_debugging() {
 
 /// Issue #1423: Test proposal supersession
 #[test]
-#[ignore = "quarantined: unwrap on HostError(Value, InvalidInput) against the current contract (docs/reference/TESTING.md)"]
 fn test_supersede_proposal_basic() {
     let env = Env::default();
     env.mock_all_auths();
@@ -167,7 +166,7 @@ fn test_supersede_proposal_basic() {
         &recipient2,
         &token,
         &200i128,
-        &Symbol::new(&env, "superseding memo"),
+        &Symbol::new(&env, "superseding_memo"),
         &Priority::High,
         &Vec::new(&env),
         &ConditionLogic::And,
@@ -223,7 +222,7 @@ fn test_supersede_proposal_authorization_check() {
             &recipient2,
             &token,
             &200i128,
-            &Symbol::new(&env, "unauthorized attempt"),
+            &Symbol::new(&env, "unauthorized_attempt"),
             &Priority::High,
             &Vec::new(&env),
             &ConditionLogic::And,
@@ -329,7 +328,6 @@ fn test_approval_timeout_configuration() {
 
 /// Issue #1425: Test auto-expire proposals
 #[test]
-#[ignore = "quarantined: fails with VaultError::InsufficientRole against the current contract (docs/reference/TESTING.md)"]
 fn test_auto_expire_proposals_basic() {
     let env = Env::default();
     env.mock_all_auths();
@@ -368,7 +366,6 @@ fn test_auto_expire_proposals_basic() {
 
 /// Issue #1425: Test timeout rejection at proposal creation
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_reject_proposal_creation_if_timeout_passed() {
     let env = Env::default();
     env.mock_all_auths();
@@ -400,7 +397,6 @@ fn test_reject_proposal_creation_if_timeout_passed() {
 
 /// Issue #1425: Test auto-expire with max count limit
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_auto_expire_proposals_respects_max_count() {
     let env = Env::default();
     env.mock_all_auths();

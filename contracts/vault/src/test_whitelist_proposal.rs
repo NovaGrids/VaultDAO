@@ -315,7 +315,6 @@ fn test_direct_admin_whitelist_still_enforces_guards() {
 /// Reading an audit entry returns it and extends its TTL, so an entry that is
 /// only ever read survives instead of being evicted.
 #[test]
-#[ignore = "quarantined: fails with VaultError::ProposalNotFound against the current contract (docs/reference/TESTING.md)"]
 fn test_get_audit_entry_extends_ttl_on_read() {
     let env = Env::default();
     let (client, _admin, _s1, _s2) = setup(&env);
@@ -323,7 +322,7 @@ fn test_get_audit_entry_extends_ttl_on_read() {
     let count = client.get_audit_entry_count();
     assert!(count > 0, "initialize should have written an audit entry");
 
-    let entry_id = 0u64;
+    let entry_id = 1u64;
     let first = client.get_audit_entry(&entry_id);
 
     // After a substantial ledger advance the entry still resolves, because the

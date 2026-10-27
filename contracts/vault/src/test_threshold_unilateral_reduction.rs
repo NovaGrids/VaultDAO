@@ -257,7 +257,6 @@ fn test_update_threshold_unchanged_applied_immediately() {
 /// update_threshold with another reduction must fail with
 /// `ConfigChangeInProgress`.
 #[test]
-#[ignore = "quarantined: first reduction must succeed in creating a proposal (docs/reference/TESTING.md)"]
 fn test_concurrent_reduction_blocked_with_config_change_in_progress() {
     let env = Env::default();
     // 4 signers, threshold = 3
@@ -367,7 +366,6 @@ fn test_threshold_reduction_succeeds_after_governance_and_timelock() {
 /// fail at the pre-check, before any proposal is created, because < 2 is
 /// unconditionally invalid.
 #[test]
-#[ignore = "quarantined: a valid reduction after a rejected one must still be allowed (docs/reference/TESTING.md)"]
 fn test_threshold_reduction_to_one_is_blocked_before_proposal_creation() {
     let env = Env::default();
     let (client, admin, _signers) = make_vault(&env, 3, 4);

@@ -114,7 +114,6 @@ proptest! {
     /// reputation-adjusted limit, no matter the order of proposal creation,
     /// cancellation, and day/week boundary crossings.
     #[test]
-    #[ignore = "quarantined: this function is not accessible outside of a contract, wrap the call with `env.as_contract()` to access it from a partic (docs/reference/TESTING.md)"]
     fn daily_and_weekly_spent_never_exceed_limits(
         actions in prop_vec(action_strategy(), 1..40),
     ) {
@@ -158,7 +157,7 @@ proptest! {
             // itself applies (see `propose_transfer_internal`), so the
             // invariant holds even once an address's reputation crosses the
             // 750 boost threshold.
-            let rep = storage::get_reputation(&env, &admin);
+            let rep = env.as_contract(&client.address, || storage::get_reputation(&env, &admin));
             let adjusted_daily_limit = if rep.score >= 750 {
                 (DAILY_LIMIT * 3) / 2
             } else {
@@ -200,7 +199,6 @@ proptest! {
     /// spend counters that were reserved at proposal-creation time, so the
     /// pending totals return to zero.
     #[test]
-    #[ignore = "quarantined: this function is not accessible outside of a contract, wrap the call with `env.as_contract()` to access it from a partic (docs/reference/TESTING.md)"]
     fn cancelling_all_pending_releases_reservations(
         actions in prop_vec(action_strategy(), 1..40),
     ) {

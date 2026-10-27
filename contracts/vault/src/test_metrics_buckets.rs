@@ -154,10 +154,10 @@ fn test_metrics_spanning_2_weeks() {
 }
 
 #[test]
-#[ignore = "quarantined: this function is not accessible outside of a contract, wrap the call with `env.as_contract()` to access it from a partic (docs/reference/TESTING.md)"]
 fn test_pruning_at_52_buckets() {
     let env = Env::default();
     env.mock_all_auths();
+    let contract_id = env.register(crate::VaultDAO, ());
 
     // Directly insert 53 buckets into storage
     for week in 0u64..53 {
@@ -170,16 +170,20 @@ fn test_pruning_at_52_buckets() {
             total_gas_used: 0,
             last_updated_ledger: week * 100,
         };
-        storage::set_metrics_bucket(&env, week, &metrics);
+        env.as_contract(&contract_id, || {
+            storage::set_metrics_bucket(&env, week, &metrics);
+        });
     }
 
     // After inserting 53, the oldest (week 0) should be pruned
-    let oldest = storage::get_metrics_bucket(&env, 0);
+    let oldest: VaultMetrics =
+        env.as_contract(&contract_id, || storage::get_metrics_bucket(&env, 0));
     // Week 0 was pruned — should return default (zeros)
     assert_eq!(oldest.executed_count, 0);
 
     // Week 52 should still exist
-    let newest = storage::get_metrics_bucket(&env, 52);
+    let newest: VaultMetrics =
+        env.as_contract(&contract_id, || storage::get_metrics_bucket(&env, 52));
     assert_eq!(newest.executed_count, 1);
 }
 

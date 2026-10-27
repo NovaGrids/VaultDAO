@@ -286,7 +286,6 @@ fn test_dependency_already_executed_outside_batch_is_accepted() {
 }
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_unexecuted_dependency_outside_batch_aborts_batch() {
     let env = Env::default();
     let (client, admin, proposer, token, _cid) = setup(&env);
@@ -323,7 +322,6 @@ fn test_unexecuted_dependency_outside_batch_aborts_batch() {
 }
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_validation_happens_before_any_transfer() {
     let env = Env::default();
     let (client, admin, proposer, token, cid) = setup(&env);

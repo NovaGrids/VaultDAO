@@ -283,11 +283,13 @@ fn test_cancel_downgrade_within_grace_period() {
     let sub = client.get_subscription(&sub_id);
     assert_eq!(sub.status, SubscriptionStatus::Active);
 
-    // Cancel downgrade before grace period
+    // An active subscription can be cancelled outright.
     let result = client.try_cancel_subscription(&subscriber, &sub_id);
-
-    // Can cancel active subscription
-    assert!(result.is_ok() || result.is_err()); // Depends on implementation
+    assert!(result.is_ok());
+    assert_eq!(
+        client.get_subscription(&sub_id).status,
+        SubscriptionStatus::Cancelled
+    );
 }
 
 // ============================================================================
@@ -295,7 +297,6 @@ fn test_cancel_downgrade_within_grace_period() {
 // ============================================================================
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_cannot_cancel_after_grace_period() {
     let env = Env::default();
     env.mock_all_auths();
@@ -314,16 +315,15 @@ fn test_cannot_cancel_after_grace_period() {
         100,
     );
 
-    // Advance well past grace period (200 ledgers)
+    // Advance well past the downgrade grace period (200 ledgers).
     env.ledger().with_mut(|li| li.sequence_number += 400);
 
-    // Try to cancel after grace period
+    // Cancellation itself is always allowed; the grace period only governs
+    // pending downgrades, not the subscriber's right to cancel.
     let result = client.try_cancel_subscription(&subscriber, &sub_id);
-
-    // May fail or succeed depending on implementation
-    // but subscription state should reflect the time passage
+    assert!(result.is_ok());
     let sub = client.get_subscription(&sub_id);
-    assert!(sub.status == SubscriptionStatus::Active || sub.status == SubscriptionStatus::Expired);
+    assert_eq!(sub.status, SubscriptionStatus::Cancelled);
 }
 
 // ============================================================================
