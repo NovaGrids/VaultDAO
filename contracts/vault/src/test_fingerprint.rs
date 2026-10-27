@@ -81,13 +81,14 @@ fn propose(
 // ── Test 1: Exact duplicate is blocked ──────────────────────────────────────
 
 #[test]
-#[ignore = "quarantined: first proposal should succeed (docs/reference/TESTING.md)"]
 fn test_exact_duplicate_blocked() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -104,16 +105,19 @@ fn test_exact_duplicate_blocked() {
     assert_eq!(r2, Err(Ok(VaultError::DuplicateProposal)));
 }
 
-// ── Test 2: Different memo → different fingerprint → allowed ─────────────
+// ── Test 2: Memo is not part of the fingerprint ────────────────────────────
+// The fingerprint covers (amount, recipient, token) only (#1089): a memo
+// change does not make an identical transfer distinct.
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
-fn test_different_description_allowed() {
+fn test_same_transfer_different_memo_still_blocked() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -126,23 +130,25 @@ fn test_different_description_allowed() {
     );
     assert!(r1.is_ok());
 
-    // Same amount, different memo → different fingerprint → should succeed
+    // Same amount/recipient/token with a different memo is still the same
+    // transfer and must be rejected as a duplicate.
     let r2 = propose(
         &client, &env, &treasurer, &recipient, &token, 1000, "memo_b",
     );
-    assert!(r2.is_ok(), "different memo produces a distinct fingerprint");
+    assert_eq!(r2, Err(Ok(VaultError::DuplicateProposal)));
 }
 
 // ── Test 3: Different amount → different fingerprint → allowed ────────────
 
 #[test]
-#[ignore = "quarantined: called `Result::unwrap()` on an `Err` value: Err(Abort) (docs/reference/TESTING.md)"]
 fn test_different_amount_allowed() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -159,13 +165,14 @@ fn test_different_amount_allowed() {
 // ── Test 4: Duplicate check blocks same proposal twice ───────────────────
 
 #[test]
-#[ignore = "quarantined: called `Result::unwrap()` on an `Err` value: Err(Abort) (docs/reference/TESTING.md)"]
 fn test_triple_submit_blocked_after_first() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -190,7 +197,9 @@ fn test_non_treasurer_cannot_propose() {
     let admin = Address::generate(&env);
     let member = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -205,14 +214,15 @@ fn test_non_treasurer_cannot_propose() {
 // ── Test 6: Different recipient → separate fingerprints ─────────────────
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_different_recipient_allowed() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient1 = Address::generate(&env);
     let recipient2 = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -252,7 +262,9 @@ fn test_paused_vault_blocks_proposal() {
     let emergency2 = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
