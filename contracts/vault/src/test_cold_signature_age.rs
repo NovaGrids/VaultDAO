@@ -35,6 +35,47 @@ fn setup_cold(env: &Env, max_age: u64) -> (VaultDAOClient<'_>, Address, BytesN<3
         max_cold_sig_age_ledgers: max_age,
     };
 
+    // set_cold_signer_config requires the Admin role, so initialise first.
+    let mut signers = Vec::new(env);
+    signers.push_back(admin.clone());
+    signers.push_back(Address::generate(env));
+    client.initialize(&admin, &crate::types::InitConfig {
+        upgrade_timelock_delay: 17_280,
+        veto_window_ledgers: 0,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
+        signers,
+        threshold: 2,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1_000_000,
+        daily_limit: 5_000_000,
+        weekly_limit: 10_000_000,
+        timelock_threshold: 0,
+        timelock_delay: 0,
+        velocity_limit: crate::types::VelocityConfig {
+            limit: 1_000_000,
+            window: 3600,
+            per_token_limit: 0,
+        },
+        threshold_strategy: crate::types::ThresholdStrategy::Fixed,
+        pre_execution_hooks: Vec::new(env),
+        post_execution_hooks: Vec::new(env),
+        veto_addresses: Vec::new(env),
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+            max_retry_delay: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(env),
+        staking_config: crate::types::StakingConfig::default(),
+        proposal_id_prefix: 0,
+    });
     client.set_cold_signer_config(&admin, &cold_config);
 
     (client, admin, pubkey)
@@ -54,7 +95,6 @@ fn test_default_config_sets_a_maximum_age() {
 
 /// A signature dated far in the past is rejected before any verification work.
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_signature_older_than_max_age_rejected() {
     let env = Env::default();
     let (client, _admin, pubkey) = setup_cold(&env, 1_000);
@@ -75,7 +115,6 @@ fn test_signature_older_than_max_age_rejected() {
 /// could set an arbitrarily far-future ledger and make the age check
 /// unfalsifiable.
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_future_dated_signature_rejected() {
     let env = Env::default();
     let (client, _admin, pubkey) = setup_cold(&env, 1_000);
@@ -90,13 +129,14 @@ fn test_future_dated_signature_rejected() {
 /// A maximum age of zero disables the check, preserving prior behaviour for
 /// vaults that have not opted in.
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_zero_max_age_disables_the_check() {
     let env = Env::default();
     let (client, _admin, pubkey) = setup_cold(&env, 0);
 
+    // Jump well past any real age bound but inside instance TTL
+    // (archival is test-only).
     env.ledger().with_mut(|li| {
-        li.sequence_number += 1_000_000;
+        li.sequence_number += 100_000;
     });
 
     let signature = BytesN::from_array(&env, &[3u8; 64]);
@@ -109,7 +149,6 @@ fn test_zero_max_age_disables_the_check() {
 /// A signature exactly at the age limit is still accepted by the age gate —
 /// the bound is inclusive.
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_signature_at_exact_age_limit_passes_age_gate() {
     let env = Env::default();
     let max_age = 1_000u64;
@@ -128,7 +167,6 @@ fn test_signature_at_exact_age_limit_passes_age_gate() {
 
 /// One ledger past the limit flips to rejection, pinning the boundary.
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_signature_one_ledger_past_limit_rejected() {
     let env = Env::default();
     let max_age = 1_000u64;
@@ -164,7 +202,6 @@ fn test_unconfigured_vault_reports_config_error() {
 
 /// The configured maximum age round-trips through storage.
 #[test]
-#[ignore = "quarantined: fails with VaultError::Unauthorized against the current contract (docs/reference/TESTING.md)"]
 fn test_max_age_persists_in_config() {
     let env = Env::default();
     let (client, _admin, _pubkey) = setup_cold(&env, 4_242);

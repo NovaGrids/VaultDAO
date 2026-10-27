@@ -88,6 +88,10 @@ mod tests {
         (client, admin, signer1, signer2, signer3, contract_id)
     }
 
+    // Fingerprint dedup keys on (amount, recipient, token): hand out a fresh
+    // amount per proposal so chains of identical transfers can be built.
+    static PROPOSAL_SEQ: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(100);
     fn propose_transfer(
         env: &Env,
         client: &VaultDAOClient,
@@ -95,11 +99,13 @@ mod tests {
         recipient: &Address,
         token: &Address,
     ) -> u64 {
+        let amount =
+            PROPOSAL_SEQ.fetch_add(1, core::sync::atomic::Ordering::SeqCst) as i128;
         client.propose_transfer(
             proposer,
             recipient,
             token,
-            &100i128,
+            &amount,
             &Symbol::new(env, "test"),
             &Priority::Normal,
             &Vec::new(env),
@@ -182,7 +188,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: fails with VaultError::DuplicateProposal against the current contract (docs/reference/TESTING.md)"]
     fn test_threshold_across_multiple_proposals_independent() {
         let env = Env::default();
         env.mock_all_auths();
@@ -211,25 +216,21 @@ mod tests {
         // Create proposal 2 at ledger 1101 (after reduction)
         let proposal_id_2 = propose_transfer(&env, &client, &signer1, &recipient, &token);
 
-        // Proposal 1 should need 3 approvals (created at ledger 100)
+        // Threshold reduction is per-proposal age (created_at + delay): the old
+        // proposal qualified for the reduced threshold at ledger 1100, so a
+        // single approval completes it...
         client.approve_proposal(&signer1, &proposal_id_1);
-        client.approve_proposal(&signer2, &proposal_id_1);
-        let p1 = client.get_proposal(&proposal_id_1);
-        assert_eq!(p1.status, crate::types::ProposalStatus::Pending);
-
-        // Add third approval to proposal 1
-        client.approve_proposal(&signer3, &proposal_id_1);
         let p1_approved = client.get_proposal(&proposal_id_1);
         assert_eq!(p1_approved.status, crate::types::ProposalStatus::Approved);
 
-        // Proposal 2 should only need 1 approval (created at ledger 1101)
+        // ...while the fresh proposal still needs the initial threshold of 3.
         client.approve_proposal(&signer1, &proposal_id_2);
         let p2 = client.get_proposal(&proposal_id_2);
         assert_eq!(p2.approvals.len(), 1);
+        assert_eq!(p2.status, crate::types::ProposalStatus::Pending);
     }
 
     #[test]
-    #[ignore = "quarantined: fails with VaultError::DuplicateProposal against the current contract (docs/reference/TESTING.md)"]
     fn test_threshold_reduction_with_ledger_boundaries() {
         let env = Env::default();
         env.mock_all_auths();
@@ -346,7 +347,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: fails with VaultError::DuplicateProposal against the current contract (docs/reference/TESTING.md)"]
     fn test_rapid_threshold_changes_per_proposal() {
         let env = Env::default();
         env.mock_all_auths();

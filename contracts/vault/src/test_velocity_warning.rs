@@ -4,7 +4,7 @@
 use super::*;
 use crate::types::Priority;
 use crate::{VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
+use soroban_sdk::{testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, Env, Symbol, TryFromVal, TryIntoVal, Vec};
 
 fn setup(
     env: &Env,
@@ -62,6 +62,11 @@ fn setup(
         },
     );
 
+    // The sliding window prunes entries with ts <= now - window; at the
+    // default timestamp 0 every entry is pruned and no window ever fills.
+    // Start the clock so transfers accumulate in the window.
+    env.ledger().with_mut(|l| l.timestamp = 5_000);
+
     (client, admin, signer1, signer2, contract_id)
 }
 
@@ -69,12 +74,17 @@ fn setup(
 // symbol name (mirrors the helper used in test_voting_deadline.rs).
 fn has_event_with_topic(env: &Env, topic_name: &str) -> bool {
     use soroban_sdk::testutils::Events;
-    use soroban_sdk::IntoVal;
-    let all_events = env.events().all();
-    let expected: soroban_sdk::Val = Symbol::new(env, topic_name).into_val(env);
-    all_events.iter().any(|e| {
+    let expected = Symbol::new(env, topic_name);
+    // Compare by value: long symbols are heap objects, so payload (handle)
+    // equality never matches across instances.
+    env.events().all().iter().any(|e| {
         let topics = e.1;
-        !topics.is_empty() && topics.get(0).unwrap().get_payload() == expected.get_payload()
+        !topics.is_empty()
+            && topics
+                .get(0)
+                .and_then(|t| soroban_sdk::Symbol::try_from_val(env, &t).ok())
+                .map(|s| s == expected)
+                .unwrap_or(false)
     })
 }
 
@@ -101,7 +111,6 @@ fn make_transfer(
 /// With a velocity limit of 3, the 2nd transfer in the window leaves exactly
 /// one transfer of remaining capacity and must emit `velocity_warning`.
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_velocity_warning_emitted_one_away_from_cap() {
     let env = Env::default();
     env.mock_all_auths();
@@ -146,7 +155,6 @@ fn test_velocity_warning_not_emitted_when_not_close_to_cap() {
 /// and is rejected with `VelocityLimitExceeded` rather than emitting
 /// another warning.
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_velocity_warning_then_limit_exceeded() {
     let env = Env::default();
     env.mock_all_auths();
