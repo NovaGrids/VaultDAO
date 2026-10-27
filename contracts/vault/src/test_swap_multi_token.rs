@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod tests {
+    use crate::testutils::mock_oracle::{MockOracle, MockOracleClient};
     use crate::*;
-    use soroban_sdk::{testutils::Address as AddressTestUtils, Address, Env, Vec};
+    use soroban_sdk::{testutils::Address as AddressTestUtils, Address, Env, Symbol, Vec};
 
     fn make_config(env: &Env, signers: Vec<Address>) -> InitConfig {
         InitConfig {
@@ -78,6 +79,19 @@ mod tests {
         client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
         client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
 
+        // Swap execution checks oracle prices for price impact.
+        let oracle_id = env.register(MockOracle, ());
+        let oracle = MockOracleClient::new(&env, &oracle_id);
+        client.set_oracle_config(
+            &admin,
+            &VaultOracleConfig {
+                address: oracle_id.clone(),
+                base_symbol: Symbol::new(&env, "USD"),
+                max_staleness: 100,
+            },
+        );
+        oracle.set_price(&100, &env.ledger().timestamp());
+
         let swap_op =
             SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
 
@@ -98,7 +112,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
     fn test_swap_execute_stores_balance_events() {
         let env = Env::default();
         env.mock_all_auths();
@@ -133,6 +146,19 @@ mod tests {
         client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
         client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
 
+        // Swap execution checks oracle prices for price impact.
+        let oracle_id = env.register(MockOracle, ());
+        let oracle = MockOracleClient::new(&env, &oracle_id);
+        client.set_oracle_config(
+            &admin,
+            &VaultOracleConfig {
+                address: oracle_id.clone(),
+                base_symbol: Symbol::new(&env, "USD"),
+                max_staleness: 100,
+            },
+        );
+        oracle.set_price(&100, &env.ledger().timestamp());
+
         let swap_op =
             SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
 
@@ -146,6 +172,7 @@ mod tests {
         );
 
         client.approve_proposal(&admin, &proposal_id);
+        client.approve_proposal(&treasurer, &proposal_id);
         client.execute_swap_proposal(&admin, &proposal_id);
 
         let result = client.get_swap_result(&proposal_id);
@@ -189,6 +216,19 @@ mod tests {
         let token_out = Address::generate(&env);
         client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
         client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
+
+        // Swap execution checks oracle prices for price impact.
+        let oracle_id = env.register(MockOracle, ());
+        let oracle = MockOracleClient::new(&env, &oracle_id);
+        client.set_oracle_config(
+            &admin,
+            &VaultOracleConfig {
+                address: oracle_id.clone(),
+                base_symbol: Symbol::new(&env, "USD"),
+                max_staleness: 100,
+            },
+        );
+        oracle.set_price(&100, &env.ledger().timestamp());
 
         let swap_op =
             SwapProposal::Swap(dex.clone(), token_in.clone(), token_out.clone(), 1000, 950);
@@ -242,6 +282,19 @@ mod tests {
         let token_out = Address::generate(&env);
         client.add_supported_token(&admin, &token_in, &10_000i128, &50_000i128);
         client.add_supported_token(&admin, &token_out, &10_000i128, &50_000i128);
+
+        // Swap execution checks oracle prices for price impact.
+        let oracle_id = env.register(MockOracle, ());
+        let oracle = MockOracleClient::new(&env, &oracle_id);
+        client.set_oracle_config(
+            &admin,
+            &VaultOracleConfig {
+                address: oracle_id.clone(),
+                base_symbol: Symbol::new(&env, "USD"),
+                max_staleness: 100,
+            },
+        );
+        oracle.set_price(&100, &env.ledger().timestamp());
 
         let swap_op = SwapProposal::Swap(
             dex.clone(),

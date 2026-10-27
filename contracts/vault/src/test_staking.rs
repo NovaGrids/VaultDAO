@@ -301,7 +301,6 @@ fn test_slash_stake_zero_when_staking_disabled_on_rejection() {
 // ============================================================================
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_refund_stake_on_execution_sets_refunded_flag() {
     let env = Env::default();
     env.mock_all_auths();
@@ -311,6 +310,7 @@ fn test_refund_stake_on_execution_sets_refunded_flag() {
         create_staked_proposal(&env, &client, &proposer, &token, &contract_id, 1000);
 
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&proposer, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     let record = client.get_stake_record(&proposal_id).unwrap();
@@ -323,7 +323,6 @@ fn test_refund_stake_on_execution_sets_refunded_flag() {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_refund_stake_returns_full_amount_to_proposer() {
     let env = Env::default();
     env.mock_all_auths();
@@ -335,6 +334,7 @@ fn test_refund_stake_returns_full_amount_to_proposer() {
     let proposer_balance_before = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
 
     client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&proposer, &proposal_id);
     client.execute_proposal(&admin, &proposal_id);
 
     let proposer_balance_after = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);

@@ -397,6 +397,10 @@ pub enum FeatureKey {
     MetricsBucket(u64),
     /// Ordered list of stored bucket week numbers (for pruning) -> Vec<u64>
     MetricsBucketIndex,
+    /// Cumulative metrics already attributed to weekly buckets -> VaultMetrics.
+    /// Buckets hold per-week deltas while the global metrics are cumulative;
+    /// without this baseline, summing buckets would double-count.
+    MetricsBucketBaseline,
     /// Pending config change proposal ID -> u64
     PendingConfig,
     /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
@@ -4406,10 +4410,46 @@ pub fn set_metrics_bucket(env: &Env, week: u64, metrics: &VaultMetrics) {
     }
 }
 
-/// Update the current week's metrics bucket with the latest cumulative snapshot.
+/// Record the current week's metrics bucket.
+///
+/// Buckets hold per-week deltas so `get_metrics_for_period` can sum them.
+/// The global metrics are cumulative, so each update attributes only the
+/// unattributed remainder (tracked via `MetricsBucketBaseline`).
 pub fn update_metrics_bucket(env: &Env, metrics: &VaultMetrics) {
     let week = get_week_number(env);
-    set_metrics_bucket(env, week, metrics);
+    let baseline: VaultMetrics = env
+        .storage()
+        .instance()
+        .get(&FeatureKey::MetricsBucketBaseline)
+        .unwrap_or_default();
+    let mut bucket = get_metrics_bucket(env, week);
+    bucket.total_proposals = bucket
+        .total_proposals
+        .saturating_add(metrics.total_proposals.saturating_sub(baseline.total_proposals));
+    bucket.executed_count = bucket
+        .executed_count
+        .saturating_add(metrics.executed_count.saturating_sub(baseline.executed_count));
+    bucket.rejected_count = bucket
+        .rejected_count
+        .saturating_add(metrics.rejected_count.saturating_sub(baseline.rejected_count));
+    bucket.expired_count = bucket
+        .expired_count
+        .saturating_add(metrics.expired_count.saturating_sub(baseline.expired_count));
+    bucket.total_execution_time_ledgers = bucket.total_execution_time_ledgers.saturating_add(
+        metrics
+            .total_execution_time_ledgers
+            .saturating_sub(baseline.total_execution_time_ledgers),
+    );
+    bucket.total_gas_used = bucket
+        .total_gas_used
+        .saturating_add(metrics.total_gas_used.saturating_sub(baseline.total_gas_used));
+    bucket.last_updated_ledger = bucket
+        .last_updated_ledger
+        .max(metrics.last_updated_ledger);
+    set_metrics_bucket(env, week, &bucket);
+    env.storage()
+        .instance()
+        .set(&FeatureKey::MetricsBucketBaseline, metrics);
     crate::events::emit_metrics_bucket_updated(
         env,
         week,

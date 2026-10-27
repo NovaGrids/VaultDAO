@@ -68,7 +68,6 @@ fn setup_metrics(env: &Env) -> (VaultDAOClient, Address, Address, Address) {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_metrics_after_3_executions_same_week() {
     let env = Env::default();
     env.mock_all_auths();
@@ -83,7 +82,7 @@ fn test_metrics_after_3_executions_same_week() {
             &signer,
             &recipient,
             &token,
-            &100,
+            &(100 + i as i128),
             &Symbol::new(&env, "t"),
             &Priority::Normal,
             &Vec::new(&env),
@@ -91,12 +90,14 @@ fn test_metrics_after_3_executions_same_week() {
             &0i128,
         );
         client.approve_proposal(&signer, &pid);
+        client.approve_proposal(&admin, &pid);
         client.execute_proposal(&admin, &pid);
         let _ = i;
     }
 
-    let week = storage::get_week_number(&env);
-    let bucket = storage::get_metrics_bucket(&env, week);
+    let week = env.as_contract(&client.address, || storage::get_week_number(&env));
+    let bucket =
+        env.as_contract(&client.address, || storage::get_metrics_bucket(&env, week));
     assert_eq!(bucket.executed_count, 3);
 
     // Cumulative metrics unchanged
@@ -105,7 +106,6 @@ fn test_metrics_after_3_executions_same_week() {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_metrics_spanning_2_weeks() {
     let env = Env::default();
     env.mock_all_auths();
@@ -127,6 +127,7 @@ fn test_metrics_spanning_2_weeks() {
         &0i128,
     );
     client.approve_proposal(&signer, &pid1);
+    client.approve_proposal(&admin, &pid1);
     client.execute_proposal(&admin, &pid1);
 
     // Week 2 (advance timestamp by 1 week)
@@ -136,7 +137,7 @@ fn test_metrics_spanning_2_weeks() {
         &signer,
         &recipient,
         &token,
-        &100,
+        &101,
         &Symbol::new(&env, "w2"),
         &Priority::Normal,
         &Vec::new(&env),
@@ -144,6 +145,7 @@ fn test_metrics_spanning_2_weeks() {
         &0i128,
     );
     client.approve_proposal(&signer, &pid2);
+    client.approve_proposal(&admin, &pid2);
     client.execute_proposal(&admin, &pid2);
 
     // Query period spanning both weeks
@@ -182,7 +184,6 @@ fn test_pruning_at_52_buckets() {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_get_metrics_cumulative_unchanged() {
     let env = Env::default();
     env.mock_all_auths();
@@ -202,6 +203,7 @@ fn test_get_metrics_cumulative_unchanged() {
         &0i128,
     );
     client.approve_proposal(&signer, &pid);
+    client.approve_proposal(&admin, &pid);
     client.execute_proposal(&admin, &pid);
 
     // get_metrics still returns cumulative totals

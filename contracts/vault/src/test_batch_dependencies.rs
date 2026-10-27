@@ -106,6 +106,7 @@ fn approved_proposal(
         &deps,
     );
     client.approve_proposal(admin, &id);
+    client.approve_proposal(proposer, &id);
     id
 }
 
@@ -134,7 +135,6 @@ fn emitted(env: &Env, name: &str) -> bool {
 // ============================================================================
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_batch_listed_out_of_order_is_reordered_and_executes() {
     let env = Env::default();
     let (client, admin, proposer, token, _cid) = setup(&env);
@@ -164,7 +164,6 @@ fn test_batch_listed_out_of_order_is_reordered_and_executes() {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_reorder_emits_event() {
     let env = Env::default();
     let (client, admin, proposer, token, _cid) = setup(&env);
@@ -189,7 +188,6 @@ fn test_reorder_emits_event() {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_already_ordered_batch_is_not_reordered() {
     let env = Env::default();
     let (client, admin, proposer, token, _cid) = setup(&env);
@@ -215,7 +213,6 @@ fn test_already_ordered_batch_is_not_reordered() {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_deep_dependency_chain_is_sorted() {
     let env = Env::default();
     let (client, admin, proposer, token, _cid) = setup(&env);
@@ -235,7 +232,6 @@ fn test_deep_dependency_chain_is_sorted() {
 }
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_diamond_dependency_is_sorted() {
     let env = Env::default();
     let (client, admin, proposer, token, _cid) = setup(&env);
@@ -264,7 +260,6 @@ fn test_diamond_dependency_is_sorted() {
 // ============================================================================
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_dependency_already_executed_outside_batch_is_accepted() {
     let env = Env::default();
     let (client, admin, proposer, token, _cid) = setup(&env);

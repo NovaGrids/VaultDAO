@@ -7200,7 +7200,6 @@ fn test_direct_set_full_quorum_threshold_is_rejected() {
 /// Verify the full governance round-trip for full_quorum_threshold:
 /// propose → approve (supermajority) → execute → check stored value.
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_full_quorum_threshold_via_governance_proposal() {
     let env = Env::default();
     env.mock_all_auths();
@@ -7227,9 +7226,10 @@ fn test_full_quorum_threshold_via_governance_proposal() {
         &5000i128,
     );
 
-    // Two approvals are enough to reach the default 67% supermajority.
+    // Supermajority is ceil(3 * 67 / 100) = 3: all three signers approve.
     client.approve_config_change(&admin, &gov_id);
     client.approve_config_change(&signer2, &gov_id);
+    client.approve_config_change(&signer3, &gov_id);
 
     // Execute: the new value should be applied to Config.
     client.execute_config_change(&admin, &gov_id);

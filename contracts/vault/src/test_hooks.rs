@@ -166,7 +166,6 @@ fn test_duplicate_hook() {
 }
 
 #[test]
-#[ignore = "quarantined: fixture has fewer signers than its threshold (ThresholdTooHigh) (docs/reference/TESTING.md)"]
 fn test_hooks_with_initialization() {
     let env = Env::default();
     env.mock_all_auths();
@@ -197,6 +196,7 @@ fn test_hooks_with_initialization() {
         signers: {
             let mut s = Vec::new(&env);
             s.push_back(admin.clone());
+            s.push_back(Address::generate(&env));
             s
         },
         threshold: 2,
