@@ -401,9 +401,8 @@ fn calculate_impact_score(
 // docs/reference/TESTING.md.
 #[cfg(test)]
 mod test_spending_limit_invariants_proptest;
-// PARKED: test_spending_refund_buckets references removed get_pending_reserved API; re-enable after repair.
-// #[cfg(test)]
-// mod test_spending_refund_buckets;
+#[cfg(test)]
+mod test_spending_refund_buckets;
 #[cfg(test)]
 mod test_stream_vesting_invariants_proptest;
 
