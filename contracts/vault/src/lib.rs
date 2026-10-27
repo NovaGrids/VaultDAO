@@ -19938,6 +19938,11 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         match op {
             ProposalOperation::Transfer(recipient, tok, amount, _memo) => {
+                // Re-check the recipient: it may have been blacklisted after
+                // approval (#1703), consistent with single-phase execution.
+                // A validation failure surfaces under its own error code
+                // rather than the generic PhaseExecutionFailed.
+                Self::validate_recipient(env, recipient)?;
                 token::try_transfer(env, tok, recipient, *amount)
                     .map_err(|_| VaultError::PhaseExecutionFailed)
             }

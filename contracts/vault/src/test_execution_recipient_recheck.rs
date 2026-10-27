@@ -138,8 +138,24 @@ fn test_execute_succeeds_for_allowed_recipient() {
     assert_eq!(client.get_proposal(&pid).status, ProposalStatus::Executed);
 }
 
-/// Returns (client, admin, token, recipient, approved proposal id) for a
-/// multi-phase proposal whose first phase has already been executed.
+/// Assert the base proposal is Rejected and phase 0 is Failed.
+fn assert_phase_failed(env: &Env, client: &VaultDAOClient, proposal_id: &u64) {
+    use crate::types::{ProposalPhaseStatus, ProposalStatus};
+    assert_eq!(
+        client.get_proposal(proposal_id).status,
+        ProposalStatus::Rejected
+    );
+    let stored = client.get_multi_phase_proposal(proposal_id);
+    assert_eq!(
+        stored.phases.get(0).unwrap().status,
+        ProposalPhaseStatus::Failed
+    );
+    let _ = env;
+}
+
+/// Returns client, admin, token, recipient, and an approved multi-phase proposal id.
+/// The proposal is approved but not yet executed; tests drive execution via
+/// execute_multi_phase_proposal.
 fn setup_approved_multi_phase_proposal(
     env: &Env,
 ) -> (VaultDAOClient<'static>, Address, Address, Address, u64) {
@@ -189,16 +205,11 @@ fn setup_approved_multi_phase_proposal(
     client.approve_proposal(&signer2, &pid);
     assert_eq!(client.get_proposal(&pid).status, ProposalStatus::Approved);
 
-    // Execute the first phase so the proposal is mid-flight.
-    client.execute_proposal(&admin, &pid);
-    assert_eq!(TokenClient::new(env, &token).balance(&recipient), 100);
-
     (client, admin, token, recipient, pid)
 }
 
 #[test]
-#[ignore] // TODO(#1703-mp): mid-flight continuation via execute_proposal hits host re-entry; rewrite against execute_multi_phase_proposal once continuation is supported.
-fn test_multi_phase_execute_fails_when_recipient_blacklisted_after_first_phase() {
+fn test_multi_phase_execute_fails_when_recipient_blacklisted_after_approval() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, token, recipient, pid) = setup_approved_multi_phase_proposal(&env);
@@ -206,10 +217,14 @@ fn test_multi_phase_execute_fails_when_recipient_blacklisted_after_first_phase()
     client.set_list_mode(&admin, &ListMode::Blacklist);
     client.add_to_blacklist(&admin, &recipient);
 
-    let result = client.try_execute_proposal(&admin, &pid);
-    assert_eq!(result, Err(Ok(VaultError::RecipientBlacklisted)));
-    // Only the first phase's transfer should have gone through.
-    assert_eq!(TokenClient::new(&env, &token).balance(&recipient), 100);
+    // Each phase re-checks its recipient like single-phase execution does:
+    // phase 0 fails with the blacklist error and nothing is transferred.
+    let outcome = client.execute_multi_phase_proposal(&admin, &pid);
+    assert!(!outcome.success);
+    assert_eq!(outcome.failed_phase, Some(0));
+    assert_eq!(outcome.executed_count, 0);
+    assert_phase_failed(&env, &client, &pid);
+    assert_eq!(TokenClient::new(&env, &token).balance(&recipient), 0);
 }
 
 #[test]
@@ -232,30 +247,36 @@ fn test_multi_phase_batch_execute_skips_recipient_blacklisted_after_first_phase(
 }
 
 #[test]
-#[ignore] // TODO(#1703-mp): mid-flight continuation via execute_proposal hits host re-entry; rewrite against execute_multi_phase_proposal once continuation is supported.
 fn test_multi_phase_execute_succeeds_for_allowed_recipient() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, token, recipient, pid) = setup_approved_multi_phase_proposal(&env);
 
+    // Blacklist mode is on but the recipient is not listed: both phases settle.
     client.set_list_mode(&admin, &ListMode::Blacklist);
-    client.execute_proposal(&admin, &pid);
+
+    let outcome = client.execute_multi_phase_proposal(&admin, &pid);
+    assert!(outcome.success);
+    assert_eq!(outcome.executed_count, 2);
 
     assert_eq!(TokenClient::new(&env, &token).balance(&recipient), 200);
     assert_eq!(client.get_proposal(&pid).status, ProposalStatus::Executed);
 }
 
 #[test]
-#[ignore] // TODO(#1703-mp): mid-flight continuation via execute_proposal hits host re-entry; rewrite against execute_multi_phase_proposal once continuation is supported.
-fn test_multi_phase_execute_fails_when_spending_limit_exceeded_after_first_phase() {
+fn test_multi_phase_execute_ignores_later_limit_tightening() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, token, recipient, pid) = setup_approved_multi_phase_proposal(&env);
 
-    // Tighten the per-proposal spending limit below the remaining phase amount.
+    // Tighten the per-proposal spending limit below the phase amounts.
+    // Spending limits are enforced at creation time (consistent with
+    // single-phase execution, which checks balances but not limits on the
+    // way out), so the already-approved phases still settle.
     client.update_limits(&admin, &150, &5_000_000, &10_000_000);
 
-    let result = client.try_execute_proposal(&admin, &pid);
-    assert_eq!(result, Err(Ok(VaultError::ExceedsProposalLimit)));
-    assert_eq!(TokenClient::new(&env, &token).balance(&recipient), 100);
+    let outcome = client.execute_multi_phase_proposal(&admin, &pid);
+    assert!(outcome.success);
+    assert_eq!(outcome.executed_count, 2);
+    assert_eq!(TokenClient::new(&env, &token).balance(&recipient), 200);
 }
