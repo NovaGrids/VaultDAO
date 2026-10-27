@@ -148,7 +148,6 @@ fn test_update_threshold_rejects_threshold_zero() {
 /// immediately; it returns `Some(proposal_id)` and leaves the current
 /// threshold unchanged until the proposal is approved and executed.
 #[test]
-#[ignore = "quarantined: auth mock conflict (Auth, ExistingValue) (docs/reference/TESTING.md)"]
 fn test_update_threshold_reduction_creates_proposal_not_immediate() {
     let env = Env::default();
     // 4 signers, threshold = 3
@@ -182,7 +181,6 @@ fn test_update_threshold_reduction_creates_proposal_not_immediate() {
 /// execute it must be blocked by `ProposalNotApproved` — even with
 /// mock_all_auths, the proposal approval count check is an invariant.
 #[test]
-#[ignore = "quarantined: auth mock conflict (Auth, ExistingValue) (docs/reference/TESTING.md)"]
 fn test_single_admin_cannot_execute_threshold_reduction_unilaterally() {
     let env = Env::default();
     // 4 signers, threshold = 3 — all three non-admin signers must approve.
@@ -310,7 +308,6 @@ fn test_update_threshold_rejects_non_admin_caller() {
 /// waiting for the timelock, the proposal can be executed and the new
 /// (lower) threshold takes effect.
 #[test]
-#[ignore = "quarantined: auth mock conflict (Auth, ExistingValue) (docs/reference/TESTING.md)"]
 fn test_threshold_reduction_succeeds_after_governance_and_timelock() {
     let env = Env::default();
     env.ledger().with_mut(|l| l.sequence_number = 1000);

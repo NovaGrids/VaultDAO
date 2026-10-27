@@ -498,6 +498,11 @@ pub const INSTANCE_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
 pub const PERSISTENT_TTL: u32 = DAY_IN_LEDGERS * 30; // 30 days
 pub const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 7; // Extend when below 7 days
+/// Governance-lifecycle records (roles, locks, stakes, participation streaks,
+/// force-rotation requests) must outlive 30-day horizons: locks run up to two
+/// years and rotation needs a 30-day streak plus timelocks.
+pub const LONG_TTL: u32 = DAY_IN_LEDGERS * 730; // ~2 years
+pub const LONG_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 30; // Extend when below 30 days
 /// Default volume-tracking window for the tiered fee system (~30 days)
 pub const VOLUME_WINDOW_DEFAULT: u64 = DAY_IN_LEDGERS as u64 * 30;
 
@@ -955,9 +960,11 @@ pub fn get_role(env: &Env, addr: &Address) -> Role {
 pub fn set_role(env: &Env, addr: &Address, role: Role) {
     let key = DataKey::Role(addr.clone());
     env.storage().persistent().set(&key, &role);
+    // Role assignments stand until explicitly changed; they must not
+    // silently expire like short-lived reservations do.
     env.storage()
         .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
     add_role_index_address(env, addr);
 }
 
@@ -2583,9 +2590,10 @@ pub fn get_participation_score(env: &Env, signer: &Address) -> SignerParticipati
 pub fn set_participation_score(env: &Env, score: &SignerParticipationScore) {
     let key = DataKey::ParticipationScore(score.signer.clone());
     env.storage().persistent().set(&key, score);
+    // Streak evaluation spans 30+ days; scores must outlive the window.
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
 }
 
 fn push_history(score: &mut SignerParticipationScore, voted: bool) {
@@ -2707,9 +2715,10 @@ pub fn get_force_rotation_request(env: &Env, id: u64) -> Result<ForceRotationReq
 pub fn set_force_rotation_request(env: &Env, request: &ForceRotationRequest) {
     let key = DataKey::ForceRotationReq(request.id);
     env.storage().persistent().set(&key, request);
+    // Requests stay open across the 30-day streak plus timelocks.
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
 }
 
 // ============================================================================
@@ -3144,10 +3153,10 @@ pub fn get_stake_record(env: &Env, proposal_id: u64) -> Option<StakeRecord> {
 pub fn set_stake_record(env: &Env, record: &StakeRecord) {
     let key = FeatureKey::StakeRecord(record.proposal_id);
     env.storage().persistent().set(&key, record);
-    // Records must survive the whole compounding horizon (weeks, not days).
+    // Records must survive the whole compounding horizon.
     env.storage()
         .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
 }
 
 pub fn get_bridge_record(
@@ -3624,10 +3633,10 @@ pub fn set_token_lock(env: &Env, lock: &TokenLock) {
     let key = FeatureKey::TokenLock(lock.owner.clone());
     env.storage().persistent().set(&key, lock);
     // Locks routinely span 30+ days (max 2 years); the 7-day proposal TTL
-    // would archive them mid-lock. Use the long-lived persistent TTL.
+    // would archive them mid-lock. Use the lifecycle TTL.
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
 }
 
 pub fn set_total_locked(env: &Env, owner: &Address, amount: i128) {
@@ -3636,7 +3645,7 @@ pub fn set_total_locked(env: &Env, owner: &Address, amount: i128) {
     // Same lifetime requirement as the TokenLock entry itself.
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
 }
 
 pub fn calculate_voting_power(env: &Env, addr: &Address) -> i128 {

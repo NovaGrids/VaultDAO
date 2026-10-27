@@ -112,9 +112,11 @@ fn test_non_emergency_signer_cannot_pause() {
 #[test]
 fn test_proposal_blocked_while_paused() {
     let (env, client) = make_env();
-    let (_admin, treasurer, em1, _em2) = setup_with_emergency(&env, &client);
+    let (admin, treasurer, em1, _em2) = setup_with_emergency(&env, &client);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     client.pause_vault(&em1, &Symbol::new(&env, "manual"));
 
@@ -154,9 +156,11 @@ fn test_read_operations_during_pause() {
 #[ignore = "quarantined: proposal should succeed after unpause (docs/reference/TESTING.md)"]
 fn test_unpause_resumes_proposals() {
     let (env, client) = make_env();
-    let (_admin, treasurer, em1, em2) = setup_with_emergency(&env, &client);
+    let (admin, treasurer, em1, em2) = setup_with_emergency(&env, &client);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     client.pause_vault(&em1, &Symbol::new(&env, "manual"));
     client.unpause_vault(&em2);
@@ -218,7 +222,9 @@ fn test_per_token_circuit_breaker_threshold_requires_admin_and_nonnegative_value
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let member = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
     signers.push_back(Address::generate(&env));
@@ -366,12 +372,13 @@ fn test_all_vote_entry_points_blocked_while_paused() {
 // ── Test 9: Approve proposal blocked while paused ────────────────────────
 
 #[test]
-#[ignore = "quarantined: host storage error: Storage MissingValue (docs/reference/TESTING.md)"]
 fn test_approve_blocked_while_paused() {
     let (env, client) = make_env();
     let (admin, treasurer, em1, _em2) = setup_with_emergency(&env, &client);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let pid = client.propose_transfer(
         &treasurer,
@@ -474,14 +481,15 @@ fn test_1350_get_pause_cooldown_remaining() {
 // ── Test 14: Removed signer cannot vote on old proposal ──────────────────
 
 #[test]
-#[ignore = "quarantined: host storage error: Storage MissingValue (docs/reference/TESTING.md)"]
 fn test_1351_removed_signer_cannot_vote() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -515,14 +523,15 @@ fn test_1351_removed_signer_cannot_vote() {
 // ── Test 15: Signer in snapshot but removed from config cannot vote ───────
 
 #[test]
-#[ignore = "quarantined: host storage error: Storage MissingValue (docs/reference/TESTING.md)"]
 fn test_1351_signer_removed_after_proposal() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -563,13 +572,14 @@ fn test_1351_signer_removed_after_proposal() {
 // ── Test 16: Validate pending proposals on limit update ──────────────────
 
 #[test]
-#[ignore = "quarantined: host storage error: Storage MissingValue (docs/reference/TESTING.md)"]
 fn test_1353_validate_pending_proposals() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
     let treasurer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());

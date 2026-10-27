@@ -4432,12 +4432,12 @@ impl VaultDAO {
     ///
     /// Used by threshold-reduction path so that even after collecting enough
     /// approvals the execution is blocked until the timelock has elapsed.
+    /// Called after `update_threshold` already authenticated the caller.
     fn propose_vault_config_change_with_timelock(
         env: Env,
         proposer: Address,
         new_config: Config,
     ) -> Result<u64, VaultError> {
-        proposer.require_auth();
 
         let role = storage::get_role(&env, &proposer);
         if role != Role::Treasurer && role != Role::Admin {

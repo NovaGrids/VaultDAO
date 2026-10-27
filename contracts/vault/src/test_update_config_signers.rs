@@ -229,7 +229,6 @@ fn test_update_config_signers_blocked_while_config_change_in_progress() {
 /// Even if the Admin approves the created proposal, executing it before
 /// reaching `threshold` approvals must fail with `ProposalNotApproved`.
 #[test]
-#[ignore = "quarantined: auth mock conflict (Auth, ExistingValue) (docs/reference/TESTING.md)"]
 fn test_update_config_signers_single_admin_cannot_execute_without_multisig() {
     let env = Env::default();
     // threshold = 2 so both admin + signer1 must approve.
@@ -263,7 +262,6 @@ fn test_update_config_signers_single_admin_cannot_execute_without_multisig() {
 /// 3. On execution, the new signer set is applied.
 /// 4. The old signers are no longer signers; the new ones are.
 #[test]
-#[ignore = "quarantined: auth mock conflict (Auth, ExistingValue) (docs/reference/TESTING.md)"]
 fn test_update_config_signers_happy_path_requires_governance_and_applies() {
     let env = Env::default();
     // threshold = 2, 3 initial signers (admin, s1, s2).
