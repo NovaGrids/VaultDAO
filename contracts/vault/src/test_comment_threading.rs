@@ -139,21 +139,22 @@ fn test_author_delete_own_comment() {
 }
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_thread_depth_limit() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, author, _token, proposal_id) = setup_comments(&env);
 
-    // Build a chain of 5 levels deep
+    // Build a chain of 6 levels deep: depth is counted in edges from the
+    // parent to the root, and the limit (5) trips on the 6th level.
     let c1 = client.add_comment(&author, &proposal_id, &Symbol::new(&env, "l1"), &0);
     let c2 = client.add_comment(&author, &proposal_id, &Symbol::new(&env, "l2"), &c1);
     let c3 = client.add_comment(&author, &proposal_id, &Symbol::new(&env, "l3"), &c2);
     let c4 = client.add_comment(&author, &proposal_id, &Symbol::new(&env, "l4"), &c3);
     let c5 = client.add_comment(&author, &proposal_id, &Symbol::new(&env, "l5"), &c4);
+    let c6 = client.add_comment(&author, &proposal_id, &Symbol::new(&env, "l6"), &c5);
 
     // get_comment_thread with parent at depth 5 should fail
-    let result = client.try_get_comment_thread(&proposal_id, &c5, &0u32, &10u32);
+    let result = client.try_get_comment_thread(&proposal_id, &c6, &0u32, &10u32);
     assert_eq!(result.err(), Some(Ok(VaultError::ThreadDepthExceeded)));
 }
 

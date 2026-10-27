@@ -297,7 +297,6 @@ fn test_rejection_vote_blocked_while_paused() {
 // ============================================================================
 
 #[test]
-#[ignore = "quarantined: flow approves once; needs a second approval now that threshold is at least 2 (ProposalNotApproved) (docs/reference/TESTING.md)"]
 fn test_execution_does_not_slash() {
     let env = Env::default();
     let (client, admin, proposer, token, cid) = setup(&env, staking_config(10, 50, false));
@@ -306,6 +305,7 @@ fn test_execution_does_not_slash() {
     let before = balance(&env, &token, &proposer);
 
     client.approve_proposal(&admin, &id);
+    client.approve_proposal(&proposer, &id);
     client.execute_proposal(&admin, &id);
 
     assert_eq!(client.get_stake_pool_balance(&token), 0);

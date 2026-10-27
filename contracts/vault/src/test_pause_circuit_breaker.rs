@@ -153,7 +153,6 @@ fn test_read_operations_during_pause() {
 // ── Test 5: Unpause resumes proposal creation ────────────────────────────
 
 #[test]
-#[ignore = "quarantined: proposal should succeed after unpause (docs/reference/TESTING.md)"]
 fn test_unpause_resumes_proposals() {
     let (env, client) = make_env();
     let (admin, treasurer, em1, em2) = setup_with_emergency(&env, &client);
@@ -300,7 +299,6 @@ fn test_circuit_breaker_budgets_are_independent_for_different_token_decimals() {
 // ── Test 8: configure_emergency needs at least 2 signers ─────────────────
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
 fn test_configure_emergency_min_two_signers() {
     let (env, client) = make_env();
     let admin = Address::generate(&env);
@@ -310,10 +308,10 @@ fn test_configure_emergency_min_two_signers() {
     signers.push_back(Address::generate(&env));
     client.initialize(&admin, &base_config(&env, signers));
 
+    // A single emergency signer is below the minimum of two.
     let only_one = Address::generate(&env);
     let mut esigners = Vec::new(&env);
     esigners.push_back(only_one.clone());
-    esigners.push_back(Address::generate(&env));
 
     let r = client.try_configure_emergency(&admin, &esigners, &500_000i128);
     assert_eq!(r, Err(Ok(VaultError::NoSigners)));

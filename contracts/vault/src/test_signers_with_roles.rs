@@ -114,8 +114,10 @@ fn test_order_matches_config_signers_order() {
 }
 
 #[test]
-#[ignore = "quarantined: assertion does not hold against the current contract (docs/reference/TESTING.md)"]
-fn test_single_signer_vault() {
+fn test_single_signer_vault_rejected() {
+    // A single-signer vault can never satisfy the minimum threshold of 2
+    // (#1523): initialization must fail instead of creating a
+    // single-key-drains-all vault.
     let env = Env::default();
     env.mock_all_auths();
 
@@ -125,7 +127,6 @@ fn test_single_signer_vault() {
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
-    signers.push_back(Address::generate(&env));
 
     let config = InitConfig {
         upgrade_timelock_delay: 17_280,
@@ -139,9 +140,10 @@ fn test_single_signer_vault() {
         threshold: 2,
         quorum: 0,
         quorum_percentage: 0,
+        default_voting_deadline: 0,
         spending_limit: 1_000_000,
-        daily_limit: 5_000_000,
-        weekly_limit: 10_000_000,
+        daily_limit: 10_000_000,
+        weekly_limit: 20_000_000,
         timelock_threshold: 0,
         timelock_delay: 0,
         velocity_limit: VelocityConfig {
@@ -150,24 +152,26 @@ fn test_single_signer_vault() {
             per_token_limit: 0,
         },
         threshold_strategy: ThresholdStrategy::Fixed,
-        default_voting_deadline: 0,
-        veto_addresses: Vec::new(&env),
-        retry_config: crate::types::RetryConfig {
-            max_retry_delay: 0,
-            enabled: false,
-            max_retries: 0,
-            initial_backoff_ledgers: 0,
-        },
         recovery_config: crate::types::RecoveryConfig::default(&env),
         staking_config: crate::types::StakingConfig::default(),
         proposal_id_prefix: 0,
         pre_execution_hooks: Vec::new(&env),
         post_execution_hooks: Vec::new(&env),
+        veto_addresses: Vec::new(&env),
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+            max_retry_delay: 0,
+        },
     };
 
-    client.initialize(&admin, &config);
-
-    let pairs = client.get_signers_with_roles();
-    assert_eq!(pairs.len(), 1);
-    assert_eq!(pairs.get(0).unwrap(), (admin, Role::Admin));
+    let result = client.try_initialize(&admin, &config);
+    // Either guard rejects a single-signer vault; ThresholdTooHigh fires
+    // first here (threshold 2 > 1 signer), and the ThresholdTooLow floor
+    // covers the degenerate threshold-1 case.
+    assert_eq!(
+        result.err(),
+        Some(Ok(crate::errors::VaultError::ThresholdTooHigh))
+    );
 }
