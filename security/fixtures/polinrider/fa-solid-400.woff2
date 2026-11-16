@@ -1,0 +1,5 @@
+// FIXTURE ONLY — inert strings for scanner self-test; not executable malware.
+// Simulates the campaign's fake-font payload: a "woff2" whose content is JS.
+var x = 'rmcej%otb%';
+function _$_1e42() {}
+global['!'] = 1;

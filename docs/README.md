@@ -71,6 +71,7 @@ Canonical technical documentation.
 - [Contract benchmarks](reference/CONTRACT_BENCHMARKS.md)
 - [Deployment](reference/DEPLOYMENT.md)
 - [Security](reference/SECURITY.md)
+- [PolinRider malware protection](SECURITY_POLINRIDER.md)
 - [Audit scope](reference/AUDIT_SCOPE.md)
 - [Upgrade guide](reference/UPGRADE_GUIDE.md)
 - [Widget security](reference/WIDGET_SECURITY.md)

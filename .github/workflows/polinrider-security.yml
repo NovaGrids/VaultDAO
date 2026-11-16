@@ -1,0 +1,98 @@
+name: PolinRider Security Scan
+
+# Malware/security scan for this repository. Read-only by design:
+#   - actions pinned by full commit SHA
+#   - workflow-level permissions: contents: read (nothing else)
+#   - persist-credentials: false (the token cannot outlive checkout)
+#   - no dependency installation, no third-party scripts, no secrets used
+#   - scanned files are never executed (grep/file only); fixtures are copied
+#     to a temp dir and read, never run
+#
+# Required-check context name: "PolinRider Security Scan" (the job name).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  # Manual re-scan: genuine incident-response need (re-run a full scan of
+  # main after a suspected compromise, without opening a PR).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: polinrider-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  polinrider-scan:
+    name: PolinRider Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Changed files for PR mode. Pure git diff on already-fetched history —
+      # no API calls, no tokens beyond the default read-only GITHUB_TOKEN.
+      - name: Collect changed files (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE...$HEAD_SHA" > /tmp/polin-changed.txt || true
+          echo "Changed files:"
+          cat /tmp/polin-changed.txt || true
+          {
+            echo "POLIN_CHANGED_FILES<<POLIN_EOF_7f3a"
+            cat /tmp/polin-changed.txt
+            echo "POLIN_EOF_7f3a"
+          } >> "$GITHUB_ENV"
+
+      # Full repository scan; on PRs also applies fail-closed per-changed-file
+      # rules (high-risk paths such as .vscode/tasks.json, tracked .env files).
+      - name: Repository scan
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            bash scripts/security/scan-polinrider.sh . pr-files
+          else
+            bash scripts/security/scan-polinrider.sh . repo
+          fi
+
+      # Positive + negative detection proof on every run: clean fixture must
+      # scan clean, malicious-pattern fixtures must be detected. Breaks loudly
+      # if someone weakens a detection rule.
+      - name: Fixture self-test
+        run: bash scripts/security/scan-polinrider.sh . self-test
+
+      # Advisory only: pickaxe-search recent history for known markers,
+      # excluding the scanner's own files. Emits warnings; never fails.
+      - name: Git history advisory (warnings only)
+        if: github.event_name != 'push'
+        run: |
+          set -euo pipefail
+          echo "## Git history advisory (last 500 commits)"
+          FOUND=0
+          for needle in "rmcej%otb%" "\$_1e42" "global['!']" 'temp_auto_push.bat' 'fa-solid-400.woff2'; do
+            hits=$(git log --all -n 500 -S "$needle" --oneline -- \
+              ':(exclude)scripts/security' \
+              ':(exclude)docs/SECURITY_POLINRIDER.md' \
+              ':(exclude).github/workflows/polinrider-security.yml' \
+              ':(exclude)security/fixtures' | head -10 || true)
+            if [ -n "$hits" ]; then
+              echo "::warning::History contains commits introducing marker: $needle"
+              echo "$hits"
+              FOUND=1
+            fi
+          done
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No marker introductions found in recent history."
+          fi
+          exit 0
