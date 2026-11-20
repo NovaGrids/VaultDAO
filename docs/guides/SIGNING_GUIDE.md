@@ -318,6 +318,8 @@ Revoke immediately if a laptop is lost, a relationship changes, or a delegate be
 
 ## 5. Emergency and QR cold-storage signing
 
+> **Full cold-storage procedure:** This section covers the QR / Mobile Signing path in the dashboard. For the complete offline workflow — constructing and serializing the payload on an online machine, signing it with an air-gapped Ed25519 key, and submitting it via `approve_with_cold_sig` — see **[COLD_SIGNING_GUIDE.md](COLD_SIGNING_GUIDE.md)**, which includes a worked `stellar-sdk` CLI example.
+
 For high-value vaults, some signers keep keys on air-gapped or mobile devices. VaultDAO supports a **Mobile Signing** path via `QRSignature`.
 
 ### 5.1 Where to find QR signing
@@ -435,4 +437,4 @@ Print or keep this beside your signing machine:
 
 ---
 
-*Document owner: Treasury operations. For contract-level behavior see `docs/reference/ARCHITECTURE.md` and `docs/reference/SECURITY.md`. For developer wallet wiring see `docs/guides/WALLET_INTEGRATION.md`.*
+*Document owner: Treasury operations. For contract-level behavior see `docs/reference/ARCHITECTURE.md` and `docs/reference/SECURITY.md`. For developer wallet wiring see `docs/guides/WALLET_INTEGRATION.md`. For offline / air-gapped approval see `docs/guides/COLD_SIGNING_GUIDE.md`.*
