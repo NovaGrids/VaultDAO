@@ -288,3 +288,20 @@ fn test_1940_clear_gas_price_oracle_emits_event() {
     let actor: Address = data.try_into_val(&env).unwrap();
     assert_eq!(actor, admin);
 }
+
+#[test]
+fn test_2127_set_rejection_threshold_emits_event() {
+    let env = Env::default();
+    let (client, admin, _proposer, _token) = setup(&env);
+    let old_threshold = client.get_rejection_threshold();
+    let new_threshold = old_threshold + 3;
+
+    client.set_rejection_threshold(&admin, &new_threshold);
+
+    let (_, data) = event_data(&env, "rejection_threshold").expect("rejection_threshold");
+    let (actor, old_value, new_value): (Address, u32, u32) = data.try_into_val(&env).unwrap();
+    assert_eq!(actor, admin);
+    assert_eq!(old_value, old_threshold);
+    assert_eq!(new_value, new_threshold);
+    assert_eq!(client.get_rejection_threshold(), new_threshold);
+}

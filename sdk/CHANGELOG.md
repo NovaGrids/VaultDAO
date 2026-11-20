@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Automated release notes:** pushing a `v*` tag now triggers
+  `.github/workflows/release.yml`, which drafts a changelog from merged PRs since the last tag
+  (grouped by label: enhancement, bug, security, documentation) and publishes it as a draft
+  GitHub Release. Maintainers must review that draft and merge its contents into this file
+  before finalizing the release, so the manual changelog and the automated draft stay in sync.
+
 - Typed helpers for the vesting family: `createVestingSchedule`, `claimVestedTokens`,
   `cancelVesting`, `getVestingSchedule`.
 - Typed helpers for token locks: `lockTokens`, `extendLock`, `unlockTokens`, `unlockEarly`,

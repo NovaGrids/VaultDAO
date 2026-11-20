@@ -143,6 +143,10 @@ const MAX_ATTACHMENTS: u32 = 10;
 /// Maximum number of signers in a signer set (Issue #1935)
 const MAX_SIGNERS: u32 = 20;
 
+/// Maximum number of proposals that can be approved in one
+/// `batch_approve_proposals` call (Issue #2126).
+const MAX_BATCH_APPROVE: u32 = 20;
+
 /// Minimum admin rotation delay: 1440 ledgers ? 24 hours at 5 s/ledger.
 /// Enforced at both vault initialization and `set_admin_rotation_delay`.
 const MIN_ADMIN_ROTATION_DELAY: u64 = 1_440;
@@ -173,6 +177,25 @@ const REP_EXEC_PROPOSER: u32 = 10;
 const REP_EXEC_APPROVER: u32 = 5;
 const REP_REJECTION_PENALTY: u32 = 20;
 const REP_APPROVAL_BONUS: u32 = 2;
+
+/// Validate that the veto window does not outlast the voting period
+/// (Issue #2129).
+///
+/// A veto window longer than `default_voting_deadline` would let a veto land
+/// after all votes have closed, creating a hidden invalidation path. The check
+/// only applies when both values are non-zero (0 means "disabled").
+fn validate_veto_config(
+    veto_window_ledgers: u64,
+    default_voting_deadline: u64,
+) -> Result<(), VaultError> {
+    if veto_window_ledgers > 0
+        && default_voting_deadline > 0
+        && veto_window_ledgers > default_voting_deadline
+    {
+        return Err(VaultError::InvalidVetoConfig);
+    }
+    Ok(())
+}
 
 /// Compute which registered addresses have `NotificationPrefs` that match
 /// `event_type` and `amount`, taking quiet hours into account.
@@ -1882,6 +1905,50 @@ impl VaultDAO {
     pub fn approve_proposal(env: Env, signer: Address, proposal_id: u64) -> Result<(), VaultError> {
         // Verify identity - CRITICAL for security
         signer.require_auth();
+        Self::approve_proposal_internal(&env, &signer, proposal_id)
+    }
+
+    /// Approve up to `MAX_BATCH_APPROVE` proposals in a single transaction.
+    ///
+    /// The signer authorizes once; each proposal is then approved through the
+    /// same logic as `approve_proposal`. Partial failure never rolls back the
+    /// whole batch: the returned vector holds one `Result` per requested id,
+    /// in the same order, so callers can inspect which approvals succeeded.
+    /// Each successful approval emits its own `ProposalApproved` event.
+    ///
+    /// If the batch exceeds `MAX_BATCH_APPROVE`, no approval is attempted and
+    /// the returned vector contains a single `Err(VaultError::BatchTooLarge)`
+    /// entry (the vector length is then 1, not `proposal_ids.len()`).
+    pub fn batch_approve_proposals(
+        env: Env,
+        signer: Address,
+        proposal_ids: Vec<u64>,
+    ) -> Vec<Result<(), VaultError>> {
+        signer.require_auth();
+
+        let mut results = Vec::new(&env);
+        if proposal_ids.len() > MAX_BATCH_APPROVE {
+            results.push_back(Err(VaultError::BatchTooLarge));
+            return results;
+        }
+
+        for proposal_id in proposal_ids.iter() {
+            results.push_back(Self::approve_proposal_internal(&env, &signer, proposal_id));
+        }
+
+        results
+    }
+
+    /// Approval body without authorization.
+    ///
+    /// `approve_proposal` and `batch_approve_proposals` authenticate the
+    /// signer themselves and route here so the same address is not authorized
+    /// twice in one frame.
+    fn approve_proposal_internal(
+        env: &Env,
+        signer: &Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
 
         // Check if vault is paused
         if storage::get_pause_state(&env).is_paused {
@@ -1889,8 +1956,8 @@ impl VaultDAO {
         }
 
         // Get config and validate signer
-        let config = storage::get_config(&env)?;
-        if !config.signers.contains(&signer) {
+        let config = storage::get_config(env)?;
+        if !config.signers.contains(signer) {
             return Err(VaultError::NotASigner);
         }
 
@@ -1898,46 +1965,46 @@ impl VaultDAO {
 
         // Apply reputation decay for the signer at the start of approve
         {
-            let mut rep = storage::get_reputation(&env, &signer);
+            let mut rep = storage::get_reputation(env, signer);
             let old_score = rep.score;
-            storage::apply_reputation_decay(&env, &mut rep);
+            storage::apply_reputation_decay(env, &mut rep);
             let new_score = rep.score;
-            storage::set_reputation(&env, &signer, &rep);
+            storage::set_reputation(env, signer, &rep);
             if old_score != new_score {
                 events::emit_reputation_updated(
-                    &env,
-                    &signer,
+                    env,
+                    signer,
                     old_score,
                     new_score,
-                    Symbol::new(&env, "decay"),
+                    Symbol::new(env, "decay"),
                 );
             }
         }
 
         // Get proposal
-        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let mut proposal = storage::get_proposal(env, proposal_id)?;
 
         // Issue #1351: Snapshot check - voter must be BOTH in snapshot AND current config
         // This prevents removed signers from voting on old proposals
-        if !proposal.snapshot_signers.contains(&signer) {
+        if !proposal.snapshot_signers.contains(signer) {
             return Err(VaultError::VoterNotInSnapshot);
         }
 
         // NEW: Check signer is still in current config (Issue #1351)
-        if !config.signers.contains(&signer) {
+        if !config.signers.contains(signer) {
             events::emit_vote_rejected_signer_removed(
-                &env,
+                env,
                 proposal_id,
-                &signer,
-                Symbol::new(&env, "signer_removed"),
+                signer,
+                Symbol::new(env, "signer_removed"),
             );
             return Err(VaultError::NotASigner);
         }
 
         // Get all signers represented by this signer (including self)
-        let mut represented_voters = Vec::new(&env);
+        let mut represented_voters = Vec::new(env);
         represented_voters.push_back(signer.clone());
-        Self::get_all_represented_voters(&env, &signer, &mut represented_voters, 0);
+        Self::get_all_represented_voters(env, signer, &mut represented_voters, 0);
 
         // Validate state
         if proposal.status != ProposalStatus::Pending {
@@ -1956,10 +2023,10 @@ impl VaultDAO {
             // Issue #1351: Also check current config
             if !config.signers.contains(&voter) {
                 events::emit_vote_rejected_signer_removed(
-                    &env,
+                    env,
                     proposal_id,
                     &voter,
-                    Symbol::new(&env, "signer_removed"),
+                    Symbol::new(env, "signer_removed"),
                 );
                 continue;
             }
@@ -1978,14 +2045,14 @@ impl VaultDAO {
             vote_cast_count += 1;
 
             // Reputation boost for approving
-            Self::update_reputation_on_approval(&env, &voter);
+            Self::update_reputation_on_approval(env, &voter);
 
             // Signer participation scoring (Issue #1093)
-            let (rate, should_alert) = storage::record_participation_vote(&env, &voter, &config);
+            let (rate, should_alert) = storage::record_participation_vote(env, &voter, &config);
             if should_alert {
-                let score = storage::get_participation_score(&env, &voter);
+                let score = storage::get_participation_score(env, &voter);
                 events::emit_low_participation_alert(
-                    &env,
+                    env,
                     &voter,
                     rate,
                     config.participation.min_participation_rate,
@@ -1994,8 +2061,8 @@ impl VaultDAO {
             }
 
             // Emit delegated vote event if voting through delegation
-            if voter != signer {
-                events::emit_delegated_vote(&env, proposal_id, &voter, &signer);
+            if voter != *signer {
+                events::emit_delegated_vote(env, proposal_id, &voter, signer);
             }
         }
 
@@ -2004,19 +2071,19 @@ impl VaultDAO {
         }
 
         // Record that the actual signer provided auth at this ledger
-        storage::set_approval_ledger(&env, proposal_id, &signer, current_ledger);
+        storage::set_approval_ledger(env, proposal_id, signer, current_ledger);
 
         // Check expiration
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             if proposal.status != ProposalStatus::Expired {
                 storage::refund_spending_limits(
-                    &env,
+                    env,
                     proposal.amount,
                     proposal.spend_day,
                     proposal.spend_week,
                 );
                 storage::refund_token_spending_limits(
-                    &env,
+                    env,
                     &proposal.token,
                     proposal.amount,
                     proposal.spend_day,
@@ -2024,14 +2091,14 @@ impl VaultDAO {
                 );
             }
             proposal.status = ProposalStatus::Expired;
-            storage::pending_expiry_index_remove(&env, proposal_id);
-            storage::set_proposal(&env, &proposal);
-            storage::metrics_on_expiry(&env);
-            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
+            storage::pending_expiry_index_remove(env, proposal_id);
+            storage::set_proposal(env, &proposal);
+            storage::metrics_on_expiry(env);
+            events::emit_proposal_expired(env, proposal_id, proposal.expires_at);
 
-            let metrics = storage::get_metrics(&env);
+            let metrics = storage::get_metrics(env);
             events::emit_metrics_updated(
-                &env,
+                env,
                 metrics.executed_count,
                 metrics.rejected_count,
                 metrics.expired_count,
@@ -2043,12 +2110,12 @@ impl VaultDAO {
         // Check voting deadline
         if proposal.voting_deadline > 0 && current_ledger > proposal.voting_deadline {
             proposal.status = ProposalStatus::Rejected;
-            storage::pending_expiry_index_remove(&env, proposal_id);
-            storage::set_proposal(&env, &proposal);
-            storage::metrics_on_rejection(&env);
-            Self::slash_insurance_on_rejection(&env, &proposal);
-            Self::slash_stake_on_rejection(&env, &proposal);
-            events::emit_proposal_deadline_rejected(&env, proposal_id, proposal.voting_deadline);
+            storage::pending_expiry_index_remove(env, proposal_id);
+            storage::set_proposal(env, &proposal);
+            storage::metrics_on_rejection(env);
+            Self::slash_insurance_on_rejection(env, &proposal);
+            Self::slash_stake_on_rejection(env, &proposal);
+            events::emit_proposal_deadline_rejected(env, proposal_id, proposal.voting_deadline);
             return Ok(());
         }
 
@@ -2058,7 +2125,7 @@ impl VaultDAO {
             .saturating_add(proposal.abstentions.len())
             .saturating_sub(vote_cast_count);
         Self::reevaluate_vote_state(
-            &env,
+            env,
             &config,
             proposal_id,
             &mut proposal,
@@ -2067,16 +2134,16 @@ impl VaultDAO {
         );
 
         if proposal.status != ProposalStatus::Pending {
-            storage::pending_expiry_index_remove(&env, proposal_id);
+            storage::pending_expiry_index_remove(env, proposal_id);
         }
-        storage::set_proposal(&env, &proposal);
-        storage::extend_instance_ttl(&env);
-        storage::create_audit_entry(&env, AuditAction::ApproveProposal, &signer, proposal_id);
+        storage::set_proposal(env, &proposal);
+        storage::extend_instance_ttl(env);
+        storage::create_audit_entry(env, AuditAction::ApproveProposal, signer, proposal_id);
 
         events::emit_proposal_approved(
-            &env,
+            env,
             proposal_id,
-            &signer,
+            signer,
             proposal.approvals.len(),
             config.threshold,
         );
@@ -21077,6 +21144,34 @@ impl VaultDAO {
 
     pub fn get_governance_proposal(env: Env, id: u64) -> Option<GovernanceProposal> {
         storage::get_governance_proposal(&env, id)
+    }
+
+    // ?? Rejection Threshold Governance (#2127) ??????????????????????????????
+
+    /// Read the current rejection threshold.
+    pub fn get_rejection_threshold(env: Env) -> u32 {
+        storage::get_rejection_threshold(&env)
+    }
+
+    /// Update the rejection threshold (Admin only, Issue #2127).
+    ///
+    /// Emits an audit event recording the change so the governance trail is
+    /// preserved.
+    pub fn set_rejection_threshold(
+        env: Env,
+        admin: Address,
+        threshold: u32,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let stored_admin = storage::get_admin(&env);
+        if stored_admin != admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::set_rejection_threshold(&env, threshold);
+        events::emit_rejection_threshold_changed(&env, &admin, threshold);
+        Ok(())
     }
 
     // ========================================================================
