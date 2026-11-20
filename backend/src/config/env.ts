@@ -110,6 +110,12 @@ export interface BackendEnv {
   readonly notificationsCleanupJobIntervalMs: number;
   /** Delivered notifications older than this many days are purged (default: 7). */
   readonly notificationsRetentionDays: number;
+  /**
+   * Maximum time in ms the scheduled job runner waits for an in-flight job to
+   * finish after receiving SIGTERM before forcing the process to exit.
+   * Default: 30000 (30 s). Env var: `JOB_SHUTDOWN_IDLE_TIMEOUT_MS`.
+   */
+  readonly jobShutdownIdleTimeoutMs: number;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -331,6 +337,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     notificationsCleanupJobEnabled: false,
     notificationsCleanupJobIntervalMs: 86_400_000,
     notificationsRetentionDays: 7,
+    jobShutdownIdleTimeoutMs: 30_000,
     ...overrides,
   };
 }
@@ -495,6 +502,12 @@ export function loadEnv(): BackendEnv {
     issues,
   );
 
+  const jobShutdownIdleTimeoutMs = readPort(
+    "JOB_SHUTDOWN_IDLE_TIMEOUT_MS",
+    30_000,
+    issues,
+  );
+
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
   validateAllowedValue(
@@ -617,5 +630,6 @@ export function loadEnv(): BackendEnv {
     notificationsCleanupJobEnabled,
     notificationsCleanupJobIntervalMs,
     notificationsRetentionDays,
+    jobShutdownIdleTimeoutMs,
   };
 }
