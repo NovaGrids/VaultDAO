@@ -52,7 +52,7 @@ export type {
 
 // Enums & errors
 export { Role, ProposalStatus, VaultErrorCode, VaultError } from "./types";
-export { SdkValidationError } from "./validation";
+export { SdkValidationError, validateContractId } from "./validation";
 export {
   EscrowStatus,
   FundingRoundStatus,
