@@ -291,3 +291,36 @@ variable "slack_webhook_url" {
   sensitive   = true
   default     = ""
 }
+
+# Admin Contract Key Management (KMS) Variables
+variable "admin_key_rotation_days" {
+  description = "Number of days between automatic rotation of the admin contract signing key"
+  type        = number
+  default     = 90
+  validation {
+    condition     = var.admin_key_rotation_days >= 1 && var.admin_key_rotation_days <= 365
+    error_message = "Admin key rotation period must be between 1 and 365 days."
+  }
+}
+
+variable "admin_secret_name" {
+  description = "Name of the AWS Secrets Manager secret holding the admin contract key reference"
+  type        = string
+  default     = "vaultdao/admin-contract-key"
+}
+
+variable "kms_deletion_window_in_days" {
+  description = "Waiting period (in days) before the KMS CMK is permanently deleted"
+  type        = number
+  default     = 30
+  validation {
+    condition     = var.kms_deletion_window_in_days >= 7 && var.kms_deletion_window_in_days <= 30
+    error_message = "KMS deletion window must be between 7 and 30 days."
+  }
+}
+
+variable "admin_key_principals" {
+  description = "IAM principal ARNs allowed to use the admin contract key via KMS"
+  type        = list(string)
+  default     = []
+}

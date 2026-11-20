@@ -278,6 +278,32 @@ Before submitting your PR, ensure:
 4. **Approval**: Once approved, your PR will be merged
 5. **Recognition**: Contributors are acknowledged in releases!
 
+### Code Owner Reviews
+
+This repository uses a [`.github/CODEOWNERS`](.github/CODEOWNERS) file to
+automatically request reviews from the appropriate domain owners. Branch
+protection rules enforce these reviews, so PRs touching the paths below
+**cannot be merged** until a mapped code owner has approved them:
+
+| Path | Required reviewers |
+| --- | --- |
+| `contracts/` | Contract reviewers |
+| `terraform/` | Infrastructure reviewers |
+| `security/` | Security reviewers |
+| `.github/` | Repository maintainers |
+
+If your PR modifies files under any of these paths:
+
+- GitHub will automatically request a review from the mapped code owner(s).
+- If the review is not requested automatically, you can request it manually via
+  the **Reviewers** section of the PR (click the gear icon and select the
+  relevant team or owner).
+- Address any feedback from the code owner; their approval is required before
+  the PR can be merged, even if all CI checks pass.
+
+If you believe a path is mapped incorrectly or a new sensitive path should be
+covered, open an issue or PR updating `.github/CODEOWNERS`.
+
 ## 🐛 Reporting Bugs
 
 Found a bug? Please [open an issue](https://github.com/NovaGrids/VaultDAO/issues/new?template=bug_report.md) with:

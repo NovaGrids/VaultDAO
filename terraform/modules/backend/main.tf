@@ -72,3 +72,20 @@ resource "aws_dynamodb_table" "terraform_locks" {
     Purpose     = "Terraform state locking"
   }
 }
+
+module "kms" {
+  source = "../kms"
+
+  environment         = var.environment
+  aws_region          = var.aws_region
+  backend_task_role_arn = var.backend_task_role_arn
+  admin_key_reference = var.admin_key_reference
+  secret_name         = var.admin_key_secret_name
+  kms_key_alias       = var.kms_key_alias
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+    Purpose     = "Admin contract key management"
+  }
+}
