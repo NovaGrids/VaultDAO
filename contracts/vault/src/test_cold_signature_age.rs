@@ -20,12 +20,20 @@ fn setup_cold(env: &Env, max_age: u64) -> (VaultDAOClient<'_>, Address, BytesN<3
     let client = VaultDAOClient::new(env, &contract_id);
     let admin = Address::generate(env);
     let cold_addr = Address::generate(env);
-    let pubkey = BytesN::from_array(env, &[7u8; 32]);
+    let signing_key = crate::test_cold_signer_pop::signing_key(7);
+    let pubkey = crate::test_cold_signer_pop::public_key(env, &signing_key);
+    let mut proofs = Vec::new(env);
+    proofs.push_back(crate::test_cold_signer_pop::pop_proof(
+        env,
+        &contract_id,
+        &cold_addr,
+        &signing_key,
+    ));
 
     let mut cold_signers = Vec::new(env);
     cold_signers.push_back(pubkey.clone());
     let mut cold_addresses = Vec::new(env);
-    cold_addresses.push_back(cold_addr);
+    cold_addresses.push_back(cold_addr.clone());
 
     let cold_config = ColdSignerConfig {
         cold_signers,
@@ -76,7 +84,7 @@ fn setup_cold(env: &Env, max_age: u64) -> (VaultDAOClient<'_>, Address, BytesN<3
         staking_config: crate::types::StakingConfig::default(),
         proposal_id_prefix: 0,
     });
-    client.set_cold_signer_config(&admin, &cold_config);
+    client.set_cold_signer_config(&admin, &cold_config, &proofs);
 
     (client, admin, pubkey)
 }
