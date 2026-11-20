@@ -97,6 +97,12 @@ Create a single transfer proposal.
 
 **Returns:** Proposal ID (u64)
 
+Each non-admin proposer may have at most 50 pending proposals at a time.
+The cap applies to single and batch proposal creation; an Admin may bypass it.
+Exceeding the cap returns `ExceedsProposerPendingLimit`.
+The persisted config field is `max_pending_per_signer` because Soroban caps
+contract field names at 30 characters.
+
 ### `propose_transfer_with_capability(...) -> Result<u64, VaultError>`
 
 Create a transfer proposal using a `CreateProposal(max_amount)` capability
@@ -500,12 +506,14 @@ Paginated list of recurring payments (capped at 50).
 
 ---
 
-### `create_stream(sender: Address, recipient: Address, token_addr: Address, amount: i128, duration: u64) -> Result<u64, VaultError>`
+### `create_stream(sender: Address, recipient: Address, token_addr: Address, rate: i128, total_amount: i128, duration_secs: u64) -> Result<u64, VaultError>`
 
 Create a token stream (continuous payment over time).
 
 **Parameters:**
-- `duration` - Stream duration in ledgers
+- `rate` - Tokens accrued per second
+- `total_amount` - Maximum amount committed to the stream
+- `duration_secs` - Stream duration in seconds
 - Funds transferred to escrow immediately
 
 **Returns:** Stream ID
@@ -522,6 +530,17 @@ the Treasurer/Admin role. Takes the same parameters as `create_stream` plus
 
 See [Capability Tokens](../guides/CAPABILITY_TOKENS.md) for grant validation,
 limits, lifecycle, and the complete authorization model.
+
+### `get_stream_claimable(stream_id: u64) -> Result<i128, VaultError>`
+
+Read-only view of the accrued, unclaimed amount for an active stream. The
+amount is capped at the stream total. Returns `StreamNotActive` for paused,
+completed, or cancelled streams.
+
+### `list_streams_by_recipient(recipient: Address, after_id: u64, limit: u32) -> Vec<u64>`
+
+Return active stream IDs for a recipient in ascending order, capped at 100
+IDs per page. Pass the last returned ID as `after_id`; use 0 for the first page.
 
 ---
 

@@ -207,10 +207,105 @@ pub struct Config {
     /// Minimum delay in ledgers for the upgrade timelock (≥ 17_280 ≈ 24 h at 5 s/ledger).
     /// Enforced at initialization and must satisfy MIN_UPGRADE_TIMELOCK.
     pub upgrade_timelock_delay: u64,
+    /// Maximum pending proposals per signer (default: 50).
+    /// Kept under Soroban's 30-character contract field-name limit.
+    pub max_pending_per_signer: u32,
 
     // ---- Issue #1093: Signer Participation Scoring ----
     // Grouped so `Config` stays within the 40-field contracttype limit.
     pub participation: ParticipationConfig,
+}
+
+/// Config layout persisted before the pending-proposal cap was added.
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConfigV1 {
+    pub signers: Vec<Address>,
+    pub signer_tiers: Map<Address, SignerTier>,
+    pub full_quorum_threshold: i128,
+    pub threshold: u32,
+    pub quorum: u32,
+    pub quorum_percentage: u32,
+    pub spending_limit: i128,
+    pub daily_limit: i128,
+    pub weekly_limit: i128,
+    pub timelock_threshold: i128,
+    pub timelock_delay: u64,
+    pub velocity_limit: VelocityConfig,
+    pub threshold_strategy: ThresholdStrategy,
+    pub pre_execution_hooks: Vec<Address>,
+    pub post_execution_hooks: Vec<Address>,
+    pub default_voting_deadline: u64,
+    pub veto_addresses: Vec<Address>,
+    pub veto_window_ledgers: u64,
+    pub retry_config: RetryConfig,
+    pub recovery_config: RecoveryConfig,
+    pub supported_tokens: Vec<Address>,
+    pub token_daily_limits: Vec<i128>,
+    pub token_weekly_limits: Vec<i128>,
+    pub stream_max_window_amount: i128,
+    pub burst_factor: u32,
+    pub staking_config: StakingConfig,
+    pub proposal_id_prefix: u64,
+    pub whitelist_mode: bool,
+    pub grace_period_ledgers: u64,
+    pub vote_weight: VoteWeight,
+    pub high_impact_threshold: u32,
+    pub admin_rotation_delay: u64,
+    pub auto_topup_amount: i128,
+    pub tier_usage_tracking: bool,
+    pub arbitration_timeout_ledgers: u64,
+    pub approval_timeout_ledgers: u64,
+    pub exec_window_ledgers: u64,
+    pub upgrade_timelock_delay: u64,
+    pub participation: ParticipationConfig,
+}
+
+impl From<ConfigV1> for Config {
+    fn from(old: ConfigV1) -> Self {
+        Self {
+            signers: old.signers,
+            signer_tiers: old.signer_tiers,
+            full_quorum_threshold: old.full_quorum_threshold,
+            threshold: old.threshold,
+            quorum: old.quorum,
+            quorum_percentage: old.quorum_percentage,
+            spending_limit: old.spending_limit,
+            daily_limit: old.daily_limit,
+            weekly_limit: old.weekly_limit,
+            timelock_threshold: old.timelock_threshold,
+            timelock_delay: old.timelock_delay,
+            velocity_limit: old.velocity_limit,
+            threshold_strategy: old.threshold_strategy,
+            pre_execution_hooks: old.pre_execution_hooks,
+            post_execution_hooks: old.post_execution_hooks,
+            default_voting_deadline: old.default_voting_deadline,
+            veto_addresses: old.veto_addresses,
+            veto_window_ledgers: old.veto_window_ledgers,
+            retry_config: old.retry_config,
+            recovery_config: old.recovery_config,
+            supported_tokens: old.supported_tokens,
+            token_daily_limits: old.token_daily_limits,
+            token_weekly_limits: old.token_weekly_limits,
+            stream_max_window_amount: old.stream_max_window_amount,
+            burst_factor: old.burst_factor,
+            staking_config: old.staking_config,
+            proposal_id_prefix: old.proposal_id_prefix,
+            whitelist_mode: old.whitelist_mode,
+            grace_period_ledgers: old.grace_period_ledgers,
+            vote_weight: old.vote_weight,
+            high_impact_threshold: old.high_impact_threshold,
+            admin_rotation_delay: old.admin_rotation_delay,
+            auto_topup_amount: old.auto_topup_amount,
+            tier_usage_tracking: old.tier_usage_tracking,
+            arbitration_timeout_ledgers: old.arbitration_timeout_ledgers,
+            approval_timeout_ledgers: old.approval_timeout_ledgers,
+            exec_window_ledgers: old.exec_window_ledgers,
+            upgrade_timelock_delay: old.upgrade_timelock_delay,
+            max_pending_per_signer: 50,
+            participation: old.participation,
+        }
+    }
 }
 
 /// Signer participation scoring thresholds (Issue #1093).
