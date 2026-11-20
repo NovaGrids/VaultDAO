@@ -1070,11 +1070,7 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
             remove_pending_proposal_for_proposer(env, &previous.proposer, proposal.id);
         }
     }
-    if proposal.status == ProposalStatus::Pending
-        && previous.as_ref().map_or(true, |old| {
-            old.status != ProposalStatus::Pending || old.proposer != proposal.proposer
-        })
-    {
+    if proposal.status == ProposalStatus::Pending {
         add_pending_proposal_for_proposer(env, &proposal.proposer, proposal.id);
     }
     // Maintain StatusIndex
@@ -1112,11 +1108,11 @@ fn add_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id:
         .unwrap_or_else(|| Vec::new(env));
     if !ids.contains(proposal_id) {
         ids.push_back(proposal_id);
-        env.storage().persistent().set(&key, &ids);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
     }
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
 
 pub fn index_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
