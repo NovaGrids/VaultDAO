@@ -212,6 +212,7 @@ export {
   unlockTokens,
   unlockEarly,
   getTokenLock,
+  getLockedBalance,
   // Escrow
   createEscrow,
   completeMilestone,

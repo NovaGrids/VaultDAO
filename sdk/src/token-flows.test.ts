@@ -22,6 +22,7 @@ import {
   unlockTokens,
   unlockEarly,
   getTokenLock,
+  getLockedBalance,
   createEscrow,
   completeMilestone,
   releaseEscrow,
@@ -239,6 +240,43 @@ describe("token locks", () => {
 
     mockRead(undefined);
     expect(await getTokenLock("GOTHER", "GCALLER", opts)).toBeNull();
+  });
+
+  const rawLock = (isActive: boolean) => ({
+    owner: "GOWNER",
+    token: "CTOKEN",
+    amount: 750n,
+    locked_at: 10n,
+    duration: 100n,
+    unlock_at: 110n,
+    is_active: isActive,
+    power_multiplier_bps: 12_500,
+  });
+
+  it("getLockedBalance reads get_token_lock for the owner", async () => {
+    mockRead(rawLock(true));
+    await getLockedBalance("GOWNER", "GCALLER", opts);
+    expect(lastCall()).toEqual({ method: "get_token_lock", args: ["addr:GOWNER"] });
+  });
+
+  it("getLockedBalance returns the amount of an active lock", async () => {
+    mockRead(rawLock(true));
+    expect(await getLockedBalance("GOWNER", "GCALLER", opts)).toBe(750n);
+  });
+
+  it("getLockedBalance returns 0n after the lock was withdrawn", async () => {
+    mockRead(rawLock(false));
+    expect(await getLockedBalance("GOWNER", "GCALLER", opts)).toBe(0n);
+  });
+
+  it("getLockedBalance returns 0n when the owner has no lock", async () => {
+    mockRead(undefined);
+    expect(await getLockedBalance("GNOBODY", "GCALLER", opts)).toBe(0n);
+  });
+
+  it("unlockTokens encodes only the owner", async () => {
+    await unlockTokens("GOWNER", opts);
+    expect(lastCall()).toEqual({ method: "unlock_tokens", args: ["addr:GOWNER"] });
   });
 });
 

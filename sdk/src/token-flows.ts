@@ -324,6 +324,23 @@ export async function getTokenLock(
   };
 }
 
+/**
+ * Amount `owner` currently has locked, in the lock token's smallest unit.
+ *
+ * Reads `get_token_lock` and returns `0n` when there is no lock or the lock
+ * has already been withdrawn — `unlock_tokens` / `unlock_early` keep the
+ * record but set `is_active = false`, so its `amount` is no longer locked.
+ * Use {@link getTokenLock} for the token, expiry and voting multiplier.
+ */
+export async function getLockedBalance(
+  owner: string,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<bigint> {
+  const lock = await getTokenLock(owner, callerPublicKey, opts);
+  return lock?.isActive ? lock.amount : 0n;
+}
+
 // ---------------------------------------------------------------------------
 // Escrow
 // ---------------------------------------------------------------------------
