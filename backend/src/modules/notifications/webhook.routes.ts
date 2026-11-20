@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 import type { WebhookDeliveryService } from "./webhook.service.js";
+import { getWebhookDlq } from "./webhooks.js";
 
 /**
  * Webhook management routes.
@@ -10,6 +11,7 @@ import type { WebhookDeliveryService } from "./webhook.service.js";
  * POST   /api/v1/webhooks              — register a new webhook
  * DELETE /api/v1/webhooks/:id          — unregister a webhook
  * GET    /api/v1/webhooks/:id/deliveries — delivery history for a webhook
+ * GET    /api/v1/webhooks/:id/dlq        — dead-lettered deliveries for a webhook
  */
 export function createWebhookRouter(service: WebhookDeliveryService) {
   const router = Router();
@@ -80,6 +82,21 @@ export function createWebhookRouter(service: WebhookDeliveryService) {
   router.get("/:id/deliveries", async (req: Request, res: Response) => {
     const id = String(req.params.id ?? "");
     const deliveries = await service.getDeliveries(id);
+    success(res, { webhookId: id, deliveries, total: deliveries.length });
+  });
+
+  /** GET /api/v1/webhooks/:id/dlq — dead-lettered deliveries */
+  router.get("/:id/dlq", (req: Request, res: Response) => {
+    const id = String(req.params.id ?? "");
+    if (!service.get(id)) {
+      error(res, {
+        message: "Webhook not found",
+        status: 404,
+        code: ErrorCode.NOT_FOUND,
+      });
+      return;
+    }
+    const deliveries = getWebhookDlq(id);
     success(res, { webhookId: id, deliveries, total: deliveries.length });
   });
 
