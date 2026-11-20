@@ -20,6 +20,7 @@ import type { SdkOptions, Network, SdkLogger, StateDiff, StateChangeValue, State
 import { VaultError, VaultErrorCode, noopLogger } from "./types";
 import { getErrorDescription } from "./errors";
 import { getRpcServer } from "./rpc";
+import { validateContractId } from "./validation";
 
 // ---------------------------------------------------------------------------
 // Network helpers
@@ -498,6 +499,9 @@ function isRateLimitError(error: unknown): boolean {
  * @internal
  */
 export function getContract(opts: SdkOptions): Contract {
+  // Fail fast with a typed SDK error instead of an opaque stellar-sdk/RPC
+  // error when the configured contract ID is malformed (#2095).
+  validateContractId("contractId", opts.contractId);
   return new Contract(opts.contractId);
 }
 

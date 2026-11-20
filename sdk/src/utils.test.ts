@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
-import { xdr, Contract } from "@stellar/stellar-sdk";
+import { xdr, Contract, Keypair, StrKey } from "@stellar/stellar-sdk";
 import {
   buildOptions,
   NETWORK_PASSPHRASES,
@@ -26,6 +26,7 @@ import {
   signAndSubmit,
 } from "./utils";
 import { VaultError, VaultErrorCode } from "./types";
+import { SdkValidationError } from "./validation";
 import type { SdkOptions } from "./types";
 
 const { serverMock, freighterMock } = vi.hoisted(() => ({
@@ -186,6 +187,63 @@ describe("utils.ts — pure helpers", () => {
       const contract = getContract(opts);
       expect(contract).toBeInstanceOf(Contract);
       expect(contract.contractId()).toBe(opts.contractId);
+    });
+
+    // #2095: malformed contract IDs fail with a typed SDK error before any
+    // stellar-sdk or RPC call.
+    const withId = (contractId: unknown): SdkOptions => ({
+      contractId: contractId as string,
+      rpcUrl: "https://rpc.example",
+      networkPassphrase: "Test SDF Network ; September 2015",
+    });
+
+    const expectInvalid = (contractId: unknown, message: RegExp): void => {
+      let caught: unknown;
+      try {
+        getContract(withId(contractId));
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(SdkValidationError);
+      const err = caught as SdkValidationError;
+      expect(err.field).toBe("contractId");
+      expect(err.value).toBe(contractId);
+      expect(err.message).toMatch(message);
+    };
+
+    it("accepts any checksum-valid contract address", () => {
+      const id = StrKey.encodeContract(Buffer.alloc(32, 7));
+      expect(getContract(withId(id)).contractId()).toBe(id);
+    });
+
+    it("rejects an empty or whitespace-only contractId", () => {
+      expectInvalid("", /non-empty Stellar contract address/);
+      expectInvalid("   ", /non-empty Stellar contract address/);
+    });
+
+    it("rejects a non-string contractId", () => {
+      expectInvalid(undefined, /non-empty Stellar contract address/);
+      expectInvalid(123, /non-empty Stellar contract address/);
+    });
+
+    it("rejects malformed contract IDs", () => {
+      const valid = "CC5EPETAFZSWR56LW35NI4IZEKDTZL5HTJV5FOO237OQRH6OMZFWFVBB";
+      for (const bad of [
+        "CXXXXXXXXX", // too short
+        valid.slice(0, -1) + "A", // checksum mismatch
+        valid.toLowerCase(), // StrKey is upper-case base32
+        `${valid}A`, // too long
+      ]) {
+        expectInvalid(bad, /not a valid Stellar contract address/);
+      }
+    });
+
+    it("rejects surrounding whitespace rather than silently trimming", () => {
+      expectInvalid(" CC5EPETAFZSWR56LW35NI4IZEKDTZL5HTJV5FOO237OQRH6OMZFWFVBB", /whitespace/);
+    });
+
+    it("explains when an account address is passed instead of a contract", () => {
+      expectInvalid(Keypair.random().publicKey(), /account address G\.\.\./);
     });
   });
 

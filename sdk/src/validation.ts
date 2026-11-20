@@ -6,6 +6,8 @@
  * field name, value, and a human-readable message.
  */
 
+import { StrKey } from "@stellar/stellar-sdk";
+
 export class SdkValidationError extends Error {
   constructor(
     public readonly field: string,
@@ -19,6 +21,32 @@ export class SdkValidationError extends Error {
 
 function fail(field: string, value: unknown, message: string): never {
   throw new SdkValidationError(field, value, message);
+}
+
+/**
+ * Validate a Soroban contract address (StrKey `C...`, 56 characters with a
+ * valid checksum) before it reaches `new Contract()` or Soroban RPC (#2095).
+ *
+ * Account addresses (`G...`) are rejected too: they are valid Stellar
+ * addresses, but passing one as the vault contract is always a config error.
+ */
+export function validateContractId(field: string, value: unknown): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    fail(field, value, `${field} must be a non-empty Stellar contract address (C...)`);
+  }
+  if (value !== value.trim()) {
+    fail(field, value, `${field} must not contain leading or trailing whitespace`);
+  }
+  if (!StrKey.isValidContract(value)) {
+    const hint = StrKey.isValidEd25519PublicKey(value)
+      ? " (got an account address G..., expected the vault contract address C...)"
+      : "";
+    fail(
+      field,
+      value,
+      `${field} is not a valid Stellar contract address: expected 56 characters starting with "C" with a valid checksum${hint}`
+    );
+  }
 }
 
 export function validateNonEmptyString(field: string, value: unknown): void {
