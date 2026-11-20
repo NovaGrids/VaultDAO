@@ -1,0 +1,147 @@
+name: Release Draft
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  draft-release:
+    name: Generate Draft Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine previous tag
+        id: prev_tag
+        env:
+          NEW_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if PREV_TAG=$(git describe --tags --abbrev=0 "${NEW_TAG}^" 2>/dev/null); then
+            echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+            echo "has_prev=true" >> "$GITHUB_OUTPUT"
+            echo "Previous tag: ${PREV_TAG}"
+          else
+            echo "prev_tag=" >> "$GITHUB_OUTPUT"
+            echo "has_prev=false" >> "$GITHUB_OUTPUT"
+            echo "No previous tag found; using full history."
+          fi
+
+      - name: Generate changelog draft
+        id: changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NEW_TAG: ${{ github.ref_name }}
+          PREV_TAG: ${{ steps.prev_tag.outputs.prev_tag }}
+          HAS_PREV: ${{ steps.prev_tag.outputs.has_prev }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+
+          # Collect merged PRs since the previous tag (or full history if none).
+          if [ "${HAS_PREV}" = "true" ]; then
+            MERGED_AT="merged:>=${PREV_TAG}"
+          else
+            MERGED_AT=""
+          fi
+
+          # Fetch merged PRs as JSON (number, title, url, labels, author).
+          if [ -n "${MERGED_AT}" ]; then
+            gh pr list \
+              --repo "${REPO}" \
+              --state merged \
+              --search "${MERGED_AT}" \
+              --limit 500 \
+              --json number,title,url,labels,author > "${RUNNER_TEMP}/prs.json"
+          else
+            gh pr list \
+              --repo "${REPO}" \
+              --state merged \
+              --limit 500 \
+              --json number,title,url,labels,author > "${RUNNER_TEMP}/prs.json"
+          fi
+
+          # Build grouped markdown.
+          {
+            echo "## What's Changed"
+            echo ""
+            if [ "${HAS_PREV}" = "true" ]; then
+              echo "Changes since \`${PREV_TAG}\`."
+            else
+              echo "No previous tag found; listing all merged pull requests."
+            fi
+            echo ""
+
+            python3 - "${RUNNER_TEMP}/prs.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as fh:
+              prs = json.load(fh)
+
+          groups = [
+              ("enhancement", "Enhancements"),
+              ("bug", "Bug Fixes"),
+              ("security", "Security"),
+              ("documentation", "Documentation"),
+              ("other", "Other Changes"),
+          ]
+          buckets = {key: [] for key, _ in groups}
+
+          for pr in prs:
+              labels = {lbl.get("name", "").lower() for lbl in pr.get("labels", [])}
+              matched = None
+              for key, _ in groups:
+                  if key in labels:
+                      matched = key
+                      break
+              if matched is None:
+                  matched = "other"
+              author = (pr.get("author") or {}).get("login", "unknown")
+              line = f"- {pr.get('title', '')} by @{author} in {pr.get('url', '')}"
+              buckets[matched].append(line)
+
+          for key, title in groups:
+              entries = buckets[key]
+              if not entries:
+                  continue
+              print(f"### {title}")
+              print("")
+              for line in entries:
+                  print(line)
+              print("")
+
+          if not any(buckets.values()):
+              print("_No merged pull requests found for this release._")
+              print("")
+          PY
+
+            echo "---"
+            echo ""
+            echo "**Full Changelog**: https://github.com/${REPO}/compare/${PREV_TAG:-<initial>}...${NEW_TAG}"
+          } > "${NOTES_FILE}"
+
+          echo "notes_file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NEW_TAG: ${{ github.ref_name }}
+          NOTES_FILE: ${{ steps.changelog.outputs.notes_file }}
+        run: |
+          set -euo pipefail
+          gh release create "${NEW_TAG}" \
+            --repo "${REPO}" \
+            --draft \
+            --title "${NEW_TAG}" \
+            --notes-file "${NOTES_FILE}"

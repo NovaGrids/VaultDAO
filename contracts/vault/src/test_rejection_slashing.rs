@@ -779,3 +779,240 @@ fn test_slashes_only_when_rejection_threshold_met() {
     assert_eq!(client.get_insurance_pool_balance(&token), INSURANCE_BURN);
     assert_eq!(client.get_stake_pool_balance(&token), 10);
 }
+
+// ============================================================================
+// Governed rejection threshold (Issue #2127)
+// ============================================================================
+
+/// A minimal vault for exercising the governed rejection threshold.
+///
+/// Returns `(client, admin, outsider)`.
+fn setup_threshold_vault(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+
+    let admin = Address::generate(env);
+    let outsider = Address::generate(env);
+
+    let mut signers = Vec::new(env);
+    signers.push_back(admin.clone());
+
+    client.initialize(
+        &admin,
+        &InitConfig {
+            upgrade_timelock_delay: 17_280,
+            veto_window_ledgers: 0,
+            whitelist_mode: false,
+            grace_period_ledgers: 100,
+            vote_weight: crate::types::VoteWeight::Flat,
+            high_impact_threshold: 70,
+            admin_rotation_delay: 1440,
+            signers,
+            threshold: 1,
+            quorum: 0,
+            quorum_percentage: 0,
+            default_voting_deadline: 0,
+            spending_limit: 10_000_000,
+            daily_limit: 50_000_000,
+            weekly_limit: 100_000_000,
+            timelock_threshold: 9_999_999,
+            timelock_delay: 0,
+            velocity_limit: VelocityConfig {
+                limit: 1000,
+                window: 3600,
+                per_token_limit: 0,
+            },
+            threshold_strategy: ThresholdStrategy::Fixed,
+            pre_execution_hooks: Vec::new(env),
+            post_execution_hooks: Vec::new(env),
+            veto_addresses: Vec::new(env),
+            retry_config: RetryConfig {
+                max_retry_delay: 0,
+                enabled: false,
+                max_retries: 0,
+                initial_backoff_ledgers: 0,
+            },
+            recovery_config: crate::types::RecoveryConfig::default(env),
+            staking_config: staking_config(false, 10),
+            proposal_id_prefix: 0,
+        },
+    );
+
+    (client, admin, outsider)
+}
+
+#[test]
+fn test_set_rejection_threshold_by_admin_updates_value() {
+    let env = Env::default();
+    let (client, admin, _outsider) = setup_threshold_vault(&env);
+
+    let before = client.get_rejection_threshold();
+    assert_ne!(before, 7, "pick a value distinct from the default");
+
+    client.set_rejection_threshold(&admin, &7);
+
+    assert_eq!(
+        client.get_rejection_threshold(),
+        7,
+        "the admin can update the rejection threshold"
+    );
+}
+
+#[test]
+fn test_set_rejection_threshold_emits_audit_event() {
+    let env = Env::default();
+    let (client, admin, _outsider) = setup_threshold_vault(&env);
+
+    client.set_rejection_threshold(&admin, &5);
+
+    let topic = Symbol::new(&env, "rejection_threshold_updated");
+    let found = env.events().all().iter().any(|(_, topics, data)| {
+        let is_event = topics
+            .first()
+            .and_then(|t| Symbol::try_from_val(&env, &t).ok())
+            .map(|s| s == topic)
+            .unwrap_or(false);
+        if !is_event {
+            return false;
+        }
+        match <(u32, u32)>::try_from_val(&env, &data) {
+            Ok((_old, new)) => new == 5,
+            Err(_) => false,
+        }
+    });
+
+    assert!(found, "expected a rejection_threshold_updated audit event");
+}
+
+#[test]
+fn test_set_rejection_threshold_unauthorized_is_rejected() {
+    let env = Env::default();
+    let (client, _admin, outsider) = setup_threshold_vault(&env);
+
+    let before = client.get_rejection_threshold();
+
+    let res = client.try_set_rejection_threshold(&outsider, &9);
+    assert_eq!(
+        res,
+        Err(Ok(VaultError::Unauthorized)),
+        "a non-admin cannot change the rejection threshold"
+    );
+    assert_eq!(
+        client.get_rejection_threshold(),
+        before,
+        "the stored threshold is unchanged after a rejected call"
+    );
+}
+
+// ============================================================================
+// Veto window validation (Issue #2129)
+// ============================================================================
+
+/// Build an `InitConfig` with the given veto window and voting deadline.
+fn init_config_with_windows(
+    env: &Env,
+    admin: &Address,
+    veto_window_ledgers: u32,
+    default_voting_deadline: u32,
+) -> InitConfig {
+    let mut signers = Vec::new(env);
+    signers.push_back(admin.clone());
+
+    InitConfig {
+        upgrade_timelock_delay: 17_280,
+        veto_window_ledgers,
+        whitelist_mode: false,
+        grace_period_ledgers: 100,
+        vote_weight: crate::types::VoteWeight::Flat,
+        high_impact_threshold: 70,
+        admin_rotation_delay: 1440,
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline,
+        spending_limit: 10_000_000,
+        daily_limit: 50_000_000,
+        weekly_limit: 100_000_000,
+        timelock_threshold: 9_999_999,
+        timelock_delay: 0,
+        velocity_limit: VelocityConfig {
+            limit: 1000,
+            window: 3600,
+            per_token_limit: 0,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        pre_execution_hooks: Vec::new(env),
+        post_execution_hooks: Vec::new(env),
+        veto_addresses: Vec::new(env),
+        retry_config: RetryConfig {
+            max_retry_delay: 0,
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(env),
+        staking_config: staking_config(false, 10),
+        proposal_id_prefix: 0,
+    }
+}
+
+#[test]
+fn test_initialize_rejects_veto_window_exceeding_voting_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    let config = init_config_with_windows(&env, &admin, 200, 100);
+    let res = client.try_initialize(&admin, &config);
+
+    assert_eq!(
+        res,
+        Err(Ok(VaultError::InvalidVetoConfig)),
+        "a veto window longer than the voting deadline must be rejected"
+    );
+}
+
+#[test]
+fn test_initialize_accepts_veto_window_equal_to_voting_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    let config = init_config_with_windows(&env, &admin, 100, 100);
+    let res = client.try_initialize(&admin, &config);
+
+    assert_eq!(
+        res,
+        Ok(Ok(())),
+        "a veto window equal to the voting deadline is allowed"
+    );
+}
+
+#[test]
+fn test_initialize_accepts_veto_window_when_deadline_is_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    // A zero deadline disables the comparison, so any veto window is accepted.
+    let config = init_config_with_windows(&env, &admin, 500, 0);
+    let res = client.try_initialize(&admin, &config);
+
+    assert_eq!(
+        res,
+        Ok(Ok(())),
+        "a zero voting deadline disables the veto window check"
+    );
+}

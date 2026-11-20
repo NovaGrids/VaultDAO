@@ -1281,3 +1281,174 @@ fn test_extend_voting_deadline_non_pending_returns_error() {
     let res = client.try_extend_voting_deadline(&admin, &proposal_id, &new_deadline);
     assert_eq!(res, Err(Ok(VaultError::ProposalNotPending)));
 }
+
+// ===========================================================================
+// Veto Window Validation Tests — Issue #2129
+//
+// **Validates: veto_window_ledgers must not exceed default_voting_deadline**
+//
+// A veto window that outlasts the voting period creates a hidden invalidation
+// path: a veto can arrive after all votes have closed.  Both `initialize` and
+// `update_approval_timeout` must reject such configs with
+// `VaultError::InvalidVetoConfig`.
+// ===========================================================================
+
+/// Build an InitConfig with an explicit `veto_window_ledgers` and
+/// `default_voting_deadline` so the veto-window invariant can be exercised.
+fn veto_window_init_config(
+    env: &Env,
+    signers: Vec<Address>,
+    veto_window_ledgers: u64,
+    default_voting_deadline: u64,
+) -> InitConfig {
+    let mut config = deadline_init_config(env, signers, default_voting_deadline);
+    config.veto_window_ledgers = veto_window_ledgers;
+    config
+}
+
+/// Register a vault and initialize it with the given config.  Returns the
+/// client and the admin address used for the call.
+fn setup_vault_with_config(
+    env: &Env,
+    config: InitConfig,
+) -> (VaultDAOClient<'_>, Address) {
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+
+    let admin = Address::generate(env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    StellarAssetClient::new(env, &token).mint(&contract_id, &10_000);
+
+    client.initialize(&admin, &config);
+    (client, admin)
+}
+
+// ---------------------------------------------------------------------------
+// Test VW-1 — initialize rejects veto_window_ledgers > default_voting_deadline
+// ---------------------------------------------------------------------------
+#[test]
+fn test_initialize_rejects_veto_window_exceeding_voting_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&contract_id, &10_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    // veto window (200) > voting deadline (100)
+    let config = veto_window_init_config(&env, signers, 200, 100);
+
+    let result = client.try_initialize(&admin, &config);
+    assert_eq!(
+        result.err(),
+        Some(Ok(VaultError::InvalidVetoConfig)),
+        "initialize must reject veto_window_ledgers > default_voting_deadline"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test VW-2 — initialize accepts veto_window_ledgers <= default_voting_deadline
+// ---------------------------------------------------------------------------
+#[test]
+fn test_initialize_accepts_veto_window_within_voting_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    StellarAssetClient::new(&env, &token).mint(&contract_id, &10_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    // veto window (100) == voting deadline (100) — boundary is allowed
+    let config = veto_window_init_config(&env, signers, 100, 100);
+
+    let result = client.try_initialize(&admin, &config);
+    assert!(
+        result.is_ok(),
+        "initialize must accept veto_window_ledgers == default_voting_deadline"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test VW-3 — update_approval_timeout rejects a deadline shorter than the
+//             configured veto window
+// ---------------------------------------------------------------------------
+#[test]
+fn test_update_approval_timeout_rejects_deadline_below_veto_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    // Valid initial config: veto window (100) <= voting deadline (200)
+    let config = veto_window_init_config(&env, signers, 100, 200);
+    let (client, admin) = setup_vault_with_config(&env, config);
+
+    // Shrink the voting deadline below the veto window
+    let result = client.try_update_approval_timeout(&admin, &50);
+    assert_eq!(
+        result.err(),
+        Some(Ok(VaultError::InvalidVetoConfig)),
+        "update_approval_timeout must reject a deadline shorter than veto_window_ledgers"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test VW-4 — update_approval_timeout accepts a deadline >= the veto window
+// ---------------------------------------------------------------------------
+#[test]
+fn test_update_approval_timeout_accepts_deadline_at_or_above_veto_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer.clone());
+
+    // Valid initial config: veto window (100) <= voting deadline (200)
+    let config = veto_window_init_config(&env, signers, 100, 200);
+    let (client, admin) = setup_vault_with_config(&env, config);
+
+    // Deadline exactly equal to the veto window is allowed
+    let result = client.try_update_approval_timeout(&admin, &100);
+    assert!(
+        result.is_ok(),
+        "update_approval_timeout must accept a deadline equal to veto_window_ledgers"
+    );
+
+    // A larger deadline is also allowed
+    let result = client.try_update_approval_timeout(&admin, &500);
+    assert!(
+        result.is_ok(),
+        "update_approval_timeout must accept a deadline above veto_window_ledgers"
+    );
+}
