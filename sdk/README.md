@@ -851,13 +851,23 @@ See [sdk/examples/create-vesting.ts](./examples/create-vesting.ts).
 Lock tokens for a number of ledgers to earn a voting-power multiplier.
 
 ```typescript
-import { lockTokens, extendLock, unlockTokens, unlockEarly, getTokenLock } from "@vaultdao/sdk";
+import {
+  lockTokens,
+  extendLock,
+  unlockTokens,
+  unlockEarly,
+  getTokenLock,
+  getLockedBalance,
+} from "@vaultdao/sdk";
 
 await signAndSubmit(await lockTokens(wallet.publicKey, token, BigInt(1_000_000_000), 518_400n, opts), opts);
 await signAndSubmit(await extendLock(wallet.publicKey, 120_960n, opts), opts);
 
 const lock = await getTokenLock(wallet.publicKey, wallet.publicKey, opts); // null if none
 console.log(lock?.unlockAt, lock?.powerMultiplierBps);
+
+// Just the amount still locked: 0n when there is no lock or it was withdrawn.
+const locked = await getLockedBalance(wallet.publicKey, wallet.publicKey, opts);
 
 // After expiry:
 await signAndSubmit(await unlockTokens(wallet.publicKey, opts), opts);
