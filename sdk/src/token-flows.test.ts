@@ -17,6 +17,8 @@ import {
   claimVestedTokens,
   cancelVesting,
   getVestingSchedule,
+  listVestingIds,
+  listVestingIdsAfter,
   lockTokens,
   extendLock,
   unlockTokens,
@@ -185,6 +187,30 @@ describe("vesting", () => {
   it("getVestingSchedule returns null when the schedule does not exist", async () => {
     mockRead(null);
     expect(await getVestingSchedule(99n, "GCALLER", opts)).toBeNull();
+  });
+
+  it("rejects zero schedule IDs and empty addresses before building a transaction", async () => {
+    await expect(claimVestedTokens("GBEN", 0n, opts)).rejects.toThrow(/scheduleId/);
+    await expect(claimVestedTokens("", 7n, opts)).rejects.toThrow(/beneficiaryPublicKey/);
+    await expect(cancelVesting("GADMIN", 0n, opts)).rejects.toThrow(/scheduleId/);
+    await expect(getVestingSchedule(0n, "GCALLER", opts)).rejects.toThrow(/scheduleId/);
+    await expect(
+      createVestingSchedule("GADMIN", "", "CTOKEN", 1n, 100, 100, 500, opts),
+    ).rejects.toThrow(/beneficiary/);
+    expect(callSpy).not.toHaveBeenCalled();
+  });
+
+  it("listVestingIds encodes offset and limit and decodes the IDs", async () => {
+    mockRead([1n, 2n, 3n]);
+    expect(await listVestingIds(0, 10, "GCALLER", opts)).toEqual([1n, 2n, 3n]);
+    expect(lastCall()).toEqual({ method: "list_vesting_ids", args: [0n, 10n] });
+  });
+
+  it("listVestingIdsAfter encodes the cursor and returns an empty page as []", async () => {
+    mockRead(undefined);
+    expect(await listVestingIdsAfter(3n, 50, "GCALLER", opts)).toEqual([]);
+    expect(lastCall()).toEqual({ method: "list_vesting_ids_after", args: [3n, 50n] });
+    await expect(listVestingIdsAfter(-1n, 50, "GCALLER", opts)).rejects.toThrow(/cursor/);
   });
 });
 

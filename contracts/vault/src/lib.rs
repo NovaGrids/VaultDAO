@@ -169,6 +169,9 @@ const MAX_ATTACHMENT_LEN: u32 = 128;
 /// Prevents near-instant repeated draining of the vault.
 const MIN_RECURRING_INTERVAL: u64 = 720;
 
+/// Domain separator prefixed to cold-signer proof-of-possession messages (#2086).
+const COLD_SIGNER_POP_DOMAIN: &[u8] = b"VaultDAO:cold-signer-pop:v1";
+
 const REP_EXEC_PROPOSER: u32 = 10;
 const REP_EXEC_APPROVER: u32 = 5;
 const REP_REJECTION_PENALTY: u32 = 20;
@@ -424,6 +427,8 @@ mod test_batch_dependencies;
 mod test_cache_invalidation;
 #[cfg(test)]
 mod test_cold_signature_age;
+#[cfg(test)]
+mod test_cold_signer_pop;
 #[cfg(test)]
 mod test_cost_estimation;
 #[cfg(test)]
@@ -11248,10 +11253,26 @@ impl VaultDAO {
     ///
     /// `cold_signers` are Ed25519 public keys (32 bytes each); max 5.
     /// `cold_signer_addresses` are the corresponding on-chain addresses (same order).
+    ///
+    /// # Proof of possession (#2086)
+    /// `proofs[i]` must be an Ed25519 signature by `cold_signers[i]` over the
+    /// message built by [`Self::cold_signer_pop_message`] for this vault and
+    /// `cold_signer_addresses[i]`. Without it an admin could register a key
+    /// they do not control, pre-populating the cold signer set ahead of a
+    /// future key compromise. Every key in the submitted set is checked on
+    /// every call, so the stored set only ever contains keys whose holders
+    /// signed off on being registered to this vault under that address.
+    ///
+    /// # Errors
+    /// - [`VaultError::TooManyColdSigners`] if more than 5 keys are given.
+    /// - [`VaultError::ColdSignerProofMismatch`] if `cold_signers`,
+    ///   `cold_signer_addresses` and `proofs` differ in length.
+    /// - Traps if any proof fails Ed25519 verification.
     pub fn set_cold_signer_config(
         env: Env,
         caller: Address,
         config: types::ColdSignerConfig,
+        proofs: Vec<BytesN<64>>,
     ) -> Result<(), VaultError> {
         caller.require_auth();
 
@@ -11265,6 +11286,20 @@ impl VaultDAO {
             return Err(VaultError::TooManyColdSigners);
         }
 
+        let n = config.cold_signers.len();
+        if config.cold_signer_addresses.len() != n || proofs.len() != n {
+            return Err(VaultError::ColdSignerProofMismatch);
+        }
+
+        for i in 0..n {
+            let public_key = config.cold_signers.get_unchecked(i);
+            let signer_address = config.cold_signer_addresses.get_unchecked(i);
+            let proof = proofs.get_unchecked(i);
+            let message = Self::cold_signer_pop_message(&env, &signer_address, &public_key);
+            // Traps (aborting the whole call) if the proof does not verify.
+            env.crypto().ed25519_verify(&public_key, &message, &proof);
+        }
+
         storage::set_cold_signer_config(&env, &config);
         storage::extend_instance_ttl(&env);
         events::emit_config_param_changed(&env, Symbol::new(&env, "cold_signer"), &caller);
@@ -11275,6 +11310,30 @@ impl VaultDAO {
     /// Get the current cold-signer configuration.
     pub fn get_cold_signer_config(env: Env) -> types::ColdSignerConfig {
         storage::get_cold_signer_config(&env)
+    }
+
+    /// Build the message a cold signer signs to prove possession of its key.
+    ///
+    /// ```text
+    /// "VaultDAO:cold-signer-pop:v1"   (27 ASCII bytes, domain separator)
+    /// || XDR(ScVal::Address(vault contract))
+    /// || XDR(ScVal::Address(cold signer address))
+    /// || public_key                    (32 raw bytes)
+    /// ```
+    ///
+    /// Binding the vault address stops a proof being replayed into another
+    /// vault; binding the signer address stops a proof being re-paired with a
+    /// different on-chain address. See `docs/guides/SIGNING_GUIDE.md`.
+    fn cold_signer_pop_message(
+        env: &Env,
+        signer_address: &Address,
+        public_key: &BytesN<32>,
+    ) -> soroban_sdk::Bytes {
+        let mut message = soroban_sdk::Bytes::from_slice(env, COLD_SIGNER_POP_DOMAIN);
+        message.append(&env.current_contract_address().to_xdr(env));
+        message.append(&signer_address.clone().to_xdr(env));
+        message.append(&soroban_sdk::Bytes::from_array(env, &public_key.to_array()));
+        message
     }
 
     /// Reject a cold signature whose stated creation ledger is too old, or is

@@ -36,6 +36,7 @@ import {
   symbolToScVal,
 } from "./utils";
 import { invokeMethod, simulateReadOnly } from "./contract";
+import { validateId, validateNonEmptyString } from "./validation";
 
 // ---------------------------------------------------------------------------
 // ScVal encoding helpers for contract structs / enums
@@ -101,6 +102,9 @@ export async function createVestingSchedule(
   endLedger: number,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateNonEmptyString("beneficiary", beneficiary);
+  validateNonEmptyString("token", token);
   if (total <= 0n) throw new Error("Vesting total must be positive");
   if (!(startLedger <= cliffLedger && cliffLedger < endLedger)) {
     throw new Error("Vesting ledgers must satisfy start <= cliff < end");
@@ -126,6 +130,8 @@ export async function claimVestedTokens(
   scheduleId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("beneficiaryPublicKey", beneficiaryPublicKey);
+  validateId("scheduleId", scheduleId);
   const op = getContract(opts).call(
     "claim_vested_tokens",
     addressToScVal(beneficiaryPublicKey),
@@ -143,6 +149,8 @@ export async function cancelVesting(
   scheduleId: bigint,
   opts: SdkOptions
 ): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  validateId("scheduleId", scheduleId);
   const op = getContract(opts).call(
     "cancel_vesting",
     addressToScVal(adminPublicKey),
@@ -174,6 +182,8 @@ export async function getVestingSchedule(
   callerPublicKey: string,
   opts: SdkOptions
 ): Promise<VestingSchedule | null> {
+  validateId("scheduleId", scheduleId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
   const op = getContract(opts).call("get_vesting_schedule", u64ToScVal(scheduleId));
   const raw = await simulateReadOnly<Record<string, unknown> | null | undefined>(
     op,
@@ -237,6 +247,30 @@ export async function listVestingIds(
     u64ToScVal(BigInt(limit))
   );
   const raw = await simulateReadOnly<unknown[]>(op, opts, callerPublicKey, "listVestingIds");
+  return (raw ?? []).map(big);
+}
+
+/**
+ * List vesting schedule IDs strictly greater than `afterId`, in ascending
+ * order. Cursor-based counterpart of {@link listVestingIds}: pass the last ID
+ * of the previous page (0 for the first page).
+ *
+ * The contract caps `limit` at 100.
+ */
+export async function listVestingIdsAfter(
+  afterId: bigint,
+  limit: number,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<bigint[]> {
+  if (afterId < 0n) throw new Error("Vesting cursor must be non-negative");
+  if (limit < 0) throw new Error("Vesting schedule limit must be non-negative");
+  const op = getContract(opts).call(
+    "list_vesting_ids_after",
+    u64ToScVal(afterId),
+    u64ToScVal(BigInt(limit))
+  );
+  const raw = await simulateReadOnly<unknown[]>(op, opts, callerPublicKey, "listVestingIdsAfter");
   return (raw ?? []).map(big);
 }
 

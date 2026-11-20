@@ -338,6 +338,10 @@ pub enum VaultError {
     /// Max cold signer count reached (5)
     TooManyColdSigners = 745,
 
+    /// `cold_signers`, `cold_signer_addresses` and the proof-of-possession
+    /// list passed to `set_cold_signer_config` differ in length (#2086)
+    ColdSignerProofMismatch = 746,
+
     // =========================================================
     // Emergency pause / circuit breaker (#1084)
     // =========================================================
