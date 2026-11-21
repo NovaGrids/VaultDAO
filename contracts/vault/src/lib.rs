@@ -604,6 +604,7 @@ mod test_recovery_cancel_votes;
 mod test_recurring;
 #[cfg(test)]
 mod test_reentrancy;
+mod test_recurring_token_min_interval;
 #[cfg(test)]
 mod test_regressions;
 #[cfg(test)]
@@ -783,6 +784,7 @@ impl VaultDAO {
             token_weekly_limits: Vec::new(&env),
             // Streaming rate limiter: default off
             stream_max_window_amount: 0,
+            min_interval_per_token: Map::new(&env),
             burst_factor: 150, // 1.5x default
             staking_config: config.staking_config,
             proposal_id_prefix: config.proposal_id_prefix,
@@ -4852,6 +4854,7 @@ impl VaultDAO {
                 token_weekly_limits: Vec::new(&env),
                 stream_max_window_amount: 0,
                 burst_factor: 150,
+            min_interval_per_token: Map::new(&env),
                 veto_window_ledgers: 0,
                 proposal_id_prefix: 0,
                 whitelist_mode: false,
@@ -6378,6 +6381,12 @@ impl VaultDAO {
         }
         Self::validate_retry_config(&config.retry_config)?;
         // Issue #1693: enforce the same minimum of 2 as initialize (Issue #1523).
+        // Issue #2137: per-token interval overrides may only tighten the global bound.
+        for (_token, interval) in config.min_interval_per_token.iter() {
+            if interval < MIN_RECURRING_INTERVAL {
+                return Err(VaultError::IntervalTooShort);
+            }
+        }
         if config.threshold < 2 {
             return Err(VaultError::ThresholdTooLow);
         }
@@ -6815,8 +6824,13 @@ impl VaultDAO {
         // Validate recipient against whitelist/blacklist policies
         Self::validate_recipient(&env, &recipient)?;
 
-        // Minimum interval check (e.g. 1 hour = 720 ledgers)
-        if interval < MIN_RECURRING_INTERVAL {
+        // Minimum interval check (e.g. 1 hour = 720 ledgers).
+        // Issue #2137: a per-token override takes precedence over the global minimum.
+        let min_interval = storage::get_config(&env)?
+            .min_interval_per_token
+            .get(token_addr.clone())
+            .unwrap_or(MIN_RECURRING_INTERVAL);
+        if interval < min_interval {
             return Err(VaultError::IntervalTooShort);
         }
 
