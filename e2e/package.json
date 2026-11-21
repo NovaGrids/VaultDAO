@@ -1,0 +1,23 @@
+{
+  "name": "@vaultdao/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end testnet scenario pack for VaultDAO (#2080)",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --import tsx/esm runner.ts",
+    "scenario:lifecycle":       "SCENARIOS=1 node --import tsx/esm runner.ts",
+    "scenario:stream":          "SCENARIOS=2 node --import tsx/esm runner.ts",
+    "scenario:dispute-recover": "SCENARIOS=3 node --import tsx/esm runner.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
