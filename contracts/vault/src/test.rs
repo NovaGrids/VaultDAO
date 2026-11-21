@@ -7571,3 +7571,119 @@ fn test_validate_limits_pending_pagination_bounds_scan() {
     // A zero limit must scan nothing and succeed.
     client.validate_limits_pending(&admin, &0u64, &0u32, &true);
 }
+
+// ============================================================================
+// Issue #2145: reputation config changes go through governance
+// ============================================================================
+
+/// Builds a 3-signer vault (admin, signer2, signer3). Returns (client, admin, signer2, signer3).
+fn reputation_gov_setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+
+    let admin = Address::generate(env);
+    let signer2 = Address::generate(env);
+    let signer3 = Address::generate(env);
+
+    let mut signers = soroban_sdk::Vec::new(env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer2.clone());
+    signers.push_back(signer3.clone());
+
+    client.initialize(&admin, &default_init_config(env, signers, 2));
+    (client, admin, signer2, signer3)
+}
+
+/// Direct calls to set_reputation_config must be rejected for everyone, including Admin.
+#[test]
+fn test_direct_set_reputation_config_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _s2, _s3) = reputation_gov_setup(&env);
+
+    let before = client.get_reputation_config();
+    let new_config = crate::types::ReputationConfig {
+        decay_half_life_ledgers: 5,
+        decay_min_score: 900,
+    };
+    let res = client.try_set_reputation_config(&admin, &new_config);
+    assert_eq!(res, Err(Ok(VaultError::InsufficientRole)));
+    assert_eq!(client.get_reputation_config(), before);
+}
+
+/// Full round trip: propose both reputation parameters, approve to the governance
+/// threshold, execute, and check the stored config.
+#[test]
+fn test_reputation_config_via_governance_flow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, signer2, signer3) = reputation_gov_setup(&env);
+
+    let half_life_id = client.propose_config_change(
+        &admin,
+        &crate::types::ConfigParam::ReputationHalfLife,
+        &5_000i128,
+    );
+    let floor_id = client.propose_config_change(
+        &admin,
+        &crate::types::ConfigParam::ReputationDecayFloor,
+        &250i128,
+    );
+
+    // Nothing applies until the proposal is approved.
+    let res = client.try_execute_config_change(&admin, &half_life_id);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotApproved)));
+
+    // Two of three is below the 67% supermajority (needs 3).
+    client.approve_config_change(&admin, &half_life_id);
+    client.approve_config_change(&signer2, &half_life_id);
+    let res = client.try_execute_config_change(&admin, &half_life_id);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotApproved)));
+    let default_half_life = crate::types::ReputationConfig::default().decay_half_life_ledgers;
+    assert_eq!(
+        client.get_reputation_config().decay_half_life_ledgers,
+        default_half_life
+    );
+
+    client.approve_config_change(&signer3, &half_life_id);
+    client.execute_config_change(&admin, &half_life_id);
+    assert_eq!(client.get_reputation_config().decay_half_life_ledgers, 5_000);
+
+    for voter in [&admin, &signer2, &signer3] {
+        client.approve_config_change(voter, &floor_id);
+    }
+    client.execute_config_change(&admin, &floor_id);
+
+    let stored = client.get_reputation_config();
+    assert_eq!(stored.decay_half_life_ledgers, 5_000);
+    assert_eq!(stored.decay_min_score, 250);
+}
+
+/// Out-of-range reputation values are rejected at the proposal stage.
+#[test]
+fn test_propose_reputation_config_validates_bounds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _s2, _s3) = reputation_gov_setup(&env);
+
+    let neg_half_life = client.try_propose_config_change(
+        &admin,
+        &crate::types::ConfigParam::ReputationHalfLife,
+        &(-1i128),
+    );
+    assert_eq!(neg_half_life, Err(Ok(VaultError::InvalidAmount)));
+
+    let floor_too_high = client.try_propose_config_change(
+        &admin,
+        &crate::types::ConfigParam::ReputationDecayFloor,
+        &1001i128,
+    );
+    assert_eq!(floor_too_high, Err(Ok(VaultError::InvalidAmount)));
+
+    let floor_negative = client.try_propose_config_change(
+        &admin,
+        &crate::types::ConfigParam::ReputationDecayFloor,
+        &(-1i128),
+    );
+    assert_eq!(floor_negative, Err(Ok(VaultError::InvalidAmount)));
+}
