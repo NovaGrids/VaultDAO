@@ -1,6 +1,6 @@
 use super::*;
 use crate::{VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Env, Vec};
+use soroban_sdk::{testutils::{Address as _, Ledger}, token::StellarAssetClient, Env, Vec};
 
 fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold: u32) -> Address {
     let signer2 = Address::generate(env);
@@ -442,4 +442,113 @@ fn test_bridge_invalid_deadline() {
         &(current_ledger as u64),
     );
     assert_eq!(result, Err(Ok(VaultError::BridgeDeadlineExceeded)));
+}
+
+// ============================================================================
+// Issue #2143: bridge transfer expiry
+// ============================================================================
+
+/// Sets up a source and target vault, funds the source, and starts a bridge
+/// transfer of 100 tokens with `deadline_ledger` = current + 100.
+/// Returns (source_client, source_vault_id, token, bridge_id, deadline_ledger).
+fn setup_pending_bridge(
+    env: &Env,
+) -> (
+    VaultDAOClient<'_>,
+    Address,
+    Address,
+    soroban_sdk::BytesN<32>,
+    u64,
+) {
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(env, &source_vault_id);
+    let target_client = VaultDAOClient::new(env, &target_vault_id);
+    let admin = Address::generate(env);
+
+    init_vault(env, &source_client, &admin, 2);
+    init_vault(env, &target_client, &admin, 2);
+
+    let token_admin = Address::generate(env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
+    StellarAssetClient::new(env, &token).mint(&source_vault_id, &1000);
+
+    let deadline_ledger = env.ledger().sequence() as u64 + 100;
+    let bridge_id = source_client.bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &95,
+        &deadline_ledger,
+    );
+
+    (source_client, source_vault_id, token, bridge_id, deadline_ledger)
+}
+
+#[test]
+fn test_expire_bridge_transfer_rejected_before_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, bridge_id, deadline_ledger) = setup_pending_bridge(&env);
+
+    // Exactly at the deadline is still too early: expiry needs current > deadline.
+    env.ledger()
+        .with_mut(|li| li.sequence_number = deadline_ledger as u32);
+    let res = source_client.try_expire_bridge_transfer(&bridge_id);
+    assert_eq!(res, Err(Ok(VaultError::TimelockNotExpired)));
+
+    let record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(record.status, crate::types::BridgeStatus::Initiated);
+}
+
+#[test]
+fn test_expire_bridge_transfer_after_deadline_marks_returned() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, bridge_id, deadline_ledger) = setup_pending_bridge(&env);
+
+    env.ledger()
+        .with_mut(|li| li.sequence_number = (deadline_ledger + 1) as u32);
+
+    // Callable by anyone: no vault admin is needed to expire a stale transfer.
+    source_client.expire_bridge_transfer(&bridge_id);
+
+    let record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(record.status, crate::types::BridgeStatus::Returned);
+    assert_eq!(record.finalized_at, (deadline_ledger + 1));
+
+    // Once expired, the transfer cannot be expired or confirmed again.
+    let again = source_client.try_expire_bridge_transfer(&bridge_id);
+    assert_eq!(again, Err(Ok(VaultError::BridgeInvalidStatus)));
+    let confirm = source_client.try_confirm_bridge_receipt(&source_client.address, &bridge_id, &96);
+    assert!(confirm.is_err());
+}
+
+#[test]
+fn test_expire_bridge_transfer_rejected_after_confirmation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, bridge_id, deadline_ledger) = setup_pending_bridge(&env);
+
+    let admin = source_client.address.clone();
+    source_client.confirm_bridge_receipt(&admin, &bridge_id, &96);
+
+    env.ledger()
+        .with_mut(|li| li.sequence_number = (deadline_ledger + 1) as u32);
+    let res = source_client.try_expire_bridge_transfer(&bridge_id);
+    assert_eq!(res, Err(Ok(VaultError::BridgeInvalidStatus)));
+}
+
+#[test]
+fn test_expire_unknown_bridge_id_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, _bridge_id, _deadline) = setup_pending_bridge(&env);
+
+    let unknown = soroban_sdk::BytesN::from_array(&env, &[7u8; 32]);
+    let res = source_client.try_expire_bridge_transfer(&unknown);
+    assert_eq!(res, Err(Ok(VaultError::BridgeInvalidId)));
 }

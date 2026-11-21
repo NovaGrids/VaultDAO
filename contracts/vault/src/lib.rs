@@ -17908,6 +17908,52 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Expire a bridge transfer whose receipt was never confirmed (Issue #2143).
+    ///
+    /// Anyone may call this once the transfer's `deadline_ledger` has passed while
+    /// the record is still `Initiated`. The bridged amount is refunded to the
+    /// source vault and the record is marked `Returned`. Calls before the deadline
+    /// are rejected with `TimelockNotExpired`.
+    ///
+    /// This is a separate entrypoint because `confirm_bridge_receipt` returns an
+    /// error after the deadline, which reverts its refund. Here the refund persists.
+    pub fn expire_bridge_transfer(
+        env: Env,
+        bridge_id: soroban_sdk::BytesN<32>,
+    ) -> Result<(), VaultError> {
+        require_not_paused(&env)?;
+
+        let mut bridge_record = storage::get_bridge_record(&env, bridge_id.clone())
+            .ok_or(VaultError::BridgeInvalidId)?;
+
+        if bridge_record.status != crate::types::BridgeStatus::Initiated {
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger <= bridge_record.deadline_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        token::transfer(
+            &env,
+            &bridge_record.token,
+            &bridge_record.source_vault,
+            bridge_record.amount,
+        );
+        bridge_record.status = crate::types::BridgeStatus::Returned;
+        bridge_record.finalized_at = current_ledger;
+        storage::set_bridge_record(&env, &bridge_record);
+        events::emit_bridge_funds_returned(
+            &env,
+            &bridge_id,
+            &bridge_record.source_vault,
+            bridge_record.amount,
+        );
+
+        Ok(())
+    }
+
     /// Propose a cross-vault transfer. Creates a standard proposal that, when
     /// approved and executed via `execute_cross_vault`, will invoke each target
     /// vault's `execute_proposal` via cross-contract call.
