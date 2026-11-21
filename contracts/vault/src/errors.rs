@@ -562,6 +562,12 @@ pub enum VaultError {
     // =========================================================
     /// A single proposer's pending reservations would exceed the per-proposer cap
     ExceedsProposerPendingLimit = 1207,
+
+    // =========================================================
+    // Threshold change cooldown (#2146)
+    // =========================================================
+    /// `update_threshold` was called again before `admin_rotation_delay` ledgers elapsed
+    ThresholdChangeCooldown = 1208,
 }
 
 // Compatibility markers for CI source checks:

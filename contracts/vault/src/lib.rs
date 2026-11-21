@@ -636,6 +636,8 @@ mod test_swap_multi_token;
 #[cfg(test)]
 mod test_threshold_reduction;
 #[cfg(test)]
+mod test_threshold_cooldown;
+#[cfg(test)]
 mod test_time_weighted_lock_token;
 #[cfg(test)]
 mod test_token_insurance;
@@ -4387,6 +4389,12 @@ impl VaultDAO {
     /// - [`VaultError::ThresholdTooHigh`] if `threshold > len(signers)`.
     /// - [`VaultError::ConfigChangeInProgress`] if a reduction proposal is
     ///   already pending (reduction path only).
+    /// - [`VaultError::ThresholdChangeCooldown`] if fewer than
+    ///   `admin_rotation_delay` ledgers have elapsed since the last successful
+    ///   call (Issue #2146). Applies to both increase and reduction paths.
+    ///
+    /// The cooldown timestamp is only recorded on success, so rejected calls
+    /// never extend the cooldown window.
     pub fn update_threshold(
         env: Env,
         admin: Address,
@@ -4409,14 +4417,28 @@ impl VaultDAO {
             return Err(VaultError::ThresholdTooHigh);
         }
 
-        if threshold < config.threshold {
+        let is_reduction = threshold < config.threshold;
+        if is_reduction && storage::get_pending_config_proposal(&env).is_some() {
+            return Err(VaultError::ConfigChangeInProgress);
+        }
+
+        // ── Cooldown (Issue #2146): block rapid oscillation of the threshold ──
+        let current_ledger = env.ledger().sequence() as u64;
+        if let Some(last_ledger) = storage::get_last_threshold_change_ledger(&env) {
+            if current_ledger < last_ledger.saturating_add(config.admin_rotation_delay) {
+                return Err(VaultError::ThresholdChangeCooldown);
+            }
+        }
+
+        if is_reduction {
             // ── Threshold reduction: requires governance + timelock ──────────
             // Build a new config with the reduced threshold and route it
             // through the multisig config-change proposal workflow.
             let mut new_config = config.clone();
             new_config.threshold = threshold;
             let proposal_id =
-                Self::propose_vault_config_change_with_timelock(env, admin, new_config)?;
+                Self::propose_vault_config_change_with_timelock(env.clone(), admin, new_config)?;
+            storage::set_last_threshold_change_ledger(&env, current_ledger);
             Ok(Some(proposal_id))
         } else {
             // ── Threshold increase (or unchanged): apply immediately ─────────
@@ -4426,9 +4448,11 @@ impl VaultDAO {
             storage::extend_instance_ttl(&env);
             storage::create_audit_entry(&env, AuditAction::UpdateThreshold, &admin, 0);
             events::emit_config_updated(&env, &admin);
+            storage::set_last_threshold_change_ledger(&env, current_ledger);
             Ok(None)
         }
     }
+
 
     /// Internal helper: like `propose_vault_config_change` but always sets
     /// `unlock_ledger` to enforce the vault's configured timelock delay.
