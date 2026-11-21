@@ -530,6 +530,8 @@ mod test_prop_spending_limits;
 mod test_prop_streaming;
 #[cfg(test)]
 mod test_prop_reentrancy;
+#[cfg(test)]
+mod test_template_presets;
 
 #[cfg(test)]
 mod test_circular_dependency;
