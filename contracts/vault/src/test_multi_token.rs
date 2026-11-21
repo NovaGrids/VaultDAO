@@ -341,9 +341,10 @@ fn test_remove_token_blocked_by_active_stream() {
     client.create_stream(&admin, &recipient, &token_b, &10i128, &1_000i128, &100u64);
 
     let res = client.try_remove_supported_token(&admin, &token_b);
-    assert!(
-        res.is_err(),
-        "token with an active stream must not be removable"
+    assert_eq!(
+        res.err(),
+        Some(Ok(VaultError::TokenHasActivePayments)),
+        "token with an active stream must be rejected with TokenHasActivePayments"
     );
     assert!(client.is_token_supported(&token_b));
 }
