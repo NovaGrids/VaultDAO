@@ -15,6 +15,7 @@ As of this writing the project has **749 contract tests** (across 35 `test_*.rs`
 5. [CI Pipeline](#5-ci-pipeline)
 6. [Best Practices](#6-best-practices)
 7. [Troubleshooting](#7-troubleshooting)
+8. [Property-Based Invariant Tests (Proptest)](#8-property-based-invariant-tests-proptest)
 
 ---
 
@@ -943,6 +944,156 @@ For the backend, confirm the variable you're relying on actually exists in `back
 
 ---
 
+## 8. Property-Based Invariant Tests (Proptest)
+
+VaultDAO uses [`proptest`](https://proptest-rs.github.io/proptest/) for contract-level invariant testing. Unlike example-based tests that check a fixed scenario, proptest generates hundreds of random inputs per property and automatically shrinks any failure to the smallest counterexample that still reproduces it.
+
+### 8.1 Invariant Modules
+
+Three modules live in `contracts/vault/src/`:
+
+| Module | Invariants covered |
+|---|---|
+| `test_prop_spending_limits` | Bucket monotonicity, proposal/daily/weekly limit gates, cancel-refund identity, bucket isolation, overflow safety, accumulation exactness |
+| `test_prop_streaming` | Accrual bound (`claimed ≤ total`), rate × elapsed = accrued, pause stops accrual, resume excludes paused time, no over-claim, completed state terminal, invalid rate rejected |
+| `test_prop_reentrancy` | Terminal status permanent, no double-execution, successful execute → `Executed` status, approve idempotence, execution precondition, concurrent proposal independence, guard cleared after execution |
+
+The older `test_spending_limit_invariants_proptest` module continues to run alongside these; it exercises action-sequence interleaving (propose → cancel → advance time) with reputation-adjusted limits.
+
+### 8.2 Running Locally
+
+```bash
+cd contracts/vault
+
+# All proptest suites at the CI default of 256 cases per property (~30 s)
+cargo test test_prop_ -- --nocapture
+
+# Extended run matching the nightly workflow (4 096 cases, ~8 min)
+PROPTEST_CASES=4096 cargo test test_prop_ -- --nocapture
+
+# A single invariant module
+cargo test test_prop_spending -- --nocapture
+
+# Original interleaving suite
+cargo test spending_limit_invariants_proptest -- --nocapture
+```
+
+The `--nocapture` flag is important: proptest prints the minimized counterexample to stdout, not stderr, so it is suppressed by default.
+
+### 8.3 CI vs Nightly
+
+| Workflow | Trigger | Cases per property | Purpose |
+|---|---|---|---|
+| `test.yml` (`contract-tests` job) | Every push / PR | 256 | Fast feedback — catches obvious regressions |
+| `nightly-proptest.yml` | 02:00 UTC daily + manual dispatch | 4 096 (configurable) | Deep search — finds rare boundary violations |
+
+Both workflows run all four proptest modules. The nightly workflow also uploads the proptest regression corpus (`.proptest-regressions/`) as a 90-day artifact, so a counterexample found on night N is automatically replayed on night N+1 even after the fix is applied — confirming the fix holds.
+
+### 8.4 Reproducing a Minimized Counterexample
+
+When proptest finds a failure it prints output like this (look in the downloaded `proptest-logs-<run-id>` artifact or in your terminal when running locally):
+
+```
+thread 'test_prop_spending_cancel_fully_refunds_daily_bucket' panicked at
+  'cancel must credit the creation-day bucket'
+  src/test_prop_spending_limits.rs:198
+
+minimal reproduction (copy this into a proptest! block to replay):
+  amount = 73
+  days_before_cancel = 2
+```
+
+**Step 1 — Confirm the reproduction locally.**
+
+Add a focused test that hard-codes the minimized values:
+
+```rust
+// In contracts/vault/src/test_prop_spending_limits.rs (or any test file)
+#[test]
+fn regression_cancel_refund_day_boundary() {
+    // Values copied verbatim from "minimal reproduction" in the failure output.
+    let amount: i128 = 73;
+    let days_before_cancel: u64 = 2;
+
+    let env = make_env();
+    env.ledger().set_timestamp(DAY_SECS * 50);
+    let (client, admin, token) = setup(&env);
+
+    let creation_day = env.ledger().timestamp() / DAY_SECS;
+    let id = propose(&client, &admin, &token, amount).expect("propose should succeed");
+
+    env.ledger().set_timestamp(DAY_SECS * (50 + days_before_cancel));
+    client.try_cancel_proposal(&admin, &id, &Symbol::new(&env, "refund"))
+        .expect("cancel should succeed")
+        .expect("contract panicked");
+
+    assert_eq!(client.get_daily_spent(&creation_day), 0,
+        "cancellation must refund the creation-day bucket");
+}
+```
+
+Run it:
+
+```bash
+cd contracts/vault
+cargo test regression_cancel_refund_day_boundary -- --nocapture
+```
+
+**Step 2 — Locate the bug.**
+
+With the reproduction pinned, you can now add `println!` statements, inspect the storage layer, and bisect through `lib.rs`/`storage.rs` without proptest's random input masking the signal.
+
+**Step 3 — Fix and verify.**
+
+After the fix, run the full property suite to confirm no regression and that the original minimized input is now handled correctly:
+
+```bash
+PROPTEST_CASES=4096 cargo test test_prop_ -- --nocapture
+```
+
+**Step 4 — Preserve the regression.**
+
+Proptest automatically writes minimized inputs to `.proptest-regressions/` and replays them on every future run. Commit that directory entry alongside your fix so the regression is locked in permanently:
+
+```bash
+git add contracts/vault/.proptest-regressions/
+git commit -m "test: add proptest regression for cancel-refund day-boundary bug"
+```
+
+### 8.5 Configuring Case Counts
+
+`proptest_config` is set per module with a sensible default:
+
+```rust
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 256,           // overridden to 4096 by PROPTEST_CASES env var
+        max_shrink_iters: 2_048,
+        ..Default::default()
+    })]
+    // ...
+}
+```
+
+The `PROPTEST_CASES` environment variable overrides the `cases` field at runtime — you do not need to edit source code to run a deeper search.
+
+To run a one-off investigation with an extreme case count:
+
+```bash
+PROPTEST_CASES=16384 PROPTEST_MAX_SHRINK_ITERS=131072 \
+  cargo test test_prop_reentrancy_arbitrary_sequence_no_panic -- --nocapture
+```
+
+### 8.6 Adding a New Invariant
+
+1. Identify the mathematical property you want to hold — write it as a sentence first ("for any valid stream, `claimed_amount` can never exceed `total_amount`").
+2. Pick the right module or create a new `test_prop_<domain>.rs` if the domain is new.
+3. Write a `proptest!` block with generators that cover the full valid input space, not just happy-path values. Use `prop_assume!` to discard structurally invalid combinations rather than coding around them.
+4. Add the module to `lib.rs` with `#[cfg(test)] mod test_prop_<domain>;`.
+5. Run locally at the nightly case count before opening a PR: `PROPTEST_CASES=4096 cargo test test_prop_<domain> -- --nocapture`.
+
+---
+
 ## Additional Resources
 
 - [Soroban Testing Docs](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup)
@@ -952,3 +1103,5 @@ For the backend, confirm the variable you're relying on actually exists in `back
 - [fast-check Documentation](https://fast-check.dev/)
 - [supertest](https://github.com/ladjs/supertest)
 - [Node.js test runner docs](https://nodejs.org/api/test.html)
+- [proptest Book](https://proptest-rs.github.io/proptest/intro.html)
+- [proptest crate docs](https://docs.rs/proptest/latest/proptest/)
