@@ -406,6 +406,7 @@ fn calculate_impact_score(
 mod test_spending_limit_invariants_proptest;
 #[cfg(test)]
 mod test_spending_refund_buckets;
+mod test_spending_utilization;
 #[cfg(test)]
 mod test_stream_vesting_invariants_proptest;
 
@@ -567,6 +568,7 @@ mod test_fingerprint;
 mod test_metrics_buckets;
 #[cfg(test)]
 mod test_multi_token;
+mod test_proposals_by_status;
 #[cfg(test)]
 mod test_overflow_checks;
 #[cfg(test)]
@@ -602,6 +604,7 @@ mod test_recovery_signer_validation;
 mod test_recovery_cancel_votes;
 #[cfg(test)]
 mod test_recurring;
+mod test_recurring_token_min_interval;
 #[cfg(test)]
 mod test_reentrancy;
 #[cfg(test)]
@@ -781,6 +784,7 @@ impl VaultDAO {
             supported_tokens: Vec::new(&env),
             token_daily_limits: Vec::new(&env),
             token_weekly_limits: Vec::new(&env),
+            min_interval_per_token: Map::new(&env),
             // Streaming rate limiter: default off
             stream_max_window_amount: 0,
             burst_factor: 150, // 1.5x default
@@ -4850,6 +4854,7 @@ impl VaultDAO {
                 supported_tokens: Vec::new(&env),
                 token_daily_limits: Vec::new(&env),
                 token_weekly_limits: Vec::new(&env),
+            min_interval_per_token: Map::new(&env),
                 stream_max_window_amount: 0,
                 burst_factor: 150,
                 veto_window_ledgers: 0,
@@ -6376,6 +6381,12 @@ impl VaultDAO {
         if config.signers.is_empty() {
             return Err(VaultError::NoSigners);
         }
+        // Issue #2137: per-token interval overrides may only tighten the global bound.
+        for (_token, interval) in config.min_interval_per_token.iter() {
+            if interval < MIN_RECURRING_INTERVAL {
+                return Err(VaultError::IntervalTooShort);
+            }
+        }
         Self::validate_retry_config(&config.retry_config)?;
         // Issue #1693: enforce the same minimum of 2 as initialize (Issue #1523).
         if config.threshold < 2 {
@@ -6489,6 +6500,44 @@ impl VaultDAO {
     /// Get per-token weekly spending for a given week
     pub fn get_token_weekly_spent(env: Env, token: Address, week: u64) -> i128 {
         storage::get_token_weekly_spent(&env, &token, week)
+    }
+
+    /// Issue #2133: snapshot of spending-limit utilization.
+    ///
+    /// Returns `(live_proposals, daily_spent, weekly_spent)`:
+    /// - `live_proposals` is the number of proposal slots in use, i.e. proposals
+    ///   that are Pending, Approved or Scheduled (read from the status index).
+    /// - `daily_spent` is the amount counted against today's daily limit.
+    /// - `weekly_spent` is the amount counted against this week's limit.
+    pub fn get_spending_utilization(env: Env) -> (i128, i128, i128) {
+        let live = Self::live_proposal_count(&env) as i128;
+        let daily = storage::get_daily_spent(&env, storage::get_day_number(&env));
+        let weekly = storage::get_weekly_spent(&env, storage::get_week_number(&env));
+        (live, daily, weekly)
+    }
+
+    /// Issue #2133: per-token spending utilization.
+    ///
+    /// Returns `(daily_spent, weekly_spent)` for `token` in the current day/week.
+    pub fn get_token_spending_utilization(env: Env, token: Address) -> (i128, i128) {
+        let daily =
+            storage::get_token_daily_spent(&env, &token, storage::get_day_number(&env));
+        let weekly =
+            storage::get_token_weekly_spent(&env, &token, storage::get_week_number(&env));
+        (daily, weekly)
+    }
+
+    /// Count proposals currently occupying a slot (Pending, Approved or Scheduled).
+    fn live_proposal_count(env: &Env) -> u32 {
+        let mut count: u32 = 0;
+        for status in [
+            ProposalStatus::Pending,
+            ProposalStatus::Approved,
+            ProposalStatus::Scheduled,
+        ] {
+            count += storage::count_proposals_with_status(env, status as u32);
+        }
+        count
     }
 
     /// Get today's spending
@@ -6815,8 +6864,13 @@ impl VaultDAO {
         // Validate recipient against whitelist/blacklist policies
         Self::validate_recipient(&env, &recipient)?;
 
-        // Minimum interval check (e.g. 1 hour = 720 ledgers)
-        if interval < MIN_RECURRING_INTERVAL {
+        // Minimum interval check (e.g. 1 hour = 720 ledgers).
+        // Issue #2137: a per-token override takes precedence over the global minimum.
+        let min_interval = storage::get_config(&env)?
+            .min_interval_per_token
+            .get(token_addr.clone())
+            .unwrap_or(MIN_RECURRING_INTERVAL);
+        if interval < min_interval {
             return Err(VaultError::IntervalTooShort);
         }
 
@@ -9177,6 +9231,21 @@ impl VaultDAO {
         limit: u64,
     ) -> Vec<u64> {
         storage::get_proposals_by_status(&env, status as u32, offset, limit)
+    }
+
+    /// Issue #2132: cursor-based page of full proposals with the given status.
+    ///
+    /// Returns proposals with `id > after_id` in ascending id order. Pass `0`
+    /// as `after_id` for the first page, then the last returned id for the next.
+    /// `limit` is capped at 50.
+    pub fn list_proposals_by_status(
+        env: Env,
+        status: ProposalStatus,
+        after_id: u64,
+        limit: u32,
+    ) -> Vec<Proposal> {
+        storage::extend_instance_ttl(&env);
+        storage::get_proposals_by_status_after(&env, status as u32, after_id, limit)
     }
 
     /// Get proposal IDs created within a ledger range (capped at 50 per page).

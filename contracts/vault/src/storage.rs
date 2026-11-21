@@ -1047,11 +1047,15 @@ pub fn proposal_exists(env: &Env, id: u64) -> bool {
 
 pub fn set_proposal(env: &Env, proposal: &Proposal) {
     let key = DataKey::Proposal(proposal.id);
+    // Issue #2132: the status index is append-only; stale entries left under a
+    // previous status are filtered out by `get_proposals_by_status_after`, which
+    // checks each proposal's current status. Writing other indexes here would
+    // read entries that may be archived, so we do not do that.
     env.storage().persistent().set(&key, proposal);
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
-    // Maintain StatusIndex
+    // Maintain StatusIndex (kept sorted ascending by proposal id)
     let status_u32 = proposal.status.clone() as u32;
     let idx_key = DataKey::StatusIndex(status_u32);
     let mut ids: Vec<u64> = env
@@ -1060,7 +1064,14 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
         .get(&idx_key)
         .unwrap_or_else(|| Vec::new(env));
     if !ids.contains(proposal.id) {
-        ids.push_back(proposal.id);
+        let mut pos = ids.len();
+        for i in 0..ids.len() {
+            if ids.get(i).unwrap() > proposal.id {
+                pos = i;
+                break;
+            }
+        }
+        ids.insert(pos, proposal.id);
         env.storage().persistent().set(&idx_key, &ids);
         env.storage()
             .persistent()
@@ -2019,6 +2030,68 @@ pub fn get_proposals_by_status(env: &Env, status: u32, offset: u64, limit: u64) 
             result.push_back(id);
             if result.len() as u64 >= cap {
                 break;
+            }
+        }
+    }
+    result
+}
+
+/// Issue #2133: count proposals whose *current* status is `status`.
+/// Index entries are filtered by the stored proposal's status because the
+/// status index is append-only.
+pub fn count_proposals_with_status(env: &Env, status: u32) -> u32 {
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::StatusIndex(status))
+        .unwrap_or_else(|| Vec::new(env));
+    let mut count: u32 = 0;
+    for id in ids.iter() {
+        if let Some(p) = env
+            .storage()
+            .persistent()
+            .get::<_, crate::types::Proposal>(&DataKey::Proposal(id))
+        {
+            if p.status.clone() as u32 == status {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Issue #2132: cursor-based page of full proposals in `status`.
+///
+/// Returns proposals whose id is strictly greater than `after_id`, in ascending
+/// id order. `limit` is capped at 50.
+pub fn get_proposals_by_status_after(
+    env: &Env,
+    status: u32,
+    after_id: u64,
+    limit: u32,
+) -> Vec<crate::types::Proposal> {
+    let cap: u32 = if limit > 50 { 50 } else { limit };
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::StatusIndex(status))
+        .unwrap_or_else(|| Vec::new(env));
+    let mut result: Vec<crate::types::Proposal> = Vec::new(env);
+    for id in ids.iter() {
+        if result.len() >= cap {
+            break;
+        }
+        if id <= after_id {
+            continue;
+        }
+        if let Some(proposal) = env
+            .storage()
+            .persistent()
+            .get::<_, crate::types::Proposal>(&DataKey::Proposal(id))
+        {
+            // Defensive: only return proposals that still carry this status.
+            if proposal.status.clone() as u32 == status {
+                result.push_back(proposal);
             }
         }
     }
