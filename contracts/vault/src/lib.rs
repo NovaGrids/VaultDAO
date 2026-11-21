@@ -33,7 +33,7 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
+    BridgeConfig, CancellationRecord, Capability, EscrowConsent, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
     DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
@@ -330,6 +330,7 @@ fn calculate_impact_score(
 // mod test_escrow_multisig_arbitration;
 // #[cfg(test)]
 // mod test_escrow_timeout;
+mod test_escrow_mutual_consent;
 // #[cfg(test)]
 // mod test_fees;
 // #[cfg(test)]
@@ -15527,6 +15528,109 @@ impl VaultDAO {
         storage::set_escrow(&env, &escrow);
 
         events::emit_escrow_auto_resolved(&env, escrow_id, amount_to_refund);
+
+        Ok(())
+    }
+
+    /// Release an escrow by mutual consent of funder and recipient (Issue #2142).
+    ///
+    /// No arbitrator is involved. The funder and the recipient each call this
+    /// with the amount they agree the recipient should receive from the escrow's
+    /// remaining balance. The first call records that party's consent. The second
+    /// call, with the same amount, settles: `release_amount` goes to the recipient
+    /// and the rest of the remaining balance is returned to the funder.
+    ///
+    /// A second call with a different amount is rejected with `InvalidAmount`, and
+    /// the first party's consent stays recorded. Only the funder or the recipient
+    /// may call this; admins cannot release on their behalf.
+    pub fn consent_release_escrow(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        release_amount: i128,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        require_not_paused(&env)?;
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+
+        let is_funder = caller == escrow.funder;
+        if !is_funder && caller != escrow.recipient {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if escrow.status != EscrowStatus::Active
+            && escrow.status != EscrowStatus::MilestonesComplete
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let remaining = escrow.total_amount - escrow.released_amount;
+        if release_amount < 0 || release_amount > remaining {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut consent = storage::get_escrow_consent(&env, escrow_id).unwrap_or(EscrowConsent {
+            funder_amount: None,
+            recipient_amount: None,
+        });
+
+        // Record the caller's consent. A party may only consent once, and must agree
+        // with the amount the other party already recorded.
+        if is_funder {
+            if consent.funder_amount.is_some() {
+                return Err(VaultError::AlreadyApproved);
+            }
+            if consent.recipient_amount.is_some_and(|a| a != release_amount) {
+                return Err(VaultError::InvalidAmount);
+            }
+            consent.funder_amount = Some(release_amount);
+        } else {
+            if consent.recipient_amount.is_some() {
+                return Err(VaultError::AlreadyApproved);
+            }
+            if consent.funder_amount.is_some_and(|a| a != release_amount) {
+                return Err(VaultError::InvalidAmount);
+            }
+            consent.recipient_amount = Some(release_amount);
+        }
+
+        if consent.funder_amount.is_some() && consent.recipient_amount.is_some() {
+            let current_ledger = env.ledger().sequence() as u64;
+            let to_recipient = release_amount;
+            let to_funder = remaining - release_amount;
+
+            if to_recipient > 0 {
+                token::transfer(&env, &escrow.token, &escrow.recipient, to_recipient);
+                storage::release_escrow_reserve(&env, &escrow.token, to_recipient);
+                events::emit_escrow_released(
+                    &env,
+                    escrow_id,
+                    &escrow.recipient,
+                    to_recipient,
+                    false,
+                );
+            }
+            if to_funder > 0 {
+                token::transfer(&env, &escrow.token, &escrow.funder, to_funder);
+                storage::release_escrow_reserve(&env, &escrow.token, to_funder);
+                events::emit_escrow_released(&env, escrow_id, &escrow.funder, to_funder, true);
+            }
+
+            escrow.released_amount = escrow.total_amount;
+            escrow.status = if to_recipient > 0 {
+                EscrowStatus::Released
+            } else {
+                EscrowStatus::Refunded
+            };
+            escrow.finalized_at = current_ledger;
+            storage::set_escrow(&env, &escrow);
+            storage::remove_escrow_consent(&env, escrow_id);
+        } else {
+            storage::set_escrow_consent(&env, escrow_id, &consent);
+        }
+
+        storage::create_audit_entry(&env, AuditAction::EscrowReleased, &caller, escrow_id);
 
         Ok(())
     }

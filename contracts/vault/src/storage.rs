@@ -23,6 +23,7 @@ use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Symbol, Vec};
 
 use crate::errors::VaultError;
 use crate::types::{
+    EscrowConsent,
     AuditCheckpoint, AuditEntry, BridgeConfig, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignatureRecord,
     ColdSignerConfig, Comment, Config, CostModel, CrossChainProposal, DeadLetterRecord,
     DelegatedPermission, Delegation, DelegationHistory, DexConfig, Escrow, EscrowStatus, ExecutionFeeEstimate,
@@ -303,6 +304,8 @@ pub enum FeatureKey {
     RetryState(u64),
     /// Escrow agreement by ID -> Escrow
     Escrow(u64),
+    /// Pending mutual-consent release for an escrow -> EscrowConsent (Issue #2142)
+    EscrowConsent(u64),
     /// Escrow IDs by funder address -> Vec<u64>
     FunderEscrows(Address),
     /// Escrow IDs by recipient address -> Vec<u64>
@@ -3570,6 +3573,26 @@ pub fn get_escrow(env: &Env, id: u64) -> Result<Escrow, VaultError> {
         set_escrow(env, &escrow);
     }
     Ok(escrow)
+}
+
+pub fn get_escrow_consent(env: &Env, escrow_id: u64) -> Option<EscrowConsent> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::EscrowConsent(escrow_id))
+}
+
+pub fn set_escrow_consent(env: &Env, escrow_id: u64, consent: &EscrowConsent) {
+    let key = FeatureKey::EscrowConsent(escrow_id);
+    env.storage().persistent().set(&key, consent);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn remove_escrow_consent(env: &Env, escrow_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&FeatureKey::EscrowConsent(escrow_id));
 }
 
 pub fn get_funder_escrows(env: &Env, funder: &Address) -> Vec<u64> {

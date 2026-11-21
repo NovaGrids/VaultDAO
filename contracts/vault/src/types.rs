@@ -2067,6 +2067,19 @@ pub struct Escrow {
     pub rejection_votes: u32,
 }
 
+/// Pending mutual-consent release for an escrow (Issue #2142).
+///
+/// Each party records the release amount they agree to. Settlement happens once
+/// both parties have recorded the same amount.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowConsent {
+    /// Amount the funder consented to release to the recipient (None = not yet consented)
+    pub funder_amount: Option<i128>,
+    /// Amount the recipient consented to release to themselves (None = not yet consented)
+    pub recipient_amount: Option<i128>,
+}
+
 // ============================================================================
 // Time-Weighted Voting (Issue: feature/time-weighted-voting)
 // ============================================================================
