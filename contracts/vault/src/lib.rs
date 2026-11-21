@@ -18078,6 +18078,14 @@ impl VaultDAO {
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
+        // Issue #2144: a vault only executes proposals from its own ID namespace.
+        // If two vaults share a prefix, IDs collide and cross-vault lookups can
+        // return another vault's data, so the registered prefix is enforced here.
+        let prefix = storage::get_config(&env)?.proposal_id_prefix;
+        if prefix != 0 && (proposal_id / 1_000_000) * 1_000_000 != prefix {
+            return Err(VaultError::InvalidProposalIdPrefix);
+        }
+
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }

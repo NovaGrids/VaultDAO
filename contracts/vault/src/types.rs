@@ -93,7 +93,13 @@ pub struct InitConfig {
     /// Post-execution hook addresses
     pub post_execution_hooks: Vec<Address>,
 
-    /// Proposal ID namespace prefix for multi-vault coordination (must be multiple of 1_000_000)
+    /// Proposal ID namespace prefix for multi-vault coordination.
+    ///
+    /// Must be a multiple of 1_000_000, or 0 to disable namespacing. Each vault
+    /// must use a prefix no other vault uses: two vaults with the same prefix
+    /// generate colliding proposal IDs, and `get_cross_vault_proposal` can then
+    /// return the other vault's data. Proposals whose ID is outside this vault's
+    /// prefix are rejected by `execute_cross_vault` (InvalidProposalIdPrefix).
     pub proposal_id_prefix: u64,
     /// Whether recipient whitelist enforcement is enabled (issue #1094)
     pub whitelist_mode: bool,
