@@ -638,6 +638,8 @@ mod test_threshold_reduction;
 #[cfg(test)]
 mod test_threshold_cooldown;
 #[cfg(test)]
+mod test_active_config_change;
+#[cfg(test)]
 mod test_time_weighted_lock_token;
 #[cfg(test)]
 mod test_token_insurance;
@@ -4453,6 +4455,16 @@ impl VaultDAO {
         }
     }
 
+
+    /// Return the ID of the config-change proposal currently in flight, or
+    /// `None` if no config change is pending (Issue #2147).
+    ///
+    /// Reads the same `PendingConfig` slot that gates `ConfigChangeInProgress`,
+    /// so the value is set on proposal creation and cleared on execution or
+    /// cancellation.
+    pub fn get_active_config_change(env: Env) -> Option<u64> {
+        storage::get_pending_config_proposal(&env)
+    }
 
     /// Internal helper: like `propose_vault_config_change` but always sets
     /// `unlock_ledger` to enforce the vault's configured timelock delay.
