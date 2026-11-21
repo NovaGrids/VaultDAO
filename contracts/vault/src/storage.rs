@@ -2025,6 +2025,30 @@ pub fn get_proposals_by_status(env: &Env, status: u32, offset: u64, limit: u64) 
     result
 }
 
+/// Issue #2133: count proposals whose *current* status is `status`.
+/// Index entries are filtered by the stored proposal's status because the
+/// status index is append-only.
+pub fn count_proposals_with_status(env: &Env, status: u32) -> u32 {
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::StatusIndex(status))
+        .unwrap_or_else(|| Vec::new(env));
+    let mut count: u32 = 0;
+    for id in ids.iter() {
+        if let Some(p) = env
+            .storage()
+            .persistent()
+            .get::<_, crate::types::Proposal>(&DataKey::Proposal(id))
+        {
+            if p.status.clone() as u32 == status {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 /// Return **all** proposal IDs stored under `StatusIndex(status)`, without a
 /// pagination cap. Used by recovery execution to invalidate every in-flight
 /// proposal in a single pass, ensuring none is missed.

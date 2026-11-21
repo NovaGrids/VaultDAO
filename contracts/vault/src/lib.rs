@@ -406,6 +406,7 @@ fn calculate_impact_score(
 mod test_spending_limit_invariants_proptest;
 #[cfg(test)]
 mod test_spending_refund_buckets;
+mod test_spending_utilization;
 #[cfg(test)]
 mod test_stream_vesting_invariants_proptest;
 
@@ -6501,6 +6502,44 @@ impl VaultDAO {
     }
 
     /// Get today's spending
+    /// Issue #2133: snapshot of spending-limit utilization.
+    ///
+    /// Returns `(live_proposals, daily_spent, weekly_spent)`:
+    /// - `live_proposals` is the number of proposal slots in use, i.e. proposals
+    ///   that are Pending, Approved or Scheduled (read from the status index).
+    /// - `daily_spent` is the amount counted against today's daily limit.
+    /// - `weekly_spent` is the amount counted against this week's limit.
+    pub fn get_spending_utilization(env: Env) -> (i128, i128, i128) {
+        let live = Self::live_proposal_count(&env) as i128;
+        let daily = storage::get_daily_spent(&env, storage::get_day_number(&env));
+        let weekly = storage::get_weekly_spent(&env, storage::get_week_number(&env));
+        (live, daily, weekly)
+    }
+
+    /// Issue #2133: per-token spending utilization.
+    ///
+    /// Returns `(daily_spent, weekly_spent)` for `token` in the current day/week.
+    pub fn get_token_spending_utilization(env: Env, token: Address) -> (i128, i128) {
+        let daily =
+            storage::get_token_daily_spent(&env, &token, storage::get_day_number(&env));
+        let weekly =
+            storage::get_token_weekly_spent(&env, &token, storage::get_week_number(&env));
+        (daily, weekly)
+    }
+
+    /// Count proposals currently occupying a slot (Pending, Approved or Scheduled).
+    fn live_proposal_count(env: &Env) -> u32 {
+        let mut count: u32 = 0;
+        for status in [
+            ProposalStatus::Pending,
+            ProposalStatus::Approved,
+            ProposalStatus::Scheduled,
+        ] {
+            count += storage::count_proposals_with_status(env, status as u32);
+        }
+        count
+    }
+
     pub fn get_today_spent(env: Env) -> i128 {
         let today = storage::get_day_number(&env);
         storage::get_daily_spent(&env, today)
