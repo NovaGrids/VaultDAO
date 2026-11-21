@@ -568,6 +568,7 @@ mod test_fingerprint;
 mod test_metrics_buckets;
 #[cfg(test)]
 mod test_multi_token;
+mod test_proposals_by_status;
 #[cfg(test)]
 mod test_overflow_checks;
 #[cfg(test)]
@@ -603,9 +604,9 @@ mod test_recovery_signer_validation;
 mod test_recovery_cancel_votes;
 #[cfg(test)]
 mod test_recurring;
+mod test_recurring_token_min_interval;
 #[cfg(test)]
 mod test_reentrancy;
-mod test_recurring_token_min_interval;
 #[cfg(test)]
 mod test_regressions;
 #[cfg(test)]
@@ -783,9 +784,9 @@ impl VaultDAO {
             supported_tokens: Vec::new(&env),
             token_daily_limits: Vec::new(&env),
             token_weekly_limits: Vec::new(&env),
+            min_interval_per_token: Map::new(&env),
             // Streaming rate limiter: default off
             stream_max_window_amount: 0,
-            min_interval_per_token: Map::new(&env),
             burst_factor: 150, // 1.5x default
             staking_config: config.staking_config,
             proposal_id_prefix: config.proposal_id_prefix,
@@ -4853,9 +4854,9 @@ impl VaultDAO {
                 supported_tokens: Vec::new(&env),
                 token_daily_limits: Vec::new(&env),
                 token_weekly_limits: Vec::new(&env),
+            min_interval_per_token: Map::new(&env),
                 stream_max_window_amount: 0,
                 burst_factor: 150,
-            min_interval_per_token: Map::new(&env),
                 veto_window_ledgers: 0,
                 proposal_id_prefix: 0,
                 whitelist_mode: false,
@@ -6380,14 +6381,14 @@ impl VaultDAO {
         if config.signers.is_empty() {
             return Err(VaultError::NoSigners);
         }
-        Self::validate_retry_config(&config.retry_config)?;
-        // Issue #1693: enforce the same minimum of 2 as initialize (Issue #1523).
         // Issue #2137: per-token interval overrides may only tighten the global bound.
         for (_token, interval) in config.min_interval_per_token.iter() {
             if interval < MIN_RECURRING_INTERVAL {
                 return Err(VaultError::IntervalTooShort);
             }
         }
+        Self::validate_retry_config(&config.retry_config)?;
+        // Issue #1693: enforce the same minimum of 2 as initialize (Issue #1523).
         if config.threshold < 2 {
             return Err(VaultError::ThresholdTooLow);
         }
@@ -6501,7 +6502,6 @@ impl VaultDAO {
         storage::get_token_weekly_spent(&env, &token, week)
     }
 
-    /// Get today's spending
     /// Issue #2133: snapshot of spending-limit utilization.
     ///
     /// Returns `(live_proposals, daily_spent, weekly_spent)`:
@@ -6540,6 +6540,7 @@ impl VaultDAO {
         count
     }
 
+    /// Get today's spending
     pub fn get_today_spent(env: Env) -> i128 {
         let today = storage::get_day_number(&env);
         storage::get_daily_spent(&env, today)
@@ -9230,6 +9231,21 @@ impl VaultDAO {
         limit: u64,
     ) -> Vec<u64> {
         storage::get_proposals_by_status(&env, status as u32, offset, limit)
+    }
+
+    /// Issue #2132: cursor-based page of full proposals with the given status.
+    ///
+    /// Returns proposals with `id > after_id` in ascending id order. Pass `0`
+    /// as `after_id` for the first page, then the last returned id for the next.
+    /// `limit` is capped at 50.
+    pub fn list_proposals_by_status(
+        env: Env,
+        status: ProposalStatus,
+        after_id: u64,
+        limit: u32,
+    ) -> Vec<Proposal> {
+        storage::extend_instance_ttl(&env);
+        storage::get_proposals_by_status_after(&env, status as u32, after_id, limit)
     }
 
     /// Get proposal IDs created within a ledger range (capped at 50 per page).
