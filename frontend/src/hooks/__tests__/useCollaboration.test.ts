@@ -106,4 +106,36 @@ describe('useCollaboration', () => {
     const client2Recipient = client2Doc.getText('recipient');
     expect(client2Recipient.toString()).toBe('G12345XYZ');
   });
+
+  it('should simulate concurrent edits to the same field and handle conflict resolution', () => {
+    const client1Doc = new Y.Doc();
+    const client2Doc = new Y.Doc();
+
+    // Two clients editing the same field concurrently before synchronization
+    const client1Recipient = client1Doc.getText('recipient');
+    const client2Recipient = client2Doc.getText('recipient');
+
+    client1Recipient.insert(0, 'G_CLIENT_1');
+    client2Recipient.insert(0, 'G_CLIENT_2');
+
+    // Sync updates between clients
+    const update1 = Y.encodeStateAsUpdate(client1Doc);
+    const update2 = Y.encodeStateAsUpdate(client2Doc);
+
+    Y.applyUpdate(client2Doc, update1);
+    Y.applyUpdate(client1Doc, update2);
+
+    // Both documents converge to the exact same merged state
+    expect(client1Recipient.toString()).toBe(client2Recipient.toString());
+
+    // Explicit conflict resolution can override with resolved selection
+    client1Doc.transact(() => {
+      client1Recipient.delete(0, client1Recipient.length);
+      client1Recipient.insert(0, 'G_RESOLVED');
+    });
+    Y.applyUpdate(client2Doc, Y.encodeStateAsUpdate(client1Doc));
+
+    expect(client1Recipient.toString()).toBe('G_RESOLVED');
+    expect(client2Recipient.toString()).toBe('G_RESOLVED');
+  });
 });
