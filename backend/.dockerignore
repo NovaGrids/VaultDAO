@@ -15,6 +15,7 @@ README.md
 coverage
 target
 .pnpm-store
+pnpm-lock.yaml
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*

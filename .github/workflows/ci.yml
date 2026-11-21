@@ -65,6 +65,83 @@ jobs:
       - name: Build runner image
         run: docker build --target runner -t vaultdao-backend:ci ./backend
 
+  frontend-docker:
+    name: Frontend Docker Image + Header Regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build frontend runner image
+        run: docker build --target runner -t vaultdao-frontend:ci ./frontend
+
+      - name: Start frontend container
+        run: |
+          docker run -d --name vaultdao-frontend-ci \
+            -p 8080:80 \
+            vaultdao-frontend:ci
+          # Wait up to 20s for nginx to be ready
+          for i in $(seq 1 10); do
+            if curl -sf http://localhost:8080/healthz > /dev/null 2>&1; then break; fi
+            sleep 2
+          done
+
+      - name: Smoke test — HTTP 200 on root
+        run: |
+          STATUS=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/)
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: expected 200, got $STATUS"
+            exit 1
+          fi
+
+      - name: Smoke test — SPA fallback returns 200
+        run: |
+          STATUS=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/proposals/99)
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: SPA fallback returned $STATUS instead of 200"
+            exit 1
+          fi
+
+      - name: Header regression — X-Frame-Options: DENY
+        run: |
+          curl -sI http://localhost:8080/ | grep -i "x-frame-options" | grep -i "DENY" \
+            || (echo "ERROR: X-Frame-Options: DENY missing" && exit 1)
+
+      - name: Header regression — X-Content-Type-Options: nosniff
+        run: |
+          curl -sI http://localhost:8080/ | grep -i "x-content-type-options" | grep -i "nosniff" \
+            || (echo "ERROR: X-Content-Type-Options: nosniff missing" && exit 1)
+
+      - name: Header regression — Referrer-Policy
+        run: |
+          curl -sI http://localhost:8080/ | grep -i "referrer-policy" | grep -i "strict-origin" \
+            || (echo "ERROR: Referrer-Policy missing or wrong value" && exit 1)
+
+      - name: Header regression — Content-Security-Policy present
+        run: |
+          curl -sI http://localhost:8080/ | grep -i "content-security-policy" \
+            || (echo "ERROR: Content-Security-Policy header missing" && exit 1)
+
+      - name: Header regression — index.html no-store
+        run: |
+          curl -sI http://localhost:8080/ | grep -i "cache-control" | grep -i "no-store" \
+            || (echo "ERROR: index.html Cache-Control must include no-store" && exit 1)
+
+      - name: Healthz endpoint
+        run: |
+          BODY=$(curl -s http://localhost:8080/healthz)
+          if [ "$BODY" != "ok" ]; then
+            echo "ERROR: /healthz body was '$BODY', expected 'ok'"
+            exit 1
+          fi
+
+      - name: Dump nginx logs on failure
+        if: failure()
+        run: docker logs vaultdao-frontend-ci
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f vaultdao-frontend-ci || true
+
   contract:
     name: Contract
     runs-on: ubuntu-latest
