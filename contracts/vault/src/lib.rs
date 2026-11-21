@@ -19053,31 +19053,21 @@ impl VaultDAO {
     // Reputation Config (Issue: feature/reputation-system)
     // ========================================================================
 
-    /// Set the admin-configurable reputation decay parameters.
+    /// Direct update of the reputation decay parameters is no longer allowed.
     ///
-    /// Only Admin can call this. Emits `rep_config_updated` and `config_updated`.
-    ///
-    /// # Arguments
-    /// * `admin`  - Admin address (must authorize)
-    /// * `config` - New `ReputationConfig` with `decay_half_life_ledgers` and `decay_min_score`
+    /// Reputation parameters affect voting power, so they must go through the
+    /// governance flow (Issue #2145): `propose_config_change` with
+    /// `ConfigParam::ReputationHalfLife` / `ConfigParam::ReputationDecayFloor`,
+    /// then `approve_config_change` to the governance threshold, then
+    /// `execute_config_change`. This call always returns `InsufficientRole`,
+    /// the same as `set_full_quorum_threshold`.
     pub fn set_reputation_config(
-        env: Env,
+        _env: Env,
         admin: Address,
-        config: ReputationConfig,
+        _config: ReputationConfig,
     ) -> Result<(), VaultError> {
         admin.require_auth();
-
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-
-        storage::set_reputation_config(&env, &config);
-        storage::extend_instance_ttl(&env);
-
-        events::emit_reputation_config_updated(&env, &admin);
-        events::emit_config_updated(&env, &admin);
-
-        Ok(())
+        Err(VaultError::InsufficientRole)
     }
 
     /// Get the current reputation decay configuration.
@@ -21179,6 +21169,17 @@ impl VaultDAO {
                     return Err(VaultError::InvalidAmount);
                 }
             }
+            // Issue #2145: reputation parameters are routed through governance.
+            ConfigParam::ReputationHalfLife => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+            ConfigParam::ReputationDecayFloor => {
+                if !(0..=1000).contains(&new_value) {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
         }
 
         let current_ledger = env.ledger().sequence() as u64;
@@ -21277,6 +21278,19 @@ impl VaultDAO {
             // Issue #1634: apply full_quorum_threshold via governance, not direct admin call.
             ConfigParam::FullQuorumThreshold => {
                 config.full_quorum_threshold = gp.new_value;
+            }
+            // Issue #2145: reputation config is applied only through this path.
+            ConfigParam::ReputationHalfLife => {
+                let mut rep = storage::get_reputation_config(&env);
+                rep.decay_half_life_ledgers = gp.new_value as u64;
+                storage::set_reputation_config(&env, &rep);
+                events::emit_reputation_config_updated(&env, &caller);
+            }
+            ConfigParam::ReputationDecayFloor => {
+                let mut rep = storage::get_reputation_config(&env);
+                rep.decay_min_score = gp.new_value as u32;
+                storage::set_reputation_config(&env, &rep);
+                events::emit_reputation_config_updated(&env, &caller);
             }
         }
 

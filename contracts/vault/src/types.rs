@@ -3211,6 +3211,12 @@ pub enum ConfigParam {
     /// workflow; direct admin updates via `set_full_quorum_threshold` are
     /// rejected (issue #1634).
     FullQuorumThreshold = 6,
+    /// Reputation decay half-life in ledgers (Issue #2145). 0 disables decay.
+    /// Changes must go through governance; `set_reputation_config` is rejected.
+    ReputationHalfLife = 7,
+    /// Reputation decay floor score, 0..=1000 (Issue #2145).
+    /// Changes must go through governance; `set_reputation_config` is rejected.
+    ReputationDecayFloor = 8,
 }
 
 #[contracttype]

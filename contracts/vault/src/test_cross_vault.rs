@@ -1,6 +1,10 @@
 use super::*;
 use crate::{VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::{Address as _, Ledger}, token::StellarAssetClient, Env, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token::StellarAssetClient,
+    Env, Vec,
+};
 
 fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold: u32) -> Address {
     let signer2 = Address::generate(env);
@@ -485,7 +489,13 @@ fn setup_pending_bridge(
         &deadline_ledger,
     );
 
-    (source_client, source_vault_id, token, bridge_id, deadline_ledger)
+    (
+        source_client,
+        source_vault_id,
+        token,
+        bridge_id,
+        deadline_ledger,
+    )
 }
 
 #[test]
