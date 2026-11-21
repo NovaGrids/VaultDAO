@@ -1,24 +1,125 @@
 # ==============================================================================
-# VaultDAO Production Frontend Override
+# VaultDAO — Production Compose Override
 # ==============================================================================
-# Serves the built frontend from the Nginx runner image on its real port (80).
-# Run with: docker compose -f docker-compose.prod.yml up frontend
+#
+# Runs both services from their compiled "runner" images.
+# Backend: compiled Node.js (dist/index.js), non-root, with healthcheck.
+# Frontend: Nginx with SPA fallback, security headers, gzip.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# Secrets — set these in your CI environment or a .env.prod file:
+#   REDIS_PASSWORD, CONTRACT_ID, SOROBAN_RPC_URL, API_KEY, ...
+#   See backend/.env.example for the full list.
+#
+# To smoke-test after startup, run:
+#   ./scripts/docker-smoke.sh
+# ==============================================================================
 
 services:
+
+  # ----------------------------------------------------------------------------
+  # Redis
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: vaultdao-redis-prod
+    environment:
+      - REDISCLI_AUTH=${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    volumes:
+      - redis-data-prod:/data
+    networks:
+      - vaultdao-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # Backend — compiled Node runner (non-root)
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runner            # runs dist/index.js as USER node
+    image: vaultdao-backend:prod
+    container_name: vaultdao-backend-prod
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      - NODE_ENV=production
+      - PORT=8787
+      - HOST=0.0.0.0
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RATE_LIMIT_REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379
+      - CONTRACT_ID=${CONTRACT_ID:?Set CONTRACT_ID}
+      - SOROBAN_RPC_URL=${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+      - CORS_ORIGIN=${CORS_ORIGIN:-https://app.vaultdao.io}
+    ports:
+      - "8787:8787"
+    volumes:
+      - vaultdao-db-prod:/app/data
+    networks:
+      - vaultdao-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Reuse the HEALTHCHECK baked into the backend Dockerfile (node HTTP probe).
+    # Compose also supports its own test here — we keep them in sync.
+    healthcheck:
+      test: ["CMD", "node", "-e",
+        "require('http').get('http://localhost:8787/health', r => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # Frontend — Nginx runner (SPA fallback + security headers)
+  # ----------------------------------------------------------------------------
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: runner
-    # Distinct tag so the production build does not overwrite the dev image
+      target: runner            # nginx:1.27-alpine, USER nginx
     image: vaultdao-frontend:prod
-    container_name: vaultdao-frontend
-    # Nginx listens on 80 inside the container; map it to host port 8080
+    container_name: vaultdao-frontend-prod
     ports:
-      - "8080:80"
+      - "80:80"
     networks:
       - vaultdao-net
+    depends_on:
+      backend:
+        condition: service_healthy
+    # Healthcheck hits the /healthz endpoint defined in nginx/default.conf
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
 
+# ------------------------------------------------------------------------------
+# Volumes
+# ------------------------------------------------------------------------------
+volumes:
+  redis-data-prod:
+    driver: local
+  vaultdao-db-prod:
+    driver: local
+
+# ------------------------------------------------------------------------------
+# Network
+# ------------------------------------------------------------------------------
 networks:
   vaultdao-net:
     name: vaultdao-shared-network

@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+.git
+.github
+.vscode
+.dockerignore
+Dockerfile
+*.md
+.DS_Store
+coverage
+e2e
+playwright.config.ts
+vitest.*.config.ts

@@ -1086,6 +1086,138 @@ open http://localhost:5173
 
 ---
 
-> **Last updated:** 2026-07-28
+## 13. Production Docker Stack (#2076)
+
+The `docker-compose.prod.yml` file runs both services from their compiled
+**runner** images — not the dev hot-reload images used by `docker-compose.yml`.
+
+### What changed from the dev compose
+
+| Area | Dev (`docker-compose.yml`) | Prod (`docker-compose.prod.yml`) |
+|---|---|---|
+| Backend image stage | `dev` (tsx watch) | `runner` (compiled `dist/index.js`, non-root `node` user) |
+| Frontend image stage | `dev` (Vite dev server) | `runner` (Nginx 1.27-alpine, non-root `nginx` user) |
+| Frontend port | 5173 (Vite) | 80 (Nginx) |
+| SPA fallback | Vite handles it | `try_files $uri $uri/ /index.html` in nginx/default.conf |
+| Security headers | None | X-Frame-Options, X-Content-Type-Options, Referrer-Policy, CSP, HSTS, Permissions-Policy |
+| Gzip | None | Enabled for JS/CSS/SVG/JSON |
+| Healthcheck | curl | Backend: Node HTTP probe; Frontend: wget /healthz |
+| pnpm-lock.yaml | Not present in frontend build | Excluded via `.dockerignore` |
+
+### Required environment variables
+
+Set these before running the prod compose (or put them in a `.env.prod` file):
+
+```bash
+export REDIS_PASSWORD=changeme          # Redis auth password
+export CONTRACT_ID=CDXXXXXX...          # Deployed VaultDAO contract address
+export SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+export CORS_ORIGIN=https://app.vaultdao.io
+```
+
+### Starting the production stack
+
+```bash
+# Build images and start all services
+docker compose -f docker-compose.prod.yml up --build -d
+
+# Tail logs
+docker compose -f docker-compose.prod.yml logs -f
+
+# Check all healthchecks are passing
+docker compose -f docker-compose.prod.yml ps
+```
+
+Expected `ps` output once healthy:
+
+```
+NAME                      STATUS
+vaultdao-redis-prod       Up (healthy)
+vaultdao-backend-prod     Up (healthy)
+vaultdao-frontend-prod    Up (healthy)
+```
+
+### Smoke test + header regression
+
+After the stack is up, run the smoke script to verify HTTP status codes,
+SPA fallback behaviour, and all required security headers:
+
+```bash
+chmod +x scripts/docker-smoke.sh
+./scripts/docker-smoke.sh
+```
+
+The script defaults to `http://localhost:80` (frontend) and
+`http://localhost:8787` (backend). Pass custom URLs as arguments:
+
+```bash
+./scripts/docker-smoke.sh http://localhost:80 http://localhost:8787
+```
+
+**What the smoke script checks:**
+
+| Check | What passes |
+|---|---|
+| Frontend `/` | HTTP 200 |
+| Frontend `/healthz` | HTTP 200, body `ok` |
+| SPA fallback `/proposals/42` | HTTP 200 (not 404) |
+| Backend `/health` | HTTP 200 |
+| Backend `/api/v1/templates` | HTTP 200 |
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Content-Security-Policy` | Present |
+| `Strict-Transport-Security` | Present |
+| `Cache-Control` on `index.html` | `no-store` |
+| `Cache-Control` on hashed JS chunk | `immutable` |
+
+The same header checks run automatically in CI via the
+`frontend-docker` job in `.github/workflows/ci.yml` on every push and PR.
+
+### Nginx configuration
+
+The production Nginx config lives at `frontend/nginx/default.conf`.
+Key behaviours:
+
+- **SPA fallback** — `try_files $uri $uri/ /index.html` ensures React Router
+  deep links return the app shell rather than a 404.
+- **Security headers** — applied on every response via `add_header … always`.
+  The `always` flag ensures headers are present even on error responses.
+- **Cache strategy** — `index.html` gets `Cache-Control: no-store` so browsers
+  always fetch the latest entry point. Vite's hashed asset filenames
+  (`/assets/index-abc123.js`) get `Cache-Control: public, immutable` for
+  aggressive long-term caching.
+- **Gzip** — enabled for `text/css`, `application/javascript`, `application/json`,
+  `image/svg+xml`, and `text/plain`.
+- **Health endpoint** — `GET /healthz` returns `200 ok` for Docker healthchecks
+  without touching the application.
+
+To update the CSP `connect-src` for a new RPC endpoint, edit
+`frontend/nginx/default.conf` and rebuild the runner image:
+
+```bash
+docker build --target runner -t vaultdao-frontend:prod ./frontend
+```
+
+### Non-root users
+
+Both runner images run as non-root:
+
+- **Backend** — `USER node` (uid 1000, the built-in Node.js Alpine user).
+  Files in `/app` are owned by `node:node`.
+- **Frontend** — `USER nginx` (uid 101, the built-in Nginx Alpine user).
+  Nginx worker processes inherit this user and cannot write outside their
+  designated tmp directories.
+
+### No pnpm-lock.yaml in builds
+
+The repo root contains a `pnpm-lock.yaml` from workspace tooling, but the
+frontend and backend both use `npm` with `package-lock.json` as the canonical
+lockfile. Each service's `.dockerignore` excludes `pnpm-lock.yaml` from the
+build context so it is never accidentally copied into an image layer.
+
+---
+
+> **Last updated:** 2026-08-28
 >
 > **Questions?** Open an issue at [github.com/NovaGrids/VaultDAO/issues](https://github.com/NovaGrids/VaultDAO/issues)
