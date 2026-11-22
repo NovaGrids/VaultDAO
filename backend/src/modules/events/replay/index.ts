@@ -8,3 +8,6 @@
 export * from "./replay.types.js";
 export * from "./replay.service.js";
 export * from "./replay-cli.js";
+export * from "./replay-checkpoint.js";
+export * from "./replay-projections.js";
+export * from "./replay-report.js";

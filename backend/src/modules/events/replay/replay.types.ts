@@ -43,6 +43,20 @@ export interface ReplayOptions {
   readonly eventTypes?: string[];
   /** Output format: human-readable or JSON. Defaults to human. */
   readonly outputFormat?: ReplayOutputFormat;
+  /**
+   * Write a checkpoint (and cursor) at least every N ledgers. A crashed run
+   * resumes from the last checkpoint. Defaults to `batchSize`.
+   */
+  readonly checkpointEvery?: number;
+  /**
+   * Resume from the checkpoint stored alongside the cursor when it applies to
+   * this run. Defaults to true; `--no-resume` disables it.
+   */
+  readonly resume?: boolean;
+  /** Explicit resume token (takes precedence over the stored checkpoint). */
+  readonly resumeToken?: string;
+  /** Path of the SQLite database holding replay projections. */
+  readonly projectionDbPath?: string;
 }
 
 /**
@@ -68,6 +82,15 @@ export interface ReplayStats {
   readonly endLedger: number;
   readonly durationMs: number;
   readonly processedLedgers: number;
+  /** Events seen per normalized event type (`NORMALIZATION_ERROR` on failure). */
+  readonly eventsByType: Readonly<Record<string, number>>;
+  /** Ledger the run resumed from, or null for a fresh run. */
+  readonly resumedFromLedger: number | null;
+  /** Last ledger covered by a persisted checkpoint, or null if none yet. */
+  readonly lastCheckpointLedger: number | null;
+  readonly checkpointsWritten: number;
+  /** Target ledger of the run (resolved latest ledger when `endLedger` is unset). */
+  readonly targetLedger: number;
 }
 
 /**
