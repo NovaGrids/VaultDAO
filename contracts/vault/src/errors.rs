@@ -629,18 +629,36 @@ pub enum VaultError {
     BatchApproveTooLarge = 1216,
 
     // =========================================================
-    // Issue #2054: Insurance claim pipeline
+    // Issue #2056: Escrow state machine and multisig arbitration
     // =========================================================
-    /// Claim oracle attestation is older than the configured max age
-    ClaimOracleStale = 1217,
-    /// Claim has no payout held in the clawback window
-    ClaimPayoutNotPending = 1218,
-    /// Clawback window has already elapsed; payout can only be released
-    ClaimClawbackWindowClosed = 1219,
-    /// Clawback window is still open; payout cannot be released yet
-    ClaimClawbackWindowOpen = 1220,
-    /// Signer has already approved this clawback
-    ClaimClawbackAlreadyApproved = 1221,
+    /// Escrow state machine does not allow this transition
+    EscrowInvalidTransition = 1217,
+    /// Escrow arbitration window has closed; only the timeout fallback applies
+    EscrowArbitrationClosed = 1218,
+    /// Arbitration panel is malformed (empty, duplicate, conflicted or bad threshold)
+    EscrowPanelInvalid = 1219,
+
+    // =========================================================
+    // Issue #2058: Supersession conflicts
+    // =========================================================
+    /// The parent proposal has already been superseded by another proposal
+    SupersessionConflict = 1220,
+
+    // =========================================================
+    // Issue #2060: Governance config change controls
+    // =========================================================
+    /// The approved config change is still inside its timelock
+    ConfigChangeTimelocked = 1221,
+    /// The config change needs a second acknowledgment before it can execute
+    ConfigChangeAckRequired = 1222,
+    /// The change would put a parameter below its safety floor
+    SafetyFloorViolation = 1223,
+
+    // =========================================================
+    // Issue #2061: Per-token circuit breakers
+    // =========================================================
+    /// This token's outflow circuit breaker is tripped
+    TokenCircuitBreakerTripped = 1224,
 }
 
 // Compatibility markers for CI source checks:

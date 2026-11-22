@@ -3087,232 +3087,241 @@ pub fn emit_audit_retention_set(env: &Env, admin: &Address, hot_window_entries: 
 }
 
 // ============================================================================
-// Issue #2051: Bridge receipt confirmer
+// Issue #2056: Escrow state machine and multisig arbitration
 // ============================================================================
 
-/// Emit when the bridge receipt configuration is updated.
+/// Emit on every escrow status change.
 ///
-/// Topics: `("bridge_receipt_cfg",)`
-/// Data:   `(admin, challenge_window_ledgers, has_verifier)`
-pub fn emit_bridge_receipt_config_set(
-    env: &Env,
-    admin: &Address,
-    challenge_window_ledgers: u64,
-    has_verifier: bool,
-) {
+/// Topics: `("escrow_state", escrow_id)`
+/// Data:   `(from_status, to_status)` as `EscrowStatus` discriminants
+pub fn emit_escrow_state_changed(env: &Env, escrow_id: u64, from: u32, to: u32) {
     env.events().publish(
-        (Symbol::new(env, "bridge_receipt_cfg"),),
-        (admin.clone(), challenge_window_ledgers, has_verifier),
+        (Symbol::new(env, "escrow_state"), escrow_id),
+        (from, to),
     );
 }
 
-/// Emit when reserved bridge funds are released to the target vault.
+/// Emit when completed milestones are paid out while the escrow stays open.
 ///
-/// Topics: `("bridge_released", bridge_id)`
-/// Data:   `(target_vault, amount)`
-pub fn emit_bridge_released(
+/// Topics: `("escrow_partial_release", escrow_id)`
+/// Data:   `(recipient, amount, released_total)`
+pub fn emit_escrow_partial_release(
     env: &Env,
-    bridge_id: &soroban_sdk::BytesN<32>,
-    target_vault: &Address,
+    escrow_id: u64,
+    recipient: &Address,
     amount: i128,
+    released_total: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "bridge_released"), bridge_id.clone()),
-        (target_vault.clone(), amount),
+        (Symbol::new(env, "escrow_partial_release"), escrow_id),
+        (recipient.clone(), amount, released_total),
     );
 }
 
-/// Emit when a bridge transfer times out and its reservation is unlocked.
+/// Emit when the funder and recipient install an arbitration panel.
 ///
-/// Topics: `("bridge_timed_out", bridge_id)`
-/// Data:   `(source_vault, amount, deadline_ledger)`
-pub fn emit_bridge_timed_out(
-    env: &Env,
-    bridge_id: &soroban_sdk::BytesN<32>,
-    source_vault: &Address,
-    amount: i128,
-    deadline_ledger: u64,
-) {
+/// Topics: `("escrow_panel_set", escrow_id)`
+/// Data:   `(arbitrators, threshold)`
+pub fn emit_escrow_panel_set(env: &Env, escrow_id: u64, arbitrators: &Vec<Address>, threshold: u32) {
     env.events().publish(
-        (Symbol::new(env, "bridge_timed_out"), bridge_id.clone()),
-        (source_vault.clone(), amount, deadline_ledger),
+        (Symbol::new(env, "escrow_panel_set"), escrow_id),
+        (arbitrators.clone(), threshold),
     );
 }
 
-/// Emit when a fraud proof against a bridge receipt is accepted.
+/// Emit when a panelist votes on a disputed escrow.
 ///
-/// Topics: `("bridge_disputed", bridge_id)`
-/// Data:   `(disputer, receipt_amount, unlocked_amount)`
-pub fn emit_bridge_disputed(
+/// Topics: `("escrow_arb_vote", escrow_id)`
+/// Data:   `(arbitrator, release_to_recipient, votes_for_outcome, threshold)`
+pub fn emit_escrow_arbitration_vote(
     env: &Env,
-    bridge_id: &soroban_sdk::BytesN<32>,
-    disputer: &Address,
-    receipt_amount: i128,
-    unlocked_amount: i128,
+    escrow_id: u64,
+    arbitrator: &Address,
+    release_to_recipient: bool,
+    votes: u32,
+    threshold: u32,
 ) {
     env.events().publish(
-        (Symbol::new(env, "bridge_disputed"), bridge_id.clone()),
-        (disputer.clone(), receipt_amount, unlocked_amount),
+        (Symbol::new(env, "escrow_arb_vote"), escrow_id),
+        (arbitrator.clone(), release_to_recipient, votes, threshold),
+    );
+}
+
+/// Emit when the arbitration timeout fallback settles an escrow.
+///
+/// Topics: `("escrow_timeout_settled", escrow_id)`
+/// Data:   `(paid_to_recipient, refunded_to_funder)`
+pub fn emit_escrow_timeout_settled(env: &Env, escrow_id: u64, to_recipient: i128, to_funder: i128) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_timeout_settled"), escrow_id),
+        (to_recipient, to_funder),
     );
 }
 
 // ============================================================================
-// Issue #2052: Capability-token runtime
+// Issue #2058: Supersession audit events
 // ============================================================================
 
-/// Emit when a holder delegates part of a capability to another signer.
+/// Emit when a proposal is superseded.
 ///
-/// Topics: `("capability_delegated", child_id)`
-/// Data:   `(parent_id, holder, delegatee, depth, amount_ceiling)`
-pub fn emit_capability_delegated(
+/// Topics: `("proposal_superseded", old_id, new_id)`
+/// Data:   `(proposer, requested_policy, applied_policy, carried_approvals, carried_abstentions)`
+#[allow(clippy::too_many_arguments)]
+pub fn emit_proposal_superseded(
     env: &Env,
-    child_id: &soroban_sdk::BytesN<32>,
-    parent_id: &soroban_sdk::BytesN<32>,
-    holder: &Address,
-    delegatee: &Address,
-    depth: u32,
-    amount_ceiling: i128,
+    old_id: u64,
+    new_id: u64,
+    proposer: &Address,
+    requested_policy: u32,
+    applied_policy: u32,
+    carried_approvals: u32,
+    carried_abstentions: u32,
 ) {
     env.events().publish(
-        (Symbol::new(env, "capability_delegated"), child_id.clone()),
+        (Symbol::new(env, "proposal_superseded"), old_id, new_id),
         (
-            parent_id.clone(),
-            holder.clone(),
-            delegatee.clone(),
-            depth,
-            amount_ceiling,
+            proposer.clone(),
+            requested_policy,
+            applied_policy,
+            carried_approvals,
+            carried_abstentions,
         ),
     );
 }
 
-/// Emit every time a capability token authorizes an action.
+/// Emit when the vault-wide vote migration policy changes.
 ///
-/// Topics: `("capability_used", token_id)`
-/// Data:   `(holder, amount, cumulative_spent, uses_count)`
-pub fn emit_capability_used(
+/// Topics: `("vote_migration_policy",)`
+/// Data:   `(admin, old_policy, new_policy)`
+pub fn emit_vote_migration_policy_set(env: &Env, admin: &Address, old: u32, new: u32) {
+    env.events().publish(
+        (Symbol::new(env, "vote_migration_policy"),),
+        (admin.clone(), old, new),
+    );
+}
+
+// ============================================================================
+// Issue #2060: Governance config change controls
+// ============================================================================
+
+/// Emit when an approved config change is queued behind its gate.
+///
+/// Topics: `("config_change_queued", gov_id)`
+/// Data:   `(unlock_ledger, risk_increasing, requires_ack)`
+pub fn emit_config_change_queued(
     env: &Env,
-    token_id: &soroban_sdk::BytesN<32>,
-    holder: &Address,
+    gov_id: u64,
+    unlock_ledger: u64,
+    risk_increasing: bool,
+    requires_ack: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "config_change_queued"), gov_id),
+        (unlock_ledger, risk_increasing, requires_ack),
+    );
+}
+
+/// Emit when the second-control role acknowledges a queued change.
+///
+/// Topics: `("config_change_acked", gov_id)`
+/// Data:   `acknowledger`
+pub fn emit_config_change_acknowledged(env: &Env, gov_id: u64, acknowledger: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "config_change_acked"), gov_id),
+        acknowledger.clone(),
+    );
+}
+
+/// Emit when a pending or queued config change is cancelled.
+///
+/// Topics: `("config_change_cancelled", gov_id)`
+/// Data:   `caller`
+pub fn emit_config_change_cancelled(env: &Env, gov_id: u64, caller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "config_change_cancelled"), gov_id),
+        caller.clone(),
+    );
+}
+
+/// Emit one event per field changed by `execute_config_change`.
+///
+/// Topics: `("config_diff", gov_id, field)`
+/// Data:   `(old_value, new_value)`
+pub fn emit_config_diff(env: &Env, gov_id: u64, field: &Symbol, old_value: i128, new_value: i128) {
+    env.events().publish(
+        (Symbol::new(env, "config_diff"), gov_id, field.clone()),
+        (old_value, new_value),
+    );
+}
+
+/// Emit when the config-change dual-control policy changes.
+///
+/// Topics: `("config_dual_control",)`
+/// Data:   `(caller, enabled, ack_role)`
+pub fn emit_config_dual_control_set(env: &Env, caller: &Address, enabled: bool, ack_role: u32) {
+    env.events().publish(
+        (Symbol::new(env, "config_dual_control"),),
+        (caller.clone(), enabled, ack_role),
+    );
+}
+
+// ============================================================================
+// Issue #2061: Treasury risk engine
+// ============================================================================
+
+/// Emit when a token's circuit breaker trips. Other tokens are unaffected.
+///
+/// Topics: `("token_breaker_tripped", token)`
+/// Data:   `(outflow_in_window, refused_amount, threshold)`
+pub fn emit_token_breaker_tripped(
+    env: &Env,
+    token: &Address,
+    outflow: i128,
+    refused_amount: i128,
+    threshold: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "token_breaker_tripped"), token.clone()),
+        (outflow, refused_amount, threshold),
+    );
+}
+
+/// Emit when an Admin resets a tripped token breaker.
+///
+/// Topics: `("token_breaker_reset", token)`
+/// Data:   `admin`
+pub fn emit_token_breaker_reset(env: &Env, token: &Address, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "token_breaker_reset"), token.clone()),
+        admin.clone(),
+    );
+}
+
+/// Emit when an approved proposal reserves treasury balance.
+///
+/// Topics: `("reservation_created", proposal_id)`
+/// Data:   `(token, amount)`
+pub fn emit_reservation_created(env: &Env, proposal_id: u64, token: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "reservation_created"), proposal_id),
+        (token.clone(), amount),
+    );
+}
+
+/// Emit when a reservation is released. `status` is the proposal status that
+/// released it (executed, cancelled, expired, vetoed, ...).
+///
+/// Topics: `("reservation_released", proposal_id)`
+/// Data:   `(token, amount, status)`
+pub fn emit_reservation_released(
+    env: &Env,
+    proposal_id: u64,
+    token: &Address,
     amount: i128,
-    cumulative_spent: i128,
-    uses_count: u32,
+    status: u32,
 ) {
     env.events().publish(
-        (Symbol::new(env, "capability_used"), token_id.clone()),
-        (holder.clone(), amount, cumulative_spent, uses_count),
+        (Symbol::new(env, "reservation_released"), proposal_id),
+        (token.clone(), amount, status),
     );
-}
-
-/// Emit when the capability epoch is bumped, invalidating every older token.
-///
-/// Topics: `("capability_epoch",)`
-/// Data:   `(admin, new_epoch)`
-pub fn emit_capability_epoch_bumped(env: &Env, admin: &Address, new_epoch: u64) {
-    env.events().publish(
-        (Symbol::new(env, "capability_epoch"),),
-        (admin.clone(), new_epoch),
-    );
-}
-
-// ============================================================================
-// Issue #2054: Insurance claim pipeline
-// ============================================================================
-
-/// Emit when the insurance claim pipeline policy is updated.
-///
-/// Topics: `("claim_policy_set",)`
-/// Data:   `(admin, quorum_mode, has_oracle, clawback_window_ledgers)`
-pub fn emit_claim_policy_set(
-    env: &Env,
-    admin: &Address,
-    quorum_mode: u32,
-    has_oracle: bool,
-    clawback_window_ledgers: u64,
-) {
-    env.events().publish(
-        (Symbol::new(env, "claim_policy_set"),),
-        (admin.clone(), quorum_mode, has_oracle, clawback_window_ledgers),
-    );
-}
-
-/// Emit when a live quorum is computed at vote close.
-///
-/// Topics: `("claim_live_quorum", claim_id)`
-/// Data:   `(counted_voters, required_voters, eligible_voters)`
-pub fn emit_claim_live_quorum(
-    env: &Env,
-    claim_id: u64,
-    counted_voters: u32,
-    required_voters: u32,
-    eligible_voters: u32,
-) {
-    env.events().publish(
-        (Symbol::new(env, "claim_live_quorum"), claim_id),
-        (counted_voters, required_voters, eligible_voters),
-    );
-}
-
-/// Emit when the claim oracle returns a verdict.
-///
-/// Topics: `("claim_oracle_verdict", claim_id)`
-/// Data:   `(oracle, valid, max_payout)`
-pub fn emit_claim_oracle_verdict(
-    env: &Env,
-    claim_id: u64,
-    oracle: &Address,
-    valid: bool,
-    max_payout: i128,
-) {
-    env.events().publish(
-        (Symbol::new(env, "claim_oracle_verdict"), claim_id),
-        (oracle.clone(), valid, max_payout),
-    );
-}
-
-/// Emit when an approved payout is held for its clawback window.
-///
-/// Topics: `("claim_payout_held", claim_id)`
-/// Data:   `(payout, release_after)`
-pub fn emit_claim_payout_held(env: &Env, claim_id: u64, payout: i128, release_after: u64) {
-    env.events().publish(
-        (Symbol::new(env, "claim_payout_held"), claim_id),
-        (payout, release_after),
-    );
-}
-
-/// Emit when a held payout is released to the claimant.
-///
-/// Topics: `("claim_payout_released", claim_id)`
-/// Data:   `(claimant, payout)`
-pub fn emit_claim_payout_released(env: &Env, claim_id: u64, claimant: &Address, payout: i128) {
-    env.events().publish(
-        (Symbol::new(env, "claim_payout_released"), claim_id),
-        (claimant.clone(), payout),
-    );
-}
-
-/// Emit when a signer approves clawing back a held payout.
-///
-/// Topics: `("claim_clawback_vote", claim_id)`
-/// Data:   `(signer, approvals, required)`
-pub fn emit_claim_clawback_approved(
-    env: &Env,
-    claim_id: u64,
-    signer: &Address,
-    approvals: u32,
-    required: u32,
-) {
-    env.events().publish(
-        (Symbol::new(env, "claim_clawback_vote"), claim_id),
-        (signer.clone(), approvals, required),
-    );
-}
-
-/// Emit when a held payout is clawed back into the insurance pool.
-///
-/// Topics: `("claim_clawed_back", claim_id)`
-/// Data:   `amount`
-pub fn emit_claim_clawed_back(env: &Env, claim_id: u64, amount: i128) {
-    env.events()
-        .publish((Symbol::new(env, "claim_clawed_back"), claim_id), amount);
 }

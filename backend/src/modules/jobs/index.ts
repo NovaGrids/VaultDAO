@@ -8,3 +8,4 @@
 export * from "./recurring/index.js";
 export * from "./job.manager.js";
 export * from "./scheduled-job-runner.js";
+export * from "./leased-queue.js";

@@ -271,33 +271,30 @@ pub enum ReserveKey {
     ReservedLocks(Address),
     /// Unreleased balance of approved funding rounds (#1901)
     ReservedFunding(Address),
-    /// Funds locked by pending `bridge_to_vault` transfers (#2051)
-    ReservedBridge(Address),
-    /// Approved insurance payouts held during their clawback window (#2054)
-    ReservedClaimPayout(Address),
+    /// Amount held by approved but unexecuted proposals (#2061)
+    ReservedPending(Address),
 }
 
-/// Storage keys for the bridge receipt confirmer, capability-token runtime and
-/// insurance claim pipeline (Issues #2051, #2052, #2054).
+/// Storage keys for escrow arbitration panels, supersession vote migration,
+/// governance config-change gates and the treasury risk engine
+/// (Issues #2056, #2058, #2060, #2061).
 #[contracttype(export = false)]
 #[derive(Clone)]
-pub enum PipelineKey {
-    /// Bridge receipt settings -> BridgeReceiptConfig
-    BridgeReceiptConfig,
-    /// Accepted receipt for a bridge transfer (bridge_id) -> BridgeReceipt
-    BridgeReceipt(BytesN<32>),
-    /// Runtime scope of a capability token (token_id) -> CapabilityScope
-    CapabilityScope(BytesN<32>),
-    /// Current capability epoch -> u64
-    CapabilityEpoch,
-    /// Revocation-list entry (token_id) -> ledger revoked at
-    CapabilityRevoked(BytesN<32>),
-    /// Insurance claim pipeline policy -> InsuranceClaimPolicy
-    ClaimPolicy,
-    /// Per-claim pipeline state (claim_id) -> ClaimSettlement
-    ClaimSettlement(u64),
-    /// Votes cast on a claim (claim_id) -> Map<Address, bool>
-    ClaimVotes(u64),
+pub enum SafeguardKey {
+    /// Arbitration panel of an escrow (escrow_id) -> EscrowArbitrationPanel
+    EscrowPanel(u64),
+    /// Cumulative amount paid to an escrow's recipient (escrow_id) -> i128
+    EscrowRecipientPaid(u64),
+    /// Vault-wide supersession vote migration policy -> VoteMigrationPolicy
+    VoteMigrationPolicy,
+    /// Execution gate of an approved governance config change (gov id) -> ConfigChangeGate
+    ConfigChangeGate(u64),
+    /// Dual-control policy for risk-increasing config changes -> ConfigDualControl
+    ConfigDualControl,
+    /// Persistent circuit-breaker state of a token -> TokenBreakerState
+    TokenBreaker(Address),
+    /// Reservation held by an approved proposal (proposal_id) -> (Address, i128)
+    PendingReservation(u64),
 }
 
 /// Storage keys for streaming pause policy, TWAP swaps, recovery epochs and
@@ -379,6 +376,10 @@ pub enum FeatureKey {
     InsurancePool(Address),
     /// Token lock by owner address -> TokenLock
     TokenLock(Address),
+    /// Voting weight frozen for a signer when a proposal is first created -> u64
+    ProposalVotingWeight(u64, Address),
+    /// Voting strategy frozen at proposal creation -> VotingStrategy
+    ProposalVotingStrategy(u64),
     /// Time-weighted voting configuration -> TimeWeightedConfig
     TimeWeightedConfig,
     /// Total locked tokens by address -> i128
@@ -1158,6 +1159,9 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
     // checks each proposal's current status. Writing other indexes here would
     // read entries that may be archived, so we do not do that.
     let previous: Option<Proposal> = env.storage().persistent().get(&key);
+    if previous.is_none() {
+        snapshot_proposal_voting_weights(env, proposal);
+    }
     env.storage().persistent().set(&key, proposal);
     env.storage()
         .persistent()
@@ -1195,6 +1199,8 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
             .persistent()
             .extend_ttl(&idx_key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
     }
+    // Keep the pending reservation in step with the status (Issue #2061).
+    sync_pending_reservation(env, proposal);
     // Maintain TimelockReady index (Issue #1640)
     // A proposal belongs in the index only while it is Approved AND still inside
     // its timelock window (unlock_ledger > 0).  Any terminal/non-timelocked
@@ -1204,6 +1210,71 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
     } else {
         remove_from_timelock_ready_index(env, proposal.id);
     }
+}
+
+fn snapshot_proposal_voting_weights(env: &Env, proposal: &Proposal) {
+    let strategy = get_voting_strategy(env);
+    let strategy_key = FeatureKey::ProposalVotingStrategy(proposal.id);
+    env.storage().persistent().set(&strategy_key, &strategy);
+    env.storage()
+        .persistent()
+        .extend_ttl(&strategy_key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    for i in 0..proposal.snapshot_signers.len() {
+        let Some(signer) = proposal.snapshot_signers.get(i) else {
+            continue;
+        };
+        let weight = match (strategy, get_token_lock(env, &signer)) {
+            (VotingStrategy::Quadratic, Some(lock)) if lock.is_active => {
+                integer_sqrt(lock.amount)
+            }
+            (VotingStrategy::Conviction, Some(lock)) if lock.is_active => {
+                let power = lock.amount.saturating_mul(lock.power_multiplier_bps as i128) / 10_000;
+                if power > 0 { power.min(u64::MAX as i128) as u64 } else { 1 }
+            }
+            _ => 1,
+        };
+        let key = FeatureKey::ProposalVotingWeight(proposal.id, signer);
+        env.storage().persistent().set(&key, &weight);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        env.events().publish(
+            (
+                soroban_sdk::Symbol::new(env, "proposal_voting_weight"),
+                proposal.id,
+                signer,
+            ),
+            weight,
+        );
+    }
+}
+
+fn integer_sqrt(value: i128) -> u64 {
+    if value <= 0 {
+        return 1;
+    }
+    let value = value as u128;
+    let mut x = value;
+    let mut y = x.div_ceil(2);
+    while y < x {
+        x = y;
+        y = (x + value / x) / 2;
+    }
+    x.min(u64::MAX as u128) as u64
+}
+
+pub fn get_proposal_voting_strategy(env: &Env, proposal_id: u64) -> VotingStrategy {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposalVotingStrategy(proposal_id))
+        .unwrap_or_else(|| get_voting_strategy(env))
+}
+
+pub fn get_proposal_voting_weight(env: &Env, proposal_id: u64, voter: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposalVotingWeight(proposal_id, voter.clone()))
+        .unwrap_or(1)
 }
 
 fn add_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
@@ -6749,4 +6820,213 @@ pub fn set_audit_compaction_anchor(env: &Env, through_id: u64, anchor_hash: u64)
     env.storage()
         .instance()
         .set(&HardeningKey::AuditAnchorHash, &anchor_hash);
+}
+
+// ============================================================================
+// Issue #2056: Escrow arbitration panels
+// ============================================================================
+
+pub fn get_escrow_panel(env: &Env, escrow_id: u64) -> Option<crate::types::EscrowArbitrationPanel> {
+    env.storage()
+        .persistent()
+        .get(&SafeguardKey::EscrowPanel(escrow_id))
+}
+
+pub fn set_escrow_panel(env: &Env, escrow_id: u64, panel: &crate::types::EscrowArbitrationPanel) {
+    let key = SafeguardKey::EscrowPanel(escrow_id);
+    env.storage().persistent().set(&key, panel);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn get_escrow_recipient_paid(env: &Env, escrow_id: u64) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&SafeguardKey::EscrowRecipientPaid(escrow_id))
+        .unwrap_or(0)
+}
+
+pub fn add_escrow_recipient_paid(env: &Env, escrow_id: u64, amount: i128) {
+    let key = SafeguardKey::EscrowRecipientPaid(escrow_id);
+    let total = get_escrow_recipient_paid(env, escrow_id).saturating_add(amount);
+    env.storage().persistent().set(&key, &total);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+// ============================================================================
+// Issue #2058: Supersession vote migration policy
+// ============================================================================
+
+pub fn get_vote_migration_policy(env: &Env) -> crate::types::VoteMigrationPolicy {
+    env.storage()
+        .instance()
+        .get(&SafeguardKey::VoteMigrationPolicy)
+        .unwrap_or(crate::types::VoteMigrationPolicy::Reset)
+}
+
+pub fn set_vote_migration_policy(env: &Env, policy: crate::types::VoteMigrationPolicy) {
+    env.storage()
+        .instance()
+        .set(&SafeguardKey::VoteMigrationPolicy, &policy);
+}
+
+// ============================================================================
+// Issue #2060: Governance config change gates and dual control
+// ============================================================================
+
+pub fn get_config_change_gate(env: &Env, gov_id: u64) -> Option<crate::types::ConfigChangeGate> {
+    env.storage()
+        .persistent()
+        .get(&SafeguardKey::ConfigChangeGate(gov_id))
+}
+
+pub fn set_config_change_gate(env: &Env, gov_id: u64, gate: &crate::types::ConfigChangeGate) {
+    let key = SafeguardKey::ConfigChangeGate(gov_id);
+    env.storage().persistent().set(&key, gate);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn remove_config_change_gate(env: &Env, gov_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&SafeguardKey::ConfigChangeGate(gov_id));
+}
+
+pub fn get_config_dual_control(env: &Env) -> crate::types::ConfigDualControl {
+    env.storage()
+        .instance()
+        .get(&SafeguardKey::ConfigDualControl)
+        .unwrap_or(crate::types::ConfigDualControl {
+            enabled: false,
+            ack_role: Role::Admin,
+        })
+}
+
+pub fn set_config_dual_control(env: &Env, policy: &crate::types::ConfigDualControl) {
+    env.storage()
+        .instance()
+        .set(&SafeguardKey::ConfigDualControl, policy);
+}
+
+// ============================================================================
+// Issue #2061: Per-token circuit breakers and pending reservations
+// ============================================================================
+
+pub fn get_token_breaker(env: &Env, token: &Address) -> Option<crate::types::TokenBreakerState> {
+    env.storage()
+        .persistent()
+        .get(&SafeguardKey::TokenBreaker(token.clone()))
+}
+
+pub fn is_token_breaker_tripped(env: &Env, token: &Address) -> bool {
+    get_token_breaker(env, token).is_some_and(|b| b.tripped)
+}
+
+/// Persist a tripped breaker. The state survives the hourly outflow window and
+/// stays tripped until an Admin resets it.
+pub fn set_token_breaker(env: &Env, token: &Address, state: &crate::types::TokenBreakerState) {
+    let key = SafeguardKey::TokenBreaker(token.clone());
+    env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn clear_token_breaker(env: &Env, token: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&SafeguardKey::TokenBreaker(token.clone()));
+}
+
+/// Total held by approved but unexecuted proposals for `token`.
+pub fn get_reserved_pending(env: &Env, token: &Address) -> i128 {
+    get_reserve(env, &ReserveKey::ReservedPending(token.clone()))
+}
+
+/// Reservation held by one proposal, if any: `(token, amount)`.
+pub fn get_pending_reservation(env: &Env, proposal_id: u64) -> Option<(Address, i128)> {
+    env.storage()
+        .persistent()
+        .get(&SafeguardKey::PendingReservation(proposal_id))
+}
+
+/// Amount reserved by `proposal_id` in `token` (0 when none).
+pub fn get_own_pending_reservation(env: &Env, proposal_id: u64, token: &Address) -> i128 {
+    match get_pending_reservation(env, proposal_id) {
+        Some((reserved_token, amount)) if reserved_token == *token => amount,
+        _ => 0,
+    }
+}
+
+/// A proposal holds a reservation exactly while it is approved and waiting to
+/// execute (`Approved` or `Scheduled`) and moves a positive amount.
+fn should_hold_reservation(proposal: &Proposal) -> bool {
+    proposal.amount > 0
+        && matches!(
+            proposal.status,
+            ProposalStatus::Approved | ProposalStatus::Scheduled
+        )
+}
+
+/// `balance - earmarked - locked - pending` for `token`. Tokens that cannot
+/// be queried count as 0, so no reservation is taken against them.
+fn spendable_for_reservation(env: &Env, token: &Address) -> i128 {
+    let client = soroban_sdk::token::Client::new(env, token);
+    let balance = match client.try_balance(&env.current_contract_address()) {
+        Ok(Ok(b)) => b,
+        _ => 0,
+    };
+    balance
+        .saturating_sub(get_total_reserved(env, token))
+        .saturating_sub(get_reserved_pending(env, token))
+}
+
+/// Bring the reservation of `proposal` in line with its status.
+///
+/// Called from `set_proposal`, so every status change (approve, execute,
+/// cancel, veto, expire, supersede, reject) passes through here. The
+/// per-proposal key makes creation and release idempotent: a reservation is
+/// created at most once per approval and released exactly once when the
+/// proposal leaves the approved states.
+pub fn sync_pending_reservation(env: &Env, proposal: &Proposal) {
+    let existing = get_pending_reservation(env, proposal.id);
+    let wanted = should_hold_reservation(proposal);
+
+    if let Some((token, amount)) = existing.clone() {
+        let unchanged = wanted && token == proposal.token && amount == proposal.amount;
+        if unchanged {
+            return;
+        }
+        adjust_reserve(env, ReserveKey::ReservedPending(token.clone()), -amount);
+        env.storage()
+            .persistent()
+            .remove(&SafeguardKey::PendingReservation(proposal.id));
+        crate::events::emit_reservation_released(env, proposal.id, &token, amount, proposal.status.clone() as u32);
+    }
+
+    // A reservation is only taken against funds that are spendable right
+    // now, so reservations can never over-commit the treasury: the first
+    // approved proposals are covered, a later one that does not fit stays
+    // Approved without a reservation and takes one on a later update once
+    // funds allow (or executes against whatever is spendable then).
+    if wanted && spendable_for_reservation(env, &proposal.token) >= proposal.amount {
+        let key = SafeguardKey::PendingReservation(proposal.id);
+        env.storage()
+            .persistent()
+            .set(&key, &(proposal.token.clone(), proposal.amount));
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        adjust_reserve(
+            env,
+            ReserveKey::ReservedPending(proposal.token.clone()),
+            proposal.amount,
+        );
+        crate::events::emit_reservation_created(env, proposal.id, &proposal.token, proposal.amount);
+    }
 }

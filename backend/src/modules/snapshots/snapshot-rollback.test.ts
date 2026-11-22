@@ -4,6 +4,7 @@ import { SnapshotService } from "./snapshot.service.js";
 import { MemorySnapshotAdapter } from "./adapters/memory.adapter.js";
 import { EventType, type NormalizedEvent } from "../events/types.js";
 import { Role } from "./types.js";
+import { SnapshotRootMismatchError } from "./errors.js";
 
 function createMockEvent(
   id: string,
@@ -17,10 +18,7 @@ function createMockEvent(
       id,
       contractId,
       ledger,
-      ledgerTimestamp: "2026-07-28T00:00:00Z",
-      txHash: `hash_${id}`,
-      eventIndex: 0,
-      inSuccessfulContractCall: true,
+      ledgerClosedAt: "2026-07-28T00:00:00Z",
     },
     type,
     data,
@@ -143,7 +141,7 @@ test("Snapshot Rollback: rollback and replay consistency", async () => {
   }, undefined, undefined, events);
 
   assert.strictEqual(rollbackResult.success, true);
-  assert.strictEqual(rollbackResult.eventsReplayed, 2); // e2 and e3 (ledger > 100)
+  assert.strictEqual(rollbackResult.eventsReplayed, 1); // only e3 follows the ledger-200 snapshot
 
   const replayedSnap = await adapter.getSnapshot(contractId);
   assert.strictEqual(replayedSnap?.lastProcessedLedger, initialSnap?.lastProcessedLedger);
@@ -191,6 +189,40 @@ test("Snapshot Rollback: known snapshot ID still restores successfully", async (
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.errorCode, undefined);
   assert.strictEqual((await adapter.getSnapshot(contractId))?.lastProcessedLedger, 10);
+});
+
+test("Snapshot Rollback: rejects a corrupted historical blob without changing active state", async () => {
+  const base = new MemorySnapshotAdapter();
+  const contractId = "C_ROLLBACK_CORRUPT_1";
+  const original = new SnapshotService(base);
+  await original.processEvent(
+    createMockEvent("integrity-1", contractId, EventType.ROLE_ASSIGNED, 10, {
+      address: "G_SAFE",
+      role: Role.ADMIN,
+    }),
+  );
+  const before = await base.getSnapshot(contractId);
+  const history = await base.getSnapshotHistory(contractId);
+  const target = history[0]!;
+  const corruptingAdapter = {
+    getSnapshot: base.getSnapshot.bind(base),
+    saveSnapshot: base.saveSnapshot.bind(base),
+    clearSnapshot: base.clearSnapshot.bind(base),
+    getSnapshotById: async () => ({
+      ...target,
+      totalSigners: target.totalSigners + 1,
+    }),
+    getSnapshotRoot: base.getSnapshotRoot.bind(base),
+  };
+  const service = new SnapshotService(corruptingAdapter as any);
+
+  await assert.rejects(
+    service.rollbackSnapshot(contractId, target.snapshotId!, "auditor restore", []),
+    SnapshotRootMismatchError,
+  );
+  const after = await base.getSnapshot(contractId);
+  assert.equal(after?.integrityRoot, before?.integrityRoot);
+  assert.equal(after?.totalSigners, before?.totalSigners);
 });
 
 test("Snapshot Rollback: unknown ID on adapter without restoreSnapshot returns SNAPSHOT_NOT_FOUND", async () => {

@@ -176,3 +176,25 @@ The emergency pause guard is enforced on every vote entry point, not just on pro
 This closes the previously identified gap where a paused vault could still accumulate approvals or rejections and advance governance state. Because the guard is applied uniformly across all four entry points, a pause now freezes the full governance lifecycle: proposals cannot be approved or rejected, and config changes cannot be approved or rejected, until the pause is lifted.
 
 Reports that demonstrate a vote entry point advancing governance state while the vault is paused are in scope under "Governance bypasses" above. Reports that rely on the documented pause behavior itself are out of scope.
+
+## Snapshot Integrity And Recovery
+
+Each persisted contract snapshot has a SHA-256 integrity root over canonical signer and role projections plus ledger/event cursor metadata. Storage adapters should retain the commitment separately from the serialized snapshot blob. Restore and rollback must verify the blob against that commitment before staging or replacing active state; a mismatch is a `SnapshotRootMismatchError` and must stop recovery without changing the active snapshot. Rebuild and restore locks must use a shared backend (Redis with compare-and-delete lease release, or a database advisory lock) when multiple backend instances can run. The in-memory lock backend is for tests and single-process development only.
+
+Auditors should record the contract ID, snapshot ID, ledger, event cursor, and integrity root in the external backup manifest. The root detects altered data when the commitment is preserved; it is not a substitute for protecting the external manifest and backup store.
+
+## Execution Webhook Verification And Operations
+
+Execution webhooks use HMAC-SHA256 with a canonical message of `<timestamp>.<nonce>.<exact request body>`. Receivers must verify `X-VaultDAO-Signature` in constant time, require `X-VaultDAO-Key-Id`, `X-VaultDAO-Timestamp`, and `X-VaultDAO-Nonce`, enforce a bounded timestamp window, and persist accepted nonces for the full replay window. Never parse and re-serialize the body before signature verification.
+
+`WebhookNonceReplayGuard` defaults to an in-process store for tests and single-instance use. Multi-instance receivers must configure `SqliteWebhookNonceReplayStore` against a shared persistent database (or another atomic shared store); otherwise a replay sent to a different instance may be accepted.
+
+Rotate webhook keys by configuring a new active key ID and secret while retaining the previous key in the receiver key ring until its explicit overlap expiry. Send with only the active key; accept either active or unexpired previous keys at the receiver. Remove the old key after the overlap period and revoke it immediately if compromised.
+
+The execution-webhook circuit breaker is per destination URL within a backend process. Repeated failures (including 5xx responses) open the breaker and pause delivery. After the cooldown it enters **half-open** and sends one probe: a 2xx closes the breaker; a failure opens it again. Multi-instance deployments should use shared circuit state if they require a cluster-wide breaker. Operators should inspect destination health and the webhook DLQ before manually redriving deliveries; do not disable signature or replay checks to restore delivery.
+
+## Durable Keeper Queue
+
+Use the SQLite leased queue for `recurring-payment`, `snapshot-rebuild`, `webhook-delivery`, and `cursor-cleanup` work. Its idempotency key is derived from `(jobType, vault, businessId, period)` and is unique across workers. Workers claim jobs under a lease, acknowledge only with the lease owner token, and return failed work with exponential backoff. Expired leases are eligible for another worker; jobs that reach their configured attempt limit move to the DLQ and cannot block unrelated work.
+
+The admin-only `GET /api/v1/jobs/dlq` endpoint lists dead letters (`offset` and `limit` supported); `POST /api/v1/jobs/dlq/:id/redrive` requeues one entry with its attempt counter reset. Monitor `vaultdao_queue_depth` and `vaultdao_queue_lease_timeouts_total`. Redrive only after correcting the underlying failure and confirm the worker's idempotent handler before replaying externally visible effects.

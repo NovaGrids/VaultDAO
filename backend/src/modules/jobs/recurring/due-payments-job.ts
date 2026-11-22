@@ -30,6 +30,7 @@ import {
   DUE_PAYMENT_BATCH_SIZE_GAUGE,
 } from "../../health/metrics.registry.js";
 import type { BackoffOptions } from "../../recurring/backoff.js";
+import type { SqliteLeasedJobQueue } from "../leased-queue.js";
 
 const logger = createLogger("due-payments-job");
 
@@ -104,6 +105,8 @@ export function createDuePaymentsScheduledJob(
     metricsRegistry?: MetricsRegistry;
     idempotencySet?: IdempotencySet;
     backoffOptions?: BackoffOptions;
+    queue?: SqliteLeasedJobQueue;
+    vaultId?: string;
   } = {},
 ): ScheduledJob {
   const jitterWindowMax = options.jitterWindowMax ?? 10;
@@ -220,13 +223,27 @@ export function createDuePaymentsScheduledJob(
           };
         }
 
-        await notificationQueue.publish({
+        const event = {
           id: randomUUID(),
           topic: "notification:events",
           source: "jobs.due-payments",
           createdAt: new Date().toISOString(),
           payload,
-        });
+        };
+        if (options.queue) {
+          if (!options.vaultId) {
+            throw new Error("vaultId is required when the leased job queue is enabled");
+          }
+          options.queue.enqueue({
+            jobType: "recurring-payment",
+            vault: options.vaultId,
+            businessId: payment.paymentId,
+            period: payment.nextPaymentLedger,
+            payload: event,
+          });
+        } else {
+          await notificationQueue.publish(event);
+        }
       }
     },
   };
@@ -238,6 +255,7 @@ export function registerDuePaymentsJob(
   recurringService: RecurringIndexerService,
   notificationQueue: NotificationQueue,
   metricsRegistry?: MetricsRegistry,
+  queue?: SqliteLeasedJobQueue,
 ): void {
   if (!env.duePaymentsJobEnabled) {
     return;
@@ -249,6 +267,8 @@ export function registerDuePaymentsJob(
     {
       jitterWindowMax: env.jitterWindowMax,
       metricsRegistry,
+      queue,
+      vaultId: env.contractId,
     },
   );
   runner.register({

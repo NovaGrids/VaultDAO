@@ -1943,3 +1943,41 @@ It returns registered event type mappings (`EventNormalizer.registeredTypes()`).
 | `config_param_changed` | `(symbol, param: Symbol)` | `admin: Address` |
 
 `param` is one of: `time_weighted`, `gov_threshold`, `cold_signer`, `max_amendments`, `insurance_vote`, `stream_rate`, `snapshot_intvl`, `cost_model`.
+
+## Escrow state machine and arbitration events (Issue #2056)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `escrow_state` | `(symbol, escrow_id: u64)` | `(from: u32, to: u32)` (`EscrowStatus` discriminants) |
+| `escrow_partial_release` | `(symbol, escrow_id: u64)` | `(recipient, amount: i128, released_total: i128)` |
+| `escrow_panel_set` | `(symbol, escrow_id: u64)` | `(arbitrators: Vec<Address>, threshold: u32)` |
+| `escrow_arb_vote` | `(symbol, escrow_id: u64)` | `(arbitrator, release_to_recipient: bool, votes: u32, threshold: u32)` |
+| `escrow_timeout_settled` | `(symbol, escrow_id: u64)` | `(to_recipient: i128, to_funder: i128)` |
+
+See [ESCROW.md](../guides/ESCROW.md).
+
+## Supersession events (Issue #2058)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `proposal_superseded` | `(symbol, old_id: u64, new_id: u64)` | `(proposer, requested_policy: u32, applied_policy: u32, carried_approvals: u32, carried_abstentions: u32)` |
+| `vote_migration_policy` | `(symbol,)` | `(admin, old_policy: u32, new_policy: u32)` |
+
+## Governance config change events (Issue #2060)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `config_change_queued` | `(symbol, gov_id: u64)` | `(unlock_ledger: u64, risk_increasing: bool, requires_ack: bool)` |
+| `config_change_acked` | `(symbol, gov_id: u64)` | `acknowledger: Address` |
+| `config_change_cancelled` | `(symbol, gov_id: u64)` | `caller: Address` |
+| `config_diff` | `(symbol, gov_id: u64, field: Symbol)` | `(old_value: i128, new_value: i128)` |
+| `config_dual_control` | `(symbol,)` | `(caller, enabled: bool, ack_role: u32)` |
+
+## Treasury risk engine events (Issue #2061)
+
+| Topic | Topics tuple | Data |
+| --- | --- | --- |
+| `token_breaker_tripped` | `(symbol, token: Address)` | `(outflow: i128, refused_amount: i128, threshold: i128)` |
+| `token_breaker_reset` | `(symbol, token: Address)` | `admin: Address` |
+| `reservation_created` | `(symbol, proposal_id: u64)` | `(token, amount: i128)` |
+| `reservation_released` | `(symbol, proposal_id: u64)` | `(token, amount: i128, status: u32)` |

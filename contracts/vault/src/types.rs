@@ -2141,6 +2141,42 @@ pub enum EscrowStatus {
     Disputed = 5,
 }
 
+impl EscrowStatus {
+    /// Formal escrow state machine (Issue #2056).
+    ///
+    /// ```text
+    /// Pending (Created) ──fund──▶ Active (Funded) ──milestone*──▶ Active / MilestonesComplete
+    ///      Active | MilestonesComplete ──dispute──▶ Disputed
+    ///      Active | MilestonesComplete ──expiry / consent / release──▶ Released | Refunded
+    ///      Disputed ──arbitration / timeout fallback──▶ Released | Refunded
+    /// ```
+    ///
+    /// `Released` and `Refunded` are terminal. Self-transitions are allowed only
+    /// for `Active` (completing or releasing one milestone keeps it `Active`).
+    pub fn can_transition_to(&self, next: &EscrowStatus) -> bool {
+        use EscrowStatus::*;
+        matches!(
+            (self, next),
+            (Pending, Active)
+                | (Active, Active)
+                | (Active, MilestonesComplete)
+                | (Active, Disputed)
+                | (Active, Released)
+                | (Active, Refunded)
+                | (MilestonesComplete, Disputed)
+                | (MilestonesComplete, Released)
+                | (MilestonesComplete, Refunded)
+                | (Disputed, Released)
+                | (Disputed, Refunded)
+        )
+    }
+
+    /// Whether the escrow can no longer move funds.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, EscrowStatus::Released | EscrowStatus::Refunded)
+    }
+}
+
 /// Milestone tracking unit for progressive fund release
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -3736,4 +3772,149 @@ pub struct AuditRetentionPolicy {
     pub hot_window_entries: u64,
     /// Number of entries folded into one compaction epoch (1..=200).
     pub batch_size: u32,
+}
+
+// ============================================================================
+// Issue #2056: Escrow multisig arbitration
+// ============================================================================
+
+/// M-of-N arbitration panel for one escrow.
+///
+/// Both the funder and the recipient must agree to the panel. Once configured,
+/// a dispute is resolved when `threshold` panelists vote for the same outcome.
+/// If the panel does not reach a decision within the vault's
+/// `arbitration_timeout_ledgers`, the timeout fallback in `auto_resolve_escrow`
+/// settles the escrow instead.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowArbitrationPanel {
+    pub arbitrators: Vec<Address>,
+    pub threshold: u32,
+    /// Panelists that voted to release the remaining funds to the recipient
+    pub release_votes: Vec<Address>,
+    /// Panelists that voted to refund the remaining funds to the funder
+    pub refund_votes: Vec<Address>,
+}
+
+/// Breakdown of where an escrow's funds stand (Issue #2056).
+///
+/// Invariant: `paid_to_recipient + refunded_to_funder + locked == total_amount`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EscrowAccounting {
+    pub total_amount: i128,
+    /// Amount owed to the recipient for completed milestones (paid or not)
+    pub earned_by_recipient: i128,
+    pub paid_to_recipient: i128,
+    pub refunded_to_funder: i128,
+    /// Amount still held by the vault for this escrow
+    pub locked: i128,
+    /// Earned but not yet paid; what `release_escrow_milestones` would pay now
+    pub releasable_now: i128,
+}
+
+// ============================================================================
+// Issue #2058: Supersession vote migration
+// ============================================================================
+
+/// What happens to the votes of a proposal when it is superseded.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum VoteMigrationPolicy {
+    /// The superseding proposal starts with no votes (default).
+    Reset = 0,
+    /// Every eligible approval and abstention is carried over, but only when
+    /// recipient and token are unchanged and the amount does not increase.
+    /// Any other change falls back to `Reset`.
+    Carry = 1,
+    /// Like `Carry`, but an amount increase keeps a share of the approvals
+    /// proportional to `old_amount / new_amount` (rounded down, earliest
+    /// approvals first). Recipient or token changes fall back to `Reset`.
+    Weighted = 2,
+}
+
+// ============================================================================
+// Issue #2060: Governance config change preview and dual control
+// ============================================================================
+
+/// Result of `simulate_config_change`: the configuration that executing the
+/// change would produce, and the controls that apply to it.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigChangePreview {
+    pub param: ConfigParam,
+    pub old_value: i128,
+    pub new_value: i128,
+    /// True when the change loosens a control (lower threshold or quorum,
+    /// higher limits, shorter timelock, weaker full-quorum rule)
+    pub risk_increasing: bool,
+    /// Ledgers between approval and the earliest possible execution
+    pub timelock_ledgers: u64,
+    /// Whether a second acknowledgment is required before execution
+    pub requires_ack: bool,
+    pub threshold: u32,
+    pub quorum: u32,
+    pub spending_limit: i128,
+    pub daily_limit: i128,
+    pub weekly_limit: i128,
+    pub timelock_delay: u64,
+    pub full_quorum_threshold: i128,
+    pub reputation_half_life: u64,
+    pub reputation_decay_floor: u32,
+}
+
+/// Execution gate recorded when a governance config change is approved.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigChangeGate {
+    pub approved_at: u64,
+    /// Earliest ledger at which `execute_config_change` may apply the change
+    pub unlock_ledger: u64,
+    pub risk_increasing: bool,
+    pub requires_ack: bool,
+    pub acknowledged_by: Option<Address>,
+}
+
+/// Dual-control policy for risk-increasing governance config changes.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigDualControl {
+    pub enabled: bool,
+    /// Role whose holder must acknowledge a risk-increasing change
+    pub ack_role: Role,
+}
+
+// ============================================================================
+// Issue #2061: Treasury risk engine
+// ============================================================================
+
+/// Persistent state of one token's outflow circuit breaker.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenBreakerState {
+    pub tripped: bool,
+    pub tripped_at: u64,
+    /// Outflow recorded in the window that tripped the breaker
+    pub outflow_at_trip: i128,
+    /// Amount of the outflow that was refused
+    pub refused_amount: i128,
+}
+
+/// Per-token treasury breakdown (Issue #2061).
+///
+/// Invariant: `spendable = max(0, balance - earmarked - pending - locked)`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreasuryRiskSnapshot {
+    pub token: Address,
+    pub balance: i128,
+    /// Escrows, streams, vesting, subscriptions, funding rounds and pools
+    pub earmarked: i128,
+    /// Reservations held by approved but unexecuted proposals
+    pub pending: i128,
+    /// Tokens held in time-weighted voting locks
+    pub locked: i128,
+    pub spendable: i128,
+    pub breaker_tripped: bool,
 }
