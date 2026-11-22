@@ -188,6 +188,8 @@ let recovery_id = vault.initiate_recovery(
 ```
 
 - Caller must be a **guardian** (`Unauthorized`, 10 otherwise).
+- Only one recovery is open at a time; see [section 4a](#4a-the-recovery-ceremony)
+  for how a second `initiate_recovery` is handled.
 - `new_signers` must be non-empty (`NoSigners`, 3).
 - `new_threshold` must be `1 ≤ threshold ≤ new_signers.len()`
   (`ThresholdTooHigh`, 5).
@@ -230,6 +232,118 @@ Emits `recovery_executed(recovery_id)` and, if any proposals were invalidated,
 `proposals_invalidated_by_recovery(recovery_id, ids)`.
 
 Reads: `get_recovery_proposal(id)`.
+
+---
+
+## 4a. The recovery ceremony
+
+### Ceremony diagram
+
+```
+                       recovery epoch E (get_recovery_epoch)
+ ┌────────────────────────────────────────────────────────────────────────────┐
+ │                                                                            │
+ │  initiate_recovery(g, signers', t')  ──▶  Pending (epoch = E)              │
+ │        │                                     │                             │
+ │        │ second initiate while open:          │ approve_recovery(g)        │
+ │        │   Reject    → RecoveryAlreadyActive  │ approve_recovery_with_     │
+ │        │   Supersede → Pending one Cancelled, │   signature(g, sig)        │
+ │        │               new one opens          │   (bound to id + epoch E,  │
+ │        │               (Approved: refused)    │    single-use, age-checked)│
+ │        │                                     ▼                             │
+ │        │                        approvals ≥ threshold ──▶ Approved         │
+ │        │                                     │                             │
+ │        │            cancel_recovery          │ wait `delay` ledgers        │
+ │        │   (Pending: any guardian,           │                             │
+ │        │    Approved: guardian quorum)       ▼                             │
+ │        │                             execute_recovery  ── one invocation ──┼──┐
+ │        │                                                                   │  │
+ │  past expires_at ─▶ expire_recovery ─▶ Expired (approvals + cancel votes   │  │
+ │                                         cleared)                           │  │
+ └────────────────────────────────────────────────────────────────────────────┘  │
+                                                                                 │
+   execute_recovery, atomically:                                                 │
+     1. revoke role, tier, delegations, permissions, capabilities of every       │
+        removed signer                                                           │
+     2. grant Member to every new signer                                         │
+     3. reset votes on Pending / Approved / Scheduled proposals                  │
+     4. write the new signer set and threshold                                   │
+     5. cancel every other open recovery                                         │
+     6. advance to epoch E+1  ◀──────────────────────────────────────────────────┘
+        (a governance change of the recovery config also cancels open
+         recoveries and advances the epoch)
+```
+
+### Competing recoveries
+
+Only one recovery epoch is active and only one recovery is open in it. What
+happens when a guardian calls `initiate_recovery` while another recovery is
+`Pending` or `Approved` depends on the policy set with
+`set_recovery_competition_policy(admin, policy)` (Admin only; read with
+`get_recovery_competition_policy()`):
+
+| Policy | Open recovery is `Pending` | Open recovery is `Approved` |
+| --- | --- | --- |
+| `Reject` (default) | `RecoveryAlreadyActive` (1203) | `RecoveryAlreadyActive` |
+| `Supersede` | The open one is `Cancelled` with its approvals and cancel votes cleared; the new one opens. Emits `recovery_superseded(old_id, new_id)` and `recovery_cancelled`. | `RecoveryAlreadyActive`. An approved recovery can only be stopped by a guardian cancel quorum, never by a newer proposal. |
+
+An expired recovery no longer blocks a new one under either policy.
+
+When a recovery executes, every other open recovery is cancelled in the same
+invocation, so two ceremonies can never both apply.
+
+### Epochs and replay protection
+
+The vault keeps a **recovery epoch** (`get_recovery_epoch()`, starting at 0).
+Every recovery records the epoch it was opened in. The epoch advances when:
+
+- a recovery executes, or
+- `execute_recovery_config_change` installs a new guardian set (open
+  recoveries are cancelled at the same time).
+
+`approve_recovery`, `approve_recovery_with_signature` and `execute_recovery`
+refuse a recovery from an older epoch with `RecoveryEpochStale` (1213). An
+approval gathered under an old guardian set or before a previous recovery can
+therefore never be counted again.
+
+### Cold-signed approvals
+
+A guardian whose key is held offline can approve with
+`approve_recovery_with_signature(guardian, proposal_id, public_key, signature, created_at_ledger)`.
+The key must be registered for that guardian address through
+`set_cold_signer_config` (with proof of possession). The guardian signs:
+
+```
+"VaultDAO:recovery-approve:v1"   (28 ASCII bytes)
+|| XDR(ScVal::Address(vault))
+|| proposal_id        (u64, big-endian)
+|| recovery epoch     (u64, big-endian)
+|| created_at_ledger  (u32, big-endian)
+```
+
+The same defences as cold proposal signatures apply:
+
+| Check | Error |
+| --- | --- |
+| Key not registered for this guardian | `NotAColdSigner` (or `ColdSignerConfigNotSet`) |
+| `created_at_ledger` in the future | `ColdSignatureFutureDated` |
+| Older than `max_cold_sig_age_ledgers`, or older than the proposal | `ColdSignatureTooOld` |
+| Proposal from an older epoch | `RecoveryEpochStale` |
+| Signature already used | `RecoverySignatureReplayed` (1214) |
+| Signature does not verify (wrong proposal, epoch, vault or key) | Call traps |
+
+No `require_auth` is needed from the guardian: the signature is the
+authorisation, and anyone may relay it.
+
+### Expiry
+
+Past `expires_at`, a recovery cannot be approved or executed and
+`get_recovery_proposal` reports it as `Expired`. Anyone can call
+`expire_recovery(proposal_id)` to persist that state: the status becomes
+`Expired`, approvals and cancel votes are cleared and `execution_after` is
+reset, emitting `recovery_expired(proposal_id; approvals_cleared, cancel_votes_cleared)`.
+It fails with `TimelockNotExpired` before expiry and `ProposalNotPending` if the
+recovery is already closed.
 
 ---
 
@@ -375,6 +489,8 @@ Emits `recovery_cancelled(recovery_id, canceller)`.
 | `get_recovery_config()` | `RecoveryConfig` |
 | `get_recovery_proposal(id)` | `RecoveryProposal` |
 | `get_recovery_cfg_change_proposal(id)` | `RecoveryConfigChangeProposal` |
+| `get_recovery_epoch()` | Current recovery epoch |
+| `get_recovery_competition_policy()` | `RecoveryCompetitionPolicy` |
 
 | Event | Payload |
 | --- | --- |
@@ -386,6 +502,10 @@ Emits `recovery_cancelled(recovery_id, canceller)`.
 | `recovery_executed` | `proposal_id` |
 | `proposals_invalidated_by_recovery` | `proposal_id, invalidated_ids` |
 | `recovery_cancelled` | `proposal_id, canceller` |
+| `recovery_superseded` | `old_id, new_id` |
+| `recovery_expired` | `proposal_id, approvals_cleared, cancel_votes_cleared` |
+| `recovery_epoch` | `new_epoch` |
+| `recovery_policy` | `admin, policy` |
 
 See [EVENTS.md](../reference/EVENTS.md) and
 [PRODUCTION_RUNBOOK.md](../reference/PRODUCTION_RUNBOOK.md) for alert wiring.

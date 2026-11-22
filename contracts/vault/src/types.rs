@@ -1409,6 +1409,8 @@ pub enum SwapProposal {
     UnstakeLp(Address, Address, i128),
     /// Claim farming rewards: (farm)
     ClaimRewards(Address),
+    /// Guarded swap with TWAP, slippage band and multi-hop path (Issue #2057)
+    RoutedSwap(RoutedSwapArgs),
 }
 
 /// DEX operation result
@@ -2026,6 +2028,9 @@ pub struct RecoveryProposal {
     pub execution_after: u64,
     /// Last ledger on which this proposal can still be approved or executed
     pub expires_at: u64,
+    /// Recovery epoch the proposal was opened in (Issue #2059). Approvals
+    /// and execution are refused once the vault's epoch has moved on.
+    pub epoch: u64,
 }
 
 /// Recovery configuration change proposal (Issue #1702)
@@ -3427,4 +3432,115 @@ pub struct ClawbackRequest {
     pub approvals: u32,
     /// Number of votes (approve or reject) cast so far (Issue #1911)
     pub votes: u32,
+}
+
+// ============================================================================
+// Issue #2055: Streaming pause TTL policy
+// ============================================================================
+
+/// What happens to a stream that stays paused longer than
+/// `StreamPausePolicy::max_pause_secs`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum PauseExpiryAction {
+    /// The stream is cancelled: accrued tokens go to the recipient and the
+    /// unearned remainder is refunded to the sender.
+    AutoCancel = 0,
+    /// The stream is treated as resumed at `pause_start + max_pause_secs`.
+    /// The schedule is extended by at most `max_pause_secs`.
+    AutoResume = 1,
+}
+
+/// Vault-wide bound on how long a stream may stay paused.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamPausePolicy {
+    /// Maximum pause length in seconds. `0` disables the policy.
+    pub max_pause_secs: u64,
+    /// Action applied once a pause outlives `max_pause_secs`.
+    pub action: PauseExpiryAction,
+}
+
+// ============================================================================
+// Issue #2057: TWAP-guarded multi-hop swaps
+// ============================================================================
+
+/// Time-weighted average price guard applied to swap execution.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TwapGuardConfig {
+    /// Look-back window in seconds over which the TWAP is computed. Must be > 0.
+    pub window_secs: u64,
+    /// Maximum allowed deviation of the spot price from the TWAP, in basis points.
+    pub max_deviation_bps: u32,
+    /// Minimum number of observations inside the window. Fewer fails closed.
+    pub min_observations: u32,
+}
+
+/// A recorded oracle price sample used to build the TWAP.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PriceObservation {
+    pub price: i128,
+    /// Oracle-reported price timestamp (seconds)
+    pub timestamp: u64,
+}
+
+/// Arguments of a guarded, optionally multi-hop swap.
+///
+/// `path[0]` is sold and `path[len - 1]` is bought. Every intermediate token
+/// must net to zero: whatever a leg produces is consumed in full by the next.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RoutedSwapArgs {
+    pub dex: Address,
+    /// Token route, 2..=4 entries, no repeats
+    pub path: Vec<Address>,
+    pub amount_in: i128,
+    /// Minimum amount of the final token. Must be > 0.
+    pub min_amount_out: i128,
+    /// Maximum slippage of the final output against the oracle-implied output,
+    /// in basis points. Capped by `DexConfig::max_slippage_bps`.
+    pub max_slippage_bps: u32,
+}
+
+/// One settled leg of a routed swap.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwapLeg {
+    pub token_in: Address,
+    pub token_out: Address,
+    pub amount_in: i128,
+    pub amount_out: i128,
+}
+
+// ============================================================================
+// Issue #2059: Recovery ceremony policy
+// ============================================================================
+
+/// How `initiate_recovery` treats an already-open recovery.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RecoveryCompetitionPolicy {
+    /// A second recovery is refused while one is open (default).
+    Reject = 0,
+    /// A new recovery cancels an open `Pending` one. An `Approved` recovery
+    /// is never superseded: it can only be cancelled by a guardian quorum.
+    Supersede = 1,
+}
+
+// ============================================================================
+// Issue #2062: Audit log compaction
+// ============================================================================
+
+/// Retention policy for hot (individually stored) audit entries.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditRetentionPolicy {
+    /// Number of most recent entries that are never compacted.
+    pub hot_window_entries: u64,
+    /// Number of entries folded into one compaction epoch (1..=200).
+    pub batch_size: u32,
 }
