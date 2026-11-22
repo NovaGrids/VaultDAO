@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@stellar/freighter-api": "1.7.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^5.1.1",
     "typescript": "^5.0.0",
     "vitest": "^4.1.1"
   }
