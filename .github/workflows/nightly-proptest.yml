@@ -1,0 +1,137 @@
+name: Nightly Proptest (Extended)
+
+# Runs every night at 02:00 UTC.
+# Can also be triggered manually from the Actions UI for ad-hoc deeper runs.
+#
+# The nightly run sets PROPTEST_CASES=4096 (vs the default 256 used in CI),
+# giving proptest ~16× more attempts per property to find counterexamples.
+# Total wall-clock time is bounded by the `timeout-minutes` guard on the job.
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 02:00 UTC every day
+  workflow_dispatch:
+    inputs:
+      proptest_cases:
+        description: "Cases per property (default: 4096)"
+        required: false
+        default: "4096"
+      proptest_max_shrink_iters:
+        description: "Max shrink iterations per failure (default: 65536)"
+        required: false
+        default: "65536"
+
+jobs:
+  extended-proptests:
+    name: Extended Property Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60          # hard ceiling — prevents runaway shrinking
+    defaults:
+      run:
+        working-directory: contracts/vault
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/vault/target
+          key: ${{ runner.os }}-cargo-nightly-${{ hashFiles('contracts/vault/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-nightly-
+
+      # -----------------------------------------------------------------------
+      # Spending-limit invariants (original stub + new deep suite)
+      # -----------------------------------------------------------------------
+      - name: Spending limit invariants — original
+        env:
+          PROPTEST_CASES: ${{ github.event.inputs.proptest_cases || '4096' }}
+          PROPTEST_MAX_SHRINK_ITERS: ${{ github.event.inputs.proptest_max_shrink_iters || '65536' }}
+        run: |
+          cargo test \
+            --lib \
+            spending_limit_invariants_proptest \
+            -- --nocapture 2>&1 | tee /tmp/proptest-spending-original.log
+
+      - name: Spending limit invariants — deep suite
+        env:
+          PROPTEST_CASES: ${{ github.event.inputs.proptest_cases || '4096' }}
+          PROPTEST_MAX_SHRINK_ITERS: ${{ github.event.inputs.proptest_max_shrink_iters || '65536' }}
+        run: |
+          cargo test \
+            --lib \
+            test_prop_spending \
+            -- --nocapture 2>&1 | tee /tmp/proptest-spending-deep.log
+
+      # -----------------------------------------------------------------------
+      # Streaming accrual invariants
+      # -----------------------------------------------------------------------
+      - name: Streaming payment invariants
+        env:
+          PROPTEST_CASES: ${{ github.event.inputs.proptest_cases || '4096' }}
+          PROPTEST_MAX_SHRINK_ITERS: ${{ github.event.inputs.proptest_max_shrink_iters || '65536' }}
+        run: |
+          cargo test \
+            --lib \
+            test_prop_streaming \
+            -- --nocapture 2>&1 | tee /tmp/proptest-streaming.log
+
+      # -----------------------------------------------------------------------
+      # Reentrancy / execution-state invariants
+      # -----------------------------------------------------------------------
+      - name: Reentrancy and execution-state invariants
+        env:
+          PROPTEST_CASES: ${{ github.event.inputs.proptest_cases || '4096' }}
+          PROPTEST_MAX_SHRINK_ITERS: ${{ github.event.inputs.proptest_max_shrink_iters || '65536' }}
+        run: |
+          cargo test \
+            --lib \
+            test_prop_reentrancy \
+            -- --nocapture 2>&1 | tee /tmp/proptest-reentrancy.log
+
+      # -----------------------------------------------------------------------
+      # Upload logs on failure so the minimized counterexample is not lost.
+      # -----------------------------------------------------------------------
+      - name: Upload proptest logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proptest-logs-${{ github.run_id }}
+          path: /tmp/proptest-*.log
+          retention-days: 30
+
+      # -----------------------------------------------------------------------
+      # Persist proptest regression corpus so re-runs always replay previously
+      # found counterexamples (even after the failing case is fixed).
+      # -----------------------------------------------------------------------
+      - name: Upload proptest regression corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proptest-corpus-${{ github.run_id }}
+          # proptest writes minimized inputs to .proptest-regressions/ by default.
+          path: contracts/vault/.proptest-regressions/
+          retention-days: 90
+
+      # -----------------------------------------------------------------------
+      # Notify on failure — posts a summary to the job's check run.
+      # -----------------------------------------------------------------------
+      - name: Summarise failures
+        if: failure()
+        run: |
+          echo "## Proptest failures detected" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "One or more property tests found a counterexample." >> $GITHUB_STEP_SUMMARY
+          echo "Download the \`proptest-logs-${{ github.run_id }}\` artifact above and" >> $GITHUB_STEP_SUMMARY
+          echo "follow **docs/reference/TESTING.md §8** to reproduce and minimise it locally." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          for f in /tmp/proptest-*.log; do
+            echo "### $(basename $f)" >> $GITHUB_STEP_SUMMARY
+            tail -40 "$f" >> $GITHUB_STEP_SUMMARY
+          done

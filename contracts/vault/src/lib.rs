@@ -552,6 +552,16 @@ mod test_vault_template;
 #[cfg(test)]
 mod test_whitelist_proposal;
 
+// ---------------------------------------------------------------------------
+// Property-based invariant suites (proptest)
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod test_prop_spending_limits;
+#[cfg(test)]
+mod test_prop_streaming;
+#[cfg(test)]
+mod test_prop_reentrancy;
+
 #[cfg(test)]
 mod test_circular_dependency;
 #[cfg(test)]

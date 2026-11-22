@@ -91,3 +91,24 @@ jobs:
 
       - name: Check contract library
         run: cargo check --lib
+
+      - name: Run contract tests
+        run: cargo test --verbose
+
+      - name: Run property tests — spending limits (original)
+        run: cargo test --verbose spending_limit_invariants_proptest
+
+      - name: Run property tests — spending limits (deep suite)
+        env:
+          PROPTEST_CASES: "256"
+        run: cargo test --verbose test_prop_spending
+
+      - name: Run property tests — streaming accrual
+        env:
+          PROPTEST_CASES: "256"
+        run: cargo test --verbose test_prop_streaming
+
+      - name: Run property tests — reentrancy and execution-state
+        env:
+          PROPTEST_CASES: "256"
+        run: cargo test --verbose test_prop_reentrancy
