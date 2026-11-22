@@ -47,6 +47,28 @@ fn action_strategy() -> impl Strategy<Value = Action> {
     ]
 }
 
+/// A single operation in a randomly generated propose/execute/cancel
+/// sequence used to exercise spending-limit bucket refund invariants.
+#[derive(Clone, Debug)]
+enum Op {
+    /// Propose a transfer of `amount`, reserving spend in the given
+    /// day/week buckets.
+    Propose { amount: i128, day: u64, week: u64 },
+    /// Execute the proposal at the given index (modulo the pending list).
+    Execute(usize),
+    /// Cancel the proposal at the given index (modulo the pending list).
+    Cancel(usize),
+}
+
+fn op_strategy() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        5 => (1i128..=(SPENDING_LIMIT / 2), 0u64..=2u64, 0u64..=1u64)
+            .prop_map(|(amount, day, week)| Op::Propose { amount, day, week }),
+        2 => (0usize..8).prop_map(Op::Execute),
+        2 => (0usize..8).prop_map(Op::Cancel),
+    ]
+}
+
 pub(crate) fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
@@ -108,7 +130,7 @@ pub(crate) fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(ProptestConfig::with_cases(1000))]
 
     /// Property: daily (and weekly) spent never exceeds the configured,
     /// reputation-adjusted limit, no matter the order of proposal creation,
@@ -192,6 +214,132 @@ proptest! {
                 spent_week,
                 adjusted_weekly_limit
             );
+        }
+    }
+
+    /// Property (Issue #2112): the daily/weekly bucket after a refund equals
+    /// the bucket before the proposal minus the executed amount. In other
+    /// words, cancelling (or otherwise refunding) a proposal must credit the
+    /// bucket the reservation was originally taken from -- the proposal's
+    /// creation day/week -- not whatever bucket happens to be current when
+    /// the refund happens.
+    #[test]
+    fn refund_credits_original_bucket(
+        ops in prop_vec(op_strategy(), 0..12),
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin, token) = setup(&env);
+        let recipient = Address::generate(&env);
+
+        // Per-proposal snapshot of the buckets at reservation time.
+        struct Reservation {
+            id: u64,
+            amount: i128,
+            day: u64,
+            week: u64,
+            day_before: i128,
+            week_before: i128,
+        }
+        let mut reservations: std::vec::Vec<Reservation> = std::vec::Vec::new();
+
+        for op in ops {
+            match op {
+                Op::Propose { amount, day, week } => {
+                    // Move the ledger into the requested bucket before
+                    // reserving, so the reservation lands in that bucket.
+                    let target_ts = day * DAY_SECS + 1;
+                    if target_ts > env.ledger().timestamp() {
+                        env.ledger().set_timestamp(target_ts);
+                    }
+                    let day_before = client.get_daily_spent(&day);
+                    let week_before = client.get_weekly_spent(&week);
+                    if let Ok(Ok(id)) = client.try_propose_transfer(
+                        &admin,
+                        &recipient,
+                        &token,
+                        &amount,
+                        &Symbol::new(&env, "p"),
+                        &Priority::Normal,
+                        &Vec::new(&env),
+                        &ConditionLogic::And,
+                        &0i128,
+                    ) {
+                        reservations.push(Reservation {
+                            id,
+                            amount,
+                            day,
+                            week,
+                            day_before,
+                            week_before,
+                        });
+                    }
+                }
+                Op::Execute(idx) => {
+                    if reservations.is_empty() {
+                        continue;
+                    }
+                    let i = idx % reservations.len();
+                    let r = &reservations[i];
+                    let id = r.id;
+                    let amount = r.amount;
+                    let day = r.day;
+                    let week = r.week;
+                    let day_before = r.day_before;
+                    let week_before = r.week_before;
+
+                    // Execute the proposal (approve then execute).
+                    let _ = client.try_approve_proposal(&admin, &id);
+                    let executed = client.try_execute_proposal(&admin, &id).is_ok();
+                    if executed {
+                        let day_after = client.get_daily_spent(&day);
+                        let week_after = client.get_weekly_spent(&week);
+                        prop_assert_eq!(
+                            day_after,
+                            day_before - amount,
+                            "daily bucket after execution must equal bucket before proposal minus executed amount"
+                        );
+                        prop_assert_eq!(
+                            week_after,
+                            week_before - amount,
+                            "weekly bucket after execution must equal bucket before proposal minus executed amount"
+                        );
+                        reservations.remove(i);
+                    }
+                }
+                Op::Cancel(idx) => {
+                    if reservations.is_empty() {
+                        continue;
+                    }
+                    let i = idx % reservations.len();
+                    let r = &reservations[i];
+                    let id = r.id;
+                    let amount = r.amount;
+                    let day = r.day;
+                    let week = r.week;
+                    let day_before = r.day_before;
+                    let week_before = r.week_before;
+
+                    let cancelled = client
+                        .try_cancel_proposal(&admin, &id, &Symbol::new(&env, "c"))
+                        .is_ok();
+                    if cancelled {
+                        let day_after = client.get_daily_spent(&day);
+                        let week_after = client.get_weekly_spent(&week);
+                        prop_assert_eq!(
+                            day_after,
+                            day_before - amount,
+                            "daily bucket after refund must equal bucket before proposal minus executed amount"
+                        );
+                        prop_assert_eq!(
+                            week_after,
+                            week_before - amount,
+                            "weekly bucket after refund must equal bucket before proposal minus executed amount"
+                        );
+                        reservations.remove(i);
+                    }
+                }
+            }
         }
     }
 
