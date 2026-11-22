@@ -181,6 +181,11 @@ pub struct Config {
     pub token_daily_limits: Vec<i128>,
     /// Per-token weekly spending limits
     pub token_weekly_limits: Vec<i128>,
+    /// Issue #2137: per-token minimum recurring-payment interval (in ledgers).
+    /// When an entry exists for a token it replaces the global
+    /// `MIN_RECURRING_INTERVAL` for recurring payments in that token. Overrides
+    /// may only tighten the bound: values below the global minimum are rejected.
+    pub min_interval_per_token: Map<Address, u64>,
 
     // ---- Issue #1064: Streaming Rate Limiter ----
     /// Maximum cumulative stream outflow allowed within the rolling window (in stroops, 0 = disabled)
