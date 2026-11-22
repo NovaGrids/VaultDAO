@@ -188,6 +188,124 @@ Visit Stellar Expert:
 - Monitor contract performance and gas usage
 - Plan mainnet deployment after thorough testing
 
+---
+
+## E2E Scenario Pack (#2080)
+
+The `e2e/` directory contains a hermetic, parallel-safe scenario suite that
+exercises the full cross-module flow against Futurenet (or any Soroban-compatible
+sandbox). Unlike unit tests, these scenarios send real transactions and verify
+on-chain state through the RPC, catching failures that only manifest when multiple
+contract modules interact.
+
+### Scenarios
+
+| # | File | What it covers |
+|---|------|----------------|
+| 1 | `scenarios/01-vault-lifecycle.ts` | Create vault → fund → propose → 2-of-2 approve → execute → assert Executed |
+| 2 | `scenarios/02-stream-pause-clawback.ts` | Create stream → assert Active → pause → assert Paused → resume → assert Active → cancel → assert Cancelled |
+| 3 | `scenarios/03-escrow-dispute-recovery.ts` | Propose + execute escrow transfer → propose second → admin cancels (recovery) → assert cancellation record exists |
+
+### Running Locally
+
+```bash
+cd e2e
+npm install
+
+# Point at a deployed contract
+export VAULT_CONTRACT_ID=CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+export SOROBAN_RPC_URL=https://rpc-futurenet.stellar.org
+export NETWORK_PASSPHRASE="Test SDF Future Network ; October 2022"
+
+# Optional: override the XLM SAC address for the target network
+export TOKEN_ADDRESS=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+
+# Run all scenarios
+node --import tsx/esm runner.ts
+
+# Run only specific scenarios (e.g. 1 and 3)
+SCENARIOS=1,3 node --import tsx/esm runner.ts
+```
+
+Each scenario generates fresh keypairs for every run — you can run multiple
+instances in parallel without key conflicts.
+
+### Local Sandbox (no friendbot)
+
+If you're running against a local `stellar/quickstart` sandbox that pre-funds
+accounts at genesis, set `SKIP_FRIENDBOT=true`:
+
+```bash
+export SOROBAN_RPC_URL=http://localhost:8000/soroban/rpc
+export NETWORK_PASSPHRASE="Standalone Network ; February 2017"
+export SKIP_FRIENDBOT=true
+node --import tsx/esm runner.ts
+```
+
+### CI / Nightly Workflow
+
+The `.github/workflows/e2e-testnet.yml` workflow runs nightly at 03:00 UTC
+and can also be triggered manually from the Actions UI.
+
+**Required secrets** (set in repo Settings → Secrets → Actions):
+
+| Secret | Description |
+|--------|-------------|
+| `VAULT_CONTRACT_ID` | Deployed contract address on Futurenet |
+| `E2E_TOKEN_ADDRESS` | XLM SAC address on the target network (optional) |
+
+The manual dispatch also accepts `vault_contract_id`, `soroban_rpc_url`,
+`network_passphrase`, and `scenarios` as inputs, so you can target a specific
+deployment without changing secrets.
+
+### Artifacts and Failure Diagnosis
+
+Every scenario writes a JSON artifact to `e2e/e2e-artifacts/` regardless of
+pass or fail. On CI, the `e2e-artifacts-<run-id>` artifact is uploaded and
+retained for 30 days.
+
+Each artifact contains:
+
+```json
+{
+  "scenario": "01-vault-lifecycle",
+  "timestamp": "2026-08-28T03:12:45.123Z",
+  "status": "fail",
+  "txHashes": ["abc123…", "def456…"],
+  "ledgers": [1234567, 1234568],
+  "error": "Expected proposal status Executed, got: Pending",
+  "notes": [
+    "admin:     GAXXX…",
+    "proposal ID: 1",
+    "vault initialized at ledger 1234566"
+  ]
+}
+```
+
+**To diagnose a failure:**
+
+1. Download the `e2e-artifacts-<run-id>` artifact from the failed Actions run.
+2. Open the JSON file for the failing scenario.
+3. Copy any `txHashes` entry and look it up on Stellar Expert:
+   `https://stellar.expert/explorer/futurenet/tx/<hash>`
+4. Check the `notes` array for the keypairs used — you can query their
+   account history on Stellar Expert to see which call failed and why.
+5. Reproduce locally with the same contract ID and RPC:
+
+```bash
+export VAULT_CONTRACT_ID=<id-from-artifact>
+export SOROBAN_RPC_URL=https://rpc-futurenet.stellar.org
+SCENARIOS=1 node --import tsx/esm runner.ts
+```
+
+### Adding a New Scenario
+
+1. Create `e2e/scenarios/0N-<name>.ts` following the pattern of the existing
+   three files: generate fresh keypairs, fund, run steps, assert, save artifact.
+2. Import and register it in `e2e/runner.ts` with the next scenario number.
+3. Document it in the table above.
+4. Test it locally before opening a PR:
+   `SCENARIOS=N node --import tsx/esm runner.ts`
 ## Proposal ID Prefix Uniqueness (multi-vault coordination)
 
 `proposal_id_prefix` in `InitConfig` namespaces proposal IDs so that cross-vault

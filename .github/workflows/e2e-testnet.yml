@@ -1,0 +1,111 @@
+name: E2E Testnet Scenarios
+
+# Runs nightly at 03:00 UTC and can be triggered manually from the Actions
+# UI (workflow_dispatch) with optional overrides for which scenarios to run
+# and whether to target Futurenet or a custom RPC.
+#
+# The job does NOT block PRs — it is informational/nightly only.
+# To make it block merges, add it to a required-status-checks branch rule.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 03:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: "Comma-separated scenario numbers to run (e.g. 1,3). Leave blank for all."
+        required: false
+        default: ""
+      soroban_rpc_url:
+        description: "Soroban RPC URL (default: Futurenet)"
+        required: false
+        default: "https://rpc-futurenet.stellar.org"
+      network_passphrase:
+        description: "Network passphrase"
+        required: false
+        default: "Test SDF Future Network ; October 2022"
+      vault_contract_id:
+        description: "Deployed VaultDAO contract ID (overrides secret)"
+        required: false
+        default: ""
+
+jobs:
+  e2e-scenarios:
+    name: E2E Testnet Scenario Pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: e2e/package.json
+
+      - name: Install e2e dependencies
+        run: npm install
+        working-directory: e2e
+
+      # -----------------------------------------------------------------------
+      # Resolve the contract ID: manual input > repo secret > skip
+      # -----------------------------------------------------------------------
+      - name: Resolve contract ID
+        id: contract
+        run: |
+          ID="${{ github.event.inputs.vault_contract_id || secrets.VAULT_CONTRACT_ID }}"
+          echo "id=$ID" >> $GITHUB_OUTPUT
+          if [ -z "$ID" ]; then
+            echo "::warning::VAULT_CONTRACT_ID is not set — scenarios will log SKIP and exit 0"
+          fi
+
+      # -----------------------------------------------------------------------
+      # Run scenarios
+      # -----------------------------------------------------------------------
+      - name: Run e2e scenarios
+        env:
+          VAULT_CONTRACT_ID:  ${{ steps.contract.outputs.id }}
+          SOROBAN_RPC_URL:    ${{ github.event.inputs.soroban_rpc_url || 'https://rpc-futurenet.stellar.org' }}
+          NETWORK_PASSPHRASE: ${{ github.event.inputs.network_passphrase || 'Test SDF Future Network ; October 2022' }}
+          SCENARIOS:          ${{ github.event.inputs.scenarios }}
+          # TOKEN_ADDRESS can be set as a repo secret for the target network's XLM SAC.
+          TOKEN_ADDRESS:      ${{ secrets.E2E_TOKEN_ADDRESS }}
+          # Friendbot is available on Futurenet — no need to skip unless using local sandbox.
+          SKIP_FRIENDBOT:     "false"
+        run: node --import tsx/esm runner.ts
+        working-directory: e2e
+
+      # -----------------------------------------------------------------------
+      # Always upload artifacts — on failure they contain tx hashes, ledgers,
+      # and error messages needed to diagnose the failure on Stellar Expert.
+      # -----------------------------------------------------------------------
+      - name: Upload scenario artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          path: e2e/e2e-artifacts/
+          retention-days: 30
+
+      # -----------------------------------------------------------------------
+      # Post a failure summary with the artifact download link.
+      # -----------------------------------------------------------------------
+      - name: Post failure summary
+        if: failure()
+        run: |
+          echo "## E2E Testnet Scenario Failures" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "One or more scenarios failed. Download the \`e2e-artifacts-${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "artifact above for tx hashes and ledger sequences." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To reproduce locally, follow **docs/guides/TESTNET_DEPLOYMENT.md — §E2E Scenarios**." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -d e2e/e2e-artifacts ]; then
+            for f in e2e/e2e-artifacts/*.json; do
+              echo "### $(basename $f)" >> $GITHUB_STEP_SUMMARY
+              cat "$f" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
