@@ -487,7 +487,12 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       "/jobs",
       authMiddleware,
       hmacMiddleware,
-      createJobsRouter(runtime.jobManager, runtime.scheduledJobRunner, adminAuthMiddleware),
+      createJobsRouter(
+        runtime.jobManager,
+        runtime.scheduledJobRunner,
+        adminAuthMiddleware,
+        runtime.leasedJobQueue,
+      ),
     );
   }
 

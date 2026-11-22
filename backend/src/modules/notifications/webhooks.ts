@@ -1,4 +1,5 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { createLogger } from "../../shared/logging/logger.js";
 import { REQUEST_ID_HEADER, requestIdStorage } from "../../shared/http/requestId.js";
 
@@ -44,17 +45,23 @@ export interface ExecutionWebhookConfig {
   readonly urls: string[];
   /** Optional secret — sent as `X-VaultDAO-Signature: sha256=<hmac>`. */
   readonly secret?: string;
+  /** Active signing key identifier. Defaults to "default" for legacy config. */
+  readonly keyId?: string;
+  /** Previous receiver keys remain valid until expiresAt (overlap rotation). */
+  readonly previousKeys?: readonly { keyId: string; secret: string; expiresAt: number }[];
   /** Optional event allowlist; empty means all execution events. */
   readonly events?: string[];
   readonly timeoutMs?: number;
   readonly maxRetries?: number;
   /** Total retry budget in seconds across all attempts (default 24h). */
   readonly maxTotalRetrySeconds?: number;
+  readonly circuitBreakerThreshold?: number;
+  readonly circuitBreakerCooldownMs?: number;
 }
 
 export type WebhookHttpClient = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
+  init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
 ) => Promise<{ ok: boolean; status: number }>;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -152,9 +159,140 @@ export function validateWebhookUrl(rawUrl: string): WebhookUrlValidation {
   return { ok: true };
 }
 
-/** HMAC-SHA256 signature for a payload (`sha256=<hex>`). Documented header: `X-VaultDAO-Signature`. */
-export function signWebhookPayload(payload: string, secret: string): string {
-  return `sha256=${createHmac("sha256", secret).update(payload).digest("hex")}`;
+/** HMAC-SHA256 signature bound to the timestamp, nonce, and exact payload. */
+export function signWebhookPayload(
+  payload: string,
+  secret: string,
+  timestamp?: string,
+  nonce?: string,
+): string {
+  const message = timestamp !== undefined && nonce !== undefined
+    ? `${timestamp}.${nonce}.${payload}`
+    : payload;
+  return `sha256=${createHmac("sha256", secret).update(message).digest("hex")}`;
+}
+
+export interface ExecutionWebhookVerificationKey {
+  readonly keyId: string;
+  readonly secret: string;
+  /** Previous keys may verify only until this epoch-millisecond deadline. */
+  readonly expiresAt?: number;
+}
+
+export interface WebhookNonceReplayStore {
+  claim(nonce: string, now: number, maxAgeMs: number): boolean;
+}
+
+export class InMemoryWebhookNonceReplayStore implements WebhookNonceReplayStore {
+  private readonly expiresAt = new Map<string, number>();
+
+  claim(nonce: string, now: number, maxAgeMs: number): boolean {
+    const expiresAt = this.expiresAt.get(nonce);
+    if (expiresAt !== undefined && expiresAt > now) return false;
+    this.expiresAt.set(nonce, now + maxAgeMs);
+    for (const [storedNonce, expiry] of this.expiresAt) {
+      if (expiry <= now) this.expiresAt.delete(storedNonce);
+    }
+    return true;
+  }
+}
+
+/** Persistent replay protection for receiver instances sharing a SQLite file. */
+export class SqliteWebhookNonceReplayStore implements WebhookNonceReplayStore {
+  constructor(private readonly db: DatabaseSync) {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS execution_webhook_nonces (
+        nonce TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS execution_webhook_nonces_expiry
+        ON execution_webhook_nonces(expires_at);
+    `);
+  }
+
+  claim(nonce: string, now: number, maxAgeMs: number): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM execution_webhook_nonces WHERE expires_at <= ?").run(now);
+      const result = this.db.prepare(`
+        INSERT OR IGNORE INTO execution_webhook_nonces(nonce, expires_at) VALUES (?, ?)
+      `).run(nonce, now + maxAgeMs);
+      this.db.exec("COMMIT");
+      return Number(result.changes) === 1;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
+export function getExecutionWebhookVerificationKeys(
+  config: ExecutionWebhookConfig,
+  now = Date.now(),
+): ExecutionWebhookVerificationKey[] {
+  const keys: ExecutionWebhookVerificationKey[] = [];
+  if (config.secret) {
+    keys.push({ keyId: config.keyId ?? "default", secret: config.secret });
+  }
+  for (const key of config.previousKeys ?? []) {
+    if (key.expiresAt >= now) keys.push(key);
+  }
+  return keys;
+}
+
+/** Receiver-side replay guard; use one shared instance for all requests. */
+export class WebhookNonceReplayGuard {
+  constructor(
+    private readonly maxAgeMs = 300_000,
+    private readonly replayStore: WebhookNonceReplayStore = new InMemoryWebhookNonceReplayStore(),
+  ) {
+    if (!Number.isInteger(maxAgeMs) || maxAgeMs <= 0) {
+      throw new Error("Webhook replay window must be a positive integer");
+    }
+  }
+
+  verify(input: {
+    body: string;
+    keyId: string;
+    signature: string;
+    timestamp: string;
+    nonce: string;
+    keys: readonly ExecutionWebhookVerificationKey[];
+    now?: number;
+  }): boolean {
+    const now = input.now ?? Date.now();
+    const timestamp = Number(input.timestamp);
+    if (!Number.isSafeInteger(timestamp) || Math.abs(now - timestamp) > this.maxAgeMs) return false;
+    if (!/^[A-Za-z0-9._:-]{16,128}$/.test(input.nonce)) return false;
+    const key = input.keys.find((candidate) =>
+      candidate.keyId === input.keyId &&
+      (candidate.expiresAt === undefined || candidate.expiresAt >= now),
+    );
+    if (!key) return false;
+    const expected = signWebhookPayload(input.body, key.secret, input.timestamp, input.nonce);
+    const a = Buffer.from(expected);
+    const b = Buffer.from(input.signature);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
+    return this.replayStore.claim(input.nonce, now, this.maxAgeMs);
+  }
+}
+
+export type ExecutionWebhookCircuitStatus = "closed" | "open" | "half-open";
+export interface ExecutionWebhookCircuitState {
+  status: ExecutionWebhookCircuitStatus;
+  failures: number;
+  openedAt: number | null;
+}
+const endpointCircuits = new Map<string, ExecutionWebhookCircuitState>();
+const halfOpenProbes = new Set<string>();
+
+export function getExecutionWebhookCircuitState(url: string): Readonly<ExecutionWebhookCircuitState> | undefined {
+  const state = endpointCircuits.get(url);
+  return state ? { ...state } : undefined;
+}
+
+export function resetExecutionWebhookCircuit(url: string): void {
+  endpointCircuits.set(url, { status: "closed", failures: 0, openedAt: null });
 }
 
 export function isExecutionEventAllowed(
@@ -175,23 +313,76 @@ async function postWithRetries(
   timeoutMs: number,
   maxRetries: number,
   maxTotalRetryMs: number,
+  config: ExecutionWebhookConfig,
 ): Promise<void> {
-  void timeoutMs;
   const startedAt = Date.now();
   let attempt = 0;
+  const threshold = config.circuitBreakerThreshold ?? 5;
+  const cooldown = config.circuitBreakerCooldownMs ?? 60_000;
+  let circuit = endpointCircuits.get(url) ?? { status: "closed", failures: 0, openedAt: null };
+  endpointCircuits.set(url, circuit);
+  if (!Number.isInteger(threshold) || threshold < 1 || !Number.isFinite(cooldown) || cooldown < 1) {
+    throw new Error("Webhook circuit breaker threshold and cooldown must be positive");
+  }
+  if (circuit.status === "open" && circuit.openedAt !== null) {
+    if (Date.now() - circuit.openedAt < cooldown) {
+      throw new Error("webhook endpoint circuit is open");
+    }
+    circuit.status = "half-open";
+  }
+  const halfOpenProbe = circuit.status === "half-open";
+  if (halfOpenProbe && halfOpenProbes.has(url)) {
+    throw new Error("webhook endpoint half-open probe is already in flight");
+  }
+  if (halfOpenProbe) halfOpenProbes.add(url);
   for (;;) {
     try {
-      const res = await client(url, {
+      const timestamp = String(Date.now());
+      const nonce = randomUUID();
+      const keyId = config.keyId ?? "default";
+      const signingSecret = config.secret;
+      const attemptHeaders = { ...headers };
+      if (signingSecret) {
+        attemptHeaders["X-VaultDAO-Key-Id"] = keyId;
+        attemptHeaders["X-VaultDAO-Timestamp"] = timestamp;
+        attemptHeaders["X-VaultDAO-Nonce"] = nonce;
+        attemptHeaders["X-VaultDAO-Signature"] =
+          signWebhookPayload(body, signingSecret, timestamp, nonce);
+      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      let res: { ok: boolean; status: number };
+      try {
+        res = await client(url, {
         method: "POST",
-        headers,
+        headers: attemptHeaders,
         body,
-      });
-      if (res.ok) return;
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (res.ok) {
+        circuit.status = "closed";
+        circuit.failures = 0;
+        circuit.openedAt = null;
+        if (halfOpenProbe) halfOpenProbes.delete(url);
+        return;
+      }
       throw new Error(`webhook delivery failed with status ${res.status}`);
     } catch (err) {
+      circuit.failures += 1;
+      if (circuit.status === "half-open" || circuit.failures >= threshold) {
+        circuit.status = "open";
+        circuit.openedAt = Date.now();
+      }
+      if (halfOpenProbe) halfOpenProbes.delete(url);
       const lastError = err instanceof Error ? err.message : String(err);
       const elapsedMs = Date.now() - startedAt;
       const budgetExhausted = elapsedMs >= maxTotalRetryMs;
+      if (circuit.status === "open" || halfOpenProbe) {
+        attempt = maxRetries;
+      }
       if (attempt >= maxRetries || budgetExhausted) {
         // Dead-letter: log exhaustively, never throw into the indexer path.
         const record: WebhookDeadLetter = {
@@ -275,9 +466,6 @@ export async function emitExecutionWebhook(
     "Content-Type": "application/json",
     [REQUEST_ID_HEADER]: requestId,
   };
-  if (config.secret) {
-    headers["X-VaultDAO-Signature"] = signWebhookPayload(body, config.secret);
-  }
   const maxTotalRetryMs =
     (config.maxTotalRetrySeconds ?? DEFAULT_MAX_TOTAL_RETRY_SECONDS) * 1000;
   const http: WebhookHttpClient =
@@ -287,6 +475,7 @@ export async function emitExecutionWebhook(
         method: init.method,
         headers: init.headers,
         body: init.body,
+        signal: init.signal,
       });
       return { ok: res.ok, status: res.status };
     });
@@ -311,6 +500,7 @@ export async function emitExecutionWebhook(
           config.timeoutMs ?? 5_000,
           config.maxRetries ?? 3,
           maxTotalRetryMs,
+          config,
         );
         logger.info("webhook delivered", { url, type: event.type });
       } catch (err) {

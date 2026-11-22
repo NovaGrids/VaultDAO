@@ -352,6 +352,10 @@ pub enum FeatureKey {
     InsurancePool(Address),
     /// Token lock by owner address -> TokenLock
     TokenLock(Address),
+    /// Voting weight frozen for a signer when a proposal is first created -> u64
+    ProposalVotingWeight(u64, Address),
+    /// Voting strategy frozen at proposal creation -> VotingStrategy
+    ProposalVotingStrategy(u64),
     /// Time-weighted voting configuration -> TimeWeightedConfig
     TimeWeightedConfig,
     /// Total locked tokens by address -> i128
@@ -1104,6 +1108,9 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
     // checks each proposal's current status. Writing other indexes here would
     // read entries that may be archived, so we do not do that.
     let previous: Option<Proposal> = env.storage().persistent().get(&key);
+    if previous.is_none() {
+        snapshot_proposal_voting_weights(env, proposal);
+    }
     env.storage().persistent().set(&key, proposal);
     env.storage()
         .persistent()
@@ -1150,6 +1157,71 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
     } else {
         remove_from_timelock_ready_index(env, proposal.id);
     }
+}
+
+fn snapshot_proposal_voting_weights(env: &Env, proposal: &Proposal) {
+    let strategy = get_voting_strategy(env);
+    let strategy_key = FeatureKey::ProposalVotingStrategy(proposal.id);
+    env.storage().persistent().set(&strategy_key, &strategy);
+    env.storage()
+        .persistent()
+        .extend_ttl(&strategy_key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    for i in 0..proposal.snapshot_signers.len() {
+        let Some(signer) = proposal.snapshot_signers.get(i) else {
+            continue;
+        };
+        let weight = match (strategy, get_token_lock(env, &signer)) {
+            (VotingStrategy::Quadratic, Some(lock)) if lock.is_active => {
+                integer_sqrt(lock.amount)
+            }
+            (VotingStrategy::Conviction, Some(lock)) if lock.is_active => {
+                let power = lock.amount.saturating_mul(lock.power_multiplier_bps as i128) / 10_000;
+                if power > 0 { power.min(u64::MAX as i128) as u64 } else { 1 }
+            }
+            _ => 1,
+        };
+        let key = FeatureKey::ProposalVotingWeight(proposal.id, signer);
+        env.storage().persistent().set(&key, &weight);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+        env.events().publish(
+            (
+                soroban_sdk::Symbol::new(env, "proposal_voting_weight"),
+                proposal.id,
+                signer,
+            ),
+            weight,
+        );
+    }
+}
+
+fn integer_sqrt(value: i128) -> u64 {
+    if value <= 0 {
+        return 1;
+    }
+    let value = value as u128;
+    let mut x = value;
+    let mut y = x.div_ceil(2);
+    while y < x {
+        x = y;
+        y = (x + value / x) / 2;
+    }
+    x.min(u64::MAX as u128) as u64
+}
+
+pub fn get_proposal_voting_strategy(env: &Env, proposal_id: u64) -> VotingStrategy {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposalVotingStrategy(proposal_id))
+        .unwrap_or_else(|| get_voting_strategy(env))
+}
+
+pub fn get_proposal_voting_weight(env: &Env, proposal_id: u64, voter: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ProposalVotingWeight(proposal_id, voter.clone()))
+        .unwrap_or(1)
 }
 
 fn add_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {

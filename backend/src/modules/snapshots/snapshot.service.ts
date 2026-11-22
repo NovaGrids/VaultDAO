@@ -35,7 +35,8 @@ import {
   SnapshotRebuildLockManager,
   InMemoryLockBackend,
 } from "./rebuild-lock.manager.js";
-import { isTransientError } from "./errors.js";
+import { isTransientError, SnapshotRootMismatchError } from "./errors.js";
+import { computeSnapshotRoot } from "./adapters/memory.adapter.js";
 
 import { createLogger } from "../../shared/logging/logger.js";
 import { randomUUID } from "node:crypto";
@@ -238,6 +239,8 @@ export class SnapshotService {
       // Update snapshot metadata
       snapshot = {
         ...snapshot,
+        snapshotId: undefined,
+        integrityRoot: undefined,
         lastProcessedLedger: event.metadata.ledger,
         lastProcessedEventId: event.metadata.id,
         snapshotAt: new Date().toISOString(),
@@ -983,20 +986,8 @@ export class SnapshotService {
     try {
       let restoredSnapshot: ContractSnapshot | null = null;
 
-      if (typeof this.adapter.restoreSnapshot === "function") {
-        restoredSnapshot = await this.adapter.restoreSnapshot(contractId, targetSnapshotId);
-      }
-
-      if (!restoredSnapshot && typeof this.adapter.getSnapshotById === "function") {
-        const found = await this.adapter.getSnapshotById(contractId, targetSnapshotId);
-        if (found) {
-          restoredSnapshot = {
-            ...found,
-            signers: new Map(found.signers),
-            roles: new Map(found.roles),
-          };
-          await this.adapter.saveSnapshot(restoredSnapshot);
-        }
+      if (typeof this.adapter.getSnapshotById === "function") {
+        restoredSnapshot = await this.adapter.getSnapshotById(contractId, targetSnapshotId);
       }
 
       if (!restoredSnapshot) {
@@ -1020,7 +1011,21 @@ export class SnapshotService {
         };
       }
 
+      const restoredId = restoredSnapshot.snapshotId ?? String(targetSnapshotId);
+      const committedRoot =
+        (await this.adapter.getSnapshotRoot?.(contractId, restoredId)) ??
+        restoredSnapshot.integrityRoot ??
+        null;
+      if (!committedRoot || computeSnapshotRoot(restoredSnapshot) !== committedRoot) {
+        throw new SnapshotRootMismatchError(contractId, restoredId);
+      }
+
       const rollbackLedger = restoredSnapshot.lastProcessedLedger;
+      const staging = new StagedSnapshotStore({
+        ...restoredSnapshot,
+        signers: new Map(restoredSnapshot.signers),
+        roles: new Map(restoredSnapshot.roles),
+      });
 
       const eventsToReplay = events
         .filter(
@@ -1030,8 +1035,16 @@ export class SnapshotService {
         )
         .sort((a, b) => a.metadata.ledger - b.metadata.ledger);
 
-      const replayResult = await this.processEvents(eventsToReplay);
+      const replayResult = await this.processEvents(eventsToReplay, {}, staging);
       const eventsReplayed = eventsToReplay.length;
+      if (!replayResult.success) return {
+        ...replayResult,
+        rollbackSnapshotId: targetSnapshotId,
+        eventsReplayed,
+        reason: rollbackReason,
+      };
+
+      if (staging.snapshot) await this.adapter.saveSnapshot(staging.snapshot);
 
       logger.info("snapshot rollback completed", {
         contractId,
@@ -1049,6 +1062,7 @@ export class SnapshotService {
         reason: rollbackReason,
       };
     } catch (error) {
+      if (error instanceof SnapshotRootMismatchError) throw error;
       logger.error("[snapshot-service] Error rolling back snapshot:", {
         error: String(error),
       });

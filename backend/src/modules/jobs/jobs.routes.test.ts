@@ -6,6 +6,8 @@ import { JobManager } from "./job.manager.js";
 import { ScheduledJobRunner } from "./scheduled-job-runner.js";
 import { createJobsRouter } from "./jobs.routes.js";
 import type { Job } from "./job.manager.js";
+import { DatabaseSync } from "node:sqlite";
+import { SqliteLeasedJobQueue } from "./leased-queue.js";
 
 function makeApp(jobManager: JobManager, runner: ScheduledJobRunner) {
   const app = express();
@@ -119,4 +121,42 @@ test("GET /api/v1/jobs: job shows disabled=true after disable", async () => {
   const job = res.body.data.find((j: any) => j.name === "check-job");
   assert.equal(job.disabled, true);
   runner.stop();
+});
+
+test("leased queue DLQ inspection and redrive require admin authentication", async () => {
+  const manager = new JobManager();
+  const runner = new ScheduledJobRunner();
+  const db = new DatabaseSync(":memory:");
+  const queue = new SqliteLeasedJobQueue(db);
+  const { id } = queue.enqueue({
+    jobType: "webhook-delivery",
+    vault: "vault",
+    businessId: "event",
+    period: 10,
+    payload: { id: "event" },
+    maxAttempts: 1,
+  }, 1_000);
+  const lease = queue.claim("worker", 1_000, 1_000)!;
+  queue.fail(id, lease.leaseOwner, new Error("dead"), { now: 1_001 });
+
+  const app = express();
+  app.use(express.json());
+  const adminOnly = (req: any, res: any, next: any) => {
+    if (req.get("authorization") !== "Bearer admin") return res.sendStatus(401);
+    next();
+  };
+  app.use("/api/v1/jobs", createJobsRouter(manager, runner, adminOnly, queue));
+
+  await request(app).get("/api/v1/jobs/dlq").expect(401);
+  const list = await request(app)
+    .get("/api/v1/jobs/dlq")
+    .set("Authorization", "Bearer admin")
+    .expect(200);
+  assert.equal(list.body.data.total, 1);
+  await request(app)
+    .post(`/api/v1/jobs/dlq/${id}/redrive`)
+    .set("Authorization", "Bearer admin")
+    .expect(200);
+  assert.equal(queue.listDeadLetters().total, 0);
+  db.close();
 });

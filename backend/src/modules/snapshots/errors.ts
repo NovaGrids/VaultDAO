@@ -12,6 +12,17 @@
 
 export type FailureDisposition = "transient" | "permanent";
 
+/** A stored snapshot does not match the auditor commitment recorded at save time. */
+export class SnapshotRootMismatchError extends Error {
+  constructor(
+    readonly contractId: string,
+    readonly snapshotId: string,
+  ) {
+    super(`Snapshot integrity root mismatch for ${contractId}/${snapshotId}`);
+    this.name = "SnapshotRootMismatchError";
+  }
+}
+
 /**
  * Base class for snapshot storage/network failures. Adapters should throw a
  * subclass so the service can tell transient failures from permanent ones

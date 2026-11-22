@@ -13427,7 +13427,7 @@ impl VaultDAO {
     }
 
     fn is_threshold_reached(env: &Env, config: &Config, proposal: &Proposal) -> bool {
-        let strategy = storage::get_voting_strategy(env);
+        let strategy = storage::get_proposal_voting_strategy(env, proposal.id);
 
         // Check if this is a time-based strategy and threshold should be reduced
         if let ThresholdStrategy::TimeBased(tb) = &config.threshold_strategy {
@@ -13473,7 +13473,7 @@ impl VaultDAO {
 
                 for i in 0..proposal.approvals.len() {
                     if let Some(voter) = proposal.approvals.get(i) {
-                        let w = Self::get_snapshot_voting_power(env, &voter) as u128;
+                        let w = Self::get_snapshot_voting_power(env, proposal.id, &voter) as u128;
                         weighted_approvals = weighted_approvals.saturating_add(w);
                     }
                 }
@@ -13481,7 +13481,7 @@ impl VaultDAO {
                 // Compute average weight across all snapshot signers
                 for i in 0..proposal.snapshot_signers.len() {
                     if let Some(signer) = proposal.snapshot_signers.get(i) {
-                        let w = Self::get_snapshot_voting_power(env, &signer) as u128;
+                        let w = Self::get_snapshot_voting_power(env, proposal.id, &signer) as u128;
                         total_weighted = total_weighted.saturating_add(w);
                     }
                 }
@@ -17533,6 +17533,17 @@ impl VaultDAO {
         storage::calculate_voting_power(&env, &owner)
     }
 
+    /// Return the immutable effective voting weight captured when a proposal
+    /// was created. Later lock or stake changes do not affect that proposal.
+    pub fn get_proposal_voting_weight(
+        env: Env,
+        proposal_id: u64,
+        voter: Address,
+    ) -> Result<u64, VaultError> {
+        storage::get_proposal(&env, proposal_id)?;
+        Ok(storage::get_proposal_voting_weight(&env, proposal_id, &voter))
+    }
+
     /// Configure time-weighted voting system
     ///
     /// Admin only function to enable/disable and configure time-weighted voting.
@@ -20769,31 +20780,9 @@ impl VaultDAO {
     // Voting Power Snapshot (for Conviction / Quadratic strategies)
     // ========================================================================
 
-    /// Compute the voting power for a signer at proposal creation time.
-    ///
-    /// For `Quadratic` strategy: weight = isqrt(token_lock.amount)
-    /// For `Conviction` strategy: weight = amount * power_multiplier_bps / 10_000
-    /// For `Simple` / `Weighted`: weight = 1 (standard counting)
-    fn get_snapshot_voting_power(env: &Env, voter: &Address) -> u64 {
-        let strategy = storage::get_voting_strategy(env);
-        match strategy {
-            VotingStrategy::Quadratic => match storage::get_token_lock(env, voter) {
-                Some(lock) if lock.is_active => Self::isqrt(lock.amount),
-                _ => 1,
-            },
-            VotingStrategy::Conviction => match storage::get_token_lock(env, voter) {
-                Some(lock) if lock.is_active => {
-                    let power = (lock.amount * lock.power_multiplier_bps as i128) / 10_000;
-                    if power > 0 {
-                        power as u64
-                    } else {
-                        1
-                    }
-                }
-                _ => 1,
-            },
-            _ => 1,
-        }
+    /// Read the effective voting power frozen at proposal creation.
+    fn get_snapshot_voting_power(env: &Env, proposal_id: u64, voter: &Address) -> u64 {
+        storage::get_proposal_voting_weight(env, proposal_id, voter)
     }
 
     // ========================================================================

@@ -48,6 +48,8 @@ export interface SignerSnapshot {
 export interface ContractSnapshot {
   readonly contractId: string;
   readonly snapshotId?: string;
+  /** SHA-256 commitment to the canonical snapshot state and cursor metadata. */
+  readonly integrityRoot?: string;
   readonly signers: Map<string, SignerSnapshot>;
   readonly roles: Map<string, RoleSnapshot>;
   readonly lastProcessedLedger: number;
@@ -63,6 +65,7 @@ export interface ContractSnapshot {
 export interface SerializableContractSnapshot {
   readonly contractId: string;
   readonly snapshotId?: string;
+  readonly integrityRoot?: string;
   readonly signers: Record<string, SignerSnapshot>;
   readonly roles: Record<string, RoleSnapshot>;
   readonly lastProcessedLedger: number;
@@ -195,6 +198,12 @@ export interface SnapshotStorageAdapter {
    * Get a snapshot by its ID or target ledger.
    */
   getSnapshotById?(contractId: string, snapshotId: string | number): Promise<ContractSnapshot | null>;
+
+  /**
+   * Retrieve the independently stored commitment for a historical snapshot.
+   * Durable adapters should keep this value outside the serialized blob.
+   */
+  getSnapshotRoot?(contractId: string, snapshotId: string): Promise<string | null>;
 
   /**
    * Restore a snapshot from history.
