@@ -27,6 +27,7 @@ Hands-on how-tos for building and operating features.
 ### Product features
 
 - [Recurring payments](guides/RECURRING_PAYMENTS.md)
+- [Streaming payments](guides/STREAMING.md)
 - [Phased treasury disbursements](guides/PHASED_DISBURSEMENTS.md)
 - [Funding rounds](guides/FUNDING_ROUNDS.md)
 - [Delegation](guides/DELEGATION_GUIDE.md)

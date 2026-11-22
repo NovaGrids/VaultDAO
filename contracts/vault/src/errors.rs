@@ -562,6 +562,33 @@ pub enum VaultError {
     // =========================================================
     /// A single proposer's pending reservations would exceed the per-proposer cap
     ExceedsProposerPendingLimit = 1207,
+
+    // =========================================================
+    // Issue #2055: Stream pause TTL
+    // =========================================================
+    /// Stream has been paused longer than the pause policy allows and the
+    /// policy is `AutoCancel`; it can no longer be resumed
+    StreamPauseExpired = 1208,
+
+    // =========================================================
+    // Issue #2057: TWAP-guarded swaps
+    // =========================================================
+    /// Not enough fresh oracle observations to build a TWAP (fails closed)
+    TwapUnavailable = 1209,
+    /// Spot price deviates from the TWAP by more than `max_deviation_bps`
+    TwapDeviationExceeded = 1210,
+    /// Swap output is outside the configured slippage band
+    SwapSlippageExceeded = 1211,
+    /// Swap path is malformed (too short/long, repeated token, broken leg)
+    SwapPathInvalid = 1212,
+
+    // =========================================================
+    // Issue #2059: Recovery ceremony
+    // =========================================================
+    /// Recovery proposal belongs to an older recovery epoch
+    RecoveryEpochStale = 1213,
+    /// Recovery approval signature was already used
+    RecoverySignatureReplayed = 1214,
 }
 
 // Compatibility markers for CI source checks:
