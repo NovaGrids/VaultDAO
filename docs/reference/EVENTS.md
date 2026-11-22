@@ -201,6 +201,13 @@ For each event:
   2. `rejector: Address`
   3. `proposer: Address`
 
+Proposal creation rejected before an ID is assigned (for example, when the
+per-proposer pending cap is exceeded) uses the same event name with a distinct
+topic shape:
+
+- **Contract topics**: `proposal_rejected`, `proposer: Address`
+- **Published data**: `reason: Symbol` (`pending_cap_exceeded`)
+
 #### `proposal_cancelled` (with refund)
 
 - **Contract topic**: `proposal_cancelled`

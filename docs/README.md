@@ -23,10 +23,12 @@ Hands-on how-tos for building and operating features.
 - [Wallet integration](guides/WALLET_INTEGRATION.md)
 - [Testnet deployment](guides/TESTNET_DEPLOYMENT.md)
 - [Signing guide](guides/SIGNING_GUIDE.md)
+- [Cold storage signing](guides/COLD_SIGNING_GUIDE.md)
 
 ### Product features
 
 - [Recurring payments](guides/RECURRING_PAYMENTS.md)
+- [Streaming payments](guides/STREAMING.md)
 - [Phased treasury disbursements](guides/PHASED_DISBURSEMENTS.md)
 - [Funding rounds](guides/FUNDING_ROUNDS.md)
 - [Delegation](guides/DELEGATION_GUIDE.md)
@@ -38,6 +40,7 @@ Hands-on how-tos for building and operating features.
 - [Treasury risk management](guides/TREASURY_RISK_MANAGEMENT.md)
 - [Governance config changes](guides/GOVERNANCE_CONFIG_CHANGES.md)
 - [Wallet recovery](guides/WALLET_RECOVERY.md)
+- [Subscription management](guides/SUBSCRIPTION_GUIDE.md)
 - [Advanced dashboard](guides/ADVANCED_DASHBOARD.md)
 - [Widget development](guides/WIDGET_DEVELOPMENT.md)
 

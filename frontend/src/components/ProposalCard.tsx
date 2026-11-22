@@ -1,7 +1,61 @@
 import React from 'react';
+import DOMPurify from 'dompurify';
 import type { Proposal } from './type';
 import { formatLedger, formatTokenAmount, truncateAddress } from '../utils/formatters';
 import StatusBadge from './StatusBadge';
+
+/**
+ * Allowlisted tags for proposal descriptions.  Anything outside this list
+ * (e.g. `<script>`, `<img>`, `<iframe>`) is stripped by DOMPurify.
+ */
+const ALLOWED_TAGS = ['b', 'i', 'a', 'code', 'pre', 'ul', 'ol', 'li'];
+
+/** Only `href` is allowed on the surviving `<a>` elements. */
+const ALLOWED_ATTR = ['href'];
+
+/** Protocols permitted in `href` attributes. */
+const SAFE_HREF_PROTOCOLS = ['http:', 'https:', 'mailto:'];
+
+/**
+ * Sanitize untrusted Markdown-rendered HTML before it is inserted into the DOM.
+ *
+ * Proposal descriptions are stored on-chain as free text, so a proposer can
+ * embed raw HTML/JavaScript.  We run the HTML through DOMPurify with a strict
+ * tag/attribute allowlist, then post-process the result to drop any `href`
+ * whose protocol is not http(s)/mailto (defence in depth against
+ * `javascript:` / `data:` URLs).
+ */
+export function sanitizeMarkdown(html: string): string {
+  if (!html) return '';
+
+  const clean = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS,
+    ALLOWED_ATTR,
+  });
+
+  // DOMPurify already strips most dangerous URLs, but enforce the protocol
+  // allowlist explicitly so behaviour does not depend on DOMPurify config.
+  if (typeof document === 'undefined') return clean;
+
+  const container = document.createElement('div');
+  container.innerHTML = clean;
+
+  container.querySelectorAll('a[href]').forEach((anchor) => {
+    const href = anchor.getAttribute('href') ?? '';
+    let protocol: string;
+    try {
+      protocol = new URL(href, 'https://placeholder.invalid').protocol;
+    } catch {
+      anchor.removeAttribute('href');
+      return;
+    }
+    if (!SAFE_HREF_PROTOCOLS.includes(protocol)) {
+      anchor.removeAttribute('href');
+    }
+  });
+
+  return container.innerHTML;
+}
 
 interface ProposalCardProps {
   proposal: Proposal;
@@ -114,7 +168,11 @@ const ProposalCard: React.FC<ProposalCardProps> = ({
       </dl>
 
       {displayed.description ? (
-        <p className="mt-3 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{displayed.description}</p>
+        <div
+          className="proposal-description mt-3 line-clamp-2 text-xs text-gray-500 dark:text-gray-400"
+          // Sanitized via DOMPurify with a strict tag/attribute allowlist.
+          dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(displayed.description) }}
+        />
       ) : null}
     </article>
   );

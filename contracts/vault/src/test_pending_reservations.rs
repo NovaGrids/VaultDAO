@@ -4,21 +4,19 @@
 //! releases the reservation so other proposers can use the budget, and a new
 //! day opens a fresh window.
 //!
-//! Rewritten against the current spend-bucket APIs. Two pieces of the
-//! original suite remain unimplemented upstream and are NOT covered here:
-//! the removed `get_pending_reserved` observability getters (use
-//! `get_daily_spent` / `get_weekly_spent` instead) and per-proposer pending
-//! caps (only the `ExceedsProposerPendingLimit` error variant exists; no
-//! enforcement is wired up).
+//! Rewritten against the current spend-bucket APIs. The removed
+//! `get_pending_reserved` getters are covered through the daily/weekly APIs.
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token::StellarAssetClient,
-    Address, Env, Symbol, Vec,
+    testutils::{Address as _, Events, Ledger},
+    Address, Env, Symbol, TryFromVal, Vec,
 };
 
 use crate::{
-    types::{InitConfig, Priority, RetryConfig, Role, ThresholdStrategy, VelocityConfig},
+    types::{
+        InitConfig, Priority, RetryConfig, Role, ThresholdStrategy, TransferDetails,
+        VelocityConfig,
+    },
     VaultDAO, VaultDAOClient,
 };
 
@@ -232,4 +230,121 @@ fn test_pending_reservations_reset_after_day_rollover() {
     let id = propose(&env, &client, &admin, &proposer, &token, 1000);
     assert!(id > 0, "proposal should succeed after day rollover");
     assert_eq!(client.get_daily_spent(&next_day), 1000);
+}
+
+#[test]
+fn test_pending_proposal_cap_rejects_proposer_at_default_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, _contract) = setup(&env);
+    let proposer = Address::generate(&env);
+
+    assert_eq!(client.get_config().max_pending_per_signer, 50);
+    let mut first_proposal_id = 0;
+    for i in 0..50 {
+        let proposal_id = propose(&env, &client, &admin, &proposer, &token, 1);
+        if i == 0 {
+            first_proposal_id = proposal_id;
+        }
+    }
+
+    assert_eq!(
+        client.try_propose_transfer(
+            &proposer,
+            &Address::generate(&env),
+            &token,
+            &1i128,
+            &Symbol::new(&env, "memo"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &crate::types::ConditionLogic::And,
+            &0i128,
+        ),
+        Err(Ok(crate::errors::VaultError::ExceedsProposerPendingLimit))
+    );
+    let rejected_event = env.events().all().iter().any(|(_, topics, data)| {
+        let is_rejected = topics
+            .first()
+            .and_then(|topic| Symbol::try_from_val(&env, &topic).ok())
+            .map(|symbol| symbol == Symbol::new(&env, "proposal_rejected"))
+            .unwrap_or(false);
+        let event_proposer = topics
+            .get(1)
+            .and_then(|topic| Address::try_from_val(&env, &topic).ok());
+        let reason = Symbol::try_from_val(&env, &data).ok();
+        is_rejected
+            && event_proposer == Some(proposer.clone())
+            && reason == Some(Symbol::new(&env, "pending_cap_exceeded"))
+    });
+    assert!(rejected_event, "proposal cap rejection must emit its reason");
+
+    client.cancel_proposal(
+        &proposer,
+        &first_proposal_id,
+        &Symbol::new(&env, "release_cap"),
+    );
+    assert!(propose(&env, &client, &admin, &proposer, &token, 1) > 0);
+}
+
+#[test]
+fn test_batch_pending_proposal_cap_is_atomic() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, _contract) = setup(&env);
+    let proposer = Address::generate(&env);
+
+    for _ in 0..49 {
+        propose(&env, &client, &admin, &proposer, &token, 1);
+    }
+    let transfers = soroban_sdk::vec![
+        &env,
+        TransferDetails {
+            recipient: Address::generate(&env),
+            token: token.clone(),
+            amount: 1,
+        },
+        TransferDetails {
+            recipient: Address::generate(&env),
+            token: token.clone(),
+            amount: 1,
+        },
+    ];
+    assert_eq!(
+        client.try_batch_propose_transfers(
+            &proposer,
+            &transfers,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &crate::types::ConditionLogic::And,
+            &0i128,
+        ),
+        Err(Ok(crate::errors::VaultError::ExceedsProposerPendingLimit))
+    );
+    assert_eq!(
+        client.list_proposal_ids(&0, &100).len(),
+        49,
+        "a rejected batch must not create partial proposals"
+    );
+}
+
+#[test]
+fn test_admin_bypasses_pending_proposal_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, _contract) = setup(&env);
+
+    for _ in 0..51 {
+        client.propose_transfer(
+            &admin,
+            &Address::generate(&env),
+            &token,
+            &1i128,
+            &Symbol::new(&env, "memo"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &crate::types::ConditionLogic::And,
+            &0i128,
+        );
+    }
+    assert_eq!(client.list_proposal_ids(&0, &100).len(), 51);
 }

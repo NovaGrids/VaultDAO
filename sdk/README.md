@@ -7,7 +7,8 @@ The official TypeScript SDK for building on VaultDAO — a decentralized treasur
 ## Table of Contents
 
 1. [Installation](#installation)
-2. [Quick Start](#quick-start)
+2. [Migrating Between Versions](#migrating-between-versions)
+3. [Quick Start](#quick-start)
 3. [Authentication with Freighter](#authentication-with-freighter)
 4. [Core Concepts](#core-concepts)
 5. [Creating Your First Proposal](#creating-your-first-proposal)
@@ -44,6 +45,17 @@ npm install @vaultdao/sdk
 - A Stellar account funded on the target network
 
 For TypeScript projects, all types are included — no separate `@types` package needed.
+
+---
+
+## Migrating Between Versions
+
+Before upgrading the SDK across a **contract schema version bump**, read the [Migration Guide](./MIGRATION.md). It has a section per breaking SDK version describing breaking API changes, new required parameters, and deprecated functions, so you know exactly what to change in your code.
+
+- [`sdk/CHANGELOG.md`](./CHANGELOG.md) lists *what* changed in each release.
+- [`sdk/MIGRATION.md`](./MIGRATION.md) explains *what you need to change* in your code, and which SDK version to upgrade to for a given contract schema version.
+
+If you are on an older SDK version and the on-chain contract has been upgraded, consult the migration guide first — older SDK versions may not be compatible with the new contract schema.
 
 ---
 
