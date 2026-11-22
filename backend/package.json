@@ -24,7 +24,7 @@
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
-    "@opentelemetry/instrumentation-express": "^0.69.0",
+    "@opentelemetry/instrumentation-express": "^0.73.0",
     "@opentelemetry/instrumentation-http": "^0.221.0",
     "@opentelemetry/sdk-node": "^0.221.0",
     "express": "^5.1.0",
