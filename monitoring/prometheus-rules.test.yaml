@@ -51,3 +51,39 @@ tests:
       - eval_time: 10m
         alertname: HighErrorRate
         exp_alerts: []
+
+  # Issue #2148: dead-letter depth of 150 for one contract stays above the
+  # 100 threshold. The alert is pending during its 5m `for:` window and fires
+  # once the condition has held for 5m.
+  - interval: 1m
+    input_series:
+      - series: 'vaultdao_dlq_depth{contract="CAAA"}'
+        values: "150x20"
+
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: DeadLetterQueueDepthHigh
+        exp_alerts: []
+
+      - eval_time: 10m
+        alertname: DeadLetterQueueDepthHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: events
+              contract: CAAA
+            exp_annotations:
+              summary: "Dead-letter queue is accumulating failures"
+              description: |
+                Dead-letter depth for contract CAAA is 150 (threshold: 100)
+
+  # Depth exactly at the threshold must not fire: the rule uses `> 100`.
+  - interval: 1m
+    input_series:
+      - series: 'vaultdao_dlq_depth{contract="CBBB"}'
+        values: "100x20"
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DeadLetterQueueDepthHigh
+        exp_alerts: []

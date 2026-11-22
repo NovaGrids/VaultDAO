@@ -27,6 +27,11 @@ import type {
   AuditEntry,
   VoteChoice,
   VotingDelegation,
+  ScopedDelegation,
+  ScopedDelegationParams,
+  DelegateVoteParams,
+  ColdSignerConfig,
+  ColdSignatureParams,
   InsuranceClaim,
   InsuranceClaimStatus,
   StakeRecord,
@@ -592,6 +597,419 @@ export async function revokeDelegation(
     addressToScVal(delegatorPublicKey)
   );
   return invokeMethod("revoke_delegation", delegatorPublicKey, op, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Scoped Delegation (sub-committee voting)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a transaction that lets `params.delegate` vote for the delegator, but
+ * only on proposals up to `maxAmount`, until `expiresAtLedger`, and (when
+ * `allowedProposalIds` is non-empty) only on those proposals.
+ *
+ * The contract returns the new delegation ID. A delegator may hold at most 3
+ * active scoped delegations.
+ *
+ * @param delegatorPublicKey - Signer delegating its vote. Must sign the transaction.
+ * @param params             - Delegate, scope, and expiry.
+ * @param opts               - SDK connection options.
+ */
+export async function createScopedDelegation(
+  delegatorPublicKey: string,
+  params: ScopedDelegationParams,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("delegatorPublicKey", delegatorPublicKey);
+  validateNonEmptyString("delegate", params.delegate);
+  if (params.delegate === delegatorPublicKey) {
+    throw new SdkValidationError(
+      "delegate",
+      params.delegate,
+      "delegate must differ from the delegator"
+    );
+  }
+  validatePositiveBigInt("maxAmount", params.maxAmount);
+  validatePositiveNumber("expiresAtLedger", params.expiresAtLedger);
+  const allowed = params.allowedProposalIds ?? [];
+  if (allowed.length > 0) validateIdList("allowedProposalIds", allowed);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "create_scoped_delegation",
+    addressToScVal(delegatorPublicKey),
+    addressToScVal(params.delegate),
+    i128ToScVal(params.maxAmount),
+    u32ToScVal(params.expiresAtLedger),
+    vecToScVal(allowed.map(u64ToScVal))
+  );
+  return invokeMethod("create_scoped_delegation", delegatorPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction that revokes a scoped delegation. Only the delegator or
+ * an Admin may revoke.
+ *
+ * @param callerPublicKey - Delegator or Admin. Must sign the transaction.
+ * @param delegationId    - Delegation to revoke.
+ * @param opts            - SDK connection options.
+ */
+export async function revokeScopedDelegation(
+  callerPublicKey: string,
+  delegationId: bigint,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+  validateId("delegationId", delegationId);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "revoke_scoped_delegation",
+    addressToScVal(callerPublicKey),
+    u64ToScVal(delegationId)
+  );
+  return invokeMethod("revoke_scoped_delegation", callerPublicKey, op, opts);
+}
+
+/**
+ * Build a transaction in which a delegate votes for its delegator under a
+ * scoped delegation. `approve: true` records an approval for the delegator,
+ * `approve: false` an abstention.
+ *
+ * The contract rejects the vote if the delegation is revoked or expired, the
+ * proposal is outside its scope or above `maxAmount`, or the delegator (or the
+ * delegate) already voted on the proposal.
+ *
+ * @param delegatePublicKey - Delegate casting the vote. Must sign the transaction.
+ * @param params            - Delegation, proposal, and vote.
+ * @param opts              - SDK connection options.
+ */
+export async function voteAsDelegate(
+  delegatePublicKey: string,
+  params: DelegateVoteParams,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("delegatePublicKey", delegatePublicKey);
+  validateId("delegationId", params.delegationId);
+  validateId("proposalId", params.proposalId);
+  if (typeof params.approve !== "boolean") {
+    throw new SdkValidationError("approve", params.approve, "approve must be a boolean");
+  }
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "vote_as_delegate",
+    addressToScVal(delegatePublicKey),
+    u64ToScVal(params.delegationId),
+    u64ToScVal(params.proposalId),
+    boolToScVal(params.approve)
+  );
+  return invokeMethod("vote_as_delegate", delegatePublicKey, op, opts);
+}
+
+/**
+ * Fetch a scoped delegation, or `null` if none exists with that ID.
+ *
+ * @param delegationId    - Delegation to fetch.
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getScopedDelegation(
+  delegationId: bigint,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<ScopedDelegation | null> {
+  validateId("delegationId", delegationId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_scoped_delegation", u64ToScVal(delegationId));
+  const raw = await simulateReadOnly<Record<string, unknown> | null | undefined>(
+    op,
+    opts,
+    callerPublicKey,
+    "getScopedDelegation"
+  );
+  return raw ? decodeScopedDelegation(raw) : null;
+}
+
+/**
+ * Fetch every scoped delegation (active or revoked) created by `delegator`.
+ *
+ * @param delegator       - Delegator address.
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getDelegatorScopedDelegations(
+  delegator: string,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<ScopedDelegation[]> {
+  validateNonEmptyString("delegator", delegator);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_delegator_scoped_delegations", addressToScVal(delegator));
+  const raw = await simulateReadOnly<Record<string, unknown>[] | null | undefined>(
+    op,
+    opts,
+    callerPublicKey,
+    "getDelegatorScopedDelegations"
+  );
+  return (raw ?? []).map(decodeScopedDelegation);
+}
+
+function decodeScopedDelegation(raw: Record<string, unknown>): ScopedDelegation {
+  return {
+    id: BigInt(raw.id as bigint),
+    delegator: raw.delegator as string,
+    delegate: raw.delegate as string,
+    maxAmount: BigInt(raw.max_amount as bigint),
+    expiresAtLedger: Number(raw.expires_at_ledger),
+    proposalIds: ((raw.proposal_ids as unknown[]) ?? []).map((v) => BigInt(v as bigint)),
+    isActive: Boolean(raw.is_active),
+    createdAt: BigInt(raw.created_at as bigint),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cold Signers (hardware / air-gapped Ed25519 keys)
+// ---------------------------------------------------------------------------
+
+/** Domain separator the contract prefixes to proof-of-possession messages. */
+export const COLD_SIGNER_POP_DOMAIN = "VaultDAO:cold-signer-pop:v1";
+
+/** Maximum number of cold signers the contract accepts. */
+const MAX_COLD_SIGNERS = 5;
+
+function hexToBytes(field: string, hex: unknown, byteLength: number): Uint8Array {
+  const pattern = new RegExp(`^[0-9a-fA-F]{${byteLength * 2}}$`);
+  if (typeof hex !== "string" || !pattern.test(hex)) {
+    throw new SdkValidationError(
+      field,
+      hex,
+      `${field} must be ${byteLength} bytes encoded as ${byteLength * 2} hex characters`
+    );
+  }
+  return Uint8Array.from(hex.match(/../g)!, (byte) => parseInt(byte, 16));
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+/**
+ * Build the message a cold signer signs to approve a proposal: the proposal ID
+ * as 8 little-endian bytes. Sign it with the cold key's Ed25519 private key and
+ * pass the signature to {@link approveWithColdSignature}.
+ *
+ * @param proposalId - Proposal being approved.
+ */
+export function buildColdSignatureMessage(proposalId: bigint): Uint8Array {
+  validateNonNegativeBigInt("proposalId", proposalId);
+  if (proposalId > 0xffffffffffffffffn) {
+    throw new SdkValidationError("proposalId", proposalId, "proposalId must fit in a u64");
+  }
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigUint64(0, proposalId, true);
+  return out;
+}
+
+/**
+ * Build the proof-of-possession message a cold signer must sign before it can
+ * be registered with {@link setColdSignerConfig}:
+ *
+ * ```text
+ * "VaultDAO:cold-signer-pop:v1"
+ *   || XDR(ScVal::Address(contractId))
+ *   || XDR(ScVal::Address(coldSignerAddress))
+ *   || publicKey (32 raw bytes)
+ * ```
+ *
+ * @param contractId        - Vault contract the key is being registered with (C...).
+ * @param coldSignerAddress - On-chain address the key will be registered under.
+ * @param publicKey         - Cold signer's Ed25519 public key (64 hex chars).
+ */
+export function buildColdSignerPopMessage(
+  contractId: string,
+  coldSignerAddress: string,
+  publicKey: string
+): Uint8Array {
+  validateNonEmptyString("contractId", contractId);
+  validateNonEmptyString("coldSignerAddress", coldSignerAddress);
+  const key = hexToBytes("publicKey", publicKey, 32);
+  return concatBytes([
+    new TextEncoder().encode(COLD_SIGNER_POP_DOMAIN),
+    addressToScVal(contractId).toXDR(),
+    addressToScVal(coldSignerAddress).toXDR(),
+    key,
+  ]);
+}
+
+/**
+ * Build a transaction that submits a cold signer's Ed25519 approval of a
+ * proposal (`submit_cold_signature`).
+ *
+ * The cold key never signs the Stellar transaction itself, so any account can
+ * pay for and submit it. The contract verifies the signature against
+ * `buildColdSignatureMessage(proposalId)`, rejects replays, and rejects
+ * signatures older than `maxColdSigAgeLedgers` or dated in the future.
+ *
+ * @param sourcePublicKey - Account that will sign and pay for the transaction.
+ * @param params          - Proposal, signature, cold public key, and creation ledger.
+ * @param opts            - SDK connection options.
+ */
+export async function approveWithColdSignature(
+  sourcePublicKey: string,
+  params: ColdSignatureParams,
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("sourcePublicKey", sourcePublicKey);
+  validateNonNegativeBigInt("proposalId", params.proposalId);
+  const signature = hexToBytes("signature", params.signature, 64);
+  const publicKey = hexToBytes("publicKey", params.publicKey, 32);
+  validateNonNegativeNumber("createdAtLedger", params.createdAtLedger);
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "submit_cold_signature",
+    u64ToScVal(params.proposalId),
+    xdr.ScVal.scvBytes(signature),
+    xdr.ScVal.scvBytes(publicKey),
+    u32ToScVal(params.createdAtLedger)
+  );
+  return invokeMethod("submit_cold_signature", sourcePublicKey, op, opts);
+}
+
+/**
+ * Build a transaction that replaces the cold signer set and policy (Admin only).
+ *
+ * `proofs[i]` is the Ed25519 signature by `config.coldSigners[i]` over
+ * `buildColdSignerPopMessage(opts.contractId, config.coldSignerAddresses[i], config.coldSigners[i])`.
+ * Every key needs a proof on every call, including keys already registered.
+ *
+ * @param adminPublicKey - Admin. Must sign the transaction.
+ * @param config         - New cold signer policy.
+ * @param proofs         - Proof-of-possession signatures (128 hex chars each), one per key.
+ * @param opts           - SDK connection options.
+ */
+export async function setColdSignerConfig(
+  adminPublicKey: string,
+  config: ColdSignerConfig,
+  proofs: string[],
+  opts: SdkOptions
+): Promise<string> {
+  validateNonEmptyString("adminPublicKey", adminPublicKey);
+  if (!Array.isArray(config.coldSigners) || config.coldSigners.length > MAX_COLD_SIGNERS) {
+    throw new SdkValidationError(
+      "coldSigners",
+      config.coldSigners,
+      `coldSigners must be an array of at most ${MAX_COLD_SIGNERS} keys`
+    );
+  }
+  const n = config.coldSigners.length;
+  if (!Array.isArray(config.coldSignerAddresses) || config.coldSignerAddresses.length !== n) {
+    throw new SdkValidationError(
+      "coldSignerAddresses",
+      config.coldSignerAddresses,
+      "coldSignerAddresses must have one address per cold signer"
+    );
+  }
+  if (!Array.isArray(proofs) || proofs.length !== n) {
+    throw new SdkValidationError("proofs", proofs, "proofs must have one signature per cold signer");
+  }
+  config.coldSignerAddresses.forEach((a, i) =>
+    validateNonEmptyString(`coldSignerAddresses[${i}]`, a)
+  );
+  validateNonNegativeNumber("coldSigThreshold", config.coldSigThreshold);
+  if (config.coldSigThreshold > n) {
+    throw new SdkValidationError(
+      "coldSigThreshold",
+      config.coldSigThreshold,
+      "coldSigThreshold cannot exceed the number of cold signers"
+    );
+  }
+  validateNonNegativeNumber("coldSigExpiry", config.coldSigExpiry);
+  validateNonNegativeBigInt("maxColdSigAgeLedgers", config.maxColdSigAgeLedgers);
+
+  const keys = config.coldSigners.map((k, i) => hexToBytes(`coldSigners[${i}]`, k, 32));
+  const sigs = proofs.map((p, i) => hexToBytes(`proofs[${i}]`, p, 64));
+
+  const contract = getContract(opts);
+  const op = contract.call(
+    "set_cold_signer_config",
+    addressToScVal(adminPublicKey),
+    structToScVal({
+      cold_signers: vecToScVal(keys.map((k) => xdr.ScVal.scvBytes(k))),
+      cold_signer_addresses: vecToScVal(config.coldSignerAddresses.map(addressToScVal)),
+      cold_sig_threshold: u32ToScVal(config.coldSigThreshold),
+      cold_sig_expiry: u32ToScVal(config.coldSigExpiry),
+      max_cold_sig_age_ledgers: u64ToScVal(config.maxColdSigAgeLedgers),
+    }),
+    vecToScVal(sigs.map((s) => xdr.ScVal.scvBytes(s)))
+  );
+  return invokeMethod("set_cold_signer_config", adminPublicKey, op, opts);
+}
+
+/**
+ * Fetch the vault's cold signer policy. A `coldSigThreshold` of 0 means cold
+ * signing is not configured.
+ *
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getColdSignerConfig(
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<ColdSignerConfig> {
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_cold_signer_config");
+  const raw = await simulateReadOnly<Record<string, unknown>>(
+    op,
+    opts,
+    callerPublicKey,
+    "getColdSignerConfig"
+  );
+  return {
+    coldSigners: ((raw.cold_signers as Uint8Array[]) ?? []).map((k) => bytesToHex(k)),
+    coldSignerAddresses: (raw.cold_signer_addresses as string[]) ?? [],
+    coldSigThreshold: Number(raw.cold_sig_threshold),
+    coldSigExpiry: Number(raw.cold_sig_expiry),
+    maxColdSigAgeLedgers: BigInt((raw.max_cold_sig_age_ledgers as bigint) ?? 0),
+  };
+}
+
+/**
+ * Count the unexpired cold signatures recorded for a proposal.
+ *
+ * @param proposalId      - Proposal to check.
+ * @param callerPublicKey - Any valid Stellar public key.
+ * @param opts            - SDK connection options.
+ */
+export async function getColdSignatureCount(
+  proposalId: bigint,
+  callerPublicKey: string,
+  opts: SdkOptions
+): Promise<number> {
+  validateNonNegativeBigInt("proposalId", proposalId);
+  validateNonEmptyString("callerPublicKey", callerPublicKey);
+
+  const contract = getContract(opts);
+  const op = contract.call("get_cold_signature_count", u64ToScVal(proposalId));
+  const raw = await simulateReadOnly<number>(op, opts, callerPublicKey, "getColdSignatureCount");
+  return Number(raw);
 }
 
 // ---------------------------------------------------------------------------

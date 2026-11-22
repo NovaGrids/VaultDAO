@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (grouped by label: enhancement, bug, security, documentation) and publishes it as a draft
   GitHub Release. Maintainers must review that draft and merge its contents into this file
   before finalizing the release, so the manual changelog and the automated draft stay in sync.
+- Scoped delegation bindings: `createScopedDelegation`, `revokeScopedDelegation`,
+  `voteAsDelegate`, `getScopedDelegation`, `getDelegatorScopedDelegations`, and the
+  `ScopedDelegation` type (#2090).
+- Cold signer bindings: `approveWithColdSignature` (`submit_cold_signature`),
+  `setColdSignerConfig`, `getColdSignerConfig`, `getColdSignatureCount`, plus the
+  `buildColdSignatureMessage` and `buildColdSignerPopMessage` payload builders (#2089, #2086).
+- `listVestingIdsAfter` cursor pagination, and input validation on the vesting helpers (#2088).
+
+### Changed
+
+- **Breaking (contract):** `set_cold_signer_config` now takes a `proofs` list with one
+  proof-of-possession signature per cold signer (#2086).
 
 - Typed helpers for the vesting family: `createVestingSchedule`, `claimVestedTokens`,
   `cancelVesting`, `getVestingSchedule`.

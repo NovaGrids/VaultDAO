@@ -1,8 +1,33 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Copy, Download } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import type { DiffSegment } from '../types/comparison';
 import { getDiffSegments } from '../utils/diffHighlighting';
 import { copyToClipboard } from '../utils/clipboard';
+
+/**
+ * Allowlist of safe tags/attributes for rendered proposal descriptions.
+ * Mirrors the shared sanitizeMarkdown configuration.
+ */
+export const ALLOWED_TAGS = ['b', 'i', 'a', 'code', 'pre', 'ul', 'ol', 'li'];
+export const ALLOWED_ATTR = ['href'];
+
+/**
+ * Fields whose values are treated as free-text Markdown and rendered as HTML.
+ */
+const MARKDOWN_FIELDS = ['description', 'memo'];
+
+/**
+ * Sanitize a Markdown-rendered HTML string before inserting it into the DOM.
+ */
+export const sanitizeMarkdown = (html: string): string =>
+  DOMPurify.sanitize(html, {
+    ALLOWED_TAGS,
+    ALLOWED_ATTR,
+  });
+
+const isMarkdownField = (fieldName: string): boolean =>
+  MARKDOWN_FIELDS.includes(fieldName.toLowerCase());
 
 export interface ProposalDiffViewerProps {
   oldProposal: Record<string, unknown>;
@@ -17,6 +42,8 @@ export interface DiffField {
   newValue: string;
   isHighlighted: boolean;
   segments: DiffSegment[];
+  /** True when the field is free-text Markdown rendered as sanitized HTML. */
+  isMarkdown: boolean;
 }
 
 type ViewMode = 'split' | 'unified';
@@ -67,6 +94,7 @@ export const ProposalDiffViewer: React.FC<ProposalDiffViewerProps> = ({
         newValue,
         isHighlighted,
         segments,
+        isMarkdown: isMarkdownField(key),
       });
     }
 
@@ -248,9 +276,13 @@ const SplitView: React.FC<ViewProps> = ({ field }) => {
         <div className="mb-2 text-sm font-medium text-gray-600 dark:text-gray-400">
           Original
         </div>
-        <code className="block break-words rounded bg-red-50 p-3 text-sm text-red-900 dark:bg-red-900 dark:text-red-100">
-          {field.oldValue || '(empty)'}
-        </code>
+        {field.isMarkdown ? (
+          <SanitizedMarkdown value={field.oldValue} className="bg-red-50 text-red-900 dark:bg-red-900 dark:text-red-100" />
+        ) : (
+          <code className="block break-words rounded bg-red-50 p-3 text-sm text-red-900 dark:bg-red-900 dark:text-red-100">
+            {field.oldValue || '(empty)'}
+          </code>
+        )}
       </div>
 
       {/* New Value with Highlighting */}
@@ -275,9 +307,13 @@ const UnifiedView: React.FC<ViewProps> = ({ field }) => {
           <div className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-400">
             Original
           </div>
-          <code className="block break-words rounded bg-red-50 p-2 text-sm text-red-900 dark:bg-red-900 dark:text-red-100">
-            {field.oldValue || '(empty)'}
-          </code>
+          {field.isMarkdown ? (
+            <SanitizedMarkdown value={field.oldValue} className="bg-red-50 text-red-900 dark:bg-red-900 dark:text-red-100" />
+          ) : (
+            <code className="block break-words rounded bg-red-50 p-2 text-sm text-red-900 dark:bg-red-900 dark:text-red-100">
+              {field.oldValue || '(empty)'}
+            </code>
+          )}
         </div>
         <div>
           <div className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-400">
@@ -315,5 +351,35 @@ const DiffHighlightedCode: React.FC<DiffHighlightedCodeProps> = ({ segments }) =
         </span>
       ))}
     </code>
+  );
+};
+
+interface SanitizedMarkdownProps {
+  value: string;
+  className?: string;
+}
+
+/**
+ * SanitizedMarkdown — Render free-text Markdown as sanitized HTML.
+ * All HTML is passed through DOMPurify with a strict tag/attribute allowlist
+ * before being inserted into the DOM.
+ */
+const SanitizedMarkdown: React.FC<SanitizedMarkdownProps> = ({ value, className = '' }) => {
+  const sanitized = useMemo(() => sanitizeMarkdown(value), [value]);
+
+  if (!value) {
+    return (
+      <code className={`block break-words rounded p-2 text-sm ${className}`}>
+        (empty)
+      </code>
+    );
+  }
+
+  return (
+    <div
+      className={`block break-words rounded p-2 text-sm ${className}`}
+      // eslint-disable-next-line react/no-danger -- sanitized via DOMPurify allowlist
+      dangerouslySetInnerHTML={{ __html: sanitized }}
+    />
   );
 };

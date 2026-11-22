@@ -621,6 +621,77 @@ export interface VotingDelegation {
   expiryLedger: bigint;
 }
 
+/**
+ * A delegation that lets `delegate` vote for `delegator`, but only on certain
+ * proposals (mirrors the contract's `ScopedDelegation`). Used for
+ * sub-committee voting.
+ */
+export interface ScopedDelegation {
+  id: bigint;
+  /** Signer whose vote is being delegated. */
+  delegator: string;
+  /** Address allowed to vote on the delegator's behalf. */
+  delegate: string;
+  /** Largest proposal amount the delegate may vote on. */
+  maxAmount: bigint;
+  /** Ledger after which the delegation can no longer be used. */
+  expiresAtLedger: number;
+  /** Proposals the delegate may vote on; empty means any proposal. */
+  proposalIds: bigint[];
+  /** `false` once revoked. */
+  isActive: boolean;
+  /** Ledger the delegation was created at. */
+  createdAt: bigint;
+}
+
+/** Parameters for {@link createScopedDelegation}. */
+export interface ScopedDelegationParams {
+  /** Address allowed to vote on the delegator's behalf. Must differ from the delegator. */
+  delegate: string;
+  /** Largest proposal amount the delegate may vote on. */
+  maxAmount: bigint;
+  /** Ledger after which the delegation can no longer be used. */
+  expiresAtLedger: number;
+  /** Proposals the delegate may vote on. Omit or pass `[]` for any proposal. */
+  allowedProposalIds?: bigint[];
+}
+
+/** Parameters for {@link voteAsDelegate}. */
+export interface DelegateVoteParams {
+  delegationId: bigint;
+  proposalId: bigint;
+  /** `true` records an approval for the delegator, `false` an abstention. */
+  approve: boolean;
+}
+
+/**
+ * Cold-storage signer policy (mirrors the contract's `ColdSignerConfig`).
+ * Public keys are 32-byte Ed25519 keys as 64-character hex strings.
+ */
+export interface ColdSignerConfig {
+  /** Registered Ed25519 public keys (hex, max 5). */
+  coldSigners: string[];
+  /** On-chain address for each cold signer, in the same order as `coldSigners`. */
+  coldSignerAddresses: string[];
+  /** Cold signatures required to count toward quorum. 0 disables cold signing. */
+  coldSigThreshold: number;
+  /** Ledgers after submission before a cold signature expires. */
+  coldSigExpiry: number;
+  /** Maximum age, in ledgers, a cold signature may have when submitted. 0 disables the check. */
+  maxColdSigAgeLedgers: bigint;
+}
+
+/** Parameters for {@link approveWithColdSignature}. */
+export interface ColdSignatureParams {
+  proposalId: bigint;
+  /** 64-byte Ed25519 signature over `buildColdSignatureMessage(proposalId)`, as 128 hex chars. */
+  signature: string;
+  /** 32-byte Ed25519 public key of a registered cold signer, as 64 hex chars. */
+  publicKey: string;
+  /** Ledger the signature was produced against. Must not be in the future. */
+  createdAtLedger: number;
+}
+
 /** Status of an insurance claim (mirrors the contract's `InsuranceClaimStatus`). */
 export type InsuranceClaimStatus = "Pending" | "Approved" | "Rejected" | "Expired";
 

@@ -6,8 +6,11 @@ import { ErrorCode } from "./http/errorCodes.js";
 /** Default `limit` when the query param is omitted. */
 export const DEFAULT_PAGINATION_LIMIT = 20;
 
-/** Maximum allowed `limit` after parsing (explicit values above this are capped). */
+/** Maximum allowed `limit` after parsing (explicit values above are capped). */
 export const MAX_PAGINATION_LIMIT = 100;
+
+/** Maximum allowed `limit` for the audit log endpoint (explicit values above are capped). */
+export const MAX_AUDIT_PAGINATION_LIMIT = 500;
 
 export interface PaginationQuery {
   offset: number;
@@ -119,6 +122,7 @@ export function decodeCursor(raw: string | undefined): CursorPayload | null {
  */
 export function parseCursorPagination(
   query: Request["query"],
+  maxLimit: number = MAX_PAGINATION_LIMIT,
 ): { ok: true; value: CursorPaginationQuery } | { ok: false; message: string } {
   const limitRaw = getFirstQueryString(query, "limit");
   const cursorRaw = getFirstQueryString(query, "cursor");
@@ -140,7 +144,7 @@ export function parseCursorPagination(
         message: "Invalid limit: must be at least 1",
       };
     }
-    limit = Math.min(n, MAX_PAGINATION_LIMIT);
+    limit = Math.min(n, maxLimit);
   }
 
   let cursor: CursorPayload | null = null;
@@ -170,8 +174,55 @@ export function parseCursorPagination(
 export function validateCursorPagination(
   req: Request,
   res: Response,
+  maxLimit: number = MAX_PAGINATION_LIMIT,
 ): CursorPaginationQuery | null {
-  const parsed = parseCursorPagination(req.query);
+  const parsed = parseCursorPagination(req.query, maxLimit);
+  if (!parsed.ok) {
+    error(res, { message: parsed.message, status: 400, code: ErrorCode.BAD_REQUEST });
+    return null;
+  }
+  return parsed.value;
+}
+
+/**
+ * Parses pagination params for the audit log endpoint.
+ *
+ * Accepts `?after=<cursor>&limit=<n>` (max {@link MAX_AUDIT_PAGINATION_LIMIT}).
+ * For convenience the generic `cursor` query param is also honored when
+ * `after` is absent, so clients can reuse the standard cursor helpers.
+ *
+ * - `after`/`cursor` absent (or empty) → `cursor: null`, treated as page one.
+ * - `after`/`cursor` present but undecodable → `{ ok: false }` (caller responds 400).
+ * - `limit` defaults to {@link DEFAULT_PAGINATION_LIMIT}, must be an integer ≥ 1,
+ *   and is capped at {@link MAX_AUDIT_PAGINATION_LIMIT}.
+ */
+export function parseAuditPagination(
+  query: Request["query"],
+): { ok: true; value: CursorPaginationQuery } | { ok: false; message: string } {
+  const afterRaw = getFirstQueryString(query, "after");
+  const cursorRaw = getFirstQueryString(query, "cursor");
+
+  const normalizedQuery: Request["query"] = { ...query };
+  if (afterRaw !== undefined) {
+    normalizedQuery.cursor = afterRaw;
+  } else if (cursorRaw !== undefined) {
+    normalizedQuery.cursor = cursorRaw;
+  } else {
+    delete normalizedQuery.cursor;
+  }
+
+  return parseCursorPagination(normalizedQuery, MAX_AUDIT_PAGINATION_LIMIT);
+}
+
+/**
+ * Validates audit pagination query params and responds with **400** on failure.
+ * @returns `{ cursor, limit }` or `null` if a 400 was already sent.
+ */
+export function validateAuditPagination(
+  req: Request,
+  res: Response,
+): CursorPaginationQuery | null {
+  const parsed = parseAuditPagination(req.query);
   if (!parsed.ok) {
     error(res, { message: parsed.message, status: 400, code: ErrorCode.BAD_REQUEST });
     return null;

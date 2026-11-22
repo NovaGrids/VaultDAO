@@ -150,6 +150,7 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         <ConflictResolutionPanel 
           localData={formData} 
           remoteData={getDraftState() as any} 
+          baseData={initialData}
           onResolve={(resolved) => {
             setFormData(prev => ({ ...prev, ...resolved }));
             resolveConflict(resolved);

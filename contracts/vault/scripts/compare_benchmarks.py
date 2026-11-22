@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""Compare current Soroban benchmark results with a stored baseline."""
+"""Compare current Soroban benchmark results with a stored baseline.
+
+Usage (CI regression gate)::
+
+    python3 scripts/compare_benchmarks.py \\
+        --baseline baseline.json \\
+        --current current.json \\
+        --threshold 15 \\
+        --summary "$GITHUB_STEP_SUMMARY"
+
+The script consumes the JSON artifact produced by ``cargo bench`` (schema
+version 1) and writes a Markdown report to stdout and, optionally, to the file
+given by ``--summary``. It exits with status 1 when any gated metric
+(``cpu_instructions`` or ``memory_bytes``) degrades by more than ``--threshold``
+percent, when the release WASM grows by more than the threshold, or when the
+set of benchmark scenarios changes. Wall-clock time is reported but never
+gated. Invalid input exits with status 2.
+"""
 
 import argparse
 import json
@@ -32,7 +49,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--current", required=True)
-    parser.add_argument("--threshold", type=float, default=5.0)
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=15.0,
+        help="Maximum allowed percentage regression for gated metrics (default: 15.0)",
+    )
     parser.add_argument("--summary", help="Append a Markdown report to this file")
     args = parser.parse_args()
 

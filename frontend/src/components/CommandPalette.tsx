@@ -63,6 +63,17 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(na
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const FOCUSABLE_SELECTOR =
+  'input, button, select, textarea, a[href], [tabindex]:not([tabindex="-1"])';
+
+/** Enabled, focusable descendants of `root`, in DOM order. */
+function getFocusable(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) => !el.hasAttribute('disabled'),
+  );
+}
+
 function loadRecent(): string[] {
   try {
     const raw = localStorage.getItem(RECENT_KEY);
@@ -94,6 +105,11 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  /** Element that had focus before the palette opened; focus returns here on close. */
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const isOpenRef = useRef(false);
+  isOpenRef.current = isOpen;
 
   const { proposals } = useProposals();
   const { approveProposal, rejectProposal } = useVaultContract();
@@ -223,6 +239,14 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
   const close = useCallback(() => {
     setIsOpen(false);
     setQuery('');
+    // Return focus to whatever opened the palette (Issue #2149).
+    const trigger = triggerRef.current;
+    triggerRef.current = null;
+    // Clear the open flag first so the focus trap does not pull focus back.
+    isOpenRef.current = false;
+    if (trigger && document.contains(trigger)) {
+      trigger.focus();
+    }
   }, []);
 
   // ── Global keyboard listener ──────────────────────────────────────────────
@@ -240,6 +264,9 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
           return;
         }
         e.preventDefault();
+        if (!isOpenRef.current) {
+          triggerRef.current = document.activeElement as HTMLElement | null;
+        }
         setIsOpen((prev) => !prev);
         setQuery('');
         setActiveIndex(0);
@@ -258,6 +285,24 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
     }
   }, [isOpen]);
 
+  // ── Focus trap ────────────────────────────────────────────────────────────
+  // While the palette is open, any focus move outside it is pulled back to the
+  // search input. The confirmation dialog is a separate modal with its own
+  // buttons, so the trap is suspended while it is shown.
+
+  useEffect(() => {
+    if (!isOpen || confirmation) return;
+    const onFocusIn = (e: FocusEvent) => {
+      if (!isOpenRef.current) return;
+      const dialog = dialogRef.current;
+      if (dialog && e.target instanceof Node && !dialog.contains(e.target)) {
+        inputRef.current?.focus();
+      }
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, [isOpen, confirmation]);
+
   // ── Keyboard navigation inside palette ───────────────────────────────────
 
   const handleKeyDown = useCallback(
@@ -265,6 +310,28 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
       if (e.key === 'Escape') {
         e.preventDefault();
         close();
+        return;
+      }
+      if (e.key === 'Tab') {
+        // Keep Tab cycling inside the palette (Issue #2149).
+        const focusable = getFocusable(dialogRef.current);
+        if (focusable.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        const insideDialog = active instanceof Node && !!dialogRef.current?.contains(active);
+        if (e.shiftKey) {
+          if (!insideDialog || active === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (!insideDialog || active === last) {
+          e.preventDefault();
+          first.focus();
+        }
         return;
       }
       if (e.key === 'ArrowDown') {
@@ -350,7 +417,11 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
           aria-modal="true"
           aria-label="Command palette"
         >
-        <div className="overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
+        <div
+          ref={dialogRef}
+          onKeyDown={handleKeyDown}
+          className="overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl"
+        >
           {/* Search input */}
           <div className="flex items-center gap-3 border-b border-gray-700 px-4 py-3">
             <Search className="h-5 w-5 shrink-0 text-gray-400" aria-hidden />
@@ -359,7 +430,6 @@ export function CommandPalette({ actions, maxRecent = MAX_RECENT_DEFAULT }: Comm
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
               placeholder="Search commands…"
               className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 focus:outline-none"
               aria-label="Search commands"
