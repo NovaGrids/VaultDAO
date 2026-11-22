@@ -241,6 +241,7 @@ pub enum CounterKey {
     Batch = 7,
     ScopedDelegation = 8,
     RecoveryConfigChange = 9,
+    ColdSignerRotation = 10,
 }
 
 #[contracttype(export = false)]
@@ -489,6 +490,8 @@ pub enum FeatureKey {
     KeeperHookCount,
     /// Number of rejection votes required to reject a proposal -> u32
     RejectionThreshold,
+    /// Cold signer rotation proposal -> ColdSignerRotation (#2085)
+    ColdSignerRotation(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -5219,6 +5222,27 @@ pub fn set_cold_signer_config(env: &Env, config: &ColdSignerConfig) {
     env.storage()
         .instance()
         .set(&FeatureKey::ColdSignerConfig, config);
+}
+
+pub fn increment_cold_signer_rotation_id(env: &Env) -> u64 {
+    let key = FeatureKey::Counter(CounterKey::ColdSignerRotation);
+    let id = env.storage().instance().get(&key).unwrap_or(1);
+    env.storage().instance().set(&key, &(id + 1));
+    id
+}
+
+pub fn get_cold_signer_rotation(env: &Env, id: u64) -> Option<crate::types::ColdSignerRotation> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::ColdSignerRotation(id))
+}
+
+pub fn set_cold_signer_rotation(env: &Env, rotation: &crate::types::ColdSignerRotation) {
+    let key = FeatureKey::ColdSignerRotation(rotation.id);
+    env.storage().persistent().set(&key, rotation);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
 }
 
 pub fn get_cold_sig(
