@@ -1,0 +1,11 @@
+# VaultDAO Staging — example variable values
+# Copy to terraform.tfvars and fill in real values. Never commit terraform.tfvars.
+
+aws_region          = "us-east-1"
+app_port            = 8787
+stellar_contract_id = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+cors_origin         = "https://staging.app.vaultdao.io"
+container_image     = "" # leave empty to use ECR :latest
+acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
+github_org          = "NovaGrids"
+github_repo         = "VaultDAO"

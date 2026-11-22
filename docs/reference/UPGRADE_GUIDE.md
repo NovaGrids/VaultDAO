@@ -452,6 +452,9 @@ The contract stores `DataKey::SchemaVersion` (`storage::CURRENT_SCHEMA_VERSION`)
 - [ ] Confirm `get_schema_version()` equals the new build's version.
 - [ ] When changing `Config`, `Proposal`, or `Escrow` types, bump `CURRENT_SCHEMA_VERSION` and add a migration step in `migrate`.
 
+Schema version 2 adds the default per-signer pending proposal cap and rebuilds
+the pending-proposal and active-stream recipient indexes for existing vaults.
+
 ### Post-upgrade validation
 
 - [ ] `get_config()` returns expected, unchanged settings.

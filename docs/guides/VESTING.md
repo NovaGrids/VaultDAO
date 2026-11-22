@@ -181,4 +181,34 @@ Vesting events use a **two-element topic**: the event name and the schedule id.
 
 `start_ledger` is not included in `vesting_created`; read it with `get_vesting_schedule` if an indexer needs the full curve.
 
+## 6. Fuzzing
+
+The vesting accrual arithmetic is exercised by a dedicated cargo-fuzz target,
+`fuzz/fuzz_targets/fuzz_vesting_accrual.rs` (registered as `fuzz_vesting_accrual`
+in `fuzz/Cargo.toml`). It generates random
+`(start_ledger, cliff_ledger, end_ledger, total_amount, claim_at_ledger)` tuples,
+normalizes them so `start_ledger ≤ cliff_ledger < end_ledger` and
+`total_amount > 0`, and drives the real accrual helper inside a
+`soroban_sdk::Env`. The following invariants are asserted:
+
+- the claimable amount is non-negative and never exceeds `total_amount`;
+- when `claim_at_ledger < cliff_ledger` the claimable amount is exactly `0`;
+- when `claim_at_ledger >= end_ledger` the claimable amount is exactly `total_amount`.
+
+Run it with:
+
+```sh
+cd fuzz
+cargo +nightly fuzz run fuzz_vesting_accrual -- -max_total_time=1800
+```
+
+### Run log
+
+| Date | Duration | Corpus size | Findings |
+|---|---|---|---|
+| _pending_ | 30 min | _pending_ | _pending_ |
+
+Update this table after each scheduled run (record the run date, the duration,
+the resulting corpus size and any findings or crashes).
+
 See also: [API reference](../reference/API.md#token-vesting), [Event reference](../reference/EVENTS.md#vesting).

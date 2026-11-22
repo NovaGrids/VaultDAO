@@ -9,6 +9,67 @@ import { AuditRpcError, verifyAuditChain, streamAuditCsv } from "./audit.service
 
 const logger = createLogger("audit-controller");
 
+/** Maximum number of audit records a single page may return. */
+export const MAX_AUDIT_PAGE_LIMIT = 500;
+
+const DEFAULT_AUDIT_PAGE_LIMIT = 50;
+
+interface AuditCursorQuery {
+  after: string | null;
+  limit: number;
+}
+
+/**
+ * Parses and validates the `after`/`limit` query params for the paginated
+ * `GET /audit` endpoint. Returns `null` after writing a 400 response when the
+ * params are invalid.
+ */
+function parseAuditCursorQuery(
+  request: Parameters<RequestHandler>[0],
+  response: Parameters<RequestHandler>[1],
+): AuditCursorQuery | null {
+  const rawAfter = request.query.after;
+  const rawLimit = request.query.limit;
+
+  let after: string | null = null;
+  if (rawAfter !== undefined) {
+    if (typeof rawAfter !== "string" || rawAfter.length === 0) {
+      error(response, {
+        message: "after must be a non-empty string cursor",
+        status: 400,
+        code: ErrorCode.VALIDATION_ERROR,
+      });
+      return null;
+    }
+    after = rawAfter;
+  }
+
+  let limit = DEFAULT_AUDIT_PAGE_LIMIT;
+  if (rawLimit !== undefined) {
+    if (typeof rawLimit !== "string" || !/^\d+$/.test(rawLimit)) {
+      error(response, {
+        message: "limit must be a positive integer",
+        status: 400,
+        code: ErrorCode.VALIDATION_ERROR,
+      });
+      return null;
+    }
+    const parsed = Number.parseInt(rawLimit, 10);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) {
+      error(response, {
+        message: "limit must be a positive integer",
+        status: 400,
+        code: ErrorCode.VALIDATION_ERROR,
+      });
+      return null;
+    }
+    limit = Math.min(parsed, MAX_AUDIT_PAGE_LIMIT);
+  }
+
+  return { after, limit };
+}
+=======
+
 /**
  * Warns when a request uses the legacy `offset`/`page` pagination params so
  * clients can be nudged toward cursor-based pagination (`?cursor=`), which is
@@ -67,18 +128,29 @@ export function getAuditController(service: AuditService): RequestHandler {
       request.query.offset === undefined;
 
     if (isCursorMode) {
-      const cursorQuery = validateCursorPagination(request, response);
+      const cursorQuery = parseAuditCursorQuery(request, response);
       if (!cursorQuery) return;
+
+      // Fetch one extra record to determine whether a next page exists.
+      const fetchLimit = cursorQuery.limit + 1;
 
       try {
         const page = await service.getAuditTrail(
           contractId,
-          cursorQuery.cursor?.offset ?? 0,
-          cursorQuery.limit,
+          0,
+          fetchLimit,
           verify,
-          typeof request.query.cursor === "string" ? request.query.cursor : null,
+          cursorQuery.after,
         );
-        success(response, page);
+
+        const records = page.data ?? [];
+        const hasNextPage = records.length > cursorQuery.limit;
+        const items = hasNextPage ? records.slice(0, cursorQuery.limit) : records;
+        const nextCursor = hasNextPage
+          ? (items[items.length - 1] as { id?: string } | undefined)?.id ?? null
+          : null;
+
+        success(response, { items, nextCursor });
       } catch (err) {
         if (err instanceof AuditRpcError) {
           error(response, {
