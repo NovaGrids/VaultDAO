@@ -261,5 +261,21 @@
     "fcp": "Primer Renderizado de Contenido",
     "memoryUsage": "Uso de Memoria",
     "heapUsage": "Uso del Heap"
+  },
+  "warRoom": {
+    "title": "Sala de Crisis de Incidentes",
+    "activeIncidents": "{count, plural, =0 {Sin incidentes activos} one {# incidente activo} other {# incidentes activos}}",
+    "pendingApprovals": "{count, plural, =0 {Sin aprobaciones pendientes} one {# aprobación pendiente} other {# aprobaciones pendientes}}",
+    "timelockExpiresAt": "El bloqueo temporal expira el {date, date, medium} a las {date, time, short}",
+    "lastUpdated": "Última actualización {date, date, short}"
+  },
+  "governanceErrors": {
+    "PROPOSAL_NOT_FOUND": "Propuesta no encontrada.",
+    "PROPOSAL_ALREADY_EXECUTED": "Esta propuesta ya ha sido ejecutada.",
+    "TIMELOCK_NOT_ELAPSED": "El período de bloqueo temporal aún no ha transcurrido.",
+    "QUORUM_NOT_REACHED": "No se ha alcanzado el quórum para esta propuesta.",
+    "UNAUTHORIZED_SIGNER": "El firmante no está autorizado para esta bóveda.",
+    "SPENDING_LIMIT_EXCEEDED": "El monto solicitado excede el límite de gasto configurado.",
+    "PROPOSAL_EXPIRED": "Esta propuesta ha expirado y ya no puede ejecutarse."
   }
 }

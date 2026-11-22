@@ -261,5 +261,21 @@
     "fcp": "First Contentful Paint",
     "memoryUsage": "Memory Usage",
     "heapUsage": "Heap Usage"
+  },
+  "warRoom": {
+    "title": "Incident War Room",
+    "activeIncidents": "{count, plural, =0 {No active incidents} one {# active incident} other {# active incidents}}",
+    "pendingApprovals": "{count, plural, =0 {No pending approvals} one {# pending approval} other {# pending approvals}}",
+    "timelockExpiresAt": "Timelock expires on {date, date, medium} at {date, time, short}",
+    "lastUpdated": "Last updated {date, date, short}"
+  },
+  "governanceErrors": {
+    "PROPOSAL_NOT_FOUND": "Proposal not found.",
+    "PROPOSAL_ALREADY_EXECUTED": "This proposal has already been executed.",
+    "TIMELOCK_NOT_ELAPSED": "Timelock period has not elapsed yet.",
+    "QUORUM_NOT_REACHED": "Quorum has not been reached for this proposal.",
+    "UNAUTHORIZED_SIGNER": "Signer is not authorized for this vault.",
+    "SPENDING_LIMIT_EXCEEDED": "Requested amount exceeds the configured spending limit.",
+    "PROPOSAL_EXPIRED": "This proposal has expired and can no longer be executed."
   }
 }

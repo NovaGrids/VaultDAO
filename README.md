@@ -125,6 +125,7 @@ Pull requests and pushes to `main` run `.github/workflows/ci.yml`:
 ## Docs & contributing
 
 - Documentation index: [docs/README.md](docs/README.md)
+- Governance parameter guide: [docs/guides/GOVERNANCE_PARAMETER_GUIDE.md](docs/guides/GOVERNANCE_PARAMETER_GUIDE.md)
 - Architecture: [docs/reference/ARCHITECTURE.md](docs/reference/ARCHITECTURE.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security: [docs/reference/SECURITY.md](docs/reference/SECURITY.md)

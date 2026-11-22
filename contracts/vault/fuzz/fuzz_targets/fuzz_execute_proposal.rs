@@ -30,6 +30,8 @@ struct ExecuteProposalFuzzInput {
     amounts: [u32; 4],
     approve_admin: bool,
     approve_signer2: bool,
+    reject_admin: bool,
+    reject_signer2: bool,
     veto: bool,
     cancel: bool,
     ledger_offset: u32,
@@ -131,13 +133,24 @@ fuzz_target!(|data: ExecuteProposalFuzzInput| {
     let idx = (data.proposal_pick as u32) % proposal_ids.len();
     let target_id = proposal_ids.get(idx).unwrap();
 
-    // Randomly move the target proposal toward Approved / Vetoed / Cancelled
+    // Soroban mainnet per-transaction resource caps.
+    const MAX_CPU_INSTRUCTIONS: u64 = 100_000_000;
+    const MAX_MEM_BYTES: u64 = 41_943_040; // 40 MiB
+
+    // Randomly move the target proposal toward Approved / Rejected / Vetoed / Cancelled
     // before execution, so `execute_proposal` sees every reachable status.
+    env.cost_estimate().budget().reset_default();
     if data.approve_admin {
         let _ = client.try_approve_proposal(&admin, &target_id);
     }
     if data.approve_signer2 {
         let _ = client.try_approve_proposal(&signer2, &target_id);
+    }
+    if data.reject_admin {
+        let _ = client.try_reject_proposal(&admin, &target_id);
+    }
+    if data.reject_signer2 {
+        let _ = client.try_reject_proposal(&signer2, &target_id);
     }
     if data.veto {
         let _ = client.try_veto_proposal(&admin, &target_id);
@@ -161,13 +174,31 @@ fuzz_target!(|data: ExecuteProposalFuzzInput| {
         &outsider
     };
 
-    // The call under test: must resolve to a typed `VaultError` for every
-    // unreachable/invalid state transition, never panic.
-    let _ = client.try_execute_proposal(executor, &target_id);
+    // Reset budget right before execution so we measure the execution entrypoint
+    // under Soroban's per-transaction CPU and memory caps.
+    env.cost_estimate().budget().reset_default();
+    let exec_result = client.try_execute_proposal(executor, &target_id);
+
+    let cpu_cost = env.cost_estimate().budget().cpu_instruction_cost();
+    let mem_cost = env.cost_estimate().budget().memory_bytes_cost();
+    assert!(
+        cpu_cost <= MAX_CPU_INSTRUCTIONS,
+        "execute_proposal exceeded CPU budget: {cpu_cost} > {MAX_CPU_INSTRUCTIONS}"
+    );
+    assert!(
+        mem_cost <= MAX_MEM_BYTES,
+        "execute_proposal exceeded memory budget: {mem_cost} > {MAX_MEM_BYTES}"
+    );
 
     if data.execute_twice {
         // Re-entrant / double-execute attempts must also be rejected
         // cleanly (ProposalAlreadyExecuted or similar), not panic.
-        let _ = client.try_execute_proposal(executor, &target_id);
+        let second_result = client.try_execute_proposal(executor, &target_id);
+        if matches!(exec_result, Ok(Ok(()))) {
+            assert!(
+                !matches!(second_result, Ok(Ok(()))),
+                "double-execution invariant violated for proposal {target_id}"
+            );
+        }
     }
 });

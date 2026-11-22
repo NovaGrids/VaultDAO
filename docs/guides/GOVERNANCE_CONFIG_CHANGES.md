@@ -1,6 +1,6 @@
 # Governance Config Changes
 
-This guide explains how vault configuration is changed on-chain, which parameters must go through the signer-governance workflow, and which ones a single Admin can change directly.
+This guide explains how vault configuration is changed on-chain, which parameters must go through the signer-governance workflow, and which ones a single Admin can change directly. For recommendations on choosing initial parameter values by vault archetype, see the [Governance Parameter Selection Guide](./GOVERNANCE_PARAMETER_GUIDE.md).
 
 > **Read this before operating a production vault.** Several parameters that governance is meant to protect can also be changed by a single Admin through a direct setter (see [Governance bypasses](#known-governance-bypasses)). Until those setters are restricted in the contract, treat the Admin key as able to change any of them unilaterally.
 

@@ -22,9 +22,19 @@ export interface CursorStorage {
   getCursor(): Promise<EventCursor | null>;
 
   /**
+   * Retrieves the last saved cursor for a specific contract ID.
+   */
+  getCursorForContract?(contractId: string): Promise<EventCursor | null>;
+
+  /**
    * Persists a new cursor.
    */
   saveCursor(cursor: EventCursor): Promise<void>;
+
+  /**
+   * Persists a new cursor for a specific contract ID.
+   */
+  saveCursorForContract?(contractId: string, cursor: EventCursor): Promise<void>;
 
   /**
    * Lists all stored cursors with their IDs.

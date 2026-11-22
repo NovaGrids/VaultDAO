@@ -403,3 +403,9 @@ const rtl = isRTL();
 **Last Updated**: February 26, 2026
 **Version**: 1.0
 **Status**: Active
+
+## Translator Guidelines: ICU Message Format, Governance Errors, and Pseudo-Locale
+
+- **ICU Plurals & Dates (`warRoom.*`)**: Use ICU MessageFormat syntax for counts and timestamps (e.g., `{count, plural, =0 {No active incidents} one {# active incident} other {# active incidents}}`, `{date, date, medium}`). Do not translate ICU keywords (`plural`, `one`, `other`, `date`, `time`) or placeholder names (`count`, `date`).
+- **Contract Error Catalog (`governanceErrors.*`)**: All Soroban `VaultError` codes are keyed by their canonical enum/code name (e.g., `PROPOSAL_NOT_FOUND`, `TIMELOCK_NOT_ELAPSED`). Keep error messages concise and actionable.
+- **Pseudo-Locale CI Check**: `.github/workflows/i18n-pseudo-locale.yml` runs `frontend/scripts/check-pseudo-locale.mjs` on locale changes to verify key parity between `en` and `es` and to catch UI truncation via `[!! ... !!]` expansion.

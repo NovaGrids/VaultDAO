@@ -8,6 +8,15 @@ VaultDAO exposes on-chain **contract events** (emitted by the Soroban contract) 
 - **WebSocket** realtime streaming
 - **SSE** streaming (see the SSE section; Issue #102)
 
+## Multi-Vault Indexing & Per-Contract Cursors
+
+`EventPollingService` supports indexing multiple vault contracts (`CONTRACT_IDS` / `BackendEnv.contractIds`) with bounded concurrency (`INDEXING_PARALLELISM` / `BackendEnv.indexingParallelism`):
+
+- **Per-contract cursors**: Each `contractId` maintains its own `EventCursor` via `CursorStorage.getCursorForContract` / `saveCursorForContract`, so restarts resume each vault at its own last-processed ledger.
+- **Fault isolation**: Vaults are polled in bounded batches via `Promise.allSettled`; an RPC outage or timeout on one vault does not stall other vaults.
+- **Fail-closed pagination**: A vault's cursor is only advanced after all pages and event handlers for that poll cycle succeed.
+- **Per-vault health**: `EventPollingService.getPerVaultStates()` exposes `lastLedger`, `lag`, `consecutiveErrors`, and `lastErrorClass` per contract.
+
 This document is designed for external developers building integrations.
 
 ## Terminology

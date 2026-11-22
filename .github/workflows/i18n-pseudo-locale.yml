@@ -1,0 +1,26 @@
+name: i18n Pseudo-Locale Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/public/locales/**"
+      - "frontend/scripts/check-pseudo-locale.mjs"
+      - ".github/workflows/i18n-pseudo-locale.yml"
+
+jobs:
+  pseudo-locale:
+    name: Pseudo-LOC & ICU Catalog Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run pseudo-locale check
+        run: node scripts/check-pseudo-locale.mjs
