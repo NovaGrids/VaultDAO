@@ -34,6 +34,20 @@ Run:
 k6 run load-tests/approval-load.js
 ```
 
+### stream-load.js
+Simulates 50 concurrent `trigger_stream_payment` calls against the same stream, the most likely production stress pattern for payroll vaults (many payments firing against one stream at once).
+
+**Metrics:**
+- Trigger latency (p99 < 2000ms)
+- Error rate < 1%
+
+Run:
+```bash
+k6 run load-tests/stream-load.js
+```
+
+The scenario fails if p99 latency exceeds 2 seconds or the error rate exceeds 1% (enforced via `options.thresholds`).
+
 ### comprehensive-load.js
 Full end-to-end load test simulating 100 users performing create, approve, and execute operations over 10 minutes.
 
@@ -122,6 +136,17 @@ If the P99 threshold is breached under 1000 concurrent connections, check:
 - `vaultdao_ws_connections_active` and event broadcast fan-out cost in `EventWebSocketServer`
 - Node.js event loop lag on the backend process (a single-threaded WS broadcast loop degrades with connection count)
 - Whether `wsMaxSubscriptionsPerClient` (see `backend/src/config/env.ts`) is set high enough to avoid rejected subscriptions inflating the failure rate
+
+## CI Benchmark Regression Gate
+
+Contract benchmarks in `contracts/vault/benches/contract.rs` are run in CI via `cargo bench`, and the results are uploaded as a build artifact. On subsequent runs, `scripts/compare_benchmarks.py` compares the new results against the previous artifact and fails the build if any metric degrades by more than **15%**. Baselines are tracked for `approve_proposal`, `execute_proposal`, and `batch_propose_transfers`.
+
+If CI fails on the benchmark gate, reproduce locally with:
+
+```bash
+cargo bench --manifest-path contracts/vault/Cargo.toml
+python scripts/compare_benchmarks.py <previous-results> <current-results>
+```
 
 ## Performance Benchmarks
 
