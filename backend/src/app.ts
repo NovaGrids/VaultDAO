@@ -43,6 +43,7 @@ import {
   NoPendingRotationError,
 } from "./shared/http/api-key-rotation.js";
 import { createJsonWithRawBody, createHmacSigningMiddleware } from "./shared/http/hmac.js";
+import { createEtagCacheMiddleware } from "./shared/http/etagCache.js";
 import { ErrorCode } from "./shared/http/errorCodes.js";
 import {
   REQUEST_ID_HEADER,
@@ -394,7 +395,9 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     }
   }
 
-  v1Router.get("/admin/config", adminAuthMiddleware, hmacMiddleware, (_req, res) => {
+  const etagCacheMiddleware = createEtagCacheMiddleware();
+
+  v1Router.get("/admin/config", adminAuthMiddleware, hmacMiddleware, etagCacheMiddleware, (_req, res) => {
     success(res, {
       nodeEnv: env.nodeEnv,
       stellarNetwork: env.stellarNetwork,
@@ -527,6 +530,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     "/proposals",
     authMiddleware,
     hmacMiddleware,
+    etagCacheMiddleware,
     createProposalsRouter(
       runtime.proposalActivityAggregator,
       runtime.proposalActivityPersistence,
@@ -599,6 +603,7 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
     "/vault",
     authMiddleware,
     hmacMiddleware,
+    etagCacheMiddleware,
     createVaultRouter(env.sorobanRpcUrl, passphrase, runtime.cacheManager, (runtime as any).vaultRegistry, adminAuthMiddleware),
   );
 

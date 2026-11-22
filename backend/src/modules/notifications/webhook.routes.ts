@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 import type { WebhookDeliveryService } from "./webhook.service.js";
+import { validateWebhookUrl } from "./webhook.url-validator.js";
 import { getWebhookDlq } from "./webhooks.js";
 
 /**
@@ -32,6 +33,17 @@ export function createWebhookRouter(service: WebhookDeliveryService) {
       });
       return;
     }
+
+    const urlCheck = validateWebhookUrl(url);
+    if (!urlCheck.ok) {
+      error(res, {
+        message: urlCheck.message,
+        status: 400,
+        code: ErrorCode.VALIDATION_ERROR,
+      });
+      return;
+    }
+
     if (!secret || typeof secret !== "string") {
       error(res, {
         message: "secret is required",

@@ -111,6 +111,12 @@ export interface BackendEnv {
   /** Delivered notifications older than this many days are purged (default: 7). */
   readonly notificationsRetentionDays: number;
   /**
+   * Maximum time in ms the scheduled job runner waits for an in-flight job to
+   * finish after receiving SIGTERM before forcing the process to exit.
+   * Default: 30000 (30 s). Env var: `JOB_SHUTDOWN_IDLE_TIMEOUT_MS`.
+   */
+  readonly jobShutdownIdleTimeoutMs: number;
+  /**
    * Total retry budget, in seconds, for a single webhook delivery.
    *
    * Once the cumulative time spent retrying a delivery exceeds this budget,
@@ -348,6 +354,7 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     notificationsCleanupJobEnabled: false,
     notificationsCleanupJobIntervalMs: 86_400_000,
     notificationsRetentionDays: 7,
+    jobShutdownIdleTimeoutMs: 30_000,
     webhookMaxTotalRetrySeconds: 86_400,
     contentSecurityPolicy: "default-src 'none'",
     ...overrides,
@@ -514,6 +521,11 @@ export function loadEnv(): BackendEnv {
     issues,
   );
 
+  const jobShutdownIdleTimeoutMs = readPort(
+    "JOB_SHUTDOWN_IDLE_TIMEOUT_MS",
+    30_000,
+    issues,
+  );
   const webhookMaxTotalRetrySeconds = readPort(
     "WEBHOOK_MAX_TOTAL_RETRY_SECONDS",
     86_400,
@@ -646,6 +658,7 @@ export function loadEnv(): BackendEnv {
     notificationsCleanupJobEnabled,
     notificationsCleanupJobIntervalMs,
     notificationsRetentionDays,
+    jobShutdownIdleTimeoutMs,
     webhookMaxTotalRetrySeconds,
     contentSecurityPolicy,
   };

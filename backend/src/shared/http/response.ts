@@ -1,4 +1,5 @@
-import type { Response } from "express";
+import type { Request, Response, NextFunction, RequestHandler } from "express";
+import { createHash } from "node:crypto";
 import { ErrorCode } from "./errorCodes.js";
 import { requestIdStorage } from "./requestId.js";
 import { createLogger } from "../logging/logger.js";
@@ -81,4 +82,66 @@ export function error(
   res.status(status)
     .set("Content-Type", "application/json")
     .json(body);
+}
+
+function computeEtag(payload: string | Buffer): string {
+  const hash = createHash("sha256").update(payload).digest("base64url");
+  return `"${hash}"`;
+}
+
+function ifNoneMatchMatches(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  const candidates = header.split(",").map((v) => v.trim());
+  return candidates.some((candidate) => {
+    if (candidate === "*") return true;
+    // Compare ignoring weak prefix on the client-provided value.
+    const normalized = candidate.startsWith("W/") ? candidate.slice(2) : candidate;
+    return normalized === etag;
+  });
+}
+
+/**
+ * Middleware factory that adds ETag-based caching to read-only GET endpoints.
+ *
+ * For GET requests it wraps `res.json` / `res.send` to compute a strong ETag
+ * (SHA-256 of the serialized body), sets `ETag` and `Cache-Control: no-cache`,
+ * and short-circuits with a bodyless 304 when the request's `If-None-Match`
+ * header matches the freshly computed ETag.
+ */
+export function createEtagCacheMiddleware(): RequestHandler {
+  return function etagCache(req: Request, res: Response, next: NextFunction): void {
+    if (req.method !== "GET") {
+      next();
+      return;
+    }
+
+    const originalJson = res.json.bind(res);
+    const originalSend = res.send.bind(res);
+
+    const respond = (body: unknown): Response => {
+      const serialized =
+        typeof body === "string" || Buffer.isBuffer(body)
+          ? body
+          : JSON.stringify(body);
+
+      const etag = computeEtag(serialized);
+      res.set("ETag", etag);
+      res.set("Cache-Control", "no-cache");
+
+      if (ifNoneMatchMatches(req.headers["if-none-match"], etag)) {
+        res.status(304);
+        return originalSend.call(res);
+      }
+
+      return originalSend.call(res, body);
+    };
+
+    res.json = ((body: unknown) => respond(body)) as Response["json"];
+    res.send = ((body?: unknown) => respond(body)) as Response["send"];
+
+    // Keep the original json helper reachable for callers that bypass send.
+    void originalJson;
+
+    next();
+  };
 }
