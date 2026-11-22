@@ -332,6 +332,8 @@ pub enum FeatureKey {
     ExecutionFeeEstimate(u64),
     /// Vault-wide performance metrics -> VaultMetrics
     Metrics,
+    /// Rejection threshold (percentage of votes needed to reject) -> u32 (#2127)
+    RejectionThreshold,
     /// Proposal template by ID -> ProposalTemplate
     Template(u64),
     /// Template name to ID mapping -> u64
@@ -3284,6 +3286,28 @@ pub fn get_metrics(env: &Env) -> VaultMetrics {
 
 pub fn set_metrics(env: &Env, metrics: &VaultMetrics) {
     env.storage().instance().set(&FeatureKey::Metrics, metrics);
+}
+
+// ============================================================================
+// Rejection Threshold (#2127)
+// ============================================================================
+
+/// Default rejection threshold, used until an admin sets one explicitly.
+pub const DEFAULT_REJECTION_THRESHOLD: u32 = 0;
+
+/// Read the governed rejection threshold.
+pub fn get_rejection_threshold(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::RejectionThreshold)
+        .unwrap_or(DEFAULT_REJECTION_THRESHOLD)
+}
+
+/// Persist the governed rejection threshold.
+pub fn set_rejection_threshold(env: &Env, threshold: u32) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::RejectionThreshold, &threshold);
 }
 
 pub fn metrics_on_execution(env: &Env, gas_used: u64, execution_time_ledgers: u64) {

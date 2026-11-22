@@ -625,3 +625,150 @@ fn test_get_executable_proposals_limit_cap() {
         "oversized limit must be clamped, not rejected"
     );
 }
+
+/// Issue #2126: A batch where every proposal is pending and approvable returns
+/// one `Ok(())` per item, records the approval on each proposal, and emits a
+/// `ProposalApproved` event for each successful approval.
+#[test]
+fn test_batch_approve_proposals_all_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+
+    let mut proposal_ids = Vec::new(&env);
+    for _ in 0..3 {
+        let recipient = Address::generate(&env);
+        let id = make_proposal(&env, &client, &admin, &token, &recipient, 100);
+        proposal_ids.push_back(id);
+    }
+
+    let results = client.batch_approve_proposals(&signer1, &proposal_ids);
+    assert_eq!(results.len(), proposal_ids.len());
+    for result in results.iter() {
+        assert_eq!(result, Ok(()), "every pending proposal must approve");
+    }
+
+    for id in proposal_ids.iter() {
+        let proposal = client.get_proposal(&id);
+        assert!(
+            proposal.approvals.contains(&signer1),
+            "signer must be recorded as an approver"
+        );
+    }
+
+    let events = env.events().all();
+    let mut approved_events = 0u32;
+    for event in events.iter() {
+        if event.0 == contract_id {
+            approved_events += 1;
+        }
+    }
+    assert!(
+        approved_events >= proposal_ids.len(),
+        "each successful approval must emit an event"
+    );
+}
+
+/// Issue #2126: A mixed batch must not roll back on partial failure. Invalid
+/// ids and already-approved proposals yield per-item `Err` values while the
+/// remaining pending proposals are still approved.
+#[test]
+fn test_batch_approve_proposals_mixed_results() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+
+    let recipient_a = Address::generate(&env);
+    let id_a = make_proposal(&env, &client, &admin, &token, &recipient_a, 100);
+    let recipient_b = Address::generate(&env);
+    let id_b = make_proposal(&env, &client, &admin, &token, &recipient_b, 100);
+    let recipient_c = Address::generate(&env);
+    let id_c = make_proposal(&env, &client, &admin, &token, &recipient_c, 100);
+
+    // Pre-approve id_b so it fails inside the batch as already approved.
+    client.approve_proposal(&signer1, &id_b);
+
+    let invalid_id = 9_999u64;
+    let mut proposal_ids = Vec::new(&env);
+    proposal_ids.push_back(id_a);
+    proposal_ids.push_back(invalid_id);
+    proposal_ids.push_back(id_b);
+    proposal_ids.push_back(id_c);
+
+    let results = client.batch_approve_proposals(&signer1, &proposal_ids);
+    assert_eq!(results.len(), 4);
+
+    assert_eq!(results.get(0).unwrap(), Ok(()));
+    assert!(results.get(1).unwrap().is_err(), "invalid id must fail");
+    assert!(
+        results.get(2).unwrap().is_err(),
+        "already-approved proposal must fail"
+    );
+    assert_eq!(results.get(3).unwrap(), Ok(()));
+
+    // Successful items must remain approved: no rollback of the batch.
+    assert!(client.get_proposal(&id_a).approvals.contains(&signer1));
+    assert!(client.get_proposal(&id_c).approvals.contains(&signer1));
+}
+
+/// Issue #2126: A batch of 21 ids exceeds the 20-item cap and is rejected.
+#[test]
+fn test_batch_approve_proposals_exceeds_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+
+    let mut proposal_ids = Vec::new(&env);
+    for _ in 0..21 {
+        let recipient = Address::generate(&env);
+        let id = make_proposal(&env, &client, &admin, &token, &recipient, 100);
+        proposal_ids.push_back(id);
+    }
+
+    let result = client.try_batch_approve_proposals(&signer1, &proposal_ids);
+    assert!(
+        result.is_err(),
+        "a batch of 21 proposals must be rejected by the 20-item cap"
+    );
+}
+
+/// Issue #2126: A batch of exactly 20 proposals is within the cap and succeeds.
+#[test]
+fn test_batch_approve_proposals_at_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+
+    let mut proposal_ids = Vec::new(&env);
+    for _ in 0..20 {
+        let recipient = Address::generate(&env);
+        let id = make_proposal(&env, &client, &admin, &token, &recipient, 100);
+        proposal_ids.push_back(id);
+    }
+
+    let results = client.batch_approve_proposals(&signer1, &proposal_ids);
+    assert_eq!(results.len(), 20);
+    for result in results.iter() {
+        assert_eq!(result, Ok(()), "all 20 proposals must approve");
+    }
+}

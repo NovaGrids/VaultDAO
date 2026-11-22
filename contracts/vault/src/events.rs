@@ -586,6 +586,25 @@ pub fn emit_threshold_reduced(env: &Env, proposal_id: u64, old_threshold: u32, n
     );
 }
 
+/// Emit when the vault-wide rejection threshold is changed by an admin.
+///
+/// Provides the governance trail for `set_rejection_threshold` so off-chain
+/// observers can track who changed the threshold and from/to which values.
+///
+/// Topics: `("rejection_threshold",)`
+/// Data:   `(admin, old_threshold, new_threshold)`
+pub fn emit_rejection_threshold_updated(
+    env: &Env,
+    admin: &Address,
+    old_threshold: u32,
+    new_threshold: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "rejection_threshold"),),
+        (admin.clone(), old_threshold, new_threshold),
+    );
+}
+
 /// Emit when a signer is added
 #[allow(dead_code)]
 pub fn emit_signer_added(env: &Env, signer: &Address, total_signers: u32) {

@@ -497,6 +497,8 @@ pub enum VaultError {
     // Issue #1527: Veto config validation
     // =========================================================
     /// veto_addresses is non-empty but veto_window_ledgers is 0 (veto would be silently disabled)
+    /// Also returned when `veto_window_ledgers > default_voting_deadline` (both non-zero),
+    /// since a veto could then arrive after the voting period has closed (Issue #2129).
     InvalidVetoConfig = 1136,
     // Issue #1708: Swap price-impact arithmetic
     // =========================================================
@@ -598,6 +600,12 @@ pub enum VaultError {
     RecoveryEpochStale = 1214,
     /// Recovery approval signature was already used
     RecoverySignatureReplayed = 1215,
+
+    // =========================================================
+    // Issue #2126: Batch proposal approval
+    // =========================================================
+    /// `batch_approve_proposals` was called with more than `MAX_BATCH_APPROVE` (20) proposal IDs
+    BatchApproveTooLarge = 1216,
 }
 
 // Compatibility markers for CI source checks:
