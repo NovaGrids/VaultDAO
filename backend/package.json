@@ -38,7 +38,7 @@
     "@types/node": "^24.12.0",
     "@types/supertest": "^7.2.0",
     "@types/ws": "^8.18.1",
-    "fast-check": "^4.6.0",
+    "fast-check": "^4.10.3",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
