@@ -5,3 +5,4 @@
  */
 
 export { MemorySnapshotAdapter } from "./memory.adapter.js";
+export { SqliteSnapshotAdapter } from "./sqlite.adapter.js";

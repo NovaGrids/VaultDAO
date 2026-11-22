@@ -14,6 +14,26 @@ import type {
   SerializableContractSnapshot,
 } from "../types.js";
 import { Role } from "../types.js";
+import { createHash } from "node:crypto";
+import { SnapshotRootMismatchError } from "../errors.js";
+
+function canonicalSnapshot(snapshot: ContractSnapshot): string {
+  return JSON.stringify({
+    contractId: snapshot.contractId,
+    snapshotId: snapshot.snapshotId,
+    lastProcessedLedger: snapshot.lastProcessedLedger,
+    lastProcessedEventId: snapshot.lastProcessedEventId,
+    snapshotAt: snapshot.snapshotAt,
+    totalSigners: snapshot.totalSigners,
+    totalRoleAssignments: snapshot.totalRoleAssignments,
+    signers: [...snapshot.signers.entries()].sort(([a], [b]) => a.localeCompare(b)),
+    roles: [...snapshot.roles.entries()].sort(([a], [b]) => a.localeCompare(b)),
+  });
+}
+
+export function computeSnapshotRoot(snapshot: ContractSnapshot): string {
+  return createHash("sha256").update(canonicalSnapshot(snapshot)).digest("hex");
+}
 
 /**
  * MemorySnapshotAdapter
@@ -24,6 +44,7 @@ import { Role } from "../types.js";
 export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
   private snapshots: Map<string, ContractSnapshot> = new Map();
   private snapshotHistory: Map<string, ContractSnapshot[]> = new Map();
+  private readonly snapshotRoots = new Map<string, string>();
   private readonly maxHistorySize = 5;
 
   /**
@@ -38,11 +59,14 @@ export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
    */
   async saveSnapshot(snapshot: ContractSnapshot): Promise<void> {
     const snapId = snapshot.snapshotId ?? `snap_${snapshot.lastProcessedLedger}_${snapshot.lastProcessedEventId || Date.now()}`;
-    const snapWithId: ContractSnapshot = {
+    const snapshotWithId: ContractSnapshot = {
       ...snapshot,
       snapshotId: snapId,
     };
+    const root = computeSnapshotRoot(snapshotWithId);
+    const snapWithId: ContractSnapshot = { ...snapshotWithId, integrityRoot: root };
     this.snapshots.set(snapshot.contractId, snapWithId);
+    this.snapshotRoots.set(`${snapshot.contractId}:${snapId}`, root);
 
     let history = this.snapshotHistory.get(snapshot.contractId) ?? [];
     const clonedSigners = new Map(snapWithId.signers);
@@ -66,6 +90,9 @@ export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
   async clearSnapshot(contractId: string): Promise<void> {
     this.snapshots.delete(contractId);
     this.snapshotHistory.delete(contractId);
+    for (const key of this.snapshotRoots.keys()) {
+      if (key.startsWith(`${contractId}:`)) this.snapshotRoots.delete(key);
+    }
   }
 
   /**
@@ -90,12 +117,20 @@ export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
     );
   }
 
+  async getSnapshotRoot(contractId: string, snapshotId: string): Promise<string | null> {
+    return this.snapshotRoots.get(`${contractId}:${snapshotId}`) ?? null;
+  }
+
   /**
    * Restore a snapshot from history.
    */
   async restoreSnapshot(contractId: string, snapshotId: string | number): Promise<ContractSnapshot | null> {
     const target = await this.getSnapshotById(contractId, snapshotId);
     if (!target) return null;
+    const root = await this.getSnapshotRoot(contractId, target.snapshotId ?? String(snapshotId));
+    if (!root || computeSnapshotRoot(target) !== root) {
+      throw new SnapshotRootMismatchError(contractId, target.snapshotId ?? String(snapshotId));
+    }
 
     const restored: ContractSnapshot = {
       ...target,
@@ -247,6 +282,8 @@ export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
   public static serialize(snapshot: ContractSnapshot): SerializableContractSnapshot {
     return {
       contractId: snapshot.contractId,
+      snapshotId: snapshot.snapshotId,
+      integrityRoot: snapshot.integrityRoot,
       signers: Object.fromEntries(snapshot.signers),
       roles: Object.fromEntries(snapshot.roles),
       lastProcessedLedger: snapshot.lastProcessedLedger,
@@ -263,6 +300,8 @@ export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
   public static deserialize(data: SerializableContractSnapshot): ContractSnapshot {
     return {
       contractId: data.contractId,
+      snapshotId: data.snapshotId,
+      integrityRoot: data.integrityRoot,
       signers: new Map(Object.entries(data.signers)),
       roles: new Map(Object.entries(data.roles)),
       lastProcessedLedger: data.lastProcessedLedger,
@@ -285,5 +324,7 @@ export class MemorySnapshotAdapter implements SnapshotStorageAdapter {
    */
   async clearAll(): Promise<void> {
     this.snapshots.clear();
+    this.snapshotHistory.clear();
+    this.snapshotRoots.clear();
   }
 }

@@ -9,9 +9,14 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   SnapshotRebuildLockManager,
   InMemoryLockBackend,
+  SqliteLockBackend,
 } from "./rebuild-lock.manager.js";
 
 const CONTRACT_ID = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
@@ -95,4 +100,24 @@ test("lock ids are unique across acquisitions", async () => {
   assert.notStrictEqual(second, first, "each acquisition must get a fresh lock id");
 
   await manager.releaseLock(CONTRACT_ID, second);
+});
+
+test("independent SQLite-backed managers share an exclusive persistent lock", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "vaultdao-lock-"));
+  const databasePath = join(directory, "locks.sqlite");
+  const dbA = new DatabaseSync(databasePath);
+  const dbB = new DatabaseSync(databasePath);
+  try {
+    const managerA = new SnapshotRebuildLockManager({ backend: new SqliteLockBackend(dbA) });
+    const managerB = new SnapshotRebuildLockManager({ backend: new SqliteLockBackend(dbB) });
+    const lockA = await managerA.acquireLock(CONTRACT_ID);
+    assert.ok(lockA);
+    assert.equal(await managerB.acquireLock(CONTRACT_ID), null);
+    assert.equal(await managerA.releaseLock(CONTRACT_ID, lockA), true);
+    assert.ok(await managerB.acquireLock(CONTRACT_ID));
+  } finally {
+    dbA.close();
+    dbB.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

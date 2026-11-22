@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { createLogger } from "../../shared/logging/logger.js";
 
 /**
@@ -59,6 +60,110 @@ export interface LockBackend {
    * Check if a lock is currently held.
    */
   isLocked(contractId: string): Promise<boolean>;
+}
+
+export interface RedisLockClient {
+  set(key: string, value: string, expiryMode: "PX", durationMs: number, condition: "NX"): Promise<"OK" | null>;
+  eval(script: string, numberOfKeys: number, key: string, lockId: string): Promise<number>;
+  exists(key: string): Promise<number>;
+}
+
+/**
+ * Redis-backed lease lock. Release is compare-and-delete so an expired owner
+ * cannot release a lease acquired by another worker.
+ */
+export class RedisLockBackend implements LockBackend {
+  constructor(
+    private readonly redis: RedisLockClient,
+    private readonly keyPrefix = "vaultdao:snapshot-lock:",
+  ) {}
+
+  async tryAcquire(contractId: string, durationMs: number): Promise<LockAcquisitionResult> {
+    if (!Number.isInteger(durationMs) || durationMs <= 0) {
+      throw new Error("Lock duration must be a positive integer");
+    }
+    const lockId = `lock:${contractId}:${randomUUID()}`;
+    const key = this.keyPrefix + contractId;
+    const acquired = await this.redis.set(key, lockId, "PX", durationMs, "NX");
+    return acquired === "OK"
+      ? { acquired: true, lockId, expiresAt: Date.now() + durationMs }
+      : { acquired: false };
+  }
+
+  async release(contractId: string, lockId: string): Promise<LockReleaseResult> {
+    const released = await this.redis.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+      1,
+      this.keyPrefix + contractId,
+      lockId,
+    );
+    return { released: released === 1 };
+  }
+
+  async isLocked(contractId: string): Promise<boolean> {
+    return (await this.redis.exists(this.keyPrefix + contractId)) === 1;
+  }
+}
+
+/**
+ * Persistent lease lock backed by a shared SQLite database file. BEGIN
+ * IMMEDIATE serializes acquisitions across backend processes using that file.
+ */
+export class SqliteLockBackend implements LockBackend {
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly keyPrefix = "snapshot:",
+  ) {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS snapshot_locks (
+        lock_key TEXT PRIMARY KEY,
+        lock_id TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      )
+    `);
+  }
+
+  async tryAcquire(contractId: string, durationMs: number): Promise<LockAcquisitionResult> {
+    if (!Number.isInteger(durationMs) || durationMs <= 0) {
+      throw new Error("Lock duration must be a positive integer");
+    }
+    const now = Date.now();
+    const lockId = `lock:${contractId}:${randomUUID()}`;
+    const lockKey = this.keyPrefix + contractId;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM snapshot_locks WHERE lock_key = ? AND expires_at <= ?")
+        .run(lockKey, now);
+      const result = this.db.prepare(`
+        INSERT INTO snapshot_locks (lock_key, lock_id, expires_at) VALUES (?, ?, ?)
+        ON CONFLICT(lock_key) DO NOTHING
+      `).run(lockKey, lockId, now + durationMs);
+      this.db.exec("COMMIT");
+      return Number(result.changes) === 1
+        ? { acquired: true, lockId, expiresAt: now + durationMs }
+        : { acquired: false };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async release(contractId: string, lockId: string): Promise<LockReleaseResult> {
+    const result = this.db.prepare(
+      "DELETE FROM snapshot_locks WHERE lock_key = ? AND lock_id = ?",
+    ).run(this.keyPrefix + contractId, lockId);
+    return { released: Number(result.changes) === 1 };
+  }
+
+  async isLocked(contractId: string): Promise<boolean> {
+    const now = Date.now();
+    const lockKey = this.keyPrefix + contractId;
+    this.db.prepare("DELETE FROM snapshot_locks WHERE lock_key = ? AND expires_at <= ?")
+      .run(lockKey, now);
+    return Boolean(this.db.prepare(
+      "SELECT 1 AS held FROM snapshot_locks WHERE lock_key = ?",
+    ).get(lockKey));
+  }
 }
 
 /**

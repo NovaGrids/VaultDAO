@@ -17,9 +17,11 @@ import {
 } from "./modules/recurring/index.js";
 import {
   SnapshotService,
-  MemorySnapshotAdapter,
+  SqliteSnapshotAdapter,
   SnapshotDiffService,
   InMemorySnapshotDiffAdapter,
+  SnapshotRebuildLockManager,
+  SqliteLockBackend,
 } from "./modules/snapshots/index.js";
 import {
   ProposalActivityConsumer,
@@ -30,6 +32,7 @@ import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
 import { EventSseBroadcaster } from "./modules/events/sse/sse.broadcaster.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import { ScheduledJobRunner } from "./modules/jobs/scheduled-job-runner.js";
+import { LeasedJobWorker, SqliteLeasedJobQueue } from "./modules/jobs/leased-queue.js";
 import { CursorStorageCleanupJob } from "./modules/jobs/recurring/cursor-storage-cleanup.job.js";
 import { registerDuePaymentsJob } from "./modules/jobs/recurring/due-payments-job.js";
 import { createProposalArchivalJob } from "./modules/jobs/recurring/proposal-archival.job.js";
@@ -55,6 +58,8 @@ import { VaultService } from "./modules/vault/vault.service.js";
 import { DatabaseSync } from "node:sqlite";
 import { configureWalMode } from "./shared/storage/sqlite-wal.js";
 import { runMigrations } from "./shared/storage/migrations.js";
+import type { NotificationEvent } from "./modules/notifications/notification.types.js";
+import type { NormalizedEvent } from "./modules/events/types.js";
 
 export interface BackendRuntime {
   readonly startedAt: string;
@@ -70,6 +75,7 @@ export interface BackendRuntime {
   readonly transactionsService: TransactionsService;
   readonly jobManager: JobManager;
   readonly scheduledJobRunner: ScheduledJobRunner;
+  readonly leasedJobQueue?: SqliteLeasedJobQueue;
   readonly wsServer?: EventWebSocketServer;
   readonly sseBroadcaster?: EventSseBroadcaster;
   readonly metricsRegistry: MetricsRegistry;
@@ -88,6 +94,28 @@ export interface BackendRuntime {
 export interface BackendServer {
   readonly server: Server;
   readonly runtime: BackendRuntime;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNotificationEvent(value: unknown): value is NotificationEvent {
+  return isRecord(value) &&
+    typeof value["id"] === "string" &&
+    typeof value["topic"] === "string" &&
+    typeof value["source"] === "string" &&
+    typeof value["createdAt"] === "string" &&
+    isRecord(value["payload"]);
+}
+
+function isNormalizedEvent(value: unknown): value is NormalizedEvent {
+  if (!isRecord(value) || !isRecord(value["metadata"])) return false;
+  const metadata = value["metadata"];
+  return typeof metadata["id"] === "string" &&
+    typeof metadata["contractId"] === "string" &&
+    typeof metadata["ledger"] === "number" &&
+    typeof value["type"] === "string";
 }
 
 export async function startServer(
@@ -174,6 +202,9 @@ export async function startServer(
     "counter",
   );
   registerProposalThroughputMetrics(metricsRegistry);
+  const leasedJobQueueDb = new DatabaseSync(env.databasePath ?? ":memory:");
+  configureWalMode(leasedJobQueueDb);
+  const leasedJobQueue = new SqliteLeasedJobQueue(leasedJobQueueDb, metricsRegistry);
 
   const jobManager = new JobManager(metricsRegistry);
 
@@ -228,9 +259,24 @@ export async function startServer(
   );
 
   const snapshotService = new SnapshotService(
-    new MemorySnapshotAdapter(),
+    new SqliteSnapshotAdapter(
+      (() => {
+        const db = new DatabaseSync(env.databasePath ?? ":memory:");
+        configureWalMode(db);
+        return db;
+      })(),
+    ),
     undefined,
     {
+      lockManager: new SnapshotRebuildLockManager({
+        backend: new SqliteLockBackend(
+          (() => {
+            const db = new DatabaseSync(env.databasePath ?? ":memory:");
+            configureWalMode(db);
+            return db;
+          })(),
+        ),
+      }),
       onChainProvider: vaultService,
       verificationEmitter: webhookDeliveryService,
     },
@@ -254,6 +300,7 @@ export async function startServer(
     transactionsService,
     jobManager,
     scheduledJobRunner,
+    leasedJobQueue,
     metricsRegistry,
     notificationQueue: priorityNotificationQueue,
     notificationQueueStore,
@@ -347,14 +394,21 @@ export async function startServer(
   runtime.dbCursorAdapter = dbCursorAdapter;
 
   if (env.cursorCleanupJobEnabled) {
-    scheduledJobRunner.register(
-      new CursorStorageCleanupJob(
-        env.cursorCleanupJobIntervalMs,
-        true,
-        cursorStorage,
-        env.cursorRetentionDays,
-      ),
-    );
+    scheduledJobRunner.register({
+      name: "cursor-storage-cleanup",
+      intervalMs: env.cursorCleanupJobIntervalMs,
+      runOnStart: true,
+      run: async (context) => {
+        const period = Math.floor(context.now().getTime() / env.cursorCleanupJobIntervalMs);
+        leasedJobQueue.enqueue({
+          jobType: "cursor-cleanup",
+          vault: env.contractId,
+          businessId: "cursor-cleanup",
+          period,
+          payload: {},
+        });
+      },
+    });
   }
 
   registerDuePaymentsJob(
@@ -362,7 +416,50 @@ export async function startServer(
     env,
     recurringIndexerService,
     jobNotificationPublisher,
+    metricsRegistry,
+    leasedJobQueue,
   );
+
+  const leasedJobWorker = new LeasedJobWorker(
+    leasedJobQueue,
+    {
+      "recurring-payment": async (payload) => {
+        if (!isNotificationEvent(payload)) throw new Error("Invalid recurring-payment job payload");
+        await jobNotificationPublisher.publish(payload);
+      },
+      "snapshot-rebuild": async (payload) => {
+        const events = isRecord(payload) ? payload["events"] : undefined;
+        if (!isRecord(payload) || typeof payload["contractId"] !== "string" ||
+            !Array.isArray(events) || !events.every(isNormalizedEvent)) {
+          throw new Error("Snapshot rebuild jobs require contractId and normalized events");
+        }
+        const result = await snapshotService.rebuildSnapshot(
+          events,
+          { contractId: payload["contractId"], clearExisting: true },
+        );
+        if (!result.success) throw new Error(result.error ?? "Snapshot rebuild failed");
+      },
+      "webhook-delivery": async (payload) => {
+        if (!isNotificationEvent(payload)) throw new Error("Invalid webhook-delivery job payload");
+        await webhookDeliveryService.deliver(payload);
+      },
+      "cursor-cleanup": async () => {
+        await new CursorStorageCleanupJob(
+          env.cursorCleanupJobIntervalMs,
+          false,
+          cursorStorage,
+          env.cursorRetentionDays,
+        ).run({ now: () => new Date() });
+      },
+    },
+    { leaseMs: 30_000, pollMs: 1_000 },
+  );
+  jobManager.registerJob({
+    name: "leased-job-worker",
+    start: () => leasedJobWorker.start(),
+    stop: () => leasedJobWorker.stop(),
+    isRunning: () => leasedJobWorker.isRunning(),
+  }, { replace: true });
 
   if (env.notificationsCleanupJobEnabled) {
     scheduledJobRunner.register(

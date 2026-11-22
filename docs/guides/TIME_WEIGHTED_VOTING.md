@@ -33,7 +33,7 @@ pub struct TimeWeightedConfig {
 
 > ⚠️ **Disabling the feature freezes existing locks.** `unlock_tokens` and `unlock_early` both check `enabled`, so setting `enabled = false` while locks are outstanding leaves those tokens in the vault until the feature is re-enabled. Drain or migrate locks before turning it off.
 
-> `set_time_weighted_config` does not validate its fields and emits no event. Keep `min_lock_duration ≤ max_lock_duration` and `early_unlock_penalty_bps ≤ 10_000` yourself.
+`set_time_weighted_config` validates non-zero duration bounds, `min_lock_duration ≤ max_lock_duration`, the penalty ceiling, and that an enabled config names a supported governance token. Successful changes are audited and emit a config-change event.
 
 ---
 
@@ -91,13 +91,15 @@ Alice locks **1,000** tokens for **180 days** (`3,110,400` ledgers) at ledger `1
 
 ### How locks feed proposal voting
 
-`get_voting_power` is a read-only view. Proposal threshold checks read the lock directly through `get_snapshot_voting_power`, depending on the active `VotingStrategy`:
+`get_voting_power` is a read-only view of current power. When a proposal is created, the effective voting weight of each signer in its signer snapshot is captured and stored for that proposal. Votes and threshold calculations read this immutable value; extending, unlocking, or replacing a lock later cannot change the tally of an open proposal. `get_proposal_voting_weight(proposal_id, voter)` returns the captured value. Voters outside the proposal's signer snapshot have the baseline weight `1`.
 
 | Strategy | Per-voter weight |
 |---|---|
-| `Quadratic` | `isqrt(lock.amount)` for an active lock (multiplier ignored), else `1` |
-| `Conviction` | `lock.amount × power_multiplier_bps / 10_000` for an active lock (no decay), else `1` |
+| `Quadratic` | `isqrt(lock.amount)` for an active lock at proposal creation (multiplier ignored), else `1` |
+| `Conviction` | `lock.amount × power_multiplier_bps / 10_000` for an active lock at proposal creation (no decay), else `1` |
 | `Simple`, `Weighted` | `1` (locks are not consulted) |
+
+This prevents post-start stake changes from boosting or reducing an open proposal's tally. Decay remains part of the current-power getter; a proposal's voting weight is intentionally frozen at its start rather than decaying during voting.
 
 ---
 
@@ -112,7 +114,7 @@ stateDiagram-v2
   Inactive --> Active: lock_tokens (new lock)
 ```
 
-Each address holds **at most one** lock at a time. An inactive lock is overwritten by the next `lock_tokens` call.
+Each address holds **at most one** lock at a time. An inactive lock is overwritten by the next `lock_tokens` call. Proposal creation emits `proposal_voting_weight` for each signer whose immutable weight is captured; the `get_proposal_voting_weight` getter returns the same value.
 
 ---
 

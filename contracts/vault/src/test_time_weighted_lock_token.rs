@@ -5,7 +5,8 @@
 
 use crate::errors::VaultError;
 use crate::types::{
-    InitConfig, RetryConfig, ThresholdStrategy, TimeWeightedConfig, VelocityConfig,
+    ConditionLogic, InitConfig, Priority, RetryConfig, ThresholdStrategy, TimeWeightedConfig,
+    VelocityConfig, VotingStrategy,
 };
 use crate::{VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -181,6 +182,38 @@ fn test_governance_token_lock_grants_voting_power() {
     assert_eq!(lock.token, gov_token);
     let baseline = client.get_voting_power(&Address::generate(&env));
     assert!(client.get_voting_power(&owner) > baseline);
+}
+
+#[test]
+fn test_open_proposal_voting_weight_is_frozen_at_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, gov_token) = setup(&env);
+    client.update_voting_strategy(&admin, &VotingStrategy::Quadratic);
+
+    StellarAssetClient::new(&env, &gov_token).mint(&admin, &1_000);
+    client.lock_tokens(&admin, &gov_token, &1_000, &LOCK_DURATION);
+    let recipient = Address::generate(&env);
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &gov_token,
+        &1,
+        &Symbol::new(&env, "frozen"),
+        &Priority::Low,
+        &Vec::new(&env),
+        &ConditionLogic::None,
+        &0,
+    );
+    let initial_weight = client.get_proposal_voting_weight(&proposal_id, &admin);
+    assert_eq!(initial_weight, 31);
+
+    client.unlock_early(&admin);
+    StellarAssetClient::new(&env, &gov_token).mint(&admin, &9_100);
+    client.lock_tokens(&admin, &gov_token, &10_000, &LOCK_DURATION);
+
+    assert_eq!(client.get_proposal_voting_weight(&proposal_id, &admin), initial_weight);
+    assert!(client.get_voting_power(&admin) > initial_weight as i128);
 }
 
 // ============================================================================

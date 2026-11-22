@@ -4,13 +4,46 @@ import type { JobManager } from "./job.manager.js";
 import type { ScheduledJobRunner } from "./scheduled-job-runner.js";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
+import type { SqliteLeasedJobQueue } from "./leased-queue.js";
 
 export function createJobsRouter(
   jobManager: JobManager,
   scheduledJobRunner: ScheduledJobRunner,
   adminAuthMiddleware: (req: Request, res: Response, next: NextFunction) => void,
+  leasedQueue?: SqliteLeasedJobQueue,
 ): Router {
   const router = Router();
+
+  router.get("/dlq", adminAuthMiddleware, (req, res) => {
+    if (!leasedQueue) {
+      error(res, { message: "Durable job queue is not configured", status: 503, code: ErrorCode.BAD_REQUEST });
+      return;
+    }
+    const offset = Number(req.query["offset"] ?? 0);
+    const limit = Number(req.query["limit"] ?? 50);
+    try {
+      success(res, leasedQueue.listDeadLetters(offset, limit));
+    } catch (err) {
+      error(res, {
+        message: err instanceof Error ? err.message : String(err),
+        status: 400,
+        code: ErrorCode.BAD_REQUEST,
+      });
+    }
+  });
+
+  router.post("/dlq/:id/redrive", adminAuthMiddleware, (req, res) => {
+    if (!leasedQueue) {
+      error(res, { message: "Durable job queue is not configured", status: 503, code: ErrorCode.BAD_REQUEST });
+      return;
+    }
+    const id = String(req.params["id"] ?? "");
+    if (!leasedQueue.redrive(id)) {
+      error(res, { message: "Dead-letter job not found", status: 404, code: ErrorCode.NOT_FOUND });
+      return;
+    }
+    success(res, { id, redriven: true });
+  });
 
   /**
    * GET /api/v1/jobs
