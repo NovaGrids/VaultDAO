@@ -606,6 +606,38 @@ pub enum VaultError {
     // =========================================================
     /// `batch_approve_proposals` was called with more than `MAX_BATCH_APPROVE` (20) proposal IDs
     BatchApproveTooLarge = 1216,
+
+    // =========================================================
+    // Issue #2056: Escrow state machine and multisig arbitration
+    // =========================================================
+    /// Escrow state machine does not allow this transition
+    EscrowInvalidTransition = 1217,
+    /// Escrow arbitration window has closed; only the timeout fallback applies
+    EscrowArbitrationClosed = 1218,
+    /// Arbitration panel is malformed (empty, duplicate, conflicted or bad threshold)
+    EscrowPanelInvalid = 1219,
+
+    // =========================================================
+    // Issue #2058: Supersession conflicts
+    // =========================================================
+    /// The parent proposal has already been superseded by another proposal
+    SupersessionConflict = 1220,
+
+    // =========================================================
+    // Issue #2060: Governance config change controls
+    // =========================================================
+    /// The approved config change is still inside its timelock
+    ConfigChangeTimelocked = 1221,
+    /// The config change needs a second acknowledgment before it can execute
+    ConfigChangeAckRequired = 1222,
+    /// The change would put a parameter below its safety floor
+    SafetyFloorViolation = 1223,
+
+    // =========================================================
+    // Issue #2061: Per-token circuit breakers
+    // =========================================================
+    /// This token's outflow circuit breaker is tripped
+    TokenCircuitBreakerTripped = 1224,
 }
 
 // Compatibility markers for CI source checks:

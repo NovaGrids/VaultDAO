@@ -19,6 +19,7 @@ This guide explains *how* VaultDAO constrains outflow and *how* operators should
 8. [Monthly risk review checklist](#8-monthly-risk-review-checklist)
 9. [Incident playbooks](#9-incident-playbooks)
 10. [Appendix: Config fields quick map](#10-appendix-config-fields-quick-map)
+11. [Risk engine: spendable balance, reservations and per-token breakers](#11-risk-engine-spendable-balance-reservations-and-per-token-breakers)
 
 ---
 
@@ -32,7 +33,8 @@ VaultDAO is designed so that no single rushed click empties the treasury. Risk c
 | **daily_limit** / **weekly_limit** | Aggregate outflow over time | `Config.daily_limit`, `Config.weekly_limit` |
 | Per-token daily/weekly limits | Same idea per asset | `Config.token_daily_limits`, `Config.token_weekly_limits` |
 | **Timelock** + high-impact extension | Speed of execution after approvals | `timelock_*`, `high_impact_threshold` |
-| **Circuit breaker threshold** | Burst outflow in a short window (~1 hour) | `circuit_breaker_threshold` (storage / feature config) |
+| **Per-token circuit breaker** | Burst outflow of one token in a short window (~1 hour) | `circuit_breaker_threshold` / `set_circuit_token_threshold` |
+| **Earmarks + pending reservations** | Funds already promised elsewhere | `get_treasury_risk_snapshot` ([§11](#11-risk-engine-spendable-balance-reservations-and-per-token-breakers)) |
 | Roles + threshold / quorum | Who can propose and how many must agree | Roles, `threshold`, `quorum` |
 | Compliance score (dashboard) | Operational hygiene signal | Governance Health widget (`N% Compliant`) |
 
@@ -159,7 +161,7 @@ Relevant `VaultError` outcomes include (names reflect contract semantics):
 | Today’s aggregate would exceed cap | `ExceedsDailyLimit` |
 | Week’s aggregate would exceed cap | `ExceedsWeeklyLimit` |
 | Per-token daily / weekly | `ExceedsTokenDailyLimit` / `ExceedsTokenWeeklyLimit` |
-| Circuit breaker trips on execute | Vault auto-pauses; `VaultPaused` with cause `circuit_breaker` |
+| Circuit breaker trips on execute | That token's breaker trips (`token_breaker_tripped`); later outflows of the token fail with `TokenCircuitBreakerTripped` |
 
 Exact numeric codes live in `contracts/vault/src/errors.rs`. Frontend `errorMapping` translates many of these into plain-language titles and recovery tips for non-technical Treasurers.
 
@@ -235,20 +237,24 @@ Treat “forgot to reset” as an incident:
 
 ### 6.1 What it is
 
-The **circuit breaker** is a burst-outflow brake evaluated at **proposal execution**. It is separate from daily/weekly spending limits.
+The **circuit breaker** is a burst-outflow brake evaluated at **proposal execution** (and on swaps and funding-round payouts). It is separate from daily/weekly spending limits. Breakers are **per token** (Issue #2061): one token tripping never blocks another.
 
 On-chain behavior (see `contracts/vault/src/lib.rs` and `storage.rs`):
 
-1. Read **`circuit_breaker_threshold`** via `storage::get_circuit_breaker_threshold` (instance storage feature key; default `0` means disabled).
-2. If threshold `> 0`, compute the current **hour window** (`ledger_sequence / 720`, roughly one hour of ledgers).
-3. Read outflow already recorded for that window (`get_circuit_breaker_outflow`).
+1. If the token's breaker is already tripped, fail with **`TokenCircuitBreakerTripped`**.
+2. Read the token's threshold: `set_circuit_token_threshold(admin, token, threshold)` if set, otherwise the vault-wide `circuit_breaker_threshold` from `configure_emergency`. `0` means disabled.
+3. If threshold `> 0`, compute the current **hour window** (`ledger_sequence / 720`, roughly one hour of ledgers) and read that token's outflow for the window.
 4. If `outflow + proposal.amount > threshold`:
-   - Auto-set pause state with cause symbol **`circuit_breaker`**
-   - Emit vault-paused event
-   - Return **`VaultError::VaultPaused`**
-5. Otherwise add the amount to the window’s outflow counter (temporary storage with short TTL).
+   - Trip **only this token's** breaker and persist it (`TokenBreakerState { tripped, tripped_at, outflow_at_trip, refused_amount }`)
+   - Write an audit entry and emit `token_breaker_tripped(token) → (outflow, refused_amount, threshold)`
+   - The proposal is not executed. It stays `Approved` and keeps its reservation.
+5. Otherwise add the amount to that token's window counter (temporary storage with short TTL).
 
-This is the field operators mean when they say **Config / vault `circuit_breaker_threshold`**: configure it deliberately; leaving it at `0` disables the brake.
+**Pause persistence.** A tripped breaker does not clear when the hourly window rolls over. It stays tripped until an Admin calls `reset_token_circuit_breaker(admin, token)` (emits `token_breaker_reset`). Read it with `get_token_breaker_state(token)`.
+
+**Isolation.** Other tokens keep flowing while one is tripped, and the vault-wide pause (`pause_vault`) is not touched. Use `pause_vault` yourself if the incident is broader than one asset.
+
+Configure the threshold deliberately; leaving it at `0` disables the brake.
 
 ### 6.2 Choosing a threshold (guidelines, not mandates)
 
@@ -262,11 +268,11 @@ These percentages are **guidelines, not mandates**. Size the absolute threshold 
 
 ### 6.3 Operator response when it trips
 
-1. Confirm dashboard / events show pause cause `circuit_breaker`.
+1. Confirm events show `token_breaker_tripped` and which token tripped (`get_token_breaker_state(token)`).
 2. Halt keeper aggressive retries that might add noise.
 3. Inventory executions in the last hour—expected payroll vs unknown recipients.
-4. If legitimate burst (rare): unpause per Admin emergency procedure **after** human review, optionally raise threshold temporarily with governance, then reset.
-5. If malicious: keep paused, rotate keys, cancel lingering proposals, engage Security Officer.
+4. If legitimate burst (rare): after human review, call `reset_token_circuit_breaker`, optionally raise that token's threshold temporarily, then set it back. If the same hour window is still open, the next outflow over the threshold trips it again.
+5. If malicious: leave the breaker tripped, `pause_vault` if other tokens are at risk, rotate keys, cancel lingering proposals, engage Security Officer.
 
 ### 6.4 Relationship to backend “circuit breakers”
 
@@ -341,7 +347,8 @@ Within 24–48 hours: Admin + Treasurer + Security huddle. Consider tighter limi
 
 - [ ] Verify `circuit_breaker_threshold` is **> 0** in production (or document intentional disable with Security sign-off)
 - [ ] Confirm who can unpause and where the emergency runbook lives
-- [ ] Review any `circuit_breaker` pause events since last review
+- [ ] Review any `token_breaker_tripped` events since last review and confirm no breaker is still tripped unintentionally
+- [ ] Check `get_treasury_risk_snapshot` per token: `pending` reservations are expected, `spendable` covers next month's needs
 
 ### Governance & access (10 minutes)
 
@@ -407,9 +414,50 @@ Within 24–48 hours: Admin + Treasurer + Security huddle. Consider tighter limi
 | `Config.token_daily_limits` / `token_weekly_limits` | Per-asset ceilings |
 | `Config.timelock_threshold` / `timelock_delay` | Slow mid/large executions |
 | `Config.high_impact_threshold` | Extra delay for high impact scores |
-| **`circuit_breaker_threshold`** | Hourly burst pause trigger |
+| **`circuit_breaker_threshold`** | Default hourly burst trigger for every token |
+| `set_circuit_token_threshold` | Per-token hourly burst trigger (overrides the default) |
 | `Config.threshold` / `quorum` | Human consensus strength |
 | `Config.supported_tokens` | Multi-token surface area |
+
+---
+
+## 11. Risk engine: spendable balance, reservations and per-token breakers
+
+Issue #2061 makes the contract track every commitment against the treasury, so executors cannot over-commit it.
+
+### 11.1 Spendable balance
+
+For each token:
+
+```
+spendable = max(0, balance − earmarked − pending − locked)
+```
+
+| Term | What it holds |
+|---|---|
+| `balance` | Vault's token balance |
+| `earmarked` | Escrows, streams, vesting, subscriptions, approved funding rounds, insurance pool, stake pool, collected fees |
+| `pending` | Reservations of approved but unexecuted proposals ([§11.2](#112-pending-reservations-issue-2061)) |
+| `locked` | Time-weighted voting locks owed back to lockers |
+
+`get_treasury_risk_snapshot(token)` returns all five values plus `breaker_tripped`. Every new commitment (transfer execution, recurring payment, stream creation, funding-round approval, vesting) is checked against `spendable`. A stream payout draws on its own earmark first and is not blocked by later reservations.
+
+### 11.2 Pending reservations (Issue #2061)
+
+A proposal holds a reservation exactly while it is `Approved` or `Scheduled`:
+
+- **Created** when it becomes approved, but only if its amount fits in `spendable` at that moment. Reservations therefore never exceed the uncommitted balance. A proposal that does not fit stays `Approved` without a reservation; it takes one on a later update once funds allow, and it can only execute against funds that are actually spendable, never against another proposal's reservation.
+- **Released exactly once** when the proposal leaves the approved states: execute, cancel, veto, reject, expiry, supersession. The per-proposal record makes the release idempotent: a second cancel or execute fails and releases nothing.
+- A proposal's own reservation is counted as available to it when it executes.
+- A circuit-breaker trip or a retryable failure leaves the proposal `Approved` and keeps its reservation.
+
+Approved proposals past their deadline or execution window still hold their reservation until something touches them. Anyone can free it with `expire_approved_reservation(proposal_id)`, which moves such a proposal to `Expired`.
+
+Read one reservation with `get_pending_reservation(proposal_id) -> Option<(token, amount)>`. Events: `reservation_created(proposal_id) → (token, amount)` and `reservation_released(proposal_id) → (token, amount, status)`.
+
+### 11.3 Tests
+
+`contracts/vault/src/test_treasury_risk_2061.rs` covers cross-token breaker isolation, trip persistence, exactly-once release on execute / cancel / expiry, the over-commit guard, and a proptest property that checks the spendable formula and `pending == Σ reservations` after random approve / execute / cancel / expire sequences.
 
 ---
 

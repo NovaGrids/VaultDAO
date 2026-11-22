@@ -45,7 +45,7 @@ use types::{
     InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
     NotificationPreferencesV2, NotificationPrefs, OptionalProposalOperation,
     OptionalVaultOracleConfig, ParticipationConfig, PauseCooldownConfig,
-    PauseState, Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase,
+    Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase,
     ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig,
     RecoveryConfigChangeProposal, RecoveryProposal, RecoveryStatus, RecurringPayment,
     RecurringStatus, Reputation, ReputationConfig, RetryConfig, RetryState, Role, RoleAssignment,
@@ -159,6 +159,14 @@ const MIN_UPGRADE_TIMELOCK: u64 = 17_280;
 
 /// Maximum number of milestones allowed on a single escrow
 const MAX_ESCROW_MILESTONES: u32 = 50;
+/// Maximum number of arbitrators on an escrow panel (Issue #2056)
+const MAX_ESCROW_PANEL_SIZE: u32 = 10;
+/// Lowest threshold a governance config change may set (Issue #2060).
+/// Matches the minimum enforced by `initialize` and `update_threshold`.
+const MIN_GOVERNED_THRESHOLD: u32 = 2;
+/// Minimum delay between approval and execution of a risk-increasing
+/// governance config change, in ledgers (~1 hour) (Issue #2060).
+const MIN_CONFIG_CHANGE_TIMELOCK_LEDGERS: u64 = 720;
 
 /// Absolute ceiling for `RetryConfig.initial_backoff_ledgers`: 30 days at ~5 s/ledger.
 const MAX_RETRY_BACKOFF_LEDGERS: u64 = 17_280 * 30;
@@ -678,6 +686,14 @@ mod test_swap_twap_2057;
 mod test_recovery_ceremony_2059;
 #[cfg(test)]
 mod test_audit_compaction_2062;
+#[cfg(test)]
+mod test_escrow_precedence_matrix_2056;
+#[cfg(test)]
+mod test_supersession_migration_2058;
+#[cfg(test)]
+mod test_config_change_controls_2060;
+#[cfg(test)]
+mod test_treasury_risk_2061;
 #[cfg(test)]
 mod test_subscription_auto_topup;
 #[cfg(test)]
@@ -2817,28 +2833,20 @@ impl VaultDAO {
             }
         }
 
-        // Circuit breaker check: auto-pause if outflow in current hour exceeds threshold (#1084)
+        // Per-token circuit breaker (#1084, #2061). A tripped breaker only
+        // blocks outflows of its own token and stays tripped until an Admin
+        // resets it, even after the hourly window rolls over.
+        if storage::is_token_breaker_tripped(&env, &proposal.token) {
+            return Err(VaultError::TokenCircuitBreakerTripped);
+        }
         let threshold = storage::get_circuit_breaker_threshold_for_token(&env, &proposal.token);
         if threshold > 0 {
             let window = storage::get_hour_window(&env);
             let outflow = storage::get_circuit_breaker_outflow(&env, &proposal.token, window);
             if outflow + proposal.amount > threshold {
-                // Auto-trigger pause
-                let cb_cause = Symbol::new(&env, "circuit_breaker");
-                let pause_state = PauseState {
-                    is_paused: true,
-                    paused_by: None,
-                    paused_at_ledger: env.ledger().sequence(),
-                    cause: cb_cause.clone(),
-                };
-                storage::set_pause_state(&env, &pause_state);
-                storage::create_audit_entry(
-                    &env,
-                    AuditAction::VaultPaused,
-                    &executor,
-                    storage::symbol_to_u64_key(&env, &cb_cause),
-                );
-                events::emit_vault_paused(&env, &executor, &cb_cause);
+                // Trip this token's breaker. Returning Ok persists the trip;
+                // the proposal stays Approved and keeps its reservation.
+                Self::trip_token_breaker(&env, &executor, &proposal.token, outflow, proposal.amount, threshold);
                 return Ok(());
             }
         }
@@ -3338,7 +3346,20 @@ impl VaultDAO {
 
             for i in 0..required_per_token.len() {
                 let (token_addr, required_amount) = required_per_token.get(i).unwrap();
-                if Self::available_balance(&env, &token_addr) < required_amount {
+                // The batch's own proposals hold reservations for these
+                // transfers; they must not block themselves (#2061).
+                let mut own_reserved: i128 = 0;
+                for k in 0..planned_transfers.len() {
+                    let (pid, planned_token, _, _) = planned_transfers.get(k).unwrap();
+                    if planned_token == token_addr {
+                        own_reserved = own_reserved.saturating_add(
+                            storage::get_own_pending_reservation(&env, pid, &token_addr),
+                        );
+                    }
+                }
+                if Self::available_balance(&env, &token_addr).saturating_add(own_reserved)
+                    < required_amount
+                {
                     abort_reason = Some(VaultError::InsufficientBalance);
                     break;
                 }
@@ -4862,7 +4883,9 @@ impl VaultDAO {
             .saturating_sub(stream.claimed_amount)
             .max(0);
         storage::release_stream_reserve(&env, &stream.token_addr, amount.min(remaining));
-        if Self::available_balance(&env, &stream.token_addr) < amount {
+        // The stream's funds were earmarked before any later proposal
+        // reservation, so pending reservations do not block them (#2061).
+        if Self::earmark_free_balance(&env, &stream.token_addr) < amount {
             return Err(VaultError::InsufficientBalance);
         }
 
@@ -5653,7 +5676,9 @@ impl VaultDAO {
 
         // Atomically deduct from pool and transfer
         pool.debit(env, &proposal.token, proposal.amount);
-        if Self::available_balance(env, &proposal.token) < proposal.amount {
+        if Self::available_balance_for_proposal(env, &proposal.token, proposal.id)
+            < proposal.amount
+        {
             return Err(VaultError::InsufficientBalance);
         }
         token::transfer(env, &proposal.token, &proposal.recipient, proposal.amount);
@@ -5761,6 +5786,39 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
+        // Chain integrity (Issue #2058): only a live, non-executed proposal can
+        // be superseded, and each parent can be superseded exactly once. A
+        // second, competing supersession of the same parent is a conflict.
+        if storage::get_superseded_by(&env, old_proposal_id).is_some() {
+            return Err(VaultError::SupersessionConflict);
+        }
+        match old_proposal.status {
+            ProposalStatus::Pending | ProposalStatus::Approved | ProposalStatus::Scheduled => {}
+            ProposalStatus::Executed => return Err(VaultError::ProposalAlreadyExecuted),
+            ProposalStatus::Cancelled => return Err(VaultError::ProposalAlreadyCancelled),
+            _ => return Err(VaultError::ProposalNotPending),
+        }
+        // Validates the ancestor chain (cycle / depth) and ensures no ancestor
+        // was executed.
+        let ancestors = Self::get_supercession_chain(env.clone(), old_proposal_id)?;
+        for ancestor_id in ancestors.iter() {
+            if let Ok(ancestor) = storage::get_proposal(&env, ancestor_id) {
+                if ancestor.status == ProposalStatus::Executed {
+                    return Err(VaultError::ProposalAlreadyExecuted);
+                }
+            }
+        }
+
+        // Cancel the old proposal first so its spending-limit buckets, pending
+        // reservation, insurance and stake are released before the new
+        // proposal is validated against the same limits.
+        Self::cancel_proposal_internal(
+            &env,
+            &proposer,
+            old_proposal_id,
+            Symbol::new(&env, "superseded"),
+        )?;
+
         // Create the new proposal
         let new_proposal_id = Self::propose_transfer_internal(
             env.clone(),
@@ -5780,11 +5838,8 @@ impl VaultDAO {
             None,
         )?;
 
-        // Cancel the old proposal with supersession reason
-        let mut cancelled_proposal = old_proposal;
-        cancelled_proposal.status = ProposalStatus::Cancelled;
-
         // Add metadata linking to the new proposal
+        let mut cancelled_proposal = storage::get_proposal(&env, old_proposal_id)?;
         cancelled_proposal.metadata.set(
             Symbol::new(&env, "superseded_by"),
             String::from_str(&env, "id"),
@@ -5793,30 +5848,131 @@ impl VaultDAO {
             Symbol::new(&env, "supersession_reason"),
             String::from_str(&env, "superseded"),
         );
-
         storage::set_proposal(&env, &cancelled_proposal);
 
-        // Add metadata to new proposal linking to old one
+        // Add metadata to new proposal linking to old one, then migrate votes
+        // according to the vault's policy.
         let mut new_proposal = storage::get_proposal(&env, new_proposal_id)?;
         new_proposal.metadata.set(
             Symbol::new(&env, "supersedes"),
             String::from_str(&env, "id"),
         );
+        let requested = storage::get_vote_migration_policy(&env);
+        let (applied, carried_approvals, carried_abstentions) =
+            Self::migrate_supersession_votes(&env, &old_proposal, &mut new_proposal, requested)?;
         storage::set_proposal(&env, &new_proposal);
 
         // Record the parent/child link so the supersession chain can be traversed.
         storage::set_supersession_link(&env, old_proposal_id, new_proposal_id);
 
-        // Emit event for supersession
-        events::emit_proposal_cancelled(
+        events::emit_proposal_superseded(
             &env,
             old_proposal_id,
+            new_proposal_id,
             &proposer,
-            &Symbol::new(&env, "superseded"),
-            0, // No refund in supersession
+            requested as u32,
+            applied as u32,
+            carried_approvals,
+            carried_abstentions,
         );
 
         Ok(new_proposal_id)
+    }
+
+    /// Carry votes from a superseded proposal to its replacement (Issue #2058).
+    ///
+    /// Returns `(applied_policy, carried_approvals, carried_abstentions)`.
+    /// `Carry` and `Weighted` fall back to `Reset` when the recipient or token
+    /// changed; `Carry` also falls back on any amount increase. Only voters that
+    /// are in the new proposal's snapshot and still signers are carried. If
+    /// the carried votes meet the threshold and quorum, the new proposal is
+    /// approved through the same `reevaluate_vote_state` logic as a vote.
+    fn migrate_supersession_votes(
+        env: &Env,
+        old: &Proposal,
+        new: &mut Proposal,
+        policy: crate::types::VoteMigrationPolicy,
+    ) -> Result<(crate::types::VoteMigrationPolicy, u32, u32), VaultError> {
+        use crate::types::VoteMigrationPolicy;
+
+        let same_target = old.recipient == new.recipient && old.token == new.token;
+        let applied = match policy {
+            VoteMigrationPolicy::Reset => VoteMigrationPolicy::Reset,
+            _ if !same_target => VoteMigrationPolicy::Reset,
+            VoteMigrationPolicy::Carry if new.amount > old.amount => VoteMigrationPolicy::Reset,
+            other => other,
+        };
+        if applied == VoteMigrationPolicy::Reset {
+            return Ok((applied, 0, 0));
+        }
+
+        let config = storage::get_config(env)?;
+        let snapshot = new.snapshot_signers.clone();
+        let signers = config.signers.clone();
+        let eligible = |voter: &Address| snapshot.contains(voter) && signers.contains(voter);
+
+        // Number of approvals that may be carried.
+        let mut eligible_approvals: u32 = 0;
+        for voter in old.approvals.iter() {
+            if eligible(&voter) {
+                eligible_approvals += 1;
+            }
+        }
+        let approval_cap = if applied == VoteMigrationPolicy::Weighted && new.amount > old.amount {
+            // floor(eligible * old_amount / new_amount)
+            ((eligible_approvals as i128).saturating_mul(old.amount) / new.amount) as u32
+        } else {
+            eligible_approvals
+        };
+
+        let current_ledger = env.ledger().sequence() as u64;
+        let mut carried_approvals: u32 = 0;
+        for voter in old.approvals.iter() {
+            if carried_approvals >= approval_cap {
+                break;
+            }
+            if eligible(&voter) && !new.approvals.contains(&voter) {
+                new.approvals.push_back(voter.clone());
+                storage::set_approval_ledger(env, new.id, &voter, current_ledger);
+                carried_approvals += 1;
+            }
+        }
+        let mut carried_abstentions: u32 = 0;
+        for voter in old.abstentions.iter() {
+            if eligible(&voter) && !new.abstentions.contains(&voter) && !new.approvals.contains(&voter)
+            {
+                new.abstentions.push_back(voter.clone());
+                carried_abstentions += 1;
+            }
+        }
+
+        if carried_approvals > 0 || carried_abstentions > 0 {
+            Self::reevaluate_vote_state(env, &config, new.id, new, current_ledger, 0);
+        }
+
+        Ok((applied, carried_approvals, carried_abstentions))
+    }
+
+    /// Set the vault-wide vote migration policy applied by
+    /// `supersede_proposal` (Admin only, Issue #2058). Default: `Reset`.
+    pub fn set_vote_migration_policy(
+        env: Env,
+        admin: Address,
+        policy: crate::types::VoteMigrationPolicy,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+        let old = storage::get_vote_migration_policy(&env);
+        storage::set_vote_migration_policy(&env, policy);
+        events::emit_vote_migration_policy_set(&env, &admin, old as u32, policy as u32);
+        Ok(())
+    }
+
+    /// Current supersession vote migration policy.
+    pub fn get_vote_migration_policy(env: Env) -> crate::types::VoteMigrationPolicy {
+        storage::get_vote_migration_policy(&env)
     }
 
     /// Direct child of `proposal_id` in the supersession chain, if any.
@@ -9713,10 +9869,33 @@ impl VaultDAO {
     }
 
     /// Vault balance of `token` that is not earmarked for vesting, escrows,
-    /// streams, insurance/stake pools or collected fees (#1698).
+    /// streams, insurance/stake pools or collected fees (#1698), not locked
+    /// for time-weighted voting, and not reserved by approved but unexecuted
+    /// proposals (#2061):
+    ///
+    /// `spendable = max(0, balance - earmarked - pending - locked)`
     fn available_balance(env: &Env, token: &Address) -> i128 {
         token::balance(env, token)
             .saturating_sub(storage::get_total_reserved(env, token))
+            .saturating_sub(storage::get_reserved_pending(env, token))
+            .max(0)
+    }
+
+    /// Balance not earmarked or locked, ignoring pending proposal
+    /// reservations. Only for payouts of funds that were already earmarked.
+    fn earmark_free_balance(env: &Env, token: &Address) -> i128 {
+        token::balance(env, token)
+            .saturating_sub(storage::get_total_reserved(env, token))
+            .max(0)
+    }
+
+    /// Spendable balance as seen by `proposal_id` itself: its own pending
+    /// reservation is earmarked for it, so it is added back (#2061).
+    fn available_balance_for_proposal(env: &Env, token: &Address, proposal_id: u64) -> i128 {
+        let own = storage::get_own_pending_reservation(env, proposal_id, token);
+        token::balance(env, token)
+            .saturating_sub(storage::get_total_reserved(env, token))
+            .saturating_sub(storage::get_reserved_pending(env, token).saturating_sub(own))
             .max(0)
     }
 
@@ -10734,7 +10913,7 @@ impl VaultDAO {
             }
 
             // Skip if insufficient balance (check proposal amount + stake to refund)
-            let balance = Self::available_balance(&env, &proposal.token);
+            let balance = Self::available_balance_for_proposal(&env, &proposal.token, proposal.id);
             let required_balance = proposal.amount + proposal.stake_amount;
             if balance < required_balance {
                 failed_count += 1;
@@ -14434,6 +14613,9 @@ impl VaultDAO {
         }
 
         // Circuit breaker: same hourly outflow accounting as execute_proposal
+        if storage::is_token_breaker_tripped(&env, &proposal.token) {
+            return Err(VaultError::TokenCircuitBreakerTripped);
+        }
         let threshold = storage::get_circuit_breaker_threshold_for_token(&env, &proposal.token);
         if threshold > 0 {
             let window = storage::get_hour_window(&env);
@@ -15556,8 +15738,9 @@ impl VaultDAO {
             return Err(VaultError::GasLimitExceeded);
         }
 
-        // Snapshot unreserved balance before the fee is booked as collected
-        let balance = Self::available_balance(env, &proposal.token);
+        // Snapshot unreserved balance before the fee is booked as collected.
+        // The proposal's own pending reservation is counted as available to it.
+        let balance = Self::available_balance_for_proposal(env, &proposal.token, proposal.id);
 
         // Calculate fee for this transaction
         let fee_amount = Self::collect_and_distribute_fee(
@@ -16493,11 +16676,12 @@ impl VaultDAO {
             }
         }
 
-        if all_complete {
-            escrow.status = EscrowStatus::MilestonesComplete;
+        let next = if all_complete {
+            EscrowStatus::MilestonesComplete
         } else {
-            escrow.status = EscrowStatus::Active;
-        }
+            EscrowStatus::Active
+        };
+        Self::transition_escrow(&env, &mut escrow, next)?;
 
         storage::set_escrow(&env, &escrow);
 
@@ -16507,8 +16691,12 @@ impl VaultDAO {
         Ok(())
     }
 
-    /// Release escrowed funds to recipient after all milestones are completed.
-    /// Caller must be the funder, recipient, or admin.
+    /// Release escrowed funds after all milestones are completed, or settle an
+    /// expired escrow. Caller must be the funder, recipient, or admin.
+    ///
+    /// Precedence (Issue #2056): an open dispute blocks this call even after
+    /// expiry; on expiry, completed milestones are paid to the recipient and
+    /// only the unearned remainder is refunded to the funder.
     pub fn release_escrow(env: Env, caller: Address, escrow_id: u64) -> Result<i128, VaultError> {
         caller.require_auth();
         require_not_paused(&env)?;
@@ -16525,6 +16713,11 @@ impl VaultDAO {
         // Cannot release a disputed escrow
         if escrow.status == EscrowStatus::Disputed {
             return Err(VaultError::ConditionsNotMet);
+        }
+
+        // A settled escrow can never pay out again
+        if escrow.status.is_terminal() {
+            return Err(VaultError::ProposalAlreadyExecuted);
         }
 
         // Only release if all milestones complete or expired
@@ -16551,33 +16744,17 @@ impl VaultDAO {
             return Err(VaultError::ProposalAlreadyExecuted);
         }
 
-        if recipient_amount > 0 {
-            token::transfer(&env, &escrow.token, &escrow.recipient, recipient_amount);
-            storage::release_escrow_reserve(&env, &escrow.token, recipient_amount);
-            escrow.released_amount += recipient_amount;
-            events::emit_escrow_released(
-                &env,
-                escrow_id,
-                &escrow.recipient,
-                recipient_amount,
-                false,
-            );
-        }
-
-        if refund_amount > 0 {
-            token::transfer(&env, &escrow.token, &escrow.funder, refund_amount);
-            storage::release_escrow_reserve(&env, &escrow.token, refund_amount);
-            escrow.released_amount += refund_amount;
-            events::emit_escrow_released(&env, escrow_id, &escrow.funder, refund_amount, true);
-        }
+        Self::pay_escrow_recipient(&env, &mut escrow, recipient_amount);
+        Self::refund_escrow_funder(&env, &mut escrow, refund_amount);
 
         // Update status
         if escrow.released_amount >= escrow.total_amount {
-            escrow.status = if refund_amount > 0 {
+            let next = if refund_amount > 0 {
                 EscrowStatus::Refunded
             } else {
                 EscrowStatus::Released
             };
+            Self::transition_escrow(&env, &mut escrow, next)?;
             escrow.finalized_at = current_ledger;
         }
 
@@ -16586,6 +16763,66 @@ impl VaultDAO {
         storage::create_audit_entry(&env, AuditAction::EscrowReleased, &caller, escrow_id);
 
         Ok(amount_to_release)
+    }
+
+    /// Pay the recipient for every completed milestone that has not been paid
+    /// yet, without waiting for the remaining milestones (Issue #2056).
+    ///
+    /// The payable amount is `total * completed% / 100 - released_amount`, so a
+    /// milestone can only ever be paid once: after a partial release the same
+    /// milestones yield 0 and the call fails with `ProposalAlreadyExecuted`.
+    /// When the last milestone is paid the escrow moves to `Released`.
+    ///
+    /// Not allowed while disputed or after expiry (use `release_escrow` to
+    /// settle an expired escrow).
+    pub fn release_escrow_milestones(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+    ) -> Result<i128, VaultError> {
+        caller.require_auth();
+        require_not_paused(&env)?;
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        let role = storage::get_role(&env, &caller);
+        if caller != escrow.funder && caller != escrow.recipient && role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+        if escrow.status == EscrowStatus::Disputed {
+            return Err(VaultError::ConditionsNotMet);
+        }
+        if escrow.status.is_terminal() {
+            return Err(VaultError::ProposalAlreadyExecuted);
+        }
+        if current_ledger >= escrow.expires_at {
+            return Err(VaultError::ProposalExpired);
+        }
+
+        let amount = escrow.amount_to_release();
+        if amount <= 0 {
+            return Err(VaultError::ProposalAlreadyExecuted);
+        }
+
+        Self::pay_escrow_recipient(&env, &mut escrow, amount);
+        events::emit_escrow_partial_release(
+            &env,
+            escrow_id,
+            &escrow.recipient,
+            amount,
+            escrow.released_amount,
+        );
+
+        if escrow.released_amount >= escrow.total_amount {
+            Self::transition_escrow(&env, &mut escrow, EscrowStatus::Released)?;
+            escrow.finalized_at = current_ledger;
+        }
+
+        storage::set_escrow(&env, &escrow);
+        storage::create_audit_entry(&env, AuditAction::EscrowReleased, &caller, escrow_id);
+
+        Ok(amount)
     }
 
     /// Keep backward-compatible alias
@@ -16619,7 +16856,13 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        escrow.status = EscrowStatus::Disputed;
+        // Expiry precedence (Issue #2056): once an escrow has expired it settles
+        // by the expiry rules; a late dispute cannot freeze earned funds.
+        if env.ledger().sequence() as u64 >= escrow.expires_at {
+            return Err(VaultError::ProposalExpired);
+        }
+
+        Self::transition_escrow(&env, &mut escrow, EscrowStatus::Disputed)?;
         escrow.dispute_reason = reason.clone();
         escrow.disputed_at = env.ledger().sequence() as u64;
 
@@ -16654,6 +16897,12 @@ impl VaultDAO {
 
         let mut escrow = storage::get_escrow(&env, escrow_id)?;
 
+        // An escrow with a multisig panel is resolved only by the panel
+        // (`vote_escrow_arbitration`) or the timeout fallback (Issue #2056).
+        if storage::get_escrow_panel(&env, escrow_id).is_some() {
+            return Err(VaultError::Unauthorized);
+        }
+
         // Enforce the designated arbitrator; Admin may explicitly override.
         if arbitrator != escrow.arbitrator && role != Role::Admin {
             return Err(VaultError::Unauthorized);
@@ -16663,28 +16912,9 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        // Release all remaining funds based on arbitrator decision
-        let amount_to_release = escrow.total_amount - escrow.released_amount;
-        if amount_to_release > 0 {
-            let recipient = if release_to_recipient {
-                escrow.recipient.clone()
-            } else {
-                escrow.funder.clone()
-            };
+        Self::ensure_arbitration_open(&env, &escrow)?;
 
-            token::transfer(&env, &escrow.token, &recipient, amount_to_release);
-            storage::release_escrow_reserve(&env, &escrow.token, amount_to_release);
-            escrow.released_amount += amount_to_release;
-        }
-
-        escrow.status = if release_to_recipient {
-            EscrowStatus::Released
-        } else {
-            EscrowStatus::Refunded
-        };
-        escrow.finalized_at = env.ledger().sequence() as u64;
-
-        storage::set_escrow(&env, &escrow);
+        Self::settle_disputed_escrow(&env, &mut escrow, release_to_recipient)?;
 
         events::emit_escrow_dispute_resolved(&env, escrow_id, &arbitrator, release_to_recipient);
 
@@ -16694,7 +16924,9 @@ impl VaultDAO {
     /// Auto-resolve an escrow dispute if arbitration timeout has expired
     ///
     /// If the escrow is in Disputed status and the arbitration timeout has elapsed,
-    /// automatically refunds all remaining funds to the funder.
+    /// settles it without an arbitration decision: completed milestones are paid
+    /// to the recipient and the unearned remainder is refunded to the funder
+    /// (Issue #2056). Anyone may call this.
     ///
     /// # Arguments
     /// * `escrow_id` - The ID of the escrow to auto-resolve
@@ -16714,20 +16946,26 @@ impl VaultDAO {
             return Err(VaultError::TimelockNotExpired);
         }
 
-        // Refund all remaining funds to the funder
-        let amount_to_refund = escrow.total_amount - escrow.released_amount;
-        if amount_to_refund > 0 {
-            token::transfer(&env, &escrow.token, &escrow.funder, amount_to_refund);
-            storage::release_escrow_reserve(&env, &escrow.token, amount_to_refund);
-            escrow.released_amount += amount_to_refund;
-        }
+        // Timeout fallback (Issue #2056): arbitration cannot starve the
+        // recipient. Completed milestones are paid to the recipient and only
+        // the unearned remainder is refunded to the funder.
+        let to_recipient = escrow.amount_to_release().max(0);
+        let to_funder = (escrow.total_amount - escrow.released_amount - to_recipient).max(0);
+        Self::pay_escrow_recipient(&env, &mut escrow, to_recipient);
+        Self::refund_escrow_funder(&env, &mut escrow, to_funder);
 
-        escrow.status = EscrowStatus::Refunded;
+        let next = if to_funder > 0 || to_recipient == 0 {
+            EscrowStatus::Refunded
+        } else {
+            EscrowStatus::Released
+        };
+        Self::transition_escrow(&env, &mut escrow, next)?;
         escrow.finalized_at = current_ledger;
 
         storage::set_escrow(&env, &escrow);
 
-        events::emit_escrow_auto_resolved(&env, escrow_id, amount_to_refund);
+        events::emit_escrow_timeout_settled(&env, escrow_id, to_recipient, to_funder);
+        events::emit_escrow_auto_resolved(&env, escrow_id, to_funder);
 
         Ok(())
     }
@@ -16800,29 +17038,15 @@ impl VaultDAO {
             let to_recipient = release_amount;
             let to_funder = remaining - release_amount;
 
-            if to_recipient > 0 {
-                token::transfer(&env, &escrow.token, &escrow.recipient, to_recipient);
-                storage::release_escrow_reserve(&env, &escrow.token, to_recipient);
-                events::emit_escrow_released(
-                    &env,
-                    escrow_id,
-                    &escrow.recipient,
-                    to_recipient,
-                    false,
-                );
-            }
-            if to_funder > 0 {
-                token::transfer(&env, &escrow.token, &escrow.funder, to_funder);
-                storage::release_escrow_reserve(&env, &escrow.token, to_funder);
-                events::emit_escrow_released(&env, escrow_id, &escrow.funder, to_funder, true);
-            }
+            Self::pay_escrow_recipient(&env, &mut escrow, to_recipient);
+            Self::refund_escrow_funder(&env, &mut escrow, to_funder);
 
-            escrow.released_amount = escrow.total_amount;
-            escrow.status = if to_recipient > 0 {
+            let next = if to_recipient > 0 {
                 EscrowStatus::Released
             } else {
                 EscrowStatus::Refunded
             };
+            Self::transition_escrow(&env, &mut escrow, next)?;
             escrow.finalized_at = current_ledger;
             storage::set_escrow(&env, &escrow);
             storage::remove_escrow_consent(&env, escrow_id);
@@ -16848,6 +17072,237 @@ impl VaultDAO {
     /// Get all escrows for a recipient
     pub fn get_recipient_escrows(env: Env, recipient: Address) -> Vec<u64> {
         storage::get_recipient_escrows(&env, &recipient)
+    }
+
+    // ========================================================================
+    // Issue #2056: Escrow state machine, partial accounting, multisig panel
+    // ========================================================================
+
+    /// Move `escrow` to `next`, enforcing the formal state machine
+    /// (`EscrowStatus::can_transition_to`) and emitting `escrow_state`.
+    fn transition_escrow(
+        env: &Env,
+        escrow: &mut Escrow,
+        next: EscrowStatus,
+    ) -> Result<(), VaultError> {
+        if !escrow.status.can_transition_to(&next) {
+            return Err(VaultError::EscrowInvalidTransition);
+        }
+        if escrow.status != next {
+            events::emit_escrow_state_changed(
+                env,
+                escrow.id,
+                escrow.status.clone() as u32,
+                next.clone() as u32,
+            );
+        }
+        escrow.status = next;
+        Ok(())
+    }
+
+    /// Transfer `amount` of the escrow to its recipient and book it.
+    fn pay_escrow_recipient(env: &Env, escrow: &mut Escrow, amount: i128) {
+        if amount <= 0 {
+            return;
+        }
+        token::transfer(env, &escrow.token, &escrow.recipient, amount);
+        storage::release_escrow_reserve(env, &escrow.token, amount);
+        escrow.released_amount += amount;
+        storage::add_escrow_recipient_paid(env, escrow.id, amount);
+        events::emit_escrow_released(env, escrow.id, &escrow.recipient, amount, false);
+    }
+
+    /// Return `amount` of the escrow to its funder and book it.
+    fn refund_escrow_funder(env: &Env, escrow: &mut Escrow, amount: i128) {
+        if amount <= 0 {
+            return;
+        }
+        token::transfer(env, &escrow.token, &escrow.funder, amount);
+        storage::release_escrow_reserve(env, &escrow.token, amount);
+        escrow.released_amount += amount;
+        events::emit_escrow_released(env, escrow.id, &escrow.funder, amount, true);
+    }
+
+    /// Disputes can be resolved by arbitration only until the vault's
+    /// `arbitration_timeout_ledgers` has elapsed since the dispute. After
+    /// that, only the timeout fallback (`auto_resolve_escrow`) applies.
+    fn ensure_arbitration_open(env: &Env, escrow: &Escrow) -> Result<(), VaultError> {
+        let timeout = storage::get_config(env)?.arbitration_timeout_ledgers;
+        let elapsed = (env.ledger().sequence() as u64).saturating_sub(escrow.disputed_at);
+        if timeout > 0 && elapsed >= timeout {
+            return Err(VaultError::EscrowArbitrationClosed);
+        }
+        Ok(())
+    }
+
+    /// Settle a disputed escrow by an arbitration decision: every remaining
+    /// unit goes to the recipient (`release_to_recipient`) or back to the
+    /// funder. Amounts already paid by partial releases are never clawed back.
+    fn settle_disputed_escrow(
+        env: &Env,
+        escrow: &mut Escrow,
+        release_to_recipient: bool,
+    ) -> Result<(), VaultError> {
+        let remaining = escrow.total_amount - escrow.released_amount;
+        let next = if release_to_recipient {
+            Self::pay_escrow_recipient(env, escrow, remaining);
+            EscrowStatus::Released
+        } else {
+            Self::refund_escrow_funder(env, escrow, remaining);
+            EscrowStatus::Refunded
+        };
+        Self::transition_escrow(env, escrow, next)?;
+        escrow.finalized_at = env.ledger().sequence() as u64;
+        storage::set_escrow(env, escrow);
+        Ok(())
+    }
+
+    /// Install an M-of-N arbitration panel on an escrow.
+    ///
+    /// Both the funder and the recipient must authorize. The panel can be set
+    /// or replaced only while the escrow is open and not disputed. Panelists
+    /// must be distinct, must not be the funder or recipient, and `threshold`
+    /// must be a strict majority of the panel so the two outcomes can never
+    /// both reach it. Once a panel is set, `resolve_escrow_dispute` is
+    /// disabled for this escrow.
+    pub fn set_escrow_arbitration_panel(
+        env: Env,
+        escrow_id: u64,
+        arbitrators: Vec<Address>,
+        threshold: u32,
+    ) -> Result<(), VaultError> {
+        let escrow = storage::get_escrow(&env, escrow_id)?;
+        escrow.funder.require_auth();
+        escrow.recipient.require_auth();
+
+        if escrow.status != EscrowStatus::Active
+            && escrow.status != EscrowStatus::MilestonesComplete
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let n = arbitrators.len();
+        if n == 0 || n > MAX_ESCROW_PANEL_SIZE || threshold == 0 || threshold > n || threshold * 2 <= n
+        {
+            return Err(VaultError::EscrowPanelInvalid);
+        }
+        for i in 0..n {
+            let a = arbitrators.get(i).unwrap();
+            if a == escrow.funder || a == escrow.recipient {
+                return Err(VaultError::EscrowPanelInvalid);
+            }
+            for j in 0..i {
+                if arbitrators.get(j).unwrap() == a {
+                    return Err(VaultError::EscrowPanelInvalid);
+                }
+            }
+        }
+
+        let panel = crate::types::EscrowArbitrationPanel {
+            arbitrators: arbitrators.clone(),
+            threshold,
+            release_votes: Vec::new(&env),
+            refund_votes: Vec::new(&env),
+        };
+        storage::set_escrow_panel(&env, escrow_id, &panel);
+        events::emit_escrow_panel_set(&env, escrow_id, &arbitrators, threshold);
+        Ok(())
+    }
+
+    /// Cast a panel vote on a disputed escrow.
+    ///
+    /// When `threshold` panelists agree on an outcome the escrow is settled
+    /// immediately. Each panelist votes once. Votes are refused once the
+    /// arbitration timeout has elapsed: the timeout fallback then applies, so
+    /// a deadlocked or absent panel cannot hold the recipient's earned funds.
+    pub fn vote_escrow_arbitration(
+        env: Env,
+        arbitrator: Address,
+        escrow_id: u64,
+        release_to_recipient: bool,
+    ) -> Result<(), VaultError> {
+        arbitrator.require_auth();
+        require_not_paused(&env)?;
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        let mut panel =
+            storage::get_escrow_panel(&env, escrow_id).ok_or(VaultError::EscrowPanelInvalid)?;
+
+        if escrow.status != EscrowStatus::Disputed {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if !panel.arbitrators.contains(&arbitrator) {
+            return Err(VaultError::Unauthorized);
+        }
+        Self::ensure_arbitration_open(&env, &escrow)?;
+        if panel.release_votes.contains(&arbitrator) || panel.refund_votes.contains(&arbitrator) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        let votes = if release_to_recipient {
+            panel.release_votes.push_back(arbitrator.clone());
+            panel.release_votes.len()
+        } else {
+            panel.refund_votes.push_back(arbitrator.clone());
+            panel.refund_votes.len()
+        };
+        events::emit_escrow_arbitration_vote(
+            &env,
+            escrow_id,
+            &arbitrator,
+            release_to_recipient,
+            votes,
+            panel.threshold,
+        );
+
+        if votes >= panel.threshold {
+            Self::settle_disputed_escrow(&env, &mut escrow, release_to_recipient)?;
+            events::emit_escrow_dispute_resolved(&env, escrow_id, &arbitrator, release_to_recipient);
+            panel.release_votes = Vec::new(&env);
+            panel.refund_votes = Vec::new(&env);
+        }
+        storage::set_escrow_panel(&env, escrow_id, &panel);
+        Ok(())
+    }
+
+    /// Arbitration panel of an escrow, with the votes cast so far.
+    pub fn get_escrow_arbitration_panel(
+        env: Env,
+        escrow_id: u64,
+    ) -> Option<crate::types::EscrowArbitrationPanel> {
+        storage::get_escrow_panel(&env, escrow_id)
+    }
+
+    /// Where an escrow's funds stand: earned, paid, refunded and still locked.
+    ///
+    /// `paid_to_recipient + refunded_to_funder + locked == total_amount`.
+    pub fn get_escrow_accounting(
+        env: Env,
+        escrow_id: u64,
+    ) -> Result<crate::types::EscrowAccounting, VaultError> {
+        let escrow = storage::get_escrow(&env, escrow_id)?;
+        let mut completed_pct: u32 = 0;
+        for m in escrow.milestones.iter() {
+            if m.is_completed {
+                completed_pct = completed_pct.saturating_add(m.percentage);
+            }
+        }
+        let earned = escrow.total_amount * completed_pct as i128 / 100;
+        let paid = storage::get_escrow_recipient_paid(&env, escrow_id);
+        let refunded = (escrow.released_amount - paid).max(0);
+        let releasable_now = if escrow.status.is_terminal() || escrow.status == EscrowStatus::Disputed {
+            0
+        } else {
+            escrow.amount_to_release().max(0)
+        };
+        Ok(crate::types::EscrowAccounting {
+            total_amount: escrow.total_amount,
+            earned_by_recipient: earned,
+            paid_to_recipient: paid,
+            refunded_to_funder: refunded,
+            locked: escrow.total_amount - escrow.released_amount,
+            releasable_now,
+        })
     }
 
     // ========================================================================
@@ -18932,6 +19387,9 @@ impl VaultDAO {
             }
         }
 
+        if storage::is_token_breaker_tripped(env, token) {
+            return Err(VaultError::TokenCircuitBreakerTripped);
+        }
         let cb_threshold = storage::get_circuit_breaker_threshold_for_token(env, token);
         if cb_threshold > 0 {
             let window = storage::get_hour_window(env);
@@ -19731,7 +20189,11 @@ impl VaultDAO {
 
         for eid in all_escrow_ids.iter() {
             if let Ok(mut escrow) = storage::get_escrow(&env, eid) {
-                if escrow.status == EscrowStatus::Disputed {
+                // Escrows with a multisig panel are settled only by the panel
+                // or the timeout fallback (Issue #2056).
+                if escrow.status == EscrowStatus::Disputed
+                    && storage::get_escrow_panel(&env, eid).is_none()
+                {
                     let unreleased = escrow.total_amount - escrow.released_amount;
                     if unreleased > 0 {
                         let (to_addr, is_refund) = if release_to_recipient {
@@ -19741,6 +20203,9 @@ impl VaultDAO {
                         };
                         token::transfer(&env, &escrow.token, &to_addr, unreleased);
                         storage::release_escrow_reserve(&env, &escrow.token, unreleased);
+                        if release_to_recipient {
+                            storage::add_escrow_recipient_paid(&env, eid, unreleased);
+                        }
                         escrow.released_amount = escrow.total_amount;
                         events::emit_escrow_released(&env, eid, &to_addr, unreleased, is_refund);
                     }
@@ -22574,48 +23039,8 @@ impl VaultDAO {
             return Err(VaultError::ConfigChangeInProgress);
         }
 
-        // Validate parameter bounds
-        match param {
-            ConfigParam::Threshold => {
-                let v = new_value as u32;
-                if v == 0 || v > config.signers.len() {
-                    return Err(VaultError::ThresholdTooHigh);
-                }
-            }
-            ConfigParam::Quorum => {
-                let v = new_value as u32;
-                if v > config.signers.len() {
-                    return Err(VaultError::QuorumTooHigh);
-                }
-            }
-            ConfigParam::SpendingLimit | ConfigParam::DailyLimit | ConfigParam::WeeklyLimit => {
-                if new_value <= 0 {
-                    return Err(VaultError::InvalidAmount);
-                }
-            }
-            ConfigParam::TimelockDelay => {
-                if new_value < 0 {
-                    return Err(VaultError::InvalidAmount);
-                }
-            }
-            // Issue #1634: full_quorum_threshold must be ≥ 0 (0 = disabled).
-            ConfigParam::FullQuorumThreshold => {
-                if new_value < 0 {
-                    return Err(VaultError::InvalidAmount);
-                }
-            }
-            // Issue #2145: reputation parameters are routed through governance.
-            ConfigParam::ReputationHalfLife => {
-                if new_value < 0 {
-                    return Err(VaultError::InvalidAmount);
-                }
-            }
-            ConfigParam::ReputationDecayFloor => {
-                if !(0..=1000).contains(&new_value) {
-                    return Err(VaultError::InvalidAmount);
-                }
-            }
-        }
+        // Validate parameter bounds and safety floors (Issue #2060)
+        Self::validate_config_param(&env, &config, &param, new_value)?;
 
         let current_ledger = env.ledger().sequence() as u64;
         let id = storage::increment_governance_id(&env);
@@ -22669,6 +23094,23 @@ impl VaultDAO {
         let required = (config.signers.len() as u64 * threshold_pct as u64).div_ceil(100) as u32;
         if gp.approvals.len() >= required {
             gp.status = ProposalStatus::Approved;
+            // Queue the change behind its execution gate (Issue #2060).
+            let preview = Self::build_config_change_preview(&env, &config, &gp.param, gp.new_value);
+            let gate = crate::types::ConfigChangeGate {
+                approved_at: current_ledger,
+                unlock_ledger: current_ledger.saturating_add(preview.timelock_ledgers),
+                risk_increasing: preview.risk_increasing,
+                requires_ack: preview.requires_ack,
+                acknowledged_by: None,
+            };
+            storage::set_config_change_gate(&env, gov_proposal_id, &gate);
+            events::emit_config_change_queued(
+                &env,
+                gov_proposal_id,
+                gate.unlock_ledger,
+                gate.risk_increasing,
+                gate.requires_ack,
+            );
         }
 
         storage::set_governance_proposal(&env, &gp);
@@ -22690,55 +23132,390 @@ impl VaultDAO {
         }
 
         let mut config = storage::get_config(&env)?;
+        let current_ledger = env.ledger().sequence() as u64;
 
-        match gp.param {
-            ConfigParam::Threshold => {
-                config.threshold = gp.new_value as u32;
+        // Execution gate (Issue #2060). Proposals approved before gates existed
+        // are measured from their creation ledger.
+        let gate = match storage::get_config_change_gate(&env, gov_proposal_id) {
+            Some(gate) => gate,
+            None => {
+                let preview =
+                    Self::build_config_change_preview(&env, &config, &gp.param, gp.new_value);
+                crate::types::ConfigChangeGate {
+                    approved_at: gp.created_at,
+                    unlock_ledger: gp.created_at.saturating_add(preview.timelock_ledgers),
+                    risk_increasing: preview.risk_increasing,
+                    requires_ack: preview.requires_ack,
+                    acknowledged_by: None,
+                }
             }
-            ConfigParam::SpendingLimit => {
-                config.spending_limit = gp.new_value;
-            }
-            ConfigParam::DailyLimit => {
-                config.daily_limit = gp.new_value;
-            }
-            ConfigParam::WeeklyLimit => {
-                config.weekly_limit = gp.new_value;
-            }
-            ConfigParam::TimelockDelay => {
-                config.timelock_delay = gp.new_value as u64;
-            }
-            ConfigParam::Quorum => {
-                config.quorum = gp.new_value as u32;
-            }
-            // Issue #1634: apply full_quorum_threshold via governance, not direct admin call.
-            ConfigParam::FullQuorumThreshold => {
-                config.full_quorum_threshold = gp.new_value;
-            }
-            // Issue #2145: reputation config is applied only through this path.
-            ConfigParam::ReputationHalfLife => {
-                let mut rep = storage::get_reputation_config(&env);
-                rep.decay_half_life_ledgers = gp.new_value as u64;
-                storage::set_reputation_config(&env, &rep);
-                events::emit_reputation_config_updated(&env, &caller);
-            }
-            ConfigParam::ReputationDecayFloor => {
-                let mut rep = storage::get_reputation_config(&env);
-                rep.decay_min_score = gp.new_value as u32;
-                storage::set_reputation_config(&env, &rep);
-                events::emit_reputation_config_updated(&env, &caller);
-            }
+        };
+        if gate.risk_increasing {
+            // While the vault is under an emergency pause, no change that
+            // loosens a control can be applied.
+            require_not_paused(&env)?;
+        }
+        if current_ledger < gate.unlock_ledger {
+            return Err(VaultError::ConfigChangeTimelocked);
+        }
+        if gate.requires_ack && gate.acknowledged_by.is_none() {
+            return Err(VaultError::ConfigChangeAckRequired);
+        }
+
+        // Bounds and safety floors are re-checked against the live config:
+        // the signer set may have changed since the proposal was made.
+        Self::validate_config_param(&env, &config, &gp.param, gp.new_value)?;
+
+        // Apply through the same helper `simulate_config_change` uses, so the
+        // preview always matches the applied result.
+        let mut rep = storage::get_reputation_config(&env);
+        let old_value = Self::config_param_value(&config, &rep, &gp.param);
+        Self::apply_config_param(&mut config, &mut rep, &gp.param, gp.new_value);
+        if matches!(
+            gp.param,
+            ConfigParam::ReputationHalfLife | ConfigParam::ReputationDecayFloor
+        ) {
+            storage::set_reputation_config(&env, &rep);
+            events::emit_reputation_config_updated(&env, &caller);
         }
 
         storage::set_config(&env, &config);
         gp.status = ProposalStatus::Executed;
         storage::set_governance_proposal(&env, &gp);
+        storage::remove_config_change_gate(&env, gov_proposal_id);
 
         let count = storage::get_active_governance_count(&env);
         storage::set_active_governance_count(&env, count.saturating_sub(1));
 
+        events::emit_config_diff(
+            &env,
+            gov_proposal_id,
+            &Self::config_param_field(&env, &gp.param),
+            old_value,
+            gp.new_value,
+        );
         events::emit_gov_proposal_executed(&env, gov_proposal_id, gp.param as u32, gp.new_value);
         events::emit_config_updated(&env, &caller);
         Ok(())
+    }
+
+    // ========================================================================
+    // Issue #2060: Config change simulation, safety floors and dual control
+    // ========================================================================
+
+    /// Bounds and safety floors for a governance config change. Shared by
+    /// `propose_config_change`, `simulate_config_change` and
+    /// `execute_config_change`.
+    fn validate_config_param(
+        env: &Env,
+        config: &Config,
+        param: &ConfigParam,
+        new_value: i128,
+    ) -> Result<(), VaultError> {
+        match param {
+            ConfigParam::Threshold => {
+                if new_value < 0 || new_value > config.signers.len() as i128 {
+                    return Err(VaultError::ThresholdTooHigh);
+                }
+                // Safety floor: same minimum as `initialize` / `update_threshold`.
+                if new_value < MIN_GOVERNED_THRESHOLD as i128 {
+                    return Err(VaultError::SafetyFloorViolation);
+                }
+            }
+            ConfigParam::Quorum => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                if new_value > config.signers.len() as i128 {
+                    return Err(VaultError::QuorumTooHigh);
+                }
+            }
+            ConfigParam::SpendingLimit | ConfigParam::DailyLimit | ConfigParam::WeeklyLimit => {
+                if new_value <= 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                // Keep spending <= daily <= weekly, as `update_limits` does.
+                let (spending, daily, weekly) = match param {
+                    ConfigParam::SpendingLimit => (new_value, config.daily_limit, config.weekly_limit),
+                    ConfigParam::DailyLimit => (config.spending_limit, new_value, config.weekly_limit),
+                    _ => (config.spending_limit, config.daily_limit, new_value),
+                };
+                if spending > daily || daily > weekly {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+            ConfigParam::TimelockDelay => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+            // Issue #1634: full_quorum_threshold must be ≥ 0 (0 = disabled).
+            ConfigParam::FullQuorumThreshold => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+            // Issue #2145: reputation parameters are routed through governance.
+            ConfigParam::ReputationHalfLife => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+            ConfigParam::ReputationDecayFloor => {
+                if !(0..=1000).contains(&new_value) {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+        }
+        let _ = env;
+        Ok(())
+    }
+
+    /// Current value of a governed parameter.
+    fn config_param_value(config: &Config, rep: &ReputationConfig, param: &ConfigParam) -> i128 {
+        match param {
+            ConfigParam::Threshold => config.threshold as i128,
+            ConfigParam::SpendingLimit => config.spending_limit,
+            ConfigParam::DailyLimit => config.daily_limit,
+            ConfigParam::WeeklyLimit => config.weekly_limit,
+            ConfigParam::TimelockDelay => config.timelock_delay as i128,
+            ConfigParam::Quorum => config.quorum as i128,
+            ConfigParam::FullQuorumThreshold => config.full_quorum_threshold,
+            ConfigParam::ReputationHalfLife => rep.decay_half_life_ledgers as i128,
+            ConfigParam::ReputationDecayFloor => rep.decay_min_score as i128,
+        }
+    }
+
+    /// Write a governed parameter into `config` / `rep`. Pure: no storage.
+    fn apply_config_param(
+        config: &mut Config,
+        rep: &mut ReputationConfig,
+        param: &ConfigParam,
+        new_value: i128,
+    ) {
+        match param {
+            ConfigParam::Threshold => config.threshold = new_value as u32,
+            ConfigParam::SpendingLimit => config.spending_limit = new_value,
+            ConfigParam::DailyLimit => config.daily_limit = new_value,
+            ConfigParam::WeeklyLimit => config.weekly_limit = new_value,
+            ConfigParam::TimelockDelay => config.timelock_delay = new_value as u64,
+            ConfigParam::Quorum => config.quorum = new_value as u32,
+            // Issue #1634: apply full_quorum_threshold via governance, not direct admin call.
+            ConfigParam::FullQuorumThreshold => config.full_quorum_threshold = new_value,
+            // Issue #2145: reputation config is applied only through this path.
+            ConfigParam::ReputationHalfLife => rep.decay_half_life_ledgers = new_value as u64,
+            ConfigParam::ReputationDecayFloor => rep.decay_min_score = new_value as u32,
+        }
+    }
+
+    /// Field name used in `config_diff` events.
+    fn config_param_field(env: &Env, param: &ConfigParam) -> Symbol {
+        let name = match param {
+            ConfigParam::Threshold => "threshold",
+            ConfigParam::SpendingLimit => "spending_limit",
+            ConfigParam::DailyLimit => "daily_limit",
+            ConfigParam::WeeklyLimit => "weekly_limit",
+            ConfigParam::TimelockDelay => "timelock_delay",
+            ConfigParam::Quorum => "quorum",
+            ConfigParam::FullQuorumThreshold => "full_quorum_threshold",
+            ConfigParam::ReputationHalfLife => "rep_half_life",
+            ConfigParam::ReputationDecayFloor => "rep_decay_floor",
+        };
+        Symbol::new(env, name)
+    }
+
+    /// Whether moving `param` from `old` to `new` loosens a control.
+    fn is_risk_increasing(param: &ConfigParam, old: i128, new: i128) -> bool {
+        match param {
+            ConfigParam::Threshold | ConfigParam::Quorum | ConfigParam::TimelockDelay => new < old,
+            ConfigParam::SpendingLimit | ConfigParam::DailyLimit | ConfigParam::WeeklyLimit => {
+                new > old
+            }
+            // 0 disables the full-quorum rule; a higher value applies it to fewer proposals.
+            ConfigParam::FullQuorumThreshold => old > 0 && (new == 0 || new > old),
+            ConfigParam::ReputationHalfLife | ConfigParam::ReputationDecayFloor => false,
+        }
+    }
+
+    /// Resulting config and controls for a change. Does not validate.
+    fn build_config_change_preview(
+        env: &Env,
+        config: &Config,
+        param: &ConfigParam,
+        new_value: i128,
+    ) -> crate::types::ConfigChangePreview {
+        let mut next = config.clone();
+        let mut rep = storage::get_reputation_config(env);
+        let old_value = Self::config_param_value(config, &rep, param);
+        Self::apply_config_param(&mut next, &mut rep, param, new_value);
+
+        let risk_increasing = Self::is_risk_increasing(param, old_value, new_value);
+        // Loosening changes wait at least the current vault timelock, and
+        // never less than the governance floor.
+        let timelock_ledgers = if risk_increasing {
+            core::cmp::max(config.timelock_delay, MIN_CONFIG_CHANGE_TIMELOCK_LEDGERS)
+        } else {
+            0
+        };
+        let requires_ack = risk_increasing && storage::get_config_dual_control(env).enabled;
+
+        crate::types::ConfigChangePreview {
+            param: param.clone(),
+            old_value,
+            new_value,
+            risk_increasing,
+            timelock_ledgers,
+            requires_ack,
+            threshold: next.threshold,
+            quorum: next.quorum,
+            spending_limit: next.spending_limit,
+            daily_limit: next.daily_limit,
+            weekly_limit: next.weekly_limit,
+            timelock_delay: next.timelock_delay,
+            full_quorum_threshold: next.full_quorum_threshold,
+            reputation_half_life: rep.decay_half_life_ledgers,
+            reputation_decay_floor: rep.decay_min_score,
+        }
+    }
+
+    /// Preview a governance config change without applying it.
+    ///
+    /// Runs the same validation and safety floors as `propose_config_change`
+    /// and returns the thresholds and limits that `execute_config_change`
+    /// would produce right now, plus the timelock and acknowledgment the
+    /// change would be subject to.
+    pub fn simulate_config_change(
+        env: Env,
+        param: ConfigParam,
+        new_value: i128,
+    ) -> Result<crate::types::ConfigChangePreview, VaultError> {
+        let config = storage::get_config(&env)?;
+        Self::validate_config_param(&env, &config, &param, new_value)?;
+        Ok(Self::build_config_change_preview(&env, &config, &param, new_value))
+    }
+
+    /// Execution gate of an approved config change, if any.
+    pub fn get_config_change_gate(env: Env, gov_proposal_id: u64) -> Option<crate::types::ConfigChangeGate> {
+        storage::get_config_change_gate(&env, gov_proposal_id)
+    }
+
+    /// Second-control acknowledgment of an approved, risk-increasing change.
+    ///
+    /// The caller must hold the configured `ack_role` and must not be the
+    /// proposer of the change.
+    pub fn acknowledge_config_change(
+        env: Env,
+        acknowledger: Address,
+        gov_proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        acknowledger.require_auth();
+        let gp = storage::get_governance_proposal(&env, gov_proposal_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+        if gp.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+        let mut gate = storage::get_config_change_gate(&env, gov_proposal_id)
+            .ok_or(VaultError::ProposalNotApproved)?;
+        if !gate.requires_ack {
+            return Err(VaultError::ConditionsNotMet);
+        }
+        if gate.acknowledged_by.is_some() {
+            return Err(VaultError::AlreadyApproved);
+        }
+        let policy = storage::get_config_dual_control(&env);
+        if storage::get_role(&env, &acknowledger) != policy.ack_role {
+            return Err(VaultError::InsufficientRole);
+        }
+        if acknowledger == gp.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+        gate.acknowledged_by = Some(acknowledger.clone());
+        storage::set_config_change_gate(&env, gov_proposal_id, &gate);
+        events::emit_config_change_acknowledged(&env, gov_proposal_id, &acknowledger);
+        Ok(())
+    }
+
+    /// Cancel a pending or queued governance config change.
+    ///
+    /// The proposer may withdraw its own change; an emergency signer or an
+    /// Admin may cancel any change that has not executed. This is the
+    /// emergency path for a change sitting in its timelock.
+    pub fn cancel_config_change(
+        env: Env,
+        caller: Address,
+        gov_proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        let mut gp = storage::get_governance_proposal(&env, gov_proposal_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+        if gp.status != ProposalStatus::Pending && gp.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotPending);
+        }
+        let allowed = caller == gp.proposer
+            || storage::get_role(&env, &caller) == Role::Admin
+            || storage::get_emergency_signers(&env).contains(&caller);
+        if !allowed {
+            return Err(VaultError::Unauthorized);
+        }
+        gp.status = ProposalStatus::Cancelled;
+        storage::set_governance_proposal(&env, &gp);
+        storage::remove_config_change_gate(&env, gov_proposal_id);
+        let count = storage::get_active_governance_count(&env);
+        storage::set_active_governance_count(&env, count.saturating_sub(1));
+        events::emit_config_change_cancelled(&env, gov_proposal_id, &caller);
+        Ok(())
+    }
+
+    /// Require a second acknowledgment, from a holder of `ack_role`, before
+    /// any risk-increasing config change can execute (Admin only).
+    ///
+    /// Enabling dual control only adds a control, so one Admin may do it.
+    /// Turning it off needs `disable_config_dual_control`.
+    pub fn set_config_dual_control(env: Env, admin: Address, ack_role: Role) -> Result<(), VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+        if ack_role == Role::Observer || ack_role == Role::Member {
+            return Err(VaultError::InsufficientRole);
+        }
+        let policy = crate::types::ConfigDualControl {
+            enabled: true,
+            ack_role,
+        };
+        storage::set_config_dual_control(&env, &policy);
+        events::emit_config_dual_control_set(&env, &admin, true, ack_role as u32);
+        Ok(())
+    }
+
+    /// Turn dual control off. Needs both an Admin and a distinct holder of
+    /// the current `ack_role`, so no single key can remove the second control.
+    pub fn disable_config_dual_control(
+        env: Env,
+        admin: Address,
+        acknowledger: Address,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        acknowledger.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut policy = storage::get_config_dual_control(&env);
+        if !policy.enabled {
+            return Err(VaultError::ConditionsNotMet);
+        }
+        if admin == acknowledger || storage::get_role(&env, &acknowledger) != policy.ack_role {
+            return Err(VaultError::Unauthorized);
+        }
+        policy.enabled = false;
+        storage::set_config_dual_control(&env, &policy);
+        events::emit_config_dual_control_set(&env, &admin, false, policy.ack_role as u32);
+        Ok(())
+    }
+
+    /// Current dual-control policy for governance config changes.
+    pub fn get_config_dual_control(env: Env) -> crate::types::ConfigDualControl {
+        storage::get_config_dual_control(&env)
     }
 
     pub fn get_governance_proposal(env: Env, id: u64) -> Option<GovernanceProposal> {
@@ -22866,6 +23643,124 @@ impl VaultDAO {
     /// Get the effective hourly circuit-breaker threshold for a token.
     pub fn get_circuit_token_threshold(env: Env, token: Address) -> i128 {
         storage::get_circuit_breaker_threshold_for_token(&env, &token)
+    }
+
+    // ========================================================================
+    // Issue #2061: Treasury risk engine
+    // ========================================================================
+
+    /// Trip `token`'s breaker: persist the state, audit it and emit
+    /// `token_breaker_tripped`. Other tokens keep flowing.
+    fn trip_token_breaker(
+        env: &Env,
+        caller: &Address,
+        token: &Address,
+        outflow: i128,
+        refused_amount: i128,
+        threshold: i128,
+    ) {
+        let state = crate::types::TokenBreakerState {
+            tripped: true,
+            tripped_at: env.ledger().sequence() as u64,
+            outflow_at_trip: outflow,
+            refused_amount,
+        };
+        storage::set_token_breaker(env, token, &state);
+        let cause = Symbol::new(env, "circuit_breaker");
+        storage::create_audit_entry(
+            env,
+            AuditAction::VaultPaused,
+            caller,
+            storage::symbol_to_u64_key(env, &cause),
+        );
+        events::emit_token_breaker_tripped(env, token, outflow, refused_amount, threshold);
+    }
+
+    /// Reset a tripped token circuit breaker (Admin only).
+    ///
+    /// The hourly outflow counter is not cleared: if the same window is still
+    /// open, the next outflow that crosses the threshold trips it again.
+    pub fn reset_token_circuit_breaker(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+        if !storage::is_token_breaker_tripped(&env, &token) {
+            return Err(VaultError::VaultNotPaused);
+        }
+        storage::clear_token_breaker(&env, &token);
+        storage::create_audit_entry(&env, AuditAction::VaultUnpaused, &admin, 0);
+        events::emit_token_breaker_reset(&env, &token, &admin);
+        Ok(())
+    }
+
+    /// Persistent circuit-breaker state of `token`, if it has ever tripped
+    /// since the last reset.
+    pub fn get_token_breaker_state(env: Env, token: Address) -> Option<crate::types::TokenBreakerState> {
+        storage::get_token_breaker(&env, &token)
+    }
+
+    /// Reservation currently held by an approved proposal: `(token, amount)`.
+    pub fn get_pending_reservation(env: Env, proposal_id: u64) -> Option<(Address, i128)> {
+        storage::get_pending_reservation(&env, proposal_id)
+    }
+
+    /// Per-token treasury breakdown.
+    ///
+    /// `spendable = max(0, balance - earmarked - pending - locked)` is the
+    /// amount any new commitment (proposal execution, stream, escrow-backed
+    /// payout, funding round) can draw on.
+    pub fn get_treasury_risk_snapshot(env: Env, token: Address) -> crate::types::TreasuryRiskSnapshot {
+        let balance = token::balance(&env, &token);
+        let locked = storage::get_reserved_locks(&env, &token);
+        let earmarked = storage::get_total_reserved(&env, &token).saturating_sub(locked);
+        let pending = storage::get_reserved_pending(&env, &token);
+        let spendable = balance
+            .saturating_sub(earmarked)
+            .saturating_sub(pending)
+            .saturating_sub(locked)
+            .max(0);
+        crate::types::TreasuryRiskSnapshot {
+            token: token.clone(),
+            balance,
+            earmarked,
+            pending,
+            locked,
+            spendable,
+            breaker_tripped: storage::is_token_breaker_tripped(&env, &token),
+        }
+    }
+
+    /// Release the reservation of an approved proposal that has passed its
+    /// expiry, by expiring it. Anyone may call this; it only moves a proposal
+    /// that is already past `expires_at` (or its execution window) to `Expired`.
+    pub fn expire_approved_reservation(env: Env, proposal_id: u64) -> Result<(), VaultError> {
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger > proposal.expires_at {
+            expire_approved_proposal(&env, &mut proposal, ProposalExpiryCause::Deadline);
+            return Ok(());
+        }
+        let config = storage::get_config(&env)?;
+        if config.exec_window_ledgers > 0
+            && proposal.approved_at > 0
+            && current_ledger > proposal.approved_at + config.exec_window_ledgers
+        {
+            let cause = ProposalExpiryCause::ExecutionWindow {
+                approved_at: proposal.approved_at,
+                window_ledgers: config.exec_window_ledgers,
+            };
+            expire_approved_proposal(&env, &mut proposal, cause);
+            return Ok(());
+        }
+        Err(VaultError::TimelockNotExpired)
     }
 
     /// Pause the vault (emergency signers only)

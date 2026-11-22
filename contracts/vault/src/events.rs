@@ -3081,3 +3081,243 @@ pub fn emit_audit_retention_set(env: &Env, admin: &Address, hot_window_entries: 
         (admin.clone(), hot_window_entries, batch_size),
     );
 }
+
+// ============================================================================
+// Issue #2056: Escrow state machine and multisig arbitration
+// ============================================================================
+
+/// Emit on every escrow status change.
+///
+/// Topics: `("escrow_state", escrow_id)`
+/// Data:   `(from_status, to_status)` as `EscrowStatus` discriminants
+pub fn emit_escrow_state_changed(env: &Env, escrow_id: u64, from: u32, to: u32) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_state"), escrow_id),
+        (from, to),
+    );
+}
+
+/// Emit when completed milestones are paid out while the escrow stays open.
+///
+/// Topics: `("escrow_partial_release", escrow_id)`
+/// Data:   `(recipient, amount, released_total)`
+pub fn emit_escrow_partial_release(
+    env: &Env,
+    escrow_id: u64,
+    recipient: &Address,
+    amount: i128,
+    released_total: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_partial_release"), escrow_id),
+        (recipient.clone(), amount, released_total),
+    );
+}
+
+/// Emit when the funder and recipient install an arbitration panel.
+///
+/// Topics: `("escrow_panel_set", escrow_id)`
+/// Data:   `(arbitrators, threshold)`
+pub fn emit_escrow_panel_set(env: &Env, escrow_id: u64, arbitrators: &Vec<Address>, threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_panel_set"), escrow_id),
+        (arbitrators.clone(), threshold),
+    );
+}
+
+/// Emit when a panelist votes on a disputed escrow.
+///
+/// Topics: `("escrow_arb_vote", escrow_id)`
+/// Data:   `(arbitrator, release_to_recipient, votes_for_outcome, threshold)`
+pub fn emit_escrow_arbitration_vote(
+    env: &Env,
+    escrow_id: u64,
+    arbitrator: &Address,
+    release_to_recipient: bool,
+    votes: u32,
+    threshold: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_arb_vote"), escrow_id),
+        (arbitrator.clone(), release_to_recipient, votes, threshold),
+    );
+}
+
+/// Emit when the arbitration timeout fallback settles an escrow.
+///
+/// Topics: `("escrow_timeout_settled", escrow_id)`
+/// Data:   `(paid_to_recipient, refunded_to_funder)`
+pub fn emit_escrow_timeout_settled(env: &Env, escrow_id: u64, to_recipient: i128, to_funder: i128) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_timeout_settled"), escrow_id),
+        (to_recipient, to_funder),
+    );
+}
+
+// ============================================================================
+// Issue #2058: Supersession audit events
+// ============================================================================
+
+/// Emit when a proposal is superseded.
+///
+/// Topics: `("proposal_superseded", old_id, new_id)`
+/// Data:   `(proposer, requested_policy, applied_policy, carried_approvals, carried_abstentions)`
+#[allow(clippy::too_many_arguments)]
+pub fn emit_proposal_superseded(
+    env: &Env,
+    old_id: u64,
+    new_id: u64,
+    proposer: &Address,
+    requested_policy: u32,
+    applied_policy: u32,
+    carried_approvals: u32,
+    carried_abstentions: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_superseded"), old_id, new_id),
+        (
+            proposer.clone(),
+            requested_policy,
+            applied_policy,
+            carried_approvals,
+            carried_abstentions,
+        ),
+    );
+}
+
+/// Emit when the vault-wide vote migration policy changes.
+///
+/// Topics: `("vote_migration_policy",)`
+/// Data:   `(admin, old_policy, new_policy)`
+pub fn emit_vote_migration_policy_set(env: &Env, admin: &Address, old: u32, new: u32) {
+    env.events().publish(
+        (Symbol::new(env, "vote_migration_policy"),),
+        (admin.clone(), old, new),
+    );
+}
+
+// ============================================================================
+// Issue #2060: Governance config change controls
+// ============================================================================
+
+/// Emit when an approved config change is queued behind its gate.
+///
+/// Topics: `("config_change_queued", gov_id)`
+/// Data:   `(unlock_ledger, risk_increasing, requires_ack)`
+pub fn emit_config_change_queued(
+    env: &Env,
+    gov_id: u64,
+    unlock_ledger: u64,
+    risk_increasing: bool,
+    requires_ack: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "config_change_queued"), gov_id),
+        (unlock_ledger, risk_increasing, requires_ack),
+    );
+}
+
+/// Emit when the second-control role acknowledges a queued change.
+///
+/// Topics: `("config_change_acked", gov_id)`
+/// Data:   `acknowledger`
+pub fn emit_config_change_acknowledged(env: &Env, gov_id: u64, acknowledger: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "config_change_acked"), gov_id),
+        acknowledger.clone(),
+    );
+}
+
+/// Emit when a pending or queued config change is cancelled.
+///
+/// Topics: `("config_change_cancelled", gov_id)`
+/// Data:   `caller`
+pub fn emit_config_change_cancelled(env: &Env, gov_id: u64, caller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "config_change_cancelled"), gov_id),
+        caller.clone(),
+    );
+}
+
+/// Emit one event per field changed by `execute_config_change`.
+///
+/// Topics: `("config_diff", gov_id, field)`
+/// Data:   `(old_value, new_value)`
+pub fn emit_config_diff(env: &Env, gov_id: u64, field: &Symbol, old_value: i128, new_value: i128) {
+    env.events().publish(
+        (Symbol::new(env, "config_diff"), gov_id, field.clone()),
+        (old_value, new_value),
+    );
+}
+
+/// Emit when the config-change dual-control policy changes.
+///
+/// Topics: `("config_dual_control",)`
+/// Data:   `(caller, enabled, ack_role)`
+pub fn emit_config_dual_control_set(env: &Env, caller: &Address, enabled: bool, ack_role: u32) {
+    env.events().publish(
+        (Symbol::new(env, "config_dual_control"),),
+        (caller.clone(), enabled, ack_role),
+    );
+}
+
+// ============================================================================
+// Issue #2061: Treasury risk engine
+// ============================================================================
+
+/// Emit when a token's circuit breaker trips. Other tokens are unaffected.
+///
+/// Topics: `("token_breaker_tripped", token)`
+/// Data:   `(outflow_in_window, refused_amount, threshold)`
+pub fn emit_token_breaker_tripped(
+    env: &Env,
+    token: &Address,
+    outflow: i128,
+    refused_amount: i128,
+    threshold: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "token_breaker_tripped"), token.clone()),
+        (outflow, refused_amount, threshold),
+    );
+}
+
+/// Emit when an Admin resets a tripped token breaker.
+///
+/// Topics: `("token_breaker_reset", token)`
+/// Data:   `admin`
+pub fn emit_token_breaker_reset(env: &Env, token: &Address, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "token_breaker_reset"), token.clone()),
+        admin.clone(),
+    );
+}
+
+/// Emit when an approved proposal reserves treasury balance.
+///
+/// Topics: `("reservation_created", proposal_id)`
+/// Data:   `(token, amount)`
+pub fn emit_reservation_created(env: &Env, proposal_id: u64, token: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "reservation_created"), proposal_id),
+        (token.clone(), amount),
+    );
+}
+
+/// Emit when a reservation is released. `status` is the proposal status that
+/// released it (executed, cancelled, expired, vetoed, ...).
+///
+/// Topics: `("reservation_released", proposal_id)`
+/// Data:   `(token, amount, status)`
+pub fn emit_reservation_released(
+    env: &Env,
+    proposal_id: u64,
+    token: &Address,
+    amount: i128,
+    status: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "reservation_released"), proposal_id),
+        (token.clone(), amount, status),
+    );
+}
