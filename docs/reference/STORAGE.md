@@ -342,6 +342,7 @@ From `#[contracttype] pub enum DataKey { ... }`:
 - `Role(Address)`
 - `RoleIndex`
 - `Proposal(u64)`
+- `PendingProposalsByProposer(Address)`
 - `NextProposalId`
 - `PriorityQueue(u32)`
 - `DailySpent(u64)`
@@ -363,6 +364,7 @@ From `#[contracttype] pub enum DataKey { ... }`:
 - `VotingStrategy`
 - `ApprovalLedger(u64, Address)`
 - `Stream(u64)`
+- `StreamsByRecipient(Address)`
 - `NextStreamId`
 - `CancellationRecord(u64)`
 - `CancellationHistory`

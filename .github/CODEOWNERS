@@ -1,0 +1,26 @@
+# CODEOWNERS
+#
+# This file defines code owners for security-sensitive paths in the repository.
+# GitHub automatically requests reviews from the listed owners when a pull
+# request modifies matching files. Branch protection rules can additionally
+# require approval from these owners before a PR can be merged.
+#
+# Syntax: <pattern> <owner> [<owner> ...]
+# More specific patterns take precedence over less specific ones.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything in the repository.
+* @NovaGrids/maintainers
+
+# Smart contracts — require review from contract reviewers.
+/contracts/ @NovaGrids/contract-reviewers
+
+# Infrastructure as code — require review from infra reviewers.
+/terraform/ @NovaGrids/infra-reviewers
+
+# Security-sensitive code and configuration — require review from security reviewers.
+/security/ @NovaGrids/security-reviewers
+
+# Repository automation, workflows, and this CODEOWNERS file itself —
+# require review from maintainers.
+/.github/ @NovaGrids/maintainers

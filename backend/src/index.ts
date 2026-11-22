@@ -89,8 +89,8 @@ lifecycle.onShutdown({
 
 lifecycle.onShutdown({
   name: "scheduled-job-runner",
-  handler: () => {
-    runtime.scheduledJobRunner.stop();
+  handler: async () => {
+    await runtime.scheduledJobRunner.shutdown(env.jobShutdownIdleTimeoutMs);
   },
 });
 lifecycle.onShutdown({

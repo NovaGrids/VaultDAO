@@ -1,0 +1,11 @@
+# VaultDAO Production — example variable values
+# Copy to terraform.tfvars and fill in real values. Never commit terraform.tfvars.
+
+aws_region          = "us-east-1"
+app_port            = 8787
+stellar_contract_id = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+cors_origin         = "https://app.vaultdao.io"
+container_image     = "123456789.dkr.ecr.us-east-1.amazonaws.com/vaultdao/backend:release-1.0.0"
+acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
+github_org          = "NovaGrids"
+github_repo         = "VaultDAO"

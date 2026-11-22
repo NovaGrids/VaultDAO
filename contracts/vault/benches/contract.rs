@@ -154,6 +154,40 @@ fn scenario_governance(context: &Context) {
     client.approve_proposal(&context.admin, &proposal_id);
 }
 
+fn scenario_approve_proposal(context: &Context) {
+    let client = VaultDAOClient::new(&context.env, &context.contract_id);
+    let proposal_id = propose(context);
+    client.approve_proposal(&context.admin, &proposal_id);
+}
+
+fn scenario_execute_proposal(context: &Context) {
+    let client = VaultDAOClient::new(&context.env, &context.contract_id);
+    let proposal_id = propose(context);
+    client.approve_proposal(&context.admin, &proposal_id);
+    client.approve_proposal(&context.admin, &proposal_id);
+    client.execute_proposal(&context.admin, &proposal_id);
+}
+
+fn scenario_batch_propose_transfers(context: &Context) {
+    let client = VaultDAOClient::new(&context.env, &context.contract_id);
+    let mut transfers = SorobanVec::new(&context.env);
+    for _ in 0..10 {
+        transfers.push_back(TransferDetails {
+            recipient: Address::generate(&context.env),
+            token: context.token.clone(),
+            amount: 10,
+        });
+    }
+    let _proposal_ids = client.batch_propose_transfers(
+        &context.admin,
+        &transfers,
+        &Priority::Normal,
+        &SorobanVec::<Condition>::new(&context.env),
+        &ConditionLogic::And,
+        &0,
+    );
+}
+
 fn scenario_archive(context: &Context) {
     let client = VaultDAOClient::new(&context.env, &context.contract_id);
     let _checkpoint_id = client.create_audit_checkpoint(&context.admin);
@@ -430,6 +464,14 @@ fn main() {
         benchmark("batch_events_10", "read_write", 0, scenario_batch_events),
         benchmark("query_audit_page_50", "read_only", AUDIT_SEED, scenario_query),
         benchmark("governance_approval", "read_write", 0, scenario_governance),
+        benchmark("approve_proposal", "read_write", 0, scenario_approve_proposal),
+        benchmark("execute_proposal", "read_write", 0, scenario_execute_proposal),
+        benchmark(
+            "batch_propose_transfers",
+            "read_write",
+            0,
+            scenario_batch_propose_transfers,
+        ),
         benchmark("audit_archive_100", "read_write", AUDIT_SEED, scenario_archive),
         benchmark("storage_read", "read_only", AUDIT_SEED, scenario_storage_read),
         benchmark("storage_write", "write", 0, scenario_storage_write),

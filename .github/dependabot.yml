@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/contracts/vault"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "stellar-vault/contracts-team"
+    assignees:
+      - "stellar-vault/contracts-team"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "cargo"
+      - "contracts"
+
+  - package-ecosystem: "npm"
+    directories:
+      - "/sdk"
+      - "/backend"
+      - "/frontend"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "stellar-vault/sdk-team"
+      - "stellar-vault/backend-team"
+      - "stellar-vault/frontend-team"
+    assignees:
+      - "stellar-vault/sdk-team"
+      - "stellar-vault/backend-team"
+      - "stellar-vault/frontend-team"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "npm"

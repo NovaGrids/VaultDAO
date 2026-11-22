@@ -33,7 +33,7 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
+    BridgeConfig, CancellationRecord, Capability, EscrowConsent, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
     DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
@@ -171,6 +171,9 @@ const MIN_RECURRING_INTERVAL: u64 = 720;
 
 /// Domain separator prefixed to cold-signer proof-of-possession messages (#2086).
 const COLD_SIGNER_POP_DOMAIN: &[u8] = b"VaultDAO:cold-signer-pop:v1";
+
+/// Domain separator for cold-signed recovery approvals (Issue #2059).
+const RECOVERY_APPROVAL_DOMAIN: &[u8] = b"VaultDAO:recovery-approve:v1";
 
 const REP_EXEC_PROPOSER: u32 = 10;
 const REP_EXEC_APPROVER: u32 = 5;
@@ -330,6 +333,7 @@ fn calculate_impact_score(
 // mod test_escrow_multisig_arbitration;
 // #[cfg(test)]
 // mod test_escrow_timeout;
+mod test_escrow_mutual_consent;
 // #[cfg(test)]
 // mod test_fees;
 // #[cfg(test)]
@@ -406,6 +410,7 @@ fn calculate_impact_score(
 mod test_spending_limit_invariants_proptest;
 #[cfg(test)]
 mod test_spending_refund_buckets;
+mod test_spending_utilization;
 #[cfg(test)]
 mod test_stream_vesting_invariants_proptest;
 
@@ -536,6 +541,8 @@ mod test_template_presets;
 #[cfg(test)]
 mod test_circular_dependency;
 #[cfg(test)]
+mod test_change_vote_execution_window;
+#[cfg(test)]
 mod test_cleanup_expired_capabilities;
 #[cfg(test)]
 mod test_cold_signature_replay;
@@ -579,6 +586,7 @@ mod test_fingerprint;
 mod test_metrics_buckets;
 #[cfg(test)]
 mod test_multi_token;
+mod test_proposals_by_status;
 #[cfg(test)]
 mod test_overflow_checks;
 #[cfg(test)]
@@ -614,6 +622,7 @@ mod test_recovery_signer_validation;
 mod test_recovery_cancel_votes;
 #[cfg(test)]
 mod test_recurring;
+mod test_recurring_token_min_interval;
 #[cfg(test)]
 mod test_reentrancy;
 #[cfg(test)]
@@ -638,6 +647,14 @@ mod test_stream_clawback;
 #[cfg(test)]
 mod test_stream_pause_ttl;
 #[cfg(test)]
+mod test_stream_invariants_2055;
+#[cfg(test)]
+mod test_swap_twap_2057;
+#[cfg(test)]
+mod test_recovery_ceremony_2059;
+#[cfg(test)]
+mod test_audit_compaction_2062;
+#[cfg(test)]
 mod test_subscription_auto_topup;
 #[cfg(test)]
 mod test_subscription_downgrade_grace;
@@ -647,6 +664,10 @@ mod test_swap_controls;
 mod test_swap_multi_token;
 #[cfg(test)]
 mod test_threshold_reduction;
+#[cfg(test)]
+mod test_threshold_cooldown;
+#[cfg(test)]
+mod test_active_config_change;
 #[cfg(test)]
 mod test_time_weighted_lock_token;
 #[cfg(test)]
@@ -793,6 +814,7 @@ impl VaultDAO {
             supported_tokens: Vec::new(&env),
             token_daily_limits: Vec::new(&env),
             token_weekly_limits: Vec::new(&env),
+            min_interval_per_token: Map::new(&env),
             // Streaming rate limiter: default off
             stream_max_window_amount: 0,
             burst_factor: 150, // 1.5x default
@@ -814,6 +836,7 @@ impl VaultDAO {
             approval_timeout_ledgers: 0,
             exec_window_ledgers: 0, // Set via set_exec_window_ledgers post-init (Issue #1349)
             upgrade_timelock_delay: config.upgrade_timelock_delay,
+            max_pending_per_signer: 50,
             // Participation scoring defaults; tune via update_participation_config (Issue #1093).
             participation: ParticipationConfig {
                 min_participation_rate: 50,
@@ -1215,6 +1238,29 @@ impl VaultDAO {
         )
     }
 
+    fn check_pending_proposal_limit(
+        env: &Env,
+        proposer: &Address,
+        requested: u32,
+        config: &Config,
+    ) -> Result<(), VaultError> {
+        if storage::get_role(env, proposer) == Role::Admin {
+            return Ok(());
+        }
+        if storage::get_pending_proposal_count(env, proposer)
+            .saturating_add(requested)
+            > config.max_pending_per_signer
+        {
+            events::emit_proposal_creation_rejected(
+                env,
+                proposer,
+                Symbol::new(env, "pending_cap_exceeded"),
+            );
+            return Err(VaultError::ExceedsProposerPendingLimit);
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn propose_transfer_internal(
         env: Env,
@@ -1262,6 +1308,7 @@ impl VaultDAO {
                 return Err(VaultError::InsufficientRole);
             }
         }
+        Self::check_pending_proposal_limit(&env, &proposer, 1, &config)?;
 
         // 4. Validate recipient against lists
         Self::validate_recipient(&env, &recipient)?;
@@ -1671,6 +1718,7 @@ impl VaultDAO {
         if !Role::role_satisfies(Role::Treasurer, role) {
             return Err(VaultError::InsufficientRole);
         }
+        Self::check_pending_proposal_limit(&env, &proposer, transfers.len(), &config)?;
 
         // Velocity check once for the batch (use first transfer token for per-token tracking)
         let batch_token = if transfers.is_empty() {
@@ -2412,6 +2460,18 @@ impl VaultDAO {
         }
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let current_ledger = env.ledger().sequence() as u64;
+        if (proposal.status == ProposalStatus::Approved
+            || proposal.status == ProposalStatus::Scheduled)
+            && proposal.approved_at > 0
+            && config.exec_window_ledgers > 0
+            && current_ledger
+                > proposal
+                    .approved_at
+                    .saturating_add(config.exec_window_ledgers)
+        {
+            return Err(VaultError::ProposalExecutionWindowExpired);
+        }
         if !proposal.snapshot_signers.contains(&signer) {
             return Err(VaultError::VoterNotInSnapshot);
         }
@@ -2423,7 +2483,6 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        let current_ledger = env.ledger().sequence() as u64;
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             expire_approved_proposal(&env, &mut proposal, ProposalExpiryCause::Deadline);
             return Ok(());
@@ -4399,6 +4458,12 @@ impl VaultDAO {
     /// - [`VaultError::ThresholdTooHigh`] if `threshold > len(signers)`.
     /// - [`VaultError::ConfigChangeInProgress`] if a reduction proposal is
     ///   already pending (reduction path only).
+    /// - [`VaultError::ThresholdChangeCooldown`] if fewer than
+    ///   `admin_rotation_delay` ledgers have elapsed since the last successful
+    ///   call (Issue #2146). Applies to both increase and reduction paths.
+    ///
+    /// The cooldown timestamp is only recorded on success, so rejected calls
+    /// never extend the cooldown window.
     pub fn update_threshold(
         env: Env,
         admin: Address,
@@ -4421,14 +4486,28 @@ impl VaultDAO {
             return Err(VaultError::ThresholdTooHigh);
         }
 
-        if threshold < config.threshold {
+        let is_reduction = threshold < config.threshold;
+        if is_reduction && storage::get_pending_config_proposal(&env).is_some() {
+            return Err(VaultError::ConfigChangeInProgress);
+        }
+
+        // ── Cooldown (Issue #2146): block rapid oscillation of the threshold ──
+        let current_ledger = env.ledger().sequence() as u64;
+        if let Some(last_ledger) = storage::get_last_threshold_change_ledger(&env) {
+            if current_ledger < last_ledger.saturating_add(config.admin_rotation_delay) {
+                return Err(VaultError::ThresholdChangeCooldown);
+            }
+        }
+
+        if is_reduction {
             // ── Threshold reduction: requires governance + timelock ──────────
             // Build a new config with the reduced threshold and route it
             // through the multisig config-change proposal workflow.
             let mut new_config = config.clone();
             new_config.threshold = threshold;
             let proposal_id =
-                Self::propose_vault_config_change_with_timelock(env, admin, new_config)?;
+                Self::propose_vault_config_change_with_timelock(env.clone(), admin, new_config)?;
+            storage::set_last_threshold_change_ledger(&env, current_ledger);
             Ok(Some(proposal_id))
         } else {
             // ── Threshold increase (or unchanged): apply immediately ─────────
@@ -4438,8 +4517,20 @@ impl VaultDAO {
             storage::extend_instance_ttl(&env);
             storage::create_audit_entry(&env, AuditAction::UpdateThreshold, &admin, 0);
             events::emit_config_updated(&env, &admin);
+            storage::set_last_threshold_change_ledger(&env, current_ledger);
             Ok(None)
         }
+    }
+
+
+    /// Return the ID of the config-change proposal currently in flight, or
+    /// `None` if no config change is pending (Issue #2147).
+    ///
+    /// Reads the same `PendingConfig` slot that gates `ConfigChangeInProgress`,
+    /// so the value is set on proposal creation and cleared on execution or
+    /// cancellation.
+    pub fn get_active_config_change(env: Env) -> Option<u64> {
+        storage::get_pending_config_proposal(&env)
     }
 
     /// Internal helper: like `propose_vault_config_change` but always sets
@@ -4658,6 +4749,9 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
+        // An over-long pause under an AutoResume policy resumes here (#2055)
+        Self::apply_stream_auto_resume(&env, &mut stream);
+
         // Stream must be active
         if stream.status != StreamStatus::Active {
             return Err(VaultError::StreamNotActive);
@@ -4677,16 +4771,8 @@ impl VaultDAO {
 
         // Roll accumulated_seconds forward to the current moment (capping at
         // end_timestamp so we never over-accrue beyond the stream's lifetime).
-        let effective_now = if now > stream.end_timestamp {
-            stream.end_timestamp
-        } else {
-            now
-        };
-        let elapsed_since_update = effective_now.saturating_sub(stream.last_update_timestamp);
-        let total_active_seconds = stream.accumulated_seconds + elapsed_since_update;
-
         // gross_claimable = rate * total_active_seconds, capped at total_amount
-        let gross_claimable = (stream.rate * total_active_seconds as i128).min(stream.total_amount);
+        let (total_active_seconds, gross_claimable) = Self::stream_accrual(&stream, now);
         // net claimable = gross − already_claimed
         let claimable = gross_claimable.saturating_sub(stream.claimed_amount);
 
@@ -4695,40 +4781,8 @@ impl VaultDAO {
         }
         // ────────────────────────────────────────────────────────────────────
 
-        let config = storage::get_config(&env)?;
-        let current_ledger = env.ledger().sequence();
-
         // ---- Rate-limit check ----
-        if config.stream_max_window_amount > 0 {
-            // Window length in ledgers: we use a fixed 1-day window (~17 280 ledgers)
-            const WINDOW_LEDGERS: u32 = 17_280;
-
-            let mut window =
-                storage::get_stream_rate_window(&env, stream_id).unwrap_or(StreamRateWindow {
-                    total_streamed_in_window: 0,
-                    window_start_ledger: current_ledger,
-                });
-
-            // Check if the window has expired and reset it
-            if current_ledger >= window.window_start_ledger + WINDOW_LEDGERS {
-                window = StreamRateWindow {
-                    total_streamed_in_window: 0,
-                    window_start_ledger: current_ledger,
-                };
-            }
-
-            // Effective cap = base_cap * burst_factor / 100
-            let burst_factor = config.burst_factor.max(100) as i128; // floor at 1x
-            let effective_cap = config.stream_max_window_amount.saturating_mul(burst_factor) / 100;
-
-            if window.total_streamed_in_window + amount > effective_cap {
-                return Err(VaultError::StreamRateLimitExceeded);
-            }
-
-            // Update window before transfer
-            window.total_streamed_in_window += amount;
-            storage::set_stream_rate_window(&env, stream_id, &window);
-        }
+        Self::apply_stream_rate_window(&env, stream_id, amount)?;
 
         // Release this stream's own reservation, then require the rest of the
         // payment to come from unreserved funds (#1698)
@@ -4765,6 +4819,54 @@ impl VaultDAO {
         Self::trigger_keeper_hooks(&env, &HookEventType::StreamDue, stream_id);
 
         Ok(())
+    }
+
+    /// Return the amount currently accrued and unclaimed from an active stream.
+    ///
+    /// This read-only view uses the same timestamp cap, rate calculation, and
+    /// claimed-amount subtraction as `trigger_stream_payment`.
+    pub fn get_stream_claimable(env: Env, stream_id: u64) -> Result<i128, VaultError> {
+        let stream = storage::get_streaming_payment(&env, stream_id)?;
+        if stream.status != StreamStatus::Active {
+            return Err(VaultError::StreamNotActive);
+        }
+
+        let now = env.ledger().timestamp();
+        let effective_now = if now > stream.end_timestamp {
+            stream.end_timestamp
+        } else {
+            now
+        };
+        let elapsed_since_update = effective_now.saturating_sub(stream.last_update_timestamp);
+        let total_active_seconds = stream.accumulated_seconds + elapsed_since_update;
+        let gross_claimable = (stream.rate * total_active_seconds as i128).min(stream.total_amount);
+        Ok(gross_claimable.saturating_sub(stream.claimed_amount))
+    }
+
+    /// Return active stream IDs for a recipient, in ascending order.
+    ///
+    /// Pass the last returned ID as `after_id` to fetch the next page. Pages
+    /// are capped at 100 IDs.
+    pub fn list_streams_by_recipient(
+        env: Env,
+        recipient: Address,
+        after_id: u64,
+        limit: u32,
+    ) -> Vec<u64> {
+        let cap = limit.min(100);
+        let mut streams = Vec::new(&env);
+        if cap == 0 {
+            return streams;
+        }
+        for stream_id in storage::get_stream_ids_by_recipient(&env, &recipient) {
+            if stream_id > after_id {
+                streams.push_back(stream_id);
+                if streams.len() >= cap {
+                    break;
+                }
+            }
+        }
+        streams
     }
 
     // ========================================================================
@@ -4862,6 +4964,7 @@ impl VaultDAO {
                 supported_tokens: Vec::new(&env),
                 token_daily_limits: Vec::new(&env),
                 token_weekly_limits: Vec::new(&env),
+            min_interval_per_token: Map::new(&env),
                 stream_max_window_amount: 0,
                 burst_factor: 150,
                 veto_window_ledgers: 0,
@@ -4877,6 +4980,7 @@ impl VaultDAO {
                 approval_timeout_ledgers: 0,
                 exec_window_ledgers: 0,
                 upgrade_timelock_delay: MIN_UPGRADE_TIMELOCK,
+                max_pending_per_signer: 50,
                 participation: ParticipationConfig {
                     min_participation_rate: 50,
                     low_participation_streak_n: 3,
@@ -6388,6 +6492,12 @@ impl VaultDAO {
         if config.signers.is_empty() {
             return Err(VaultError::NoSigners);
         }
+        // Issue #2137: per-token interval overrides may only tighten the global bound.
+        for (_token, interval) in config.min_interval_per_token.iter() {
+            if interval < MIN_RECURRING_INTERVAL {
+                return Err(VaultError::IntervalTooShort);
+            }
+        }
         Self::validate_retry_config(&config.retry_config)?;
         // Issue #1693: enforce the same minimum of 2 as initialize (Issue #1523).
         if config.threshold < 2 {
@@ -6501,6 +6611,44 @@ impl VaultDAO {
     /// Get per-token weekly spending for a given week
     pub fn get_token_weekly_spent(env: Env, token: Address, week: u64) -> i128 {
         storage::get_token_weekly_spent(&env, &token, week)
+    }
+
+    /// Issue #2133: snapshot of spending-limit utilization.
+    ///
+    /// Returns `(live_proposals, daily_spent, weekly_spent)`:
+    /// - `live_proposals` is the number of proposal slots in use, i.e. proposals
+    ///   that are Pending, Approved or Scheduled (read from the status index).
+    /// - `daily_spent` is the amount counted against today's daily limit.
+    /// - `weekly_spent` is the amount counted against this week's limit.
+    pub fn get_spending_utilization(env: Env) -> (i128, i128, i128) {
+        let live = Self::live_proposal_count(&env) as i128;
+        let daily = storage::get_daily_spent(&env, storage::get_day_number(&env));
+        let weekly = storage::get_weekly_spent(&env, storage::get_week_number(&env));
+        (live, daily, weekly)
+    }
+
+    /// Issue #2133: per-token spending utilization.
+    ///
+    /// Returns `(daily_spent, weekly_spent)` for `token` in the current day/week.
+    pub fn get_token_spending_utilization(env: Env, token: Address) -> (i128, i128) {
+        let daily =
+            storage::get_token_daily_spent(&env, &token, storage::get_day_number(&env));
+        let weekly =
+            storage::get_token_weekly_spent(&env, &token, storage::get_week_number(&env));
+        (daily, weekly)
+    }
+
+    /// Count proposals currently occupying a slot (Pending, Approved or Scheduled).
+    fn live_proposal_count(env: &Env) -> u32 {
+        let mut count: u32 = 0;
+        for status in [
+            ProposalStatus::Pending,
+            ProposalStatus::Approved,
+            ProposalStatus::Scheduled,
+        ] {
+            count += storage::count_proposals_with_status(env, status as u32);
+        }
+        count
     }
 
     /// Get today's spending
@@ -6827,8 +6975,13 @@ impl VaultDAO {
         // Validate recipient against whitelist/blacklist policies
         Self::validate_recipient(&env, &recipient)?;
 
-        // Minimum interval check (e.g. 1 hour = 720 ledgers)
-        if interval < MIN_RECURRING_INTERVAL {
+        // Minimum interval check (e.g. 1 hour = 720 ledgers).
+        // Issue #2137: a per-token override takes precedence over the global minimum.
+        let min_interval = storage::get_config(&env)?
+            .min_interval_per_token
+            .get(token_addr.clone())
+            .unwrap_or(MIN_RECURRING_INTERVAL);
+        if interval < min_interval {
             return Err(VaultError::IntervalTooShort);
         }
 
@@ -8243,7 +8396,9 @@ impl VaultDAO {
             &env,
             id,
             &StreamRateWindow {
-                total_streamed_in_window: total_amount,
+                // Creation escrows funds into the vault; it is not an outflow,
+                // so it must not consume the window's cap (#2055).
+                total_streamed_in_window: 0,
                 window_start_ledger: env.ledger().sequence(),
             },
         );
@@ -8293,32 +8448,15 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+        // An over-long pause under an AutoResume policy resumes here (#2055)
+        Self::apply_stream_auto_resume(&env, &mut stream);
+
         let now = env.ledger().timestamp();
 
-        // Calculate elapsed active seconds since last update
-        let elapsed_since_update = if stream.status == StreamStatus::Active {
-            // Cap at end_timestamp so we never over-accrue
-            let effective_now = if now > stream.end_timestamp {
-                stream.end_timestamp
-            } else {
-                now
-            };
-            effective_now.saturating_sub(stream.last_update_timestamp)
-        } else {
-            // Paused: no new seconds accumulate
-            0u64
-        };
-
-        let total_active_seconds = stream.accumulated_seconds + elapsed_since_update;
-
+        // Active seconds up to now (paused streams accrue nothing, and accrual
+        // is capped at end_timestamp and total_amount).
         // claimable = rate * total_active_seconds - already_claimed
-        let gross_claimable = stream.rate * total_active_seconds as i128;
-        // Never exceed total_amount
-        let gross_claimable = if gross_claimable > stream.total_amount {
-            stream.total_amount
-        } else {
-            gross_claimable
-        };
+        let (total_active_seconds, gross_claimable) = Self::stream_accrual(&stream, now);
         let claimable = gross_claimable - stream.claimed_amount;
 
         if claimable <= 0 {
@@ -8355,6 +8493,9 @@ impl VaultDAO {
             }
         }
 
+        // Burst cap applies to every stream outflow, not only triggers (#2055)
+        Self::apply_stream_rate_window(&env, stream_id, claimable)?;
+
         // Transfer claimable tokens to recipient
         if token::try_transfer(&env, &stream.token_addr, &recipient, claimable).is_err() {
             return Err(VaultError::InsufficientBalance);
@@ -8363,7 +8504,11 @@ impl VaultDAO {
         storage::release_stream_reserve(&env, &stream.token_addr, claimable);
         stream.claimed_amount += claimable;
         stream.accumulated_seconds = total_active_seconds;
-        stream.last_update_timestamp = now;
+        // A paused stream keeps its pause start, so claiming during a pause
+        // neither shortens the schedule extension nor resets the pause TTL (#2055)
+        if stream.status == StreamStatus::Active {
+            stream.last_update_timestamp = now;
+        }
 
         // Mark completed when all tokens are claimed
         if stream.claimed_amount >= stream.total_amount {
@@ -8484,16 +8629,23 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        let now = env.ledger().timestamp();
-        // Paused time is free: extend the schedule by the pause length (#1915)
-        // and record the pause for introspection.
-        let paused_for = now.saturating_sub(stream.last_update_timestamp);
-        stream.end_timestamp = stream.end_timestamp.saturating_add(paused_for);
-        stream.pause_duration = stream.pause_duration.saturating_add(paused_for);
-        stream.pause_cycles = stream.pause_cycles.saturating_add(1);
-        // Reset the update timestamp so elapsed time starts from now
-        stream.last_update_timestamp = now;
-        stream.status = StreamStatus::Active;
+        // Pause TTL policy (#2055): an expired AutoCancel pause cannot be
+        // resumed; an expired AutoResume pause resumes at its deadline, so the
+        // schedule is extended by at most `max_pause_secs`.
+        match Self::stream_pause_expiry(&env, &stream) {
+            Some((types::PauseExpiryAction::AutoCancel, _)) => {
+                return Err(VaultError::StreamPauseExpired);
+            }
+            Some((types::PauseExpiryAction::AutoResume, _)) => {
+                Self::apply_stream_auto_resume(&env, &mut stream);
+            }
+            None => {
+                // Paused time is free: extend the schedule by the pause length
+                // (#1915) and record the pause for introspection.
+                Self::credit_stream_pause(&mut stream, env.ledger().timestamp());
+                stream.status = StreamStatus::Active;
+            }
+        }
 
         storage::set_streaming_payment(&env, &stream);
 
@@ -8526,6 +8678,23 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
+        // Seconds an AutoResume policy already credited are honoured (#2055)
+        Self::apply_stream_auto_resume(&env, &mut stream);
+
+        Self::cancel_stream_internal(&env, &mut stream, &caller)
+    }
+
+    /// Settle and cancel a stream: pay the recipient everything accrued and
+    /// refund the unearned remainder to the sender. Shared by `cancel_stream`
+    /// and the AutoCancel pause policy (#2055).
+    fn cancel_stream_internal(
+        env: &Env,
+        stream: &mut StreamingPayment,
+        caller: &Address,
+    ) -> Result<i128, VaultError> {
+        let env = env.clone();
+        let stream_id = stream.id;
+
         if stream.status == StreamStatus::Cancelled {
             return Err(VaultError::ProposalAlreadyCancelled);
         }
@@ -8548,7 +8717,7 @@ impl VaultDAO {
         }
 
         // Tokens earned by recipient up to this point (but not yet claimed)
-        let gross_earned = stream.rate * stream.accumulated_seconds as i128;
+        let gross_earned = stream.rate.saturating_mul(stream.accumulated_seconds as i128);
         let gross_earned = if gross_earned > stream.total_amount {
             stream.total_amount
         } else {
@@ -8590,13 +8759,13 @@ impl VaultDAO {
         stream.last_update_timestamp = now;
         stream.status = StreamStatus::Cancelled;
 
-        storage::set_streaming_payment(&env, &stream);
+        storage::set_streaming_payment(&env, stream);
 
         events::emit_stream_status_updated(
             &env,
             stream_id,
             StreamStatus::Cancelled as u32,
-            &caller,
+            caller,
         );
 
         Ok(refund_amount)
@@ -8605,6 +8774,223 @@ impl VaultDAO {
     /// Get a streaming payment by ID.
     pub fn get_stream(env: Env, stream_id: u64) -> Result<StreamingPayment, VaultError> {
         storage::get_streaming_payment(&env, stream_id)
+    }
+
+    // ------------------------------------------------------------------------
+    // Issue #2055: unified accrual, pause TTL policy, burst caps
+    // ------------------------------------------------------------------------
+
+    /// Active seconds and gross accrued amount of a stream at `now`.
+    ///
+    /// Integer fixed-point accrual: `gross = rate * active_seconds`, computed
+    /// with saturating multiplication and capped at `total_amount`. Only an
+    /// Active stream accrues new seconds, and never past `end_timestamp`, so a
+    /// paused stream (however long the ledger gap) mints nothing extra.
+    fn stream_accrual(stream: &StreamingPayment, now: u64) -> (u64, i128) {
+        let elapsed = if stream.status == StreamStatus::Active {
+            now.min(stream.end_timestamp)
+                .saturating_sub(stream.last_update_timestamp)
+        } else {
+            0
+        };
+        let seconds = stream.accumulated_seconds.saturating_add(elapsed);
+        let gross = stream
+            .rate
+            .saturating_mul(seconds as i128)
+            .min(stream.total_amount)
+            .max(0);
+        (seconds, gross)
+    }
+
+    /// Credit a pause that ends at `resume_at`: extend the schedule by the
+    /// paused time and record it. A pause that began after the schedule had
+    /// already ended earns no extension (#2055).
+    fn credit_stream_pause(stream: &mut StreamingPayment, resume_at: u64) {
+        let paused_at = stream.last_update_timestamp;
+        let paused_for = resume_at.saturating_sub(paused_at);
+        if paused_at < stream.end_timestamp {
+            stream.end_timestamp = stream.end_timestamp.saturating_add(paused_for);
+        }
+        stream.pause_duration = stream.pause_duration.saturating_add(paused_for);
+        stream.pause_cycles = stream.pause_cycles.saturating_add(1);
+        stream.last_update_timestamp = resume_at;
+    }
+
+    /// If a paused stream has outlived the pause policy, return the policy
+    /// action and the deadline (`pause_start + max_pause_secs`).
+    fn stream_pause_expiry(
+        env: &Env,
+        stream: &StreamingPayment,
+    ) -> Option<(types::PauseExpiryAction, u64)> {
+        if stream.status != StreamStatus::Paused {
+            return None;
+        }
+        let policy = storage::get_stream_pause_policy(env);
+        if policy.max_pause_secs == 0 {
+            return None;
+        }
+        let deadline = stream
+            .last_update_timestamp
+            .saturating_add(policy.max_pause_secs);
+        if env.ledger().timestamp() <= deadline {
+            return None;
+        }
+        Some((policy.action, deadline))
+    }
+
+    /// Apply an expired AutoResume pause in memory: the stream is treated as
+    /// resumed at the deadline, so accrual restarts from there. Callers
+    /// persist the stream. No-op for any other state or policy.
+    fn apply_stream_auto_resume(env: &Env, stream: &mut StreamingPayment) {
+        if let Some((types::PauseExpiryAction::AutoResume, deadline)) =
+            Self::stream_pause_expiry(env, stream)
+        {
+            let paused_at = stream.last_update_timestamp;
+            Self::credit_stream_pause(stream, deadline);
+            stream.status = StreamStatus::Active;
+            events::emit_stream_pause_expired(
+                env,
+                stream.id,
+                types::PauseExpiryAction::AutoResume as u32,
+                paused_at,
+                deadline,
+            );
+        }
+    }
+
+    /// Count `amount` against the stream's rolling window and reject it if
+    /// it exceeds `stream_max_window_amount * burst_factor / 100`.
+    ///
+    /// Emits `stream_burst_used` when the window total goes past the base cap
+    /// (i.e. into the burst allowance). Over-cap payouts are rejected with the
+    /// stable error `StreamRateLimitExceeded`.
+    fn apply_stream_rate_window(env: &Env, stream_id: u64, amount: i128) -> Result<(), VaultError> {
+        let config = storage::get_config(env)?;
+        if config.stream_max_window_amount <= 0 {
+            return Ok(());
+        }
+        // Window length in ledgers: a fixed 1-day window (~17 280 ledgers)
+        const WINDOW_LEDGERS: u32 = 17_280;
+        let current_ledger = env.ledger().sequence();
+
+        let mut window = storage::get_stream_rate_window(env, stream_id).unwrap_or(StreamRateWindow {
+            total_streamed_in_window: 0,
+            window_start_ledger: current_ledger,
+        });
+
+        // Reset the window once it has expired
+        if current_ledger >= window.window_start_ledger.saturating_add(WINDOW_LEDGERS) {
+            window = StreamRateWindow {
+                total_streamed_in_window: 0,
+                window_start_ledger: current_ledger,
+            };
+        }
+
+        // Effective cap = base_cap * burst_factor / 100 (floor at 1x)
+        let burst_factor = config.burst_factor.max(100) as i128;
+        let base_cap = config.stream_max_window_amount;
+        let effective_cap = base_cap.saturating_mul(burst_factor) / 100;
+
+        let new_total = window.total_streamed_in_window.saturating_add(amount);
+        if new_total > effective_cap {
+            return Err(VaultError::StreamRateLimitExceeded);
+        }
+        if new_total > base_cap {
+            events::emit_stream_burst_used(
+                env,
+                stream_id,
+                new_total,
+                base_cap,
+                effective_cap,
+                window.window_start_ledger,
+            );
+        }
+
+        window.total_streamed_in_window = new_total;
+        storage::set_stream_rate_window(env, stream_id, &window);
+        Ok(())
+    }
+
+    /// Set the vault-wide stream pause policy (Admin only, Issue #2055).
+    ///
+    /// A stream paused for longer than `max_pause_secs` is either cancelled
+    /// (`AutoCancel`, via [`Self::enforce_stream_pause_policy`]) or treated as
+    /// resumed at the deadline (`AutoResume`). `max_pause_secs = 0` disables it.
+    pub fn set_stream_pause_policy(
+        env: Env,
+        admin: Address,
+        policy: types::StreamPausePolicy,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        storage::set_stream_pause_policy(&env, &policy);
+        storage::extend_instance_ttl(&env);
+        events::emit_stream_pause_policy_set(
+            &env,
+            &admin,
+            policy.max_pause_secs,
+            policy.action as u32,
+        );
+        Ok(())
+    }
+
+    /// Read the stream pause policy (Issue #2055).
+    pub fn get_stream_pause_policy(env: Env) -> types::StreamPausePolicy {
+        storage::get_stream_pause_policy(&env)
+    }
+
+    /// Apply the pause policy to a stream whose pause has expired (Issue #2055).
+    ///
+    /// Permissionless so keepers can run it. Returns the stream's new status:
+    /// `Active` for AutoResume, `Cancelled` for AutoCancel.
+    ///
+    /// # Errors
+    /// * `ProposalNotPending` - the stream is not paused.
+    /// * `TimelockNotExpired` - the pause has not outlived the policy (or no policy is set).
+    pub fn enforce_stream_pause_policy(
+        env: Env,
+        stream_id: u64,
+    ) -> Result<StreamStatus, VaultError> {
+        let mut stream = storage::get_streaming_payment(&env, stream_id)?;
+        if stream.status != StreamStatus::Paused {
+            return Err(VaultError::ProposalNotPending);
+        }
+        match Self::stream_pause_expiry(&env, &stream) {
+            None => Err(VaultError::TimelockNotExpired),
+            Some((types::PauseExpiryAction::AutoResume, _)) => {
+                Self::apply_stream_auto_resume(&env, &mut stream);
+                storage::set_streaming_payment(&env, &stream);
+                events::emit_stream_status_updated(
+                    &env,
+                    stream_id,
+                    StreamStatus::Active as u32,
+                    &env.current_contract_address(),
+                );
+                Ok(StreamStatus::Active)
+            }
+            Some((types::PauseExpiryAction::AutoCancel, deadline)) => {
+                let paused_at = stream.last_update_timestamp;
+                Self::cancel_stream_internal(&env, &mut stream, &env.current_contract_address())?;
+                events::emit_stream_pause_expired(
+                    &env,
+                    stream_id,
+                    types::PauseExpiryAction::AutoCancel as u32,
+                    paused_at,
+                    deadline,
+                );
+                Ok(StreamStatus::Cancelled)
+            }
+        }
+    }
+
+    /// Total amount clawed back from a stream so far (Issue #2055).
+    ///
+    /// Invariant: `claimed_amount <= original_total - clawed`, where the
+    /// stream's current `total_amount` already equals `original_total - clawed`.
+    pub fn get_stream_clawed_amount(env: Env, stream_id: u64) -> i128 {
+        storage::get_stream_clawed(&env, stream_id)
     }
 
     /// Adjust the rate of an active or paused stream.
@@ -8846,18 +9232,12 @@ impl VaultDAO {
             return Err(VaultError::StreamNotActive);
         }
 
-        let now = env.ledger().timestamp();
-        let mut accumulated_seconds = stream.accumulated_seconds;
-        if stream.status == StreamStatus::Active {
-            let effective_now = if now > stream.end_timestamp {
-                stream.end_timestamp
-            } else {
-                now
-            };
-            accumulated_seconds += effective_now.saturating_sub(stream.last_update_timestamp);
-        }
+        // Seconds an AutoResume policy already credited stay with the recipient (#2055)
+        Self::apply_stream_auto_resume(&env, &mut stream);
 
-        let gross_earned = (stream.rate * accumulated_seconds as i128).min(stream.total_amount);
+        let now = env.ledger().timestamp();
+        // Already-withdrawable accrual is never recalled (#1910, #2055)
+        let (accumulated_seconds, gross_earned) = Self::stream_accrual(&stream, now);
         let unvested = stream.total_amount - gross_earned;
         let recall = req.amount.min(unvested);
         if recall <= 0 {
@@ -8868,10 +9248,14 @@ impl VaultDAO {
             return Err(VaultError::InsufficientBalance);
         }
         storage::release_stream_reserve(&env, &stream.token_addr, recall);
+        storage::add_stream_clawed(&env, req.stream_id, recall);
 
         stream.total_amount -= recall;
         stream.accumulated_seconds = accumulated_seconds;
-        stream.last_update_timestamp = now;
+        // A paused stream keeps its pause start so the pause TTL is not reset
+        if stream.status == StreamStatus::Active {
+            stream.last_update_timestamp = now;
+        }
         storage::set_streaming_payment(&env, &stream);
         storage::remove_stream_rate_window(&env, req.stream_id);
 
@@ -9189,6 +9573,21 @@ impl VaultDAO {
         limit: u64,
     ) -> Vec<u64> {
         storage::get_proposals_by_status(&env, status as u32, offset, limit)
+    }
+
+    /// Issue #2132: cursor-based page of full proposals with the given status.
+    ///
+    /// Returns proposals with `id > after_id` in ascending id order. Pass `0`
+    /// as `after_id` for the first page, then the last returned id for the next.
+    /// `limit` is capped at 50.
+    pub fn list_proposals_by_status(
+        env: Env,
+        status: ProposalStatus,
+        after_id: u64,
+        limit: u32,
+    ) -> Vec<Proposal> {
+        storage::extend_instance_ttl(&env);
+        storage::get_proposals_by_status_after(&env, status as u32, after_id, limit)
     }
 
     /// Get proposal IDs created within a ledger range (capped at 50 per page).
@@ -9524,8 +9923,17 @@ impl VaultDAO {
             return Err(VaultError::AuditChainBroken);
         }
 
+        let compacted_through = storage::get_audit_compacted_through(&env);
+        if from_id <= compacted_through {
+            // Compacted entries are verified with inclusion proofs instead
+            return Err(VaultError::AuditChainBroken);
+        }
+
         let mut expected_prev_hash = if from_id == 1 {
             0
+        } else if compacted_through > 0 && from_id - 1 == compacted_through {
+            // First hot entry links to the last compacted one (#2062)
+            storage::get_audit_anchor_hash(&env)
         } else if let Ok(prev_entry) = storage::get_audit_entry(&env, from_id - 1) {
             prev_entry.hash
         } else {
@@ -9585,7 +9993,11 @@ impl VaultDAO {
         if count <= 1 {
             return Ok(None);
         }
-        for id in 1..count {
+        // Only the hot window is stored entry by entry; compacted entries are
+        // covered by their checkpoint root (#2062).
+        let compacted_through = storage::get_audit_compacted_through(&env);
+        let first_hot = compacted_through + 1;
+        for id in first_hot..count {
             let entry = storage::get_audit_entry(&env, id)?;
             let computed = storage::compute_audit_hash(
                 &env,
@@ -9599,11 +10011,15 @@ impl VaultDAO {
             if computed != entry.hash {
                 return Ok(Some(id));
             }
-            if id > 1 {
+            if id > first_hot {
                 let prev = storage::get_audit_entry(&env, id - 1)?;
                 if entry.prev_hash != prev.hash {
                     return Ok(Some(id));
                 }
+            } else if compacted_through > 0
+                && entry.prev_hash != storage::get_audit_anchor_hash(&env)
+            {
+                return Ok(Some(id));
             }
         }
         Ok(None)
@@ -9624,13 +10040,37 @@ impl VaultDAO {
     /// `get_audit_entry`.
     pub fn create_audit_checkpoint(env: Env, admin: Address) -> Result<u64, VaultError> {
         admin.require_auth();
+        Self::compact_audit_internal(&env, &admin)
+    }
+
+    /// Compact the oldest eligible audit epoch (Issue #2062).
+    ///
+    /// Admin-callable. Same operation as [`Self::create_audit_checkpoint`]:
+    /// folds the next `batch_size` entries outside the hot window into an
+    /// `AuditCheckpoint` whose Merkle root is committed to storage, keeps the
+    /// batch's leaf hashes for proof generation, emits them in an
+    /// `audit_compacted` event for off-chain archives, and removes the raw
+    /// entries. Entries inside the hot window are never touched.
+    ///
+    /// # Errors
+    /// * `Unauthorized`  - caller is not Admin.
+    /// * `InvalidAmount` - fewer than `batch_size` entries lie outside the hot window.
+    pub fn compact_audit_epoch(env: Env, admin: Address) -> Result<u64, VaultError> {
+        admin.require_auth();
+        Self::compact_audit_internal(&env, &admin)
+    }
+
+    fn compact_audit_internal(env: &Env, admin: &Address) -> Result<u64, VaultError> {
+        let env = env.clone();
+        let admin = admin.clone();
 
         let role = storage::get_role(&env, &admin);
         if role != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
 
-        const BATCH_SIZE: u64 = 100;
+        let policy = storage::get_audit_retention_policy(&env);
+        let batch_size = policy.batch_size as u64;
 
         // Determine the range of entries to checkpoint.
         // Checkpoints are sequential; find where the last one ended.
@@ -9644,23 +10084,29 @@ impl VaultDAO {
             prev.to_entry_id + 1
         };
 
+        // Need a full batch outside the hot window: the newest
+        // `hot_window_entries` entries always stay individually stored.
         let next_audit_id = storage::get_next_audit_id(&env);
-        // Need at least BATCH_SIZE entries available
-        if from_entry_id + BATCH_SIZE > next_audit_id {
+        if from_entry_id
+            .saturating_add(batch_size)
+            .saturating_add(policy.hot_window_entries)
+            > next_audit_id
+        {
             return Err(VaultError::InvalidAmount); // Not enough entries to checkpoint
         }
 
-        let to_entry_id = from_entry_id + BATCH_SIZE - 1;
+        let to_entry_id = from_entry_id + batch_size - 1;
 
         // Compute Merkle tree over entry hashes (each entry hash is a u64;
         // we convert it to a 32-byte leaf by zero-padding to match the attachment Merkle impl)
         let mut leaves: Vec<BytesN<32>> = Vec::new(&env);
+        let mut leaf_hashes: Vec<u64> = Vec::new(&env);
+        let mut last_hash: u64 = 0;
         for id in from_entry_id..=to_entry_id {
-            if let Ok(entry) = storage::get_audit_entry(&env, id) {
-                let mut leaf_bytes = [0u8; 32];
-                leaf_bytes[..8].copy_from_slice(&entry.hash.to_le_bytes());
-                leaves.push_back(BytesN::from_array(&env, &leaf_bytes));
-            }
+            let entry = storage::get_audit_entry(&env, id)?;
+            leaves.push_back(Self::audit_leaf(&env, entry.hash));
+            leaf_hashes.push_back(entry.hash);
+            last_hash = entry.hash;
         }
 
         let merkle_root = Self::compute_merkle_root(&env, leaves);
@@ -9670,11 +10116,14 @@ impl VaultDAO {
             id: checkpoint_id,
             from_entry_id,
             to_entry_id,
-            merkle_root,
+            merkle_root: merkle_root.clone(),
             created_at: env.ledger().sequence() as u64,
         };
 
         storage::set_audit_checkpoint(&env, &checkpoint);
+        storage::set_audit_checkpoint_leaves(&env, checkpoint_id, &leaf_hashes);
+        // The first hot entry's prev_hash links to this anchor
+        storage::set_audit_compaction_anchor(&env, to_entry_id, last_hash);
 
         // Remove individual entries from Persistent storage (cost savings).
         for id in from_entry_id..=to_entry_id {
@@ -9683,7 +10132,201 @@ impl VaultDAO {
 
         storage::extend_instance_ttl(&env);
         events::emit_audit_checkpoint_created(&env, checkpoint_id, &admin, from_entry_id, to_entry_id);
+        events::emit_audit_epoch_compacted(
+            &env,
+            checkpoint_id,
+            from_entry_id,
+            to_entry_id,
+            &merkle_root,
+            &leaf_hashes,
+        );
         Ok(checkpoint_id)
+    }
+
+    /// Zero-padded 32-byte Merkle leaf for an audit entry hash.
+    fn audit_leaf(env: &Env, entry_hash: u64) -> BytesN<32> {
+        let mut leaf_bytes = [0u8; 32];
+        leaf_bytes[..8].copy_from_slice(&entry_hash.to_le_bytes());
+        BytesN::from_array(env, &leaf_bytes)
+    }
+
+    /// Hash two Merkle nodes (left || right) with SHA-256.
+    fn audit_node(env: &Env, left: &BytesN<32>, right: &BytesN<32>) -> BytesN<32> {
+        let mut combined = soroban_sdk::Bytes::new(env);
+        combined.append(&left.clone().into());
+        combined.append(&right.clone().into());
+        env.crypto().sha256(&combined).into()
+    }
+
+    /// Recompute a Merkle root from a leaf, its index and the sibling path,
+    /// following the same tree shape as `compute_merkle_root` for `n` leaves:
+    /// a node without a sibling (last node of an odd level) is promoted
+    /// unchanged and consumes no proof element. Returns `None` if the proof
+    /// has the wrong length.
+    fn audit_proof_root(
+        env: &Env,
+        leaf: BytesN<32>,
+        leaf_index: u64,
+        n: u64,
+        proof: &Vec<BytesN<32>>,
+    ) -> Option<BytesN<32>> {
+        if n == 0 || leaf_index >= n {
+            return None;
+        }
+        let mut current = leaf;
+        let mut index = leaf_index;
+        let mut len = n;
+        let mut used: u32 = 0;
+        while len > 1 {
+            let promoted = index == len - 1 && !len.is_multiple_of(2);
+            if !promoted {
+                let sibling = proof.get(used)?;
+                used += 1;
+                current = if index.is_multiple_of(2) {
+                    Self::audit_node(env, &current, &sibling)
+                } else {
+                    Self::audit_node(env, &sibling, &current)
+                };
+            }
+            index /= 2;
+            len = len.div_ceil(2);
+        }
+        if used != proof.len() {
+            return None;
+        }
+        Some(current)
+    }
+
+    /// Leaf hashes of a compacted audit epoch, in entry order (Issue #2062).
+    ///
+    /// Leaf `i` is the `hash` of audit entry `from_entry_id + i`.
+    pub fn get_audit_checkpoint_leaves(env: Env, checkpoint_id: u64) -> Result<Vec<u64>, VaultError> {
+        storage::get_audit_checkpoint_leaves(&env, checkpoint_id).ok_or(VaultError::ProposalNotFound)
+    }
+
+    /// Build the Merkle inclusion proof for audit entry `entry_id`, which must
+    /// belong to `checkpoint_id` (Issue #2062).
+    pub fn get_audit_inclusion_proof(
+        env: Env,
+        checkpoint_id: u64,
+        entry_id: u64,
+    ) -> Result<Vec<BytesN<32>>, VaultError> {
+        let checkpoint = storage::get_audit_checkpoint(&env, checkpoint_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+        if entry_id < checkpoint.from_entry_id || entry_id > checkpoint.to_entry_id {
+            return Err(VaultError::InvalidAmount);
+        }
+        let hashes = storage::get_audit_checkpoint_leaves(&env, checkpoint_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+
+        let mut level: Vec<BytesN<32>> = Vec::new(&env);
+        for h in hashes.iter() {
+            level.push_back(Self::audit_leaf(&env, h));
+        }
+        let mut index = (entry_id - checkpoint.from_entry_id) as u32;
+        let mut proof: Vec<BytesN<32>> = Vec::new(&env);
+        while level.len() > 1 {
+            let len = level.len();
+            let promoted = index == len - 1 && !len.is_multiple_of(2);
+            if !promoted {
+                let sibling_index = if index.is_multiple_of(2) { index + 1 } else { index - 1 };
+                proof.push_back(level.get_unchecked(sibling_index));
+            }
+            let mut next: Vec<BytesN<32>> = Vec::new(&env);
+            let mut i = 0u32;
+            while i < len {
+                if i + 1 < len {
+                    next.push_back(Self::audit_node(
+                        &env,
+                        &level.get_unchecked(i),
+                        &level.get_unchecked(i + 1),
+                    ));
+                } else {
+                    next.push_back(level.get_unchecked(i));
+                }
+                i += 2;
+            }
+            level = next;
+            index /= 2;
+        }
+        Ok(proof)
+    }
+
+    /// Verify that a full archived audit entry belongs to a compacted epoch
+    /// (Issue #2062).
+    ///
+    /// The entry's hash is recomputed from its fields, so editing any field
+    /// (action, actor, target, timestamp, prev_hash) or the stored `hash`
+    /// makes verification fail. The leaf position is derived from `entry.id`,
+    /// so a genuine leaf cannot be passed off at another position either.
+    pub fn verify_archived_audit_entry(
+        env: Env,
+        checkpoint_id: u64,
+        entry: AuditEntry,
+        proof: Vec<BytesN<32>>,
+    ) -> bool {
+        let checkpoint = match storage::get_audit_checkpoint(&env, checkpoint_id) {
+            Some(c) => c,
+            None => return false,
+        };
+        if entry.id < checkpoint.from_entry_id || entry.id > checkpoint.to_entry_id {
+            return false;
+        }
+        let recomputed = storage::compute_audit_hash(
+            &env,
+            entry.id,
+            &entry.action,
+            &entry.actor,
+            entry.target,
+            entry.timestamp,
+            entry.prev_hash,
+        );
+        if recomputed != entry.hash {
+            return false;
+        }
+        let n = checkpoint.to_entry_id - checkpoint.from_entry_id + 1;
+        let index = entry.id - checkpoint.from_entry_id;
+        match Self::audit_proof_root(&env, Self::audit_leaf(&env, entry.hash), index, n, &proof) {
+            Some(root) => root == checkpoint.merkle_root,
+            None => false,
+        }
+    }
+
+    /// Set the audit retention policy (Admin only, Issue #2062).
+    ///
+    /// # Errors
+    /// `InvalidAmount` if `batch_size` is 0 or above 200.
+    pub fn set_audit_retention_policy(
+        env: Env,
+        admin: Address,
+        policy: types::AuditRetentionPolicy,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+        if policy.batch_size == 0 || policy.batch_size > 200 {
+            return Err(VaultError::InvalidAmount);
+        }
+        storage::set_audit_retention_policy(&env, &policy);
+        storage::extend_instance_ttl(&env);
+        events::emit_audit_retention_set(&env, &admin, policy.hot_window_entries, policy.batch_size);
+        Ok(())
+    }
+
+    /// Read the audit retention policy (Issue #2062).
+    pub fn get_audit_retention_policy(env: Env) -> types::AuditRetentionPolicy {
+        storage::get_audit_retention_policy(&env)
+    }
+
+    /// Range of audit entry IDs still stored individually, as
+    /// `(first_hot_id, last_id)` (Issue #2062). `first_hot_id > last_id` means
+    /// no hot entries remain.
+    pub fn get_audit_hot_range(env: Env) -> (u64, u64) {
+        (
+            storage::get_audit_compacted_through(&env) + 1,
+            storage::get_next_audit_id(&env).saturating_sub(1),
+        )
     }
 
     /// Retrieve a stored audit checkpoint.
@@ -9717,30 +10360,14 @@ impl VaultDAO {
             None => return false,
         };
 
-        // Reconstruct the leaf
-        let mut leaf_bytes = [0u8; 32];
-        leaf_bytes[..8].copy_from_slice(&entry_hash.to_le_bytes());
-        let mut current: BytesN<32> = BytesN::from_array(&env, &leaf_bytes);
-        let mut index = leaf_index;
-
-        // Walk up the proof path
-        for i in 0..proof.len() {
-            let sibling = proof.get(i).unwrap();
-            let mut combined = soroban_sdk::Bytes::new(&env);
-            if index.is_multiple_of(2) {
-                // current is left child
-                combined.append(&current.into());
-                combined.append(&sibling.into());
-            } else {
-                // current is right child
-                combined.append(&sibling.into());
-                combined.append(&current.into());
-            }
-            current = env.crypto().sha256(&combined).into();
-            index /= 2;
+        // Walk the proof using the checkpoint's tree shape, so leaves whose
+        // path crosses a promoted (sibling-less) node verify correctly (#2062).
+        let n = checkpoint.to_entry_id - checkpoint.from_entry_id + 1;
+        let leaf = Self::audit_leaf(&env, entry_hash);
+        match Self::audit_proof_root(&env, leaf, leaf_index, n, &proof) {
+            Some(root) => root == checkpoint.merkle_root,
+            None => false,
         }
-
-        current == checkpoint.merkle_root
     }
 
     // ========================================================================
@@ -12800,6 +13427,15 @@ impl VaultDAO {
 
     /// Get the current price of an asset in USD from the configured oracle.
     pub fn get_asset_price(env: &Env, asset: Address) -> Result<i128, VaultError> {
+        Ok(Self::fetch_oracle_price(env, &asset)?.price)
+    }
+
+    /// Fetch a fresh, positive oracle price together with its timestamp.
+    ///
+    /// Same checks as [`Self::get_asset_price`]: a stale price fails with
+    /// `OraclePriceStale`, a non-positive one with `OracleError`.
+    fn fetch_oracle_price(env: &Env, asset: &Address) -> Result<VaultPriceData, VaultError> {
+        let asset = asset.clone();
         let oracle_cfg = match storage::get_oracle_config(env) {
             crate::OptionalVaultOracleConfig::Some(cfg) => cfg,
             crate::OptionalVaultOracleConfig::None => return Err(VaultError::OracleNotConfigured),
@@ -12832,7 +13468,7 @@ impl VaultDAO {
                 if data.price <= 0 {
                     return Err(VaultError::OracleError);
                 }
-                Ok(data.price)
+                Ok(data)
             }
             None => Err(VaultError::OracleError), // Price not found
         }
@@ -13255,6 +13891,7 @@ impl VaultDAO {
             SwapProposal::StakeLp(farm, ..) => farm,
             SwapProposal::UnstakeLp(farm, ..) => farm,
             SwapProposal::ClaimRewards(farm) => farm,
+            SwapProposal::RoutedSwap(args) => &args.dex,
         };
         if !dex_config.enabled_dexs.contains(dex_addr) {
             return Err(VaultError::DexError);
@@ -13313,6 +13950,17 @@ impl VaultDAO {
                 0,
                 Vec::new(&env),
             ),
+            // Only the first token leaves the treasury; intermediate hops net
+            // to zero and the final token flows in, so spending limits count
+            // `amount_in` of `path[0]` exactly once (#2057).
+            SwapProposal::RoutedSwap(args) => {
+                Self::validate_routed_swap(args, &dex_config)?;
+                (
+                    args.path.get_unchecked(0),
+                    args.amount_in,
+                    args.path.clone(),
+                )
+            }
         };
         for token in touched_tokens.iter() {
             if !config.supported_tokens.contains(&token) {
@@ -13636,6 +14284,10 @@ impl VaultDAO {
                 let price_in = Self::get_asset_price(env, token_in.clone())?;
                 let price_out = Self::get_asset_price(env, token_out.clone())?;
 
+                // TWAP deviation guard, when configured (#2057)
+                Self::check_twap_guard(env, token_in, price_in, false)?;
+                Self::check_twap_guard(env, token_out, price_out, false)?;
+
                 // TODO: Replace with actual DEX contract cross-contract invocation
                 // For now, simulate the swap with realistic behavior
                 let simulated_amount_out = amount_in
@@ -13769,6 +14421,9 @@ impl VaultDAO {
                     executed_at: env.ledger().sequence() as u64,
                 })
             }
+            SwapProposal::RoutedSwap(args) => {
+                Self::perform_routed_swap(env, dex_config, args, proposal_id)
+            }
             SwapProposal::ClaimRewards(farm) => {
                 // TODO: Replace with actual farm contract call for claiming rewards
                 let simulated_rewards = 100; // Mock reward amount
@@ -13803,6 +14458,10 @@ impl VaultDAO {
                 // Get pre-execution oracle prices for price impact calculation
                 let price_in = Self::get_asset_price(env, token_in.clone())?;
                 let price_out = Self::get_asset_price(env, token_out.clone())?;
+
+                // TWAP deviation guard, when configured (#2057)
+                Self::check_twap_guard(env, token_in, price_in, false)?;
+                Self::check_twap_guard(env, token_out, price_out, false)?;
 
                 // TODO: Replace with actual DEX contract call
                 // For now, simulate the swap with realistic slippage
@@ -13933,6 +14592,9 @@ impl VaultDAO {
                     executed_at: env.ledger().sequence() as u64,
                 })
             }
+            SwapProposal::RoutedSwap(args) => {
+                Self::perform_routed_swap(env, dex_config, args, proposal_id)
+            }
             SwapProposal::ClaimRewards(farm) => {
                 // TODO: Replace with actual farm contract call for claiming rewards
                 let simulated_rewards = 100; // Mock reward amount
@@ -13947,6 +14609,275 @@ impl VaultDAO {
                 })
             }
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // Issue #2057: TWAP guard and routed (multi-hop) swaps
+    // ------------------------------------------------------------------------
+
+    /// Maximum number of tokens in a routed swap path (3 hops).
+    const MAX_SWAP_PATH: u32 = 4;
+
+    /// Static checks on a routed swap, run at proposal and execution time.
+    fn validate_routed_swap(args: &types::RoutedSwapArgs, dex_config: &DexConfig) -> Result<(), VaultError> {
+        let len = args.path.len();
+        if !(2..=Self::MAX_SWAP_PATH).contains(&len) {
+            return Err(VaultError::SwapPathInvalid);
+        }
+        for i in 0..len {
+            let t = args.path.get_unchecked(i);
+            for j in (i + 1)..len {
+                if args.path.get_unchecked(j) == t {
+                    return Err(VaultError::SwapPathInvalid);
+                }
+            }
+        }
+        if args.amount_in <= 0 || args.min_amount_out <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        if args.max_slippage_bps > 10_000 || args.max_slippage_bps > dex_config.max_slippage_bps {
+            return Err(VaultError::SwapSlippageExceeded);
+        }
+        if !dex_config.enabled_dexs.contains(&args.dex) {
+            return Err(VaultError::DexError);
+        }
+        Ok(())
+    }
+
+    /// Time-weighted average price of `asset` over the configured window.
+    ///
+    /// Each observation is weighted by how long it stood (until the next one,
+    /// or until `now` for the newest). Fails closed with `TwapUnavailable`
+    /// when fewer than `min_observations` samples fall inside the window.
+    fn compute_twap(
+        env: &Env,
+        asset: &Address,
+        cfg: &types::TwapGuardConfig,
+    ) -> Result<i128, VaultError> {
+        let now = env.ledger().timestamp();
+        let window_start = now.saturating_sub(cfg.window_secs);
+        let all = storage::get_price_observations(env, asset);
+
+        let mut in_window: Vec<types::PriceObservation> = Vec::new(env);
+        for obs in all.iter() {
+            if obs.timestamp >= window_start && obs.timestamp <= now {
+                in_window.push_back(obs);
+            }
+        }
+        let n = in_window.len();
+        if n == 0 || n < cfg.min_observations {
+            return Err(VaultError::TwapUnavailable);
+        }
+
+        let mut weighted: i128 = 0;
+        let mut total_secs: i128 = 0;
+        let mut plain_sum: i128 = 0;
+        for i in 0..n {
+            let obs = in_window.get_unchecked(i);
+            let until = if i + 1 < n {
+                in_window.get_unchecked(i + 1).timestamp
+            } else {
+                now
+            };
+            let dt = until.saturating_sub(obs.timestamp) as i128;
+            weighted = obs
+                .price
+                .checked_mul(dt)
+                .and_then(|v| v.checked_add(weighted))
+                .ok_or(VaultError::ArithmeticOverflow)?;
+            total_secs += dt;
+            plain_sum = plain_sum
+                .checked_add(obs.price)
+                .ok_or(VaultError::ArithmeticOverflow)?;
+        }
+        let twap = if total_secs > 0 {
+            weighted / total_secs
+        } else {
+            plain_sum / n as i128
+        };
+        if twap <= 0 {
+            return Err(VaultError::TwapUnavailable);
+        }
+        Ok(twap)
+    }
+
+    /// Reject `spot` if it deviates from the TWAP by more than the configured
+    /// band. With no TWAP config the guard is skipped unless `required`, in
+    /// which case it fails closed.
+    fn check_twap_guard(env: &Env, asset: &Address, spot: i128, required: bool) -> Result<(), VaultError> {
+        let cfg = match storage::get_twap_config(env) {
+            Some(c) => c,
+            None if required => return Err(VaultError::TwapUnavailable),
+            None => return Ok(()),
+        };
+        let twap = Self::compute_twap(env, asset, &cfg)?;
+        let diff = (spot - twap).abs();
+        let deviation_bps = diff
+            .checked_mul(10_000)
+            .ok_or(VaultError::ArithmeticOverflow)?
+            / twap;
+        if deviation_bps > cfg.max_deviation_bps as i128 {
+            return Err(VaultError::TwapDeviationExceeded);
+        }
+        Ok(())
+    }
+
+    /// Execute a routed swap atomically.
+    ///
+    /// Every leg is priced and checked before anything is recorded: fresh
+    /// oracle prices (stale aborts), TWAP band on every token, intermediate
+    /// balances netting to zero, and the final output against both
+    /// `min_amount_out` and the slippage band. A failure on any leg returns
+    /// an error, and Soroban discards the whole invocation, so no partial leg
+    /// is ever left settled.
+    fn perform_routed_swap(
+        env: &Env,
+        dex_config: &DexConfig,
+        args: &types::RoutedSwapArgs,
+        proposal_id: u64,
+    ) -> Result<SwapResult, VaultError> {
+        Self::validate_routed_swap(args, dex_config)?;
+
+        // Price every token once (stale or missing price aborts) and guard it.
+        let mut prices: Vec<i128> = Vec::new(env);
+        for token in args.path.iter() {
+            let spot = Self::get_asset_price(env, token.clone())?;
+            Self::check_twap_guard(env, &token, spot, true)?;
+            prices.push_back(spot);
+        }
+
+        let hops = args.path.len() - 1;
+        let mut legs: Vec<types::SwapLeg> = Vec::new(env);
+        let mut leg_amount = args.amount_in;
+        for i in 0..hops {
+            // TODO: Replace with the DEX router call; simulate 1% per hop as
+            // the single-hop `Swap` path does.
+            let out = leg_amount
+                .checked_mul(99)
+                .ok_or(VaultError::ArithmeticOverflow)?
+                / 100;
+            if out <= 0 {
+                return Err(VaultError::SwapPathInvalid);
+            }
+            legs.push_back(types::SwapLeg {
+                token_in: args.path.get_unchecked(i),
+                token_out: args.path.get_unchecked(i + 1),
+                amount_in: leg_amount,
+                amount_out: out,
+            });
+            leg_amount = out;
+        }
+
+        // Intermediate balance invariant: what leg i produces of token i+1 is
+        // exactly what leg i+1 consumes, so no intermediate token is left in
+        // (or taken from) the treasury.
+        for i in 0..hops.saturating_sub(1) {
+            let produced = legs.get_unchecked(i).amount_out;
+            let consumed = legs.get_unchecked(i + 1).amount_in;
+            if produced != consumed {
+                return Err(VaultError::SwapPathInvalid);
+            }
+        }
+
+        let amount_out = leg_amount;
+        let price_in = prices.get_unchecked(0);
+        let price_out = prices.get_unchecked(hops);
+        let slippage_bps = compute_swap_price_impact(args.amount_in, price_in, price_out, amount_out)?;
+
+        if slippage_bps > args.max_slippage_bps || slippage_bps > dex_config.max_price_impact_bps {
+            return Err(VaultError::SwapSlippageExceeded);
+        }
+        if amount_out < args.min_amount_out {
+            return Err(VaultError::SwapSlippageExceeded);
+        }
+
+        let token_in = args.path.get_unchecked(0);
+        let token_out = args.path.get_unchecked(hops);
+        storage::set_swap_legs(env, proposal_id, &legs);
+        events::emit_routed_swap_executed(
+            env,
+            proposal_id,
+            &args.dex,
+            &token_in,
+            &token_out,
+            args.amount_in,
+            amount_out,
+            hops,
+        );
+
+        Ok(SwapResult {
+            amount_in: args.amount_in,
+            amount_out,
+            price_impact_bps: slippage_bps,
+            executed_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Configure the TWAP guard (Admin only, Issue #2057).
+    ///
+    /// # Errors
+    /// `InvalidAmount` if `window_secs` is 0, `min_observations` is 0, or
+    /// `max_deviation_bps` exceeds 10 000.
+    pub fn set_twap_config(
+        env: Env,
+        admin: Address,
+        config: types::TwapGuardConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        if config.window_secs == 0 || config.min_observations == 0 || config.max_deviation_bps > 10_000 {
+            return Err(VaultError::InvalidAmount);
+        }
+        storage::set_twap_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+        events::emit_twap_config_set(
+            &env,
+            &admin,
+            config.window_secs,
+            config.max_deviation_bps,
+            config.min_observations,
+        );
+        Ok(())
+    }
+
+    /// Read the TWAP guard configuration (Issue #2057).
+    pub fn get_twap_config(env: Env) -> Option<types::TwapGuardConfig> {
+        storage::get_twap_config(&env)
+    }
+
+    /// Record the oracle's current price for `asset` as a TWAP observation.
+    ///
+    /// Permissionless (keepers call it on a schedule). Stale prices are
+    /// refused with `OraclePriceStale`. A sample whose oracle timestamp is not
+    /// newer than the last stored one is not stored again. Returns the price.
+    pub fn record_price_observation(env: Env, asset: Address) -> Result<i128, VaultError> {
+        let data = Self::fetch_oracle_price(&env, &asset)?;
+        let obs = types::PriceObservation {
+            price: data.price,
+            timestamp: data.timestamp,
+        };
+        if storage::push_price_observation(&env, &asset, &obs) {
+            events::emit_price_observed(&env, &asset, data.price, data.timestamp);
+        }
+        Ok(data.price)
+    }
+
+    /// Stored TWAP observations for `asset`, oldest first (Issue #2057).
+    pub fn get_price_observations(env: Env, asset: Address) -> Vec<types::PriceObservation> {
+        storage::get_price_observations(&env, &asset)
+    }
+
+    /// Current TWAP for `asset` under the configured guard (Issue #2057).
+    pub fn get_twap(env: Env, asset: Address) -> Result<i128, VaultError> {
+        let cfg = storage::get_twap_config(&env).ok_or(VaultError::TwapUnavailable)?;
+        Self::compute_twap(&env, &asset, &cfg)
+    }
+
+    /// Legs settled by an executed routed swap (Issue #2057).
+    pub fn get_swap_legs(env: Env, proposal_id: u64) -> Vec<types::SwapLeg> {
+        storage::get_swap_legs(&env, proposal_id)
     }
 
     pub fn register_pre_hook(env: Env, admin: Address, hook: Address) -> Result<(), VaultError> {
@@ -15543,6 +16474,109 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Release an escrow by mutual consent of funder and recipient (Issue #2142).
+    ///
+    /// No arbitrator is involved. The funder and the recipient each call this
+    /// with the amount they agree the recipient should receive from the escrow's
+    /// remaining balance. The first call records that party's consent. The second
+    /// call, with the same amount, settles: `release_amount` goes to the recipient
+    /// and the rest of the remaining balance is returned to the funder.
+    ///
+    /// A second call with a different amount is rejected with `InvalidAmount`, and
+    /// the first party's consent stays recorded. Only the funder or the recipient
+    /// may call this; admins cannot release on their behalf.
+    pub fn consent_release_escrow(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        release_amount: i128,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        require_not_paused(&env)?;
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+
+        let is_funder = caller == escrow.funder;
+        if !is_funder && caller != escrow.recipient {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if escrow.status != EscrowStatus::Active
+            && escrow.status != EscrowStatus::MilestonesComplete
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let remaining = escrow.total_amount - escrow.released_amount;
+        if release_amount < 0 || release_amount > remaining {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut consent = storage::get_escrow_consent(&env, escrow_id).unwrap_or(EscrowConsent {
+            funder_amount: None,
+            recipient_amount: None,
+        });
+
+        // Record the caller's consent. A party may only consent once, and must agree
+        // with the amount the other party already recorded.
+        if is_funder {
+            if consent.funder_amount.is_some() {
+                return Err(VaultError::AlreadyApproved);
+            }
+            if consent.recipient_amount.is_some_and(|a| a != release_amount) {
+                return Err(VaultError::InvalidAmount);
+            }
+            consent.funder_amount = Some(release_amount);
+        } else {
+            if consent.recipient_amount.is_some() {
+                return Err(VaultError::AlreadyApproved);
+            }
+            if consent.funder_amount.is_some_and(|a| a != release_amount) {
+                return Err(VaultError::InvalidAmount);
+            }
+            consent.recipient_amount = Some(release_amount);
+        }
+
+        if consent.funder_amount.is_some() && consent.recipient_amount.is_some() {
+            let current_ledger = env.ledger().sequence() as u64;
+            let to_recipient = release_amount;
+            let to_funder = remaining - release_amount;
+
+            if to_recipient > 0 {
+                token::transfer(&env, &escrow.token, &escrow.recipient, to_recipient);
+                storage::release_escrow_reserve(&env, &escrow.token, to_recipient);
+                events::emit_escrow_released(
+                    &env,
+                    escrow_id,
+                    &escrow.recipient,
+                    to_recipient,
+                    false,
+                );
+            }
+            if to_funder > 0 {
+                token::transfer(&env, &escrow.token, &escrow.funder, to_funder);
+                storage::release_escrow_reserve(&env, &escrow.token, to_funder);
+                events::emit_escrow_released(&env, escrow_id, &escrow.funder, to_funder, true);
+            }
+
+            escrow.released_amount = escrow.total_amount;
+            escrow.status = if to_recipient > 0 {
+                EscrowStatus::Released
+            } else {
+                EscrowStatus::Refunded
+            };
+            escrow.finalized_at = current_ledger;
+            storage::set_escrow(&env, &escrow);
+            storage::remove_escrow_consent(&env, escrow_id);
+        } else {
+            storage::set_escrow_consent(&env, escrow_id, &consent);
+        }
+
+        storage::create_audit_entry(&env, AuditAction::EscrowReleased, &caller, escrow_id);
+
+        Ok(())
+    }
+
     /// Query escrow details
     pub fn get_escrow_info(env: Env, escrow_id: u64) -> Result<Escrow, VaultError> {
         storage::get_escrow(&env, escrow_id)
@@ -15807,6 +16841,12 @@ impl VaultDAO {
         config.recovery_config = proposal.new_config.clone();
         storage::set_config(&env, &config);
 
+        // New guardians start a new epoch: open recoveries approved under the
+        // old guardian set are cancelled and can no longer be approved (#2059).
+        Self::cancel_competing_recoveries(&env, 0);
+        let new_epoch = storage::bump_recovery_epoch(&env);
+        events::emit_recovery_epoch_advanced(&env, new_epoch);
+
         proposal.status = ProposalStatus::Executed;
         storage::set_recovery_config_change_proposal(&env, &proposal);
         storage::set_active_governance_count(
@@ -15852,11 +16892,25 @@ impl VaultDAO {
             return Err(VaultError::ThresholdTooHigh);
         }
 
-        // Issue #1934: refuse to open a second recovery while one is still live.
+        // Issue #1934 / #2059: a single recovery is open at a time. Under the
+        // Supersede policy a new recovery cancels an open Pending one; an
+        // Approved recovery is never superseded (only a guardian quorum can
+        // cancel it). An expired one no longer blocks a new recovery.
+        let mut superseded: Option<u64> = None;
         if let Some(active_id) = storage::get_active_recovery_id(&env) {
-            if let Ok(active) = storage::get_recovery_proposal(&env, active_id) {
+            if let Ok(mut active) = storage::get_recovery_proposal(&env, active_id) {
                 if Self::recovery_is_open(&env, &active) {
-                    return Err(VaultError::RecoveryAlreadyActive);
+                    let policy = storage::get_recovery_competition_policy(&env);
+                    if policy == types::RecoveryCompetitionPolicy::Reject
+                        || active.status == RecoveryStatus::Approved
+                    {
+                        return Err(VaultError::RecoveryAlreadyActive);
+                    }
+                    active.status = RecoveryStatus::Cancelled;
+                    active.approvals = Vec::new(&env);
+                    active.cancel_votes = Vec::new(&env);
+                    storage::set_recovery_proposal(&env, &active);
+                    superseded = Some(active_id);
                 }
             }
         }
@@ -15882,10 +16936,15 @@ impl VaultDAO {
             created_at: current_ledger,
             execution_after: 0, // Set after approval threshold is met
             expires_at,
+            epoch: storage::get_recovery_epoch(&env),
         };
 
         storage::set_recovery_proposal(&env, &proposal);
         storage::set_active_recovery_id(&env, id);
+        if let Some(old_id) = superseded {
+            events::emit_recovery_superseded(&env, old_id, id);
+            events::emit_recovery_cancelled(&env, old_id, &caller);
+        }
         events::emit_recovery_proposed(&env, id, new_threshold);
 
         Ok(id)
@@ -15898,6 +16957,168 @@ impl VaultDAO {
         proposal_id: u64,
     ) -> Result<(), VaultError> {
         guardian.require_auth();
+        Self::approve_recovery_internal(&env, &guardian, proposal_id)
+    }
+
+    /// Approve a recovery with a cold-storage Ed25519 signature (Issue #2059).
+    ///
+    /// The guardian must be registered as a cold signer (`public_key` paired
+    /// with `guardian` in `ColdSignerConfig`). The signed message is
+    ///
+    /// ```text
+    /// "VaultDAO:recovery-approve:v1" || XDR(vault address)
+    ///   || proposal_id (u64 BE) || recovery epoch (u64 BE) || created_at_ledger (u32 BE)
+    /// ```
+    ///
+    /// Binding the vault, the proposal and the recovery epoch means an
+    /// approval signed for an earlier ceremony never verifies for a later one.
+    /// The signature must also pass the cold-signature age check, must not
+    /// predate the proposal, and can be used only once.
+    ///
+    /// # Errors
+    /// * `ColdSignerConfigNotSet` / `NotAColdSigner` - key not registered for `guardian`.
+    /// * `ColdSignatureTooOld` / `ColdSignatureFutureDated` - age check failed.
+    /// * `RecoverySignatureReplayed` - signature already used.
+    /// * `RecoveryEpochStale` - proposal is from an older recovery epoch.
+    /// * Traps if the signature does not verify.
+    pub fn approve_recovery_with_signature(
+        env: Env,
+        guardian: Address,
+        proposal_id: u64,
+        public_key: BytesN<32>,
+        signature: BytesN<64>,
+        created_at_ledger: u32,
+    ) -> Result<(), VaultError> {
+        let cold_config = storage::get_cold_signer_config(&env);
+        if cold_config.cold_signers.is_empty() {
+            return Err(VaultError::ColdSignerConfigNotSet);
+        }
+        let mut paired = false;
+        for i in 0..cold_config.cold_signers.len() {
+            if cold_config.cold_signers.get_unchecked(i) == public_key
+                && cold_config.cold_signer_addresses.get(i) == Some(guardian.clone())
+            {
+                paired = true;
+                break;
+            }
+        }
+        if !paired {
+            return Err(VaultError::NotAColdSigner);
+        }
+
+        Self::assert_cold_signature_age(&env, &cold_config, created_at_ledger)?;
+
+        let proposal = storage::get_recovery_proposal(&env, proposal_id)?;
+        if proposal.epoch != storage::get_recovery_epoch(&env) {
+            return Err(VaultError::RecoveryEpochStale);
+        }
+        // A signature cannot honestly approve a proposal that did not exist yet
+        if (created_at_ledger as u64) < proposal.created_at {
+            return Err(VaultError::ColdSignatureTooOld);
+        }
+
+        let sig_hash: BytesN<32> = env.crypto().sha256(&signature.clone().to_xdr(&env)).into();
+        if storage::is_recovery_sig_used(&env, &sig_hash) {
+            return Err(VaultError::RecoverySignatureReplayed);
+        }
+
+        let message =
+            Self::recovery_approval_message(&env, proposal_id, proposal.epoch, created_at_ledger);
+        // Traps (aborting the whole call) if the signature does not verify.
+        env.crypto().ed25519_verify(&public_key, &message, &signature);
+
+        storage::mark_recovery_sig_used(&env, &sig_hash);
+        Self::approve_recovery_internal(&env, &guardian, proposal_id)
+    }
+
+    /// Build the message a guardian signs offline to approve a recovery.
+    fn recovery_approval_message(
+        env: &Env,
+        proposal_id: u64,
+        epoch: u64,
+        created_at_ledger: u32,
+    ) -> soroban_sdk::Bytes {
+        let mut message = soroban_sdk::Bytes::from_slice(env, RECOVERY_APPROVAL_DOMAIN);
+        message.append(&env.current_contract_address().to_xdr(env));
+        message.extend_from_array(&proposal_id.to_be_bytes());
+        message.extend_from_array(&epoch.to_be_bytes());
+        message.extend_from_array(&created_at_ledger.to_be_bytes());
+        message
+    }
+
+    /// Current recovery epoch (Issue #2059). It advances whenever a recovery
+    /// executes or the recovery config changes; proposals and approvals from
+    /// an older epoch are rejected.
+    pub fn get_recovery_epoch(env: Env) -> u64 {
+        storage::get_recovery_epoch(&env)
+    }
+
+    /// Set the competing-recovery policy (Admin only, Issue #2059).
+    pub fn set_recovery_competition_policy(
+        env: Env,
+        admin: Address,
+        policy: types::RecoveryCompetitionPolicy,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        storage::set_recovery_competition_policy(&env, policy);
+        storage::extend_instance_ttl(&env);
+        events::emit_recovery_policy_set(&env, &admin, policy as u32);
+        Ok(())
+    }
+
+    /// Read the competing-recovery policy (Issue #2059).
+    pub fn get_recovery_competition_policy(env: Env) -> types::RecoveryCompetitionPolicy {
+        storage::get_recovery_competition_policy(&env)
+    }
+
+    /// Persist an expired recovery as `Expired` and drop its pending votes
+    /// (Issue #2059). Permissionless.
+    ///
+    /// # Errors
+    /// * `ProposalNotPending` - the recovery is not Pending/Approved.
+    /// * `TimelockNotExpired` - the recovery has not expired yet.
+    pub fn expire_recovery(env: Env, proposal_id: u64) -> Result<(), VaultError> {
+        let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
+        if proposal.status != RecoveryStatus::Pending && proposal.status != RecoveryStatus::Approved {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if !Self::recovery_is_expired(&env, &proposal) {
+            return Err(VaultError::TimelockNotExpired);
+        }
+        Self::close_expired_recovery(&env, &mut proposal);
+        Ok(())
+    }
+
+    /// Mark an expired, still-open recovery as `Expired`, clearing its
+    /// approvals and cancel votes so none of them can be counted later.
+    fn close_expired_recovery(env: &Env, proposal: &mut RecoveryProposal) {
+        let open = proposal.status == RecoveryStatus::Pending
+            || proposal.status == RecoveryStatus::Approved;
+        if !open || !Self::recovery_is_expired(env, proposal) {
+            return;
+        }
+        let approvals = proposal.approvals.len();
+        let cancel_votes = proposal.cancel_votes.len();
+        proposal.status = RecoveryStatus::Expired;
+        proposal.approvals = Vec::new(env);
+        proposal.cancel_votes = Vec::new(env);
+        proposal.execution_after = 0;
+        storage::set_recovery_proposal(env, proposal);
+        events::emit_recovery_expired(env, proposal.id, approvals, cancel_votes);
+    }
+
+    /// Shared approval path for `approve_recovery` and
+    /// `approve_recovery_with_signature`.
+    fn approve_recovery_internal(
+        env: &Env,
+        guardian: &Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        let env = env.clone();
+        let guardian = guardian.clone();
 
         let config = storage::get_config(&env)?;
         if !config.recovery_config.guardians.contains(&guardian) {
@@ -15910,6 +17131,10 @@ impl VaultDAO {
         }
         if Self::recovery_is_expired(&env, &proposal) {
             return Err(VaultError::ProposalExpired);
+        }
+        // Votes for an older ceremony cannot be replayed into a new one (#2059)
+        if proposal.epoch != storage::get_recovery_epoch(&env) {
+            return Err(VaultError::RecoveryEpochStale);
         }
 
         if proposal.approvals.contains(&guardian) {
@@ -16140,6 +17365,11 @@ impl VaultDAO {
         if Self::recovery_is_expired(&env, &proposal) {
             return Err(VaultError::ProposalExpired);
         }
+        // A recovery approved in an older epoch (before another recovery or a
+        // guardian change) cannot replace the current signer set (#2059)
+        if proposal.epoch != storage::get_recovery_epoch(&env) {
+            return Err(VaultError::RecoveryEpochStale);
+        }
 
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger < proposal.execution_after {
@@ -16238,6 +17468,12 @@ impl VaultDAO {
         proposal.status = RecoveryStatus::Executed;
         storage::set_recovery_proposal(&env, &proposal);
         Self::cancel_competing_recoveries(&env, proposal_id);
+
+        // Signer swap, role revocation and the epoch bump all land in this one
+        // invocation: there is no state in which the new signers are active
+        // but a removed signer still holds a role (#2059).
+        let new_epoch = storage::bump_recovery_epoch(&env);
+        events::emit_recovery_epoch_advanced(&env, new_epoch);
 
         events::emit_recovery_executed(&env, proposal_id);
         if !invalidated_ids.is_empty() {
@@ -17816,6 +19052,52 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Expire a bridge transfer whose receipt was never confirmed (Issue #2143).
+    ///
+    /// Anyone may call this once the transfer's `deadline_ledger` has passed while
+    /// the record is still `Initiated`. The bridged amount is refunded to the
+    /// source vault and the record is marked `Returned`. Calls before the deadline
+    /// are rejected with `TimelockNotExpired`.
+    ///
+    /// This is a separate entrypoint because `confirm_bridge_receipt` returns an
+    /// error after the deadline, which reverts its refund. Here the refund persists.
+    pub fn expire_bridge_transfer(
+        env: Env,
+        bridge_id: soroban_sdk::BytesN<32>,
+    ) -> Result<(), VaultError> {
+        require_not_paused(&env)?;
+
+        let mut bridge_record = storage::get_bridge_record(&env, bridge_id.clone())
+            .ok_or(VaultError::BridgeInvalidId)?;
+
+        if bridge_record.status != crate::types::BridgeStatus::Initiated {
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger <= bridge_record.deadline_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        token::transfer(
+            &env,
+            &bridge_record.token,
+            &bridge_record.source_vault,
+            bridge_record.amount,
+        );
+        bridge_record.status = crate::types::BridgeStatus::Returned;
+        bridge_record.finalized_at = current_ledger;
+        storage::set_bridge_record(&env, &bridge_record);
+        events::emit_bridge_funds_returned(
+            &env,
+            &bridge_id,
+            &bridge_record.source_vault,
+            bridge_record.amount,
+        );
+
+        Ok(())
+    }
+
     /// Propose a cross-vault transfer. Creates a standard proposal that, when
     /// approved and executed via `execute_cross_vault`, will invoke each target
     /// vault's `execute_proposal` via cross-contract call.
@@ -17939,6 +19221,14 @@ impl VaultDAO {
         require_not_paused(&env)?;
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Issue #2144: a vault only executes proposals from its own ID namespace.
+        // If two vaults share a prefix, IDs collide and cross-vault lookups can
+        // return another vault's data, so the registered prefix is enforced here.
+        let prefix = storage::get_config(&env)?.proposal_id_prefix;
+        if prefix != 0 && (proposal_id / 1_000_000) * 1_000_000 != prefix {
+            return Err(VaultError::InvalidProposalIdPrefix);
+        }
 
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
@@ -18907,31 +20197,21 @@ impl VaultDAO {
     // Reputation Config (Issue: feature/reputation-system)
     // ========================================================================
 
-    /// Set the admin-configurable reputation decay parameters.
+    /// Direct update of the reputation decay parameters is no longer allowed.
     ///
-    /// Only Admin can call this. Emits `rep_config_updated` and `config_updated`.
-    ///
-    /// # Arguments
-    /// * `admin`  - Admin address (must authorize)
-    /// * `config` - New `ReputationConfig` with `decay_half_life_ledgers` and `decay_min_score`
+    /// Reputation parameters affect voting power, so they must go through the
+    /// governance flow (Issue #2145): `propose_config_change` with
+    /// `ConfigParam::ReputationHalfLife` / `ConfigParam::ReputationDecayFloor`,
+    /// then `approve_config_change` to the governance threshold, then
+    /// `execute_config_change`. This call always returns `InsufficientRole`,
+    /// the same as `set_full_quorum_threshold`.
     pub fn set_reputation_config(
-        env: Env,
+        _env: Env,
         admin: Address,
-        config: ReputationConfig,
+        _config: ReputationConfig,
     ) -> Result<(), VaultError> {
         admin.require_auth();
-
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-
-        storage::set_reputation_config(&env, &config);
-        storage::extend_instance_ttl(&env);
-
-        events::emit_reputation_config_updated(&env, &admin);
-        events::emit_config_updated(&env, &admin);
-
-        Ok(())
+        Err(VaultError::InsufficientRole)
     }
 
     /// Get the current reputation decay configuration.
@@ -19433,7 +20713,13 @@ impl VaultDAO {
     /// `SchemaVersionMismatch`. Add one `if` step per version bump below.
     pub fn migrate(env: Env, admin: Address, from_version: u32) -> Result<(), VaultError> {
         admin.require_auth();
-        storage::get_config_unchecked(&env)?;
+        if !env
+            .storage()
+            .instance()
+            .has(&storage::DataKey::Config)
+        {
+            return Err(VaultError::NotInitialized);
+        }
         if storage::get_role(&env, &admin) != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
@@ -19441,7 +20727,39 @@ impl VaultDAO {
         if stored != from_version || from_version > storage::CURRENT_SCHEMA_VERSION {
             return Err(VaultError::SchemaVersionMismatch);
         }
-        // Version 0 -> 1: pre-versioning deployments; no data rewrite needed.
+        if from_version == storage::CURRENT_SCHEMA_VERSION {
+            storage::get_config_unchecked(&env)?;
+        }
+        if from_version < 2 {
+            let config: Config = storage::get_config_v1_unchecked(&env)?.into();
+            storage::set_config(&env, &config);
+
+            for proposal_id in
+                storage::get_proposal_ids_for_status(&env, ProposalStatus::Pending)
+            {
+                if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                    if proposal.status == ProposalStatus::Pending {
+                        storage::index_pending_proposal_for_proposer(
+                            &env,
+                            &proposal.proposer,
+                            proposal_id,
+                        );
+                    }
+                }
+            }
+
+            for stream_id in 1..storage::get_next_stream_id(&env) {
+                if let Ok(stream) = storage::get_streaming_payment(&env, stream_id) {
+                    if stream.status == StreamStatus::Active {
+                        storage::index_active_stream_for_recipient(
+                            &env,
+                            &stream.recipient,
+                            stream_id,
+                        );
+                    }
+                }
+            }
+        }
         storage::set_schema_version(&env, storage::CURRENT_SCHEMA_VERSION);
         Ok(())
     }
@@ -21033,6 +22351,17 @@ impl VaultDAO {
                     return Err(VaultError::InvalidAmount);
                 }
             }
+            // Issue #2145: reputation parameters are routed through governance.
+            ConfigParam::ReputationHalfLife => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+            ConfigParam::ReputationDecayFloor => {
+                if !(0..=1000).contains(&new_value) {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
         }
 
         let current_ledger = env.ledger().sequence() as u64;
@@ -21131,6 +22460,19 @@ impl VaultDAO {
             // Issue #1634: apply full_quorum_threshold via governance, not direct admin call.
             ConfigParam::FullQuorumThreshold => {
                 config.full_quorum_threshold = gp.new_value;
+            }
+            // Issue #2145: reputation config is applied only through this path.
+            ConfigParam::ReputationHalfLife => {
+                let mut rep = storage::get_reputation_config(&env);
+                rep.decay_half_life_ledgers = gp.new_value as u64;
+                storage::set_reputation_config(&env, &rep);
+                events::emit_reputation_config_updated(&env, &caller);
+            }
+            ConfigParam::ReputationDecayFloor => {
+                let mut rep = storage::get_reputation_config(&env);
+                rep.decay_min_score = gp.new_value as u32;
+                storage::set_reputation_config(&env, &rep);
+                events::emit_reputation_config_updated(&env, &caller);
             }
         }
 

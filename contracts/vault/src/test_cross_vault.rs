@@ -1,6 +1,10 @@
 use super::*;
 use crate::{VaultDAO, VaultDAOClient};
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Env, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token::StellarAssetClient,
+    Env, Vec,
+};
 
 fn init_vault(env: &Env, client: &VaultDAOClient<'_>, admin: &Address, threshold: u32) -> Address {
     let signer2 = Address::generate(env);
@@ -442,4 +446,205 @@ fn test_bridge_invalid_deadline() {
         &(current_ledger as u64),
     );
     assert_eq!(result, Err(Ok(VaultError::BridgeDeadlineExceeded)));
+}
+
+// ============================================================================
+// Issue #2143: bridge transfer expiry
+// ============================================================================
+
+/// Sets up a source and target vault, funds the source, and starts a bridge
+/// transfer of 100 tokens with `deadline_ledger` = current + 100.
+/// Returns (source_client, source_vault_id, token, bridge_id, deadline_ledger).
+fn setup_pending_bridge(
+    env: &Env,
+) -> (
+    VaultDAOClient<'_>,
+    Address,
+    Address,
+    soroban_sdk::BytesN<32>,
+    u64,
+) {
+    let source_vault_id = env.register(VaultDAO, ());
+    let target_vault_id = env.register(VaultDAO, ());
+    let source_client = VaultDAOClient::new(env, &source_vault_id);
+    let target_client = VaultDAOClient::new(env, &target_vault_id);
+    let admin = Address::generate(env);
+
+    init_vault(env, &source_client, &admin, 2);
+    init_vault(env, &target_client, &admin, 2);
+
+    let token_admin = Address::generate(env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
+    StellarAssetClient::new(env, &token).mint(&source_vault_id, &1000);
+
+    let deadline_ledger = env.ledger().sequence() as u64 + 100;
+    let bridge_id = source_client.bridge_to_vault(
+        &admin,
+        &target_vault_id,
+        &token,
+        &100,
+        &95,
+        &deadline_ledger,
+    );
+
+    (
+        source_client,
+        source_vault_id,
+        token,
+        bridge_id,
+        deadline_ledger,
+    )
+}
+
+#[test]
+fn test_expire_bridge_transfer_rejected_before_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, bridge_id, deadline_ledger) = setup_pending_bridge(&env);
+
+    // Exactly at the deadline is still too early: expiry needs current > deadline.
+    env.ledger()
+        .with_mut(|li| li.sequence_number = deadline_ledger as u32);
+    let res = source_client.try_expire_bridge_transfer(&bridge_id);
+    assert_eq!(res, Err(Ok(VaultError::TimelockNotExpired)));
+
+    let record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(record.status, crate::types::BridgeStatus::Initiated);
+}
+
+#[test]
+fn test_expire_bridge_transfer_after_deadline_marks_returned() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, bridge_id, deadline_ledger) = setup_pending_bridge(&env);
+
+    env.ledger()
+        .with_mut(|li| li.sequence_number = (deadline_ledger + 1) as u32);
+
+    // Callable by anyone: no vault admin is needed to expire a stale transfer.
+    source_client.expire_bridge_transfer(&bridge_id);
+
+    let record = source_client.get_bridge_record(&bridge_id).unwrap();
+    assert_eq!(record.status, crate::types::BridgeStatus::Returned);
+    assert_eq!(record.finalized_at, (deadline_ledger + 1));
+
+    // Once expired, the transfer cannot be expired or confirmed again.
+    let again = source_client.try_expire_bridge_transfer(&bridge_id);
+    assert_eq!(again, Err(Ok(VaultError::BridgeInvalidStatus)));
+    let confirm = source_client.try_confirm_bridge_receipt(&source_client.address, &bridge_id, &96);
+    assert!(confirm.is_err());
+}
+
+#[test]
+fn test_expire_bridge_transfer_rejected_after_confirmation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, bridge_id, deadline_ledger) = setup_pending_bridge(&env);
+
+    let admin = source_client.address.clone();
+    source_client.confirm_bridge_receipt(&admin, &bridge_id, &96);
+
+    env.ledger()
+        .with_mut(|li| li.sequence_number = (deadline_ledger + 1) as u32);
+    let res = source_client.try_expire_bridge_transfer(&bridge_id);
+    assert_eq!(res, Err(Ok(VaultError::BridgeInvalidStatus)));
+}
+
+#[test]
+fn test_expire_unknown_bridge_id_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (source_client, _src, _token, _bridge_id, _deadline) = setup_pending_bridge(&env);
+
+    let unknown = soroban_sdk::BytesN::from_array(&env, &[7u8; 32]);
+    let res = source_client.try_expire_bridge_transfer(&unknown);
+    assert_eq!(res, Err(Ok(VaultError::BridgeInvalidId)));
+}
+
+// ============================================================================
+// Issue #2144: cross-vault proposals must match the vault's ID namespace
+// ============================================================================
+
+/// Builds a coordinator vault with `proposal_id_prefix` set to `prefix`, and a
+/// pending cross-vault proposal. Returns (coordinator, admin, proposal_id).
+fn setup_prefixed_cross_vault(env: &Env, prefix: u64) -> (VaultDAOClient<'_>, Address, u64) {
+    let coordinator_id = env.register(VaultDAO, ());
+    let coordinator = VaultDAOClient::new(env, &coordinator_id);
+    let admin = Address::generate(env);
+    init_vault(env, &coordinator, &admin, 2);
+
+    env.as_contract(&coordinator_id, || {
+        let mut config = crate::storage::get_config(env).unwrap();
+        config.proposal_id_prefix = prefix;
+        crate::storage::set_config(env, &config);
+    });
+
+    let token = env
+        .register_stellar_asset_contract_v2(Address::generate(env))
+        .address();
+    let mut actions = Vec::new(env);
+    actions.push_back(VaultAction {
+        vault_address: Address::generate(env),
+        recipient: Address::generate(env),
+        token,
+        amount: 500,
+        memo: Symbol::new(env, "ns"),
+    });
+    let proposal_id = coordinator.propose_cross_vault(
+        &admin,
+        &actions,
+        &Priority::Normal,
+        &Vec::new(env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    (coordinator, admin, proposal_id)
+}
+
+#[test]
+fn test_execute_cross_vault_rejects_foreign_namespace_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Proposal is created under prefix 3_000_000 (ID 3_000_001).
+    let (coordinator, admin, proposal_id) = setup_prefixed_cross_vault(&env, 3_000_000);
+    assert_eq!(proposal_id / 1_000_000 * 1_000_000, 3_000_000);
+
+    // The vault is now registered under a different prefix, so the proposal is
+    // outside its namespace and must not execute.
+    let coordinator_id = coordinator.address.clone();
+    env.as_contract(&coordinator_id, || {
+        let mut config = crate::storage::get_config(&env).unwrap();
+        config.proposal_id_prefix = 4_000_000;
+        crate::storage::set_config(&env, &config);
+    });
+
+    let res = coordinator.try_execute_cross_vault(&admin, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::InvalidProposalIdPrefix)));
+}
+
+#[test]
+fn test_execute_cross_vault_accepts_matching_namespace() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (coordinator, admin, proposal_id) = setup_prefixed_cross_vault(&env, 3_000_000);
+
+    // The namespace check passes; the proposal then fails on the next guard
+    // because it is not approved yet, which proves the namespace was accepted.
+    let res = coordinator.try_execute_cross_vault(&admin, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotApproved)));
+}
+
+#[test]
+fn test_execute_cross_vault_skips_namespace_check_when_prefix_disabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // With prefix 0 (namespacing disabled) no namespace check applies.
+    let (coordinator, admin, proposal_id) = setup_prefixed_cross_vault(&env, 0);
+    let res = coordinator.try_execute_cross_vault(&admin, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotApproved)));
 }
