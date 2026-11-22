@@ -339,9 +339,11 @@ fn test_bridge_to_vault_success() {
         &(deadline_ledger as u64),
     );
 
-    // Check target vault balance
+    // Issue #2051: funds are reserved in the source vault, not sent yet.
     let token_client = soroban_sdk::token::Client::new(&env, &token);
-    assert_eq!(token_client.balance(&target_vault_id), 100);
+    assert_eq!(token_client.balance(&target_vault_id), 0);
+    assert_eq!(token_client.balance(&source_vault_id), 1000);
+    assert_eq!(source_client.get_reserved_bridge_balance(&token), 100);
 
     // Check bridge record
     let bridge_record = source_client.get_bridge_record(&bridge_id).unwrap();
@@ -543,8 +545,8 @@ fn test_expire_bridge_transfer_rejected_after_confirmation() {
     env.mock_all_auths();
     let (source_client, _src, _token, bridge_id, deadline_ledger) = setup_pending_bridge(&env);
 
-    let admin = source_client.address.clone();
-    source_client.confirm_bridge_receipt(&admin, &bridge_id, &96);
+    let target = source_client.get_bridge_record(&bridge_id).unwrap().target_vault;
+    source_client.confirm_bridge_receipt(&target, &bridge_id, &96);
 
     env.ledger()
         .with_mut(|li| li.sequence_number = (deadline_ledger + 1) as u32);

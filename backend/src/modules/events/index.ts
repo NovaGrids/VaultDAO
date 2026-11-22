@@ -7,3 +7,4 @@ export * from "./cursor/index.js";
 export * from "./replay/index.js";
 export * from "./rpc-failover-manager.js";
 export * from "./sse/sse.broadcaster.js";
+export * from "./streaming-indexer.js";

@@ -212,6 +212,18 @@ pub enum VaultError {
     /// Capability token has invalid grant parameters
     CapabilityInvalid = 636,
 
+    /// Delegated capability would exceed `MAX_CAPABILITY_DELEGATION_DEPTH` (Issue #2052)
+    CapabilityDelegationTooDeep = 637,
+    /// Use would push cumulative spend past the token's (or an ancestor's)
+    /// amount ceiling (Issue #2052)
+    CapabilityCeilingExceeded = 638,
+    /// Delegated capability is broader than its parent (scope, amount,
+    /// expiry, uses or ceiling) (Issue #2052)
+    CapabilityScopeEscalation = 639,
+    /// Token was issued in an older capability epoch and has been
+    /// invalidated by `bump_capability_epoch` (Issue #2052)
+    CapabilityEpochStale = 640,
+
     /// Commit phase is closed (past commit_deadline)
     CommitPhaseClosed = 1100,
     /// Reveal phase has not started yet (before commit_deadline)
@@ -373,6 +385,15 @@ pub enum VaultError {
     BridgeAmountExceedsLimit = 174,
     BridgeDeadlineExceeded = 175,
     BridgeSlippageExceeded = 176,
+    /// A second receipt for an already-confirmed bridge disagrees with the
+    /// first one (Issue #2051). Stable error for conflicting confirmations.
+    BridgeReceiptConflict = 177,
+    /// The configured fraud-proof verifier did not accept the dispute
+    /// (or no verifier is configured) (Issue #2051)
+    BridgeFraudProofRejected = 178,
+    /// Confirmed receipt is still inside its challenge window and cannot be
+    /// released yet (Issue #2051)
+    BridgeChallengeWindowActive = 179,
 
     // =========================================================
     // Dispute resolution
@@ -606,6 +627,20 @@ pub enum VaultError {
     // =========================================================
     /// `batch_approve_proposals` was called with more than `MAX_BATCH_APPROVE` (20) proposal IDs
     BatchApproveTooLarge = 1216,
+
+    // =========================================================
+    // Issue #2054: Insurance claim pipeline
+    // =========================================================
+    /// Claim oracle attestation is older than the configured max age
+    ClaimOracleStale = 1217,
+    /// Claim has no payout held in the clawback window
+    ClaimPayoutNotPending = 1218,
+    /// Clawback window has already elapsed; payout can only be released
+    ClaimClawbackWindowClosed = 1219,
+    /// Clawback window is still open; payout cannot be released yet
+    ClaimClawbackWindowOpen = 1220,
+    /// Signer has already approved this clawback
+    ClaimClawbackAlreadyApproved = 1221,
 }
 
 // Compatibility markers for CI source checks:

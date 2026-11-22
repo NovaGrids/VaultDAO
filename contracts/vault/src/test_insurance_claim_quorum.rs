@@ -697,3 +697,481 @@ fn test_1983_removed_signer_cannot_vote_quorum_uses_snapshot() {
     let status = client.close_insurance_claim_voting(&admin, &claim_id);
     assert_eq!(status, InsuranceClaimStatus::Approved);
 }
+
+// ============================================================================
+// Issue #2054: live quorum, oracle attestations, clawback window
+// ============================================================================
+
+mod configurable_claim_oracle {
+    use crate::types::ClaimAttestation;
+    use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env};
+
+    /// Oracle that returns whatever attestation was stored with `set`.
+    #[contract]
+    pub struct ClaimOracle;
+
+    #[contractimpl]
+    impl ClaimOracle {
+        pub fn set(env: Env, attestation: ClaimAttestation) {
+            env.storage().instance().set(&symbol_short!("att"), &attestation);
+        }
+
+        pub fn attest_claim(
+            env: Env,
+            _claim_id: u64,
+            _claimant: Address,
+            _token: Address,
+            _amount: i128,
+            _evidence_hash: BytesN<32>,
+        ) -> ClaimAttestation {
+            env.storage()
+                .instance()
+                .get(&symbol_short!("att"))
+                .expect("attestation not set")
+        }
+    }
+}
+
+mod trapping_claim_oracle {
+    use crate::types::ClaimAttestation;
+    use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+
+    /// Oracle that is down: every call traps.
+    #[contract]
+    pub struct TrappingClaimOracle;
+
+    #[contractimpl]
+    impl TrappingClaimOracle {
+        pub fn attest_claim(
+            _env: Env,
+            _claim_id: u64,
+            _claimant: Address,
+            _token: Address,
+            _amount: i128,
+            _evidence_hash: BytesN<32>,
+        ) -> ClaimAttestation {
+            panic!("oracle down")
+        }
+    }
+}
+
+use configurable_claim_oracle::{ClaimOracle, ClaimOracleClient};
+use trapping_claim_oracle::TrappingClaimOracle;
+use crate::types::{ClaimAttestation, ClaimPayoutState, ClaimQuorumMode, InsuranceClaimPolicy};
+
+fn set_policy(
+    client: &VaultDAOClient<'_>,
+    admin: &Address,
+    quorum_mode: ClaimQuorumMode,
+    oracle: Option<Address>,
+    oracle_max_age_ledgers: u64,
+    clawback_window_ledgers: u64,
+) {
+    client.set_insurance_claim_policy(
+        admin,
+        &InsuranceClaimPolicy {
+            quorum_mode,
+            oracle,
+            oracle_max_age_ledgers,
+            clawback_window_ledgers,
+        },
+    );
+}
+
+/// Credit the insurance pool directly (the vault already holds the tokens).
+fn fund_pool(env: &Env, client: &VaultDAOClient<'_>, token: &Address, amount: i128) {
+    env.as_contract(&client.address, || {
+        crate::storage::add_to_insurance_pool(env, token, amount);
+    });
+}
+
+fn balance_of(env: &Env, token: &Address, who: &Address) -> i128 {
+    soroban_sdk::token::Client::new(env, token).balance(who)
+}
+
+/// Submit a 1_000 claim and get it approved by two of four signers, then move
+/// past the deadline so it can be closed. Returns the claim id.
+fn approved_claim(
+    env: &Env,
+    client: &VaultDAOClient<'_>,
+    signers: &Vec<Address>,
+    claimant: &Address,
+    token: &Address,
+) -> u64 {
+    let deadline = env.ledger().sequence() as u64 + 1_000;
+    let claim_id =
+        client.submit_insurance_claim(claimant, token, &1_000i128, &evidence(env), &deadline);
+    client.vote_on_insurance_claim(&signers.get(0).unwrap(), &claim_id, &true);
+    client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &true);
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
+    claim_id
+}
+
+// ── Quorum policy ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_2054_default_policy_is_snapshot_and_is_frozen_per_claim() {
+    let env = Env::default();
+    let (client, admin, _signers, claimant, token) = setup(&env, 3);
+    assert_eq!(
+        client.get_insurance_claim_policy().quorum_mode,
+        ClaimQuorumMode::Snapshot
+    );
+
+    let deadline = START_LEDGER as u64 + 1_000;
+    let claim_id =
+        client.submit_insurance_claim(&claimant, &token, &1_000i128, &evidence(&env), &deadline);
+
+    // Switching the policy later does not change an in-flight claim.
+    set_policy(&client, &admin, ClaimQuorumMode::Live, None, 0, 0);
+    let settlement = client.get_claim_settlement(&claim_id).unwrap();
+    assert_eq!(settlement.quorum_mode, ClaimQuorumMode::Snapshot);
+}
+
+#[test]
+fn test_2054_live_quorum_drops_votes_of_removed_signers() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    set_policy(&client, &admin, ClaimQuorumMode::Live, None, 0, 0);
+
+    let deadline = START_LEDGER as u64 + 1_000;
+    let claim_id =
+        client.submit_insurance_claim(&claimant, &token, &1_000i128, &evidence(&env), &deadline);
+
+    let leaving = signers.get(3).unwrap();
+    client.vote_on_insurance_claim(&admin, &claim_id, &true);
+    client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &true);
+    client.vote_on_insurance_claim(&leaving, &claim_id, &true);
+    // (voters, required, eligible): ceil(4 * 50%) = 2.
+    assert_eq!(client.get_insurance_claim_quorum(&claim_id), (3, 2, 4));
+
+    client.remove_signer(&admin, &leaving);
+
+    // Live view: 3 eligible signers remain and the removed signer's vote no
+    // longer counts. Quorum = ceil(3 * 50%) = 2.
+    assert_eq!(client.get_insurance_claim_quorum(&claim_id), (2, 2, 3));
+
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
+    let status = client.close_insurance_claim_voting(&admin, &claim_id);
+    assert_eq!(status, InsuranceClaimStatus::Approved);
+
+    // The stored tally reflects the live set at close, not the snapshot.
+    let claim = client.get_insurance_claim(&claim_id);
+    assert_eq!(claim.eligible_voters, 3);
+    assert_eq!(claim.voter_count, 2);
+    assert_eq!(claim.approve_weight, 2);
+    assert!(!claim.eligible_signers.contains(&leaving));
+}
+
+#[test]
+fn test_2054_live_quorum_lets_new_signers_vote_and_counts_them() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 3);
+    set_policy(&client, &admin, ClaimQuorumMode::Live, None, 0, 0);
+
+    let deadline = START_LEDGER as u64 + 1_000;
+    let claim_id =
+        client.submit_insurance_claim(&claimant, &token, &1_000i128, &evidence(&env), &deadline);
+
+    // Add a fourth signer through governance.
+    let newcomer = Address::generate(&env);
+    let mut new_list = Vec::new(&env);
+    for i in 0..signers.len() {
+        new_list.push_back(signers.get(i).unwrap());
+    }
+    new_list.push_back(newcomer.clone());
+    let proposal_id = client.update_config_signers(&admin, &new_list);
+    client.approve_proposal(&admin, &proposal_id);
+    client.approve_proposal(&signers.get(1).unwrap(), &proposal_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    // The newcomer may vote on a live-quorum claim.
+    client.vote_on_insurance_claim(&newcomer, &claim_id, &false);
+    client.vote_on_insurance_claim(&admin, &claim_id, &true);
+    // The eligible set grew to 4, so two votes is not everyone yet.
+    assert_eq!(client.get_insurance_claim_quorum(&claim_id), (2, 2, 4));
+    assert_eq!(
+        client.try_close_insurance_claim_voting(&admin, &claim_id),
+        Err(Ok(VaultError::ClaimVotingStillOpen))
+    );
+
+    client.vote_on_insurance_claim(&signers.get(1).unwrap(), &claim_id, &true);
+    client.vote_on_insurance_claim(&signers.get(2).unwrap(), &claim_id, &true);
+    // Everyone in the live set has voted: early close is allowed.
+    let status = client.close_insurance_claim_voting(&admin, &claim_id);
+    assert_eq!(status, InsuranceClaimStatus::Approved);
+    assert_eq!(client.get_insurance_claim(&claim_id).eligible_voters, 4);
+}
+
+#[test]
+fn test_2054_live_quorum_below_quorum_expires() {
+    let env = Env::default();
+    let (client, admin, _signers, claimant, token) = setup(&env, 4);
+    set_policy(&client, &admin, ClaimQuorumMode::Live, None, 0, 0);
+
+    let deadline = START_LEDGER as u64 + 1_000;
+    let claim_id =
+        client.submit_insurance_claim(&claimant, &token, &1_000i128, &evidence(&env), &deadline);
+    client.vote_on_insurance_claim(&admin, &claim_id, &true);
+
+    env.ledger().with_mut(|l| l.sequence_number = deadline as u32 + 1);
+    assert_eq!(
+        client.close_insurance_claim_voting(&admin, &claim_id),
+        InsuranceClaimStatus::Expired
+    );
+}
+
+// ── Oracle attestations ──────────────────────────────────────────────────────
+
+#[test]
+fn test_2054_oracle_failure_aborts_payout_safely() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    fund_pool(&env, &client, &token, 5_000);
+    let trapping = env.register(TrappingClaimOracle, ());
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, Some(trapping), 0, 0);
+
+    let claim_id = approved_claim(&env, &client, &signers, &claimant, &token);
+    let claimant_before = balance_of(&env, &token, &claimant);
+
+    assert_eq!(
+        client.try_close_insurance_claim_voting(&admin, &claim_id),
+        Err(Ok(VaultError::OracleError))
+    );
+    // Nothing moved and the claim is still open for a retry.
+    let claim = client.get_insurance_claim(&claim_id);
+    assert_eq!(claim.status, InsuranceClaimStatus::Pending);
+    assert!(!claim.voting_closed);
+    assert!(!claim.bond_settled);
+    assert_eq!(client.get_insurance_pool_balance(&token), 5_000);
+    assert_eq!(balance_of(&env, &token, &claimant), claimant_before);
+
+    // Replace the broken oracle; the same claim can now be closed.
+    let oracle = env.register(ClaimOracle, ());
+    ClaimOracleClient::new(&env, &oracle).set(&ClaimAttestation {
+        valid: true,
+        max_payout: 0,
+        attested_at: env.ledger().sequence() as u64,
+    });
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, Some(oracle), 0, 0);
+    assert_eq!(
+        client.close_insurance_claim_voting(&admin, &claim_id),
+        InsuranceClaimStatus::Approved
+    );
+    assert_eq!(client.get_insurance_pool_balance(&token), 4_000);
+}
+
+#[test]
+fn test_2054_stale_or_future_attestation_aborts_payout() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    fund_pool(&env, &client, &token, 5_000);
+    let oracle = env.register(ClaimOracle, ());
+    let oracle_client = ClaimOracleClient::new(&env, &oracle);
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, Some(oracle), 10, 0);
+
+    let claim_id = approved_claim(&env, &client, &signers, &claimant, &token);
+    let now = env.ledger().sequence() as u64;
+
+    oracle_client.set(&ClaimAttestation {
+        valid: true,
+        max_payout: 0,
+        attested_at: now - 11,
+    });
+    assert_eq!(
+        client.try_close_insurance_claim_voting(&admin, &claim_id),
+        Err(Ok(VaultError::ClaimOracleStale))
+    );
+
+    oracle_client.set(&ClaimAttestation {
+        valid: true,
+        max_payout: 0,
+        attested_at: now + 1,
+    });
+    assert_eq!(
+        client.try_close_insurance_claim_voting(&admin, &claim_id),
+        Err(Ok(VaultError::OracleError))
+    );
+    assert_eq!(client.get_insurance_pool_balance(&token), 5_000);
+}
+
+#[test]
+fn test_2054_invalid_attestation_rejects_claim_without_payout() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    fund_pool(&env, &client, &token, 5_000);
+    let oracle = env.register(ClaimOracle, ());
+    ClaimOracleClient::new(&env, &oracle).set(&ClaimAttestation {
+        valid: false,
+        max_payout: 0,
+        attested_at: 0,
+    });
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, Some(oracle), 0, 0);
+
+    let claim_id = approved_claim(&env, &client, &signers, &claimant, &token);
+    assert_eq!(
+        client.close_insurance_claim_voting(&admin, &claim_id),
+        InsuranceClaimStatus::Rejected
+    );
+    // Pool keeps its funds plus the 10% bond slash (bond = 100).
+    assert_eq!(client.get_insurance_pool_balance(&token), 5_010);
+}
+
+#[test]
+fn test_2054_attestation_caps_payout() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    fund_pool(&env, &client, &token, 5_000);
+    let oracle = env.register(ClaimOracle, ());
+    ClaimOracleClient::new(&env, &oracle).set(&ClaimAttestation {
+        valid: true,
+        max_payout: 400,
+        attested_at: 0,
+    });
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, Some(oracle), 0, 0);
+
+    let claim_id = approved_claim(&env, &client, &signers, &claimant, &token);
+    client.close_insurance_claim_voting(&admin, &claim_id);
+    assert_eq!(client.get_insurance_pool_balance(&token), 4_600);
+    assert_eq!(client.get_claim_settlement(&claim_id).unwrap().payout, 400);
+}
+
+// ── Clawback window ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_2054_payout_is_held_then_released_once() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    fund_pool(&env, &client, &token, 5_000);
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, None, 0, 50);
+
+    let claim_id = approved_claim(&env, &client, &signers, &claimant, &token);
+    let before = balance_of(&env, &token, &claimant);
+    assert_eq!(
+        client.close_insurance_claim_voting(&admin, &claim_id),
+        InsuranceClaimStatus::Approved
+    );
+
+    // Debited from the pool once, held (not paid) during the window.
+    let settlement = client.get_claim_settlement(&claim_id).unwrap();
+    assert_eq!(settlement.state, ClaimPayoutState::Held);
+    assert_eq!(settlement.payout, 1_000);
+    assert_eq!(client.get_insurance_pool_balance(&token), 4_000);
+    // Only the bond came back so far.
+    assert_eq!(balance_of(&env, &token, &claimant), before + 100);
+    assert_eq!(
+        client.try_release_insurance_payout(&claim_id),
+        Err(Ok(VaultError::ClaimClawbackWindowOpen))
+    );
+
+    env.ledger()
+        .with_mut(|l| l.sequence_number = settlement.release_after as u32 + 1);
+    assert_eq!(client.release_insurance_payout(&claim_id), 1_000);
+    assert_eq!(balance_of(&env, &token, &claimant), before + 1_100);
+    assert_eq!(
+        client.try_release_insurance_payout(&claim_id),
+        Err(Ok(VaultError::ClaimPayoutNotPending))
+    );
+    // Clawback is no longer possible once released.
+    assert_eq!(
+        client.try_approve_insurance_clawback(&admin, &claim_id),
+        Err(Ok(VaultError::ClaimPayoutNotPending))
+    );
+    assert_eq!(client.get_insurance_pool_balance(&token), 4_000);
+}
+
+#[test]
+fn test_2054_multisig_clawback_restores_reserves_once() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    fund_pool(&env, &client, &token, 5_000);
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, None, 0, 50);
+
+    let claim_id = approved_claim(&env, &client, &signers, &claimant, &token);
+    client.close_insurance_claim_voting(&admin, &claim_id);
+    assert_eq!(client.get_insurance_pool_balance(&token), 4_000);
+    let claimant_before = balance_of(&env, &token, &claimant);
+
+    // Non-signers cannot vote on a clawback.
+    assert_eq!(
+        client.try_approve_insurance_clawback(&claimant, &claim_id),
+        Err(Ok(VaultError::Unauthorized))
+    );
+    // Threshold is 2: first approval only records.
+    assert!(!client.approve_insurance_clawback(&admin, &claim_id));
+    assert_eq!(
+        client.try_approve_insurance_clawback(&admin, &claim_id),
+        Err(Ok(VaultError::ClaimClawbackAlreadyApproved))
+    );
+    assert_eq!(client.get_insurance_pool_balance(&token), 4_000);
+
+    // Second approval executes the clawback.
+    assert!(client.approve_insurance_clawback(&signers.get(1).unwrap(), &claim_id));
+    assert_eq!(client.get_insurance_pool_balance(&token), 5_000);
+    assert_eq!(
+        client.get_insurance_claim(&claim_id).status,
+        InsuranceClaimStatus::ClawedBack
+    );
+    assert_eq!(
+        client.get_claim_settlement(&claim_id).unwrap().state,
+        ClaimPayoutState::ClawedBack
+    );
+
+    // Exactly once: no further clawback or release, claimant never paid.
+    assert_eq!(
+        client.try_approve_insurance_clawback(&signers.get(2).unwrap(), &claim_id),
+        Err(Ok(VaultError::ClaimPayoutNotPending))
+    );
+    env.ledger().with_mut(|l| l.sequence_number += 100);
+    assert_eq!(
+        client.try_release_insurance_payout(&claim_id),
+        Err(Ok(VaultError::ClaimPayoutNotPending))
+    );
+    assert_eq!(balance_of(&env, &token, &claimant), claimant_before);
+    assert_eq!(client.get_insurance_pool_balance(&token), 5_000);
+}
+
+#[test]
+fn test_2054_clawback_after_window_is_rejected() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    fund_pool(&env, &client, &token, 5_000);
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, None, 0, 10);
+
+    let claim_id = approved_claim(&env, &client, &signers, &claimant, &token);
+    client.close_insurance_claim_voting(&admin, &claim_id);
+    env.ledger().with_mut(|l| l.sequence_number += 11);
+    assert_eq!(
+        client.try_approve_insurance_clawback(&admin, &claim_id),
+        Err(Ok(VaultError::ClaimClawbackWindowClosed))
+    );
+}
+
+#[test]
+fn test_2054_held_payout_cannot_be_double_claimed_by_second_claim() {
+    let env = Env::default();
+    let (client, admin, signers, claimant, token) = setup(&env, 4);
+    // Pool only covers one full payout.
+    fund_pool(&env, &client, &token, 1_000);
+    set_policy(&client, &admin, ClaimQuorumMode::Snapshot, None, 0, 50);
+
+    let first = approved_claim(&env, &client, &signers, &claimant, &token);
+    client.close_insurance_claim_voting(&admin, &first);
+    assert_eq!(client.get_insurance_pool_balance(&token), 0);
+
+    // A second approved claim finds an empty pool: the held payout is not
+    // available to it.
+    let second = approved_claim(&env, &client, &signers, &claimant, &token);
+    client.close_insurance_claim_voting(&admin, &second);
+    let settlement = client.get_claim_settlement(&second).unwrap();
+    assert_eq!(settlement.payout, 0);
+    assert_eq!(settlement.state, ClaimPayoutState::None);
+}
+
+#[test]
+fn test_2054_claim_policy_is_admin_only() {
+    let env = Env::default();
+    let (client, _admin, _signers, claimant, _token) = setup(&env, 3);
+    let res = client.try_set_insurance_claim_policy(&claimant, &InsuranceClaimPolicy::default());
+    assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
+}
