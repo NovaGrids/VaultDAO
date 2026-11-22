@@ -124,6 +124,11 @@ systemctl start vaultdao-backend
 | `DATABASE_URL` | `sqlite://data.db` | `postgres://...` | Persistence (Prisma format) |
 | `REDIS_URL` | `redis://localhost:6379` | `rediss://...` | Caching/pubsub |
 | `LOG_LEVEL` | `info` | `warn` | Structured logging |
+| `ADMIN_KEY_SECRET_ID` | `vaultdao/staging/admin-key` | `vaultdao/prod/admin-key` | Secrets Manager secret holding the admin contract key reference |
+| `AWS_REGION` | `us-east-1` | `us-east-1` | Region of the KMS CMK and admin secret |
+| `ADMIN_KEY_KMS_KEY_ID` | CMK alias/ARN | CMK alias/ARN | KMS CMK used to encrypt/decrypt the admin key |
+| `ADMIN_KEY_FETCH_ON_BOOT` | `true` | `true` | Fetch admin key from Secrets Manager at startup |
+=======
 
 **.env.prod template**:
 ```
@@ -208,9 +213,116 @@ GET /api/v1/status   # Business health (sync lag, queue depth)
 ✅ [ ] PM2/systemd supervisor
 ✅ [ ] Health checks wired to orchestrator
 ✅ [ ] API keys rotated monthly
+✅ [ ] Admin key sourced from Secrets Manager (not env vars)
+✅ [ ] Backend IAM role limited to GetSecretValue + kms:Decrypt
 ✅ [ ] DB backups (daily)
 ✅ [ ] Metrics alerting (sync lag > 5min)
 ```
+
+## 🔐 **Admin Contract Key Management (AWS KMS)**
+
+The admin keypair that signs contract upgrade transactions is **never** stored in environment variables or baked into images. It is managed by the `terraform/modules/kms/` module, which provisions:
+
+- **AWS KMS CMK** — a customer-managed key (alias `alias/vaultdao-<env>-admin`) used to encrypt/decrypt the admin key material. Key policy grants `kms:Decrypt`/`kms:Encrypt`/`kms:GenerateDataKey` only to the backend task role and the rotation operator role.
+- **AWS Secrets Manager secret** — `vaultdao/<env>/admin-key`, encrypted with the CMK above. The secret payload holds the admin key *reference* (e.g. `{"adminPublicKey": "G...", "keyRef": "kms:vaultdao-<env>-admin", "version": 1}`), not raw key material in plaintext config.
+
+### Startup Secret Fetch
+
+The backend module ships a startup script (`scripts/fetch-admin-key.sh`) that runs before the Node.js process boots:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SECRET_ID="${ADMIN_KEY_SECRET_ID:?ADMIN_KEY_SECRET_ID is required}"
+REGION="${AWS_REGION:-us-east-1}"
+
+# Fetch the secret (decrypted via the KMS CMK) using the AWS CLI
+SECRET_JSON="$(aws secretsmanager get-secret-value \
+  --secret-id "$SECRET_ID" \
+  --region "$REGION" \
+  --query SecretString \
+  --output text)"
+
+# Export the admin key reference for the backend process
+export ADMIN_KEY_REF="$(echo "$SECRET_JSON" | jq -r '.keyRef')"
+export ADMIN_PUBLIC_KEY="$(echo "$SECRET_JSON" | jq -r '.adminPublicKey')"
+export ADMIN_KEY_VERSION="$(echo "$SECRET_JSON" | jq -r '.version')"
+
+exec node dist/index.js
+```
+
+The equivalent SDK call (`@aws-sdk/client-secrets-manager`) is used when the script runs inside the container:
+
+```js
+import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+
+const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
+const { SecretString } = await client.send(
+  new GetSecretValueCommand({ SecretId: process.env.ADMIN_KEY_SECRET_ID })
+);
+const { keyRef, adminPublicKey, version } = JSON.parse(SecretString);
+process.env.ADMIN_KEY_REF = keyRef;
+process.env.ADMIN_PUBLIC_KEY = adminPublicKey;
+process.env.ADMIN_KEY_VERSION = String(version);
+```
+
+If the fetch fails, the script exits non-zero so the orchestrator does not start a backend without a valid admin key reference.
+
+### Required IAM Permissions
+
+Attach the following least-privilege policy to the backend task/instance role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+      "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:vaultdao/<env>/admin-key-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt", "kms:DescribeKey"],
+      "Resource": "arn:aws:kms:<region>:<account>:key/<cmk-id>"
+    }
+  ]
+}
+```
+
+The rotation operator role additionally needs `secretsmanager:PutSecretValue`, `secretsmanager:UpdateSecretVersionStage`, and `kms:Encrypt`/`kms:GenerateDataKey` on the CMK.
+
+### Key Rotation Procedure
+
+1. **Create a new key version** — generate the new admin keypair and store it as a new secret version (do not delete the old version yet):
+   ```bash
+   aws secretsmanager put-secret-value \
+     --secret-id vaultdao/prod/admin-key \
+     --secret-string '{"adminPublicKey":"G<NEW>","keyRef":"kms:vaultdao-prod-admin","version":2}'
+   ```
+2. **Update the secret stage** — move `AWSCURRENT` to the new version so new fetches pick it up:
+   ```bash
+   aws secretsmanager update-secret-version-stage \
+     --secret-id vaultdao/prod/admin-key \
+     --version-stage AWSCURRENT \
+     --move-to-version-id <new-version-id> \
+     --remove-from-version-id <old-version-id>
+   ```
+3. **Redeploy the backend** — roll the deployment so the startup script re-fetches the secret and exports the new `ADMIN_KEY_REF`/`ADMIN_PUBLIC_KEY`:
+   ```bash
+   kubectl rollout restart deployment/vaultdao-backend   # or: docker compose up -d --force-recreate backend
+   ```
+4. **Verify** — confirm `/ready` reports the new `ADMIN_KEY_VERSION` and that upgrade transactions sign with the new key.
+5. **Revoke the old key** — after the grace period, disable/destroy the previous secret version and, if the old key was registered on-chain, rotate the admin role on the contract to the new public key:
+   ```bash
+   aws secretsmanager update-secret-version-stage \
+     --secret-id vaultdao/prod/admin-key \
+     --version-stage AWSPREVIOUS \
+     --remove-from-version-id <old-version-id>
+   ```
+
+Rotate admin keys at least quarterly, and immediately on suspected compromise.
 
 ## 🛠️ **Zero-Downtime Updates**
 
