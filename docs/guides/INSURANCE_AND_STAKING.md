@@ -149,6 +149,7 @@ A claimant asks the insurance pool to pay for a loss by submitting a claim.
 - The voting rules are chosen by claim size and **frozen onto the claim**. A later config change does not affect an open claim.
 - `vote_deadline` must be at least the voting window in ledgers after the current ledger, or the claim is refused with `ClaimVoteDeadlineTooShort`.
 - The claimant is not counted as an eligible voter if they are also a signer.
+- The **quorum mode** and **clawback window** of the current `InsuranceClaimPolicy` are also frozen onto the claim (see [section 7.5](#75-claim-pipeline-policy)).
 
 `evidence_hash` is a 32-byte hash of the off-chain evidence bundle. The contract does not store the evidence itself.
 
@@ -157,6 +158,7 @@ A claimant asks the insurance pool to pay for a loss by submitting a claim.
 `vote_on_insurance_claim(voter, claim_id, approve)`:
 
 - Only signers can vote, once each. The claimant cannot vote on their own claim.
+- Under the `Snapshot` quorum mode, only signers who were in the snapshot taken at submission can vote. Under `Live`, any current signer can vote, including signers added after submission.
 - A vote never resolves the claim. Votes are rejected after `vote_deadline`.
 - Weight is `1` per vote, or `1_000_000` per vote when staking is enabled. The ratio is what matters.
 
@@ -164,9 +166,10 @@ A claimant asks the insurance pool to pay for a loss by submitting a claim.
 
 `close_insurance_claim_voting(closer, claim_id)` can be called by any signer once **either** the voting window has passed **or** every eligible voter has voted. Settlement happens in this order:
 
-1. **Quorum.** The number of votes cast must reach `ceil(eligible_voters * quorum_bps / 10_000)`, with a minimum of one. If it does not, the claim is `Expired` and the bond is slashed 10%.
+1. **Quorum.** The number of votes cast must reach `ceil(eligible_voters * quorum_bps / 10_000)`, with a minimum of one. If it does not, the claim is `Expired` and the bond is slashed 10%. Which voters are eligible depends on the quorum mode (section 7.5).
 2. **Threshold.** Approve weight must be **strictly greater** than `approval_threshold_bps` of the total cast weight. A tie is rejected. If the threshold is not met, the claim is `Rejected` and the bond is slashed 10%.
-3. **Payout.** On approval, the payout is `min(claim amount, pool balance)`. The bond is returned in full.
+3. **Oracle.** If the policy names an oracle, it is asked for an attestation before anything is paid (section 7.6). If the oracle says the claim is invalid, the claim is `Rejected` and the bond is slashed 10%. If the oracle call fails, the close fails and nothing changes.
+4. **Payout.** On approval, the payout is `min(claim amount, attestation max_payout if non-zero, pool balance)`. It is taken out of the pool exactly once. It is paid at once, or held for the clawback window (section 7.7). The bond is returned in full.
 
 Closing is blocked while the vault is paused.
 
@@ -177,6 +180,47 @@ Closing is blocked while the vault is paused.
 | Approved | `min(amount, pool balance)` | Returned in full |
 | Rejected | None | 10% to insurance pool, 90% returned |
 | Expired (no quorum) | None | 10% to insurance pool, 90% returned |
+| Rejected by oracle | None | 10% to insurance pool, 90% returned |
+| Clawed back | Held payout returned to the pool | Already returned at approval |
+
+### 7.5 Claim pipeline policy
+
+`set_insurance_claim_policy(admin, InsuranceClaimPolicy { quorum_mode, oracle, oracle_max_age_ledgers, clawback_window_ledgers })` (Admin only). Read it with `get_insurance_claim_policy`, and read each claim's pipeline state with `get_claim_settlement(claim_id)`.
+
+**Quorum policy.**
+
+| Mode | Eligible voters | Votes counted | When eligibility is fixed |
+|------|-----------------|---------------|---------------------------|
+| `Snapshot` (default) | Signers at submission, minus the claimant | All votes cast | At submission |
+| `Live` | Signers **at vote close**, minus the claimant | Only votes from signers still eligible at close | At close |
+
+Under `Live`, a removed signer's vote is dropped, and a signer added after submission can vote and counts toward the quorum. The early-close rule ("every eligible voter has voted") also uses the live set. `get_insurance_claim_quorum` reports the live numbers while voting is open. At close the claim's `eligible_signers`, `eligible_voters`, `voter_count` and weights are rewritten with the live tally, and a `claim_live_quorum` event is emitted. The mode is frozen onto each claim when it is submitted, so changing the policy never changes the rules for an open claim. The default stays `Snapshot` for backward compatibility.
+
+### 7.6 Oracle attestations
+
+When `oracle` is set, an approved claim is checked by calling
+`attest_claim(claim_id, claimant, token, amount, evidence_hash) -> ClaimAttestation { valid, max_payout, attested_at }` on the oracle contract before any payout.
+
+| Oracle result | Effect |
+|---------------|--------|
+| `valid = true` | Payout goes ahead, capped at `max_payout` when that is non-zero |
+| `valid = false` | Claim `Rejected`, bond slashed 10%, no payout |
+| Call traps, oracle missing, or wrong return type | `OracleError`; the close fails, nothing is paid, the claim stays `Pending` and can be closed again later |
+| `attested_at` in the future or `max_payout < 0` | `OracleError` (same as above) |
+| `attested_at` older than `oracle_max_age_ledgers` (when non-zero) | `ClaimOracleStale` (same as above) |
+
+Oracle settings are read when the claim closes, not frozen at submission. An Admin can therefore replace a broken oracle, and claims that are stuck can then be closed.
+
+### 7.7 Clawback window
+
+With `clawback_window_ledgers > 0` (frozen per claim), an approved payout is **held** rather than paid. It is subtracted from the insurance pool and moved into a separate claim-payout reserve. That reserve still counts as earmarked, so the funds cannot be spent elsewhere and cannot pay out a second claim.
+
+- `release_insurance_payout(claim_id)` can be called by anyone after `release_after`. It pays the held amount to the claimant once.
+- `approve_insurance_clawback(signer, claim_id)` can be called by current signers up to and including `release_after`. When approvals from `threshold` distinct current signers are reached, the held amount goes back to the insurance pool once and the claim becomes `ClawedBack`.
+
+After a release or a clawback, both calls fail with `ClaimPayoutNotPending`. Releasing early fails with `ClaimClawbackWindowOpen`, a clawback after the window fails with `ClaimClawbackWindowClosed`, and a repeat approval fails with `ClaimClawbackAlreadyApproved`.
+
+Events: `claim_policy_set`, `claim_live_quorum`, `claim_oracle_verdict`, `claim_payout_held`, `claim_payout_released`, `claim_clawback_vote`, `claim_clawed_back`.
 
 ---
 
@@ -225,6 +269,17 @@ Set with `update_staking_config`.
 | `large_claim_voting_window` | Voting window for large claims | `17280` (about 1 day) |
 
 Set with `set_insurance_voting_config`.
+
+### InsuranceClaimPolicy
+
+| Field | Meaning | Default |
+|-------|---------|---------|
+| `quorum_mode` | `Snapshot` or `Live` (section 7.5) | `Snapshot` |
+| `oracle` | Optional attestation oracle (section 7.6) | none |
+| `oracle_max_age_ledgers` | Maximum attestation age; `0` = no limit | `0` |
+| `clawback_window_ledgers` | Ledgers an approved payout is held; `0` = pay at once | `0` |
+
+Set with `set_insurance_claim_policy`.
 
 ---
 

@@ -1840,10 +1840,43 @@ pub enum CrossVaultStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum BridgeStatus {
+    /// Funds reserved in the source vault, awaiting receipt confirmation
     Initiated = 0,
+    /// Receipt confirmed. Reserved funds are released to the target vault
+    /// immediately, or after the challenge window when one is configured
+    /// (see `BridgeReceipt::released`).
     Confirmed = 1,
     Rejected = 2,
+    /// Timed out without a receipt; the reservation was unlocked
     Returned = 3,
+    /// A fraud proof against the receipt was accepted; the reservation was
+    /// unlocked and nothing was released (Issue #2051)
+    Disputed = 4,
+}
+
+/// Receipt-confirmation settings for `bridge_to_vault` transfers (Issue #2051).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeReceiptConfig {
+    /// Optional fraud-proof verifier contract. Must expose
+    /// `verify_bridge_fraud_proof(bridge_id: BytesN<32>, claimed_amount: i128, proof: Bytes) -> bool`.
+    pub fraud_proof_verifier: Option<Address>,
+    /// Ledgers a confirmed receipt stays challengeable before funds can be
+    /// released. 0 releases on confirmation.
+    pub challenge_window_ledgers: u64,
+}
+
+/// First (and only accepted) receipt recorded for a bridge transfer (Issue #2051).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeReceipt {
+    pub confirmer: Address,
+    pub actual_amount: i128,
+    pub confirmed_at: u64,
+    /// Ledger after which the reserved funds may be released
+    pub release_after: u64,
+    /// Whether the reserved funds were transferred to the target vault
+    pub released: bool,
 }
 
 /// Record of a cross-vault bridge operation
@@ -2949,6 +2982,30 @@ pub enum Capability {
     ExecuteRecurring(u64),
 }
 
+/// Runtime scope of a capability token (Issue #2052).
+///
+/// Kept beside the `CapabilityToken` record so tokens granted before this
+/// runtime existed still decode; such legacy tokens behave as root tokens with
+/// no ceiling, issued in epoch 0.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityScope {
+    /// Vault the token is valid for (must be this contract)
+    pub vault: Address,
+    /// Cumulative amount ceiling across all uses (0 = no ceiling)
+    pub amount_ceiling: i128,
+    /// Cumulative amount spent through this token and its delegates
+    pub spent: i128,
+    /// Parent token for delegated capabilities
+    pub parent: Option<BytesN<32>>,
+    /// Delegation depth (root = 0)
+    pub depth: u32,
+    /// Capability epoch at issuance; tokens from older epochs are invalid
+    pub epoch: u64,
+    /// Admin (root) or delegating holder that issued the token
+    pub issuer: Address,
+}
+
 /// Capability token granting scoped permissions to an external address
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -3197,6 +3254,91 @@ pub enum InsuranceClaimStatus {
     Approved = 1,
     Rejected = 2,
     Expired = 3,
+    /// Approved payout reversed by multisig during the clawback window (Issue #2054)
+    ClawedBack = 4,
+}
+
+/// How a claim's quorum is sized (Issue #2054).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ClaimQuorumMode {
+    /// Eligible voters frozen at submission (legacy behaviour, #1355/#1983)
+    Snapshot = 0,
+    /// Eligible voters are the signers at vote close (claimant excluded);
+    /// only votes from voters still eligible at close are counted
+    Live = 1,
+}
+
+/// Vault-wide insurance claim pipeline policy (Issue #2054).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InsuranceClaimPolicy {
+    /// Quorum mode applied to claims submitted under this policy
+    pub quorum_mode: ClaimQuorumMode,
+    /// Optional oracle consulted before any payout. Must expose
+    /// `attest_claim(claim_id: u64, claimant: Address, token: Address, amount: i128, evidence_hash: BytesN<32>) -> ClaimAttestation`.
+    pub oracle: Option<Address>,
+    /// Maximum attestation age in ledgers (0 = no age limit)
+    pub oracle_max_age_ledgers: u64,
+    /// Ledgers an approved payout is held (and clawback-able) before release.
+    /// 0 pays out immediately on approval.
+    pub clawback_window_ledgers: u64,
+}
+
+impl Default for InsuranceClaimPolicy {
+    fn default() -> Self {
+        Self {
+            quorum_mode: ClaimQuorumMode::Snapshot,
+            oracle: None,
+            oracle_max_age_ledgers: 0,
+            clawback_window_ledgers: 0,
+        }
+    }
+}
+
+/// Oracle verdict on an insurance claim (Issue #2054).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClaimAttestation {
+    /// Whether the oracle's evidence supports the claim
+    pub valid: bool,
+    /// Upper bound on the payout (0 = no extra cap)
+    pub max_payout: i128,
+    /// Ledger the attestation was produced at
+    pub attested_at: u64,
+}
+
+/// Lifecycle of an approved claim's payout (Issue #2054).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ClaimPayoutState {
+    /// No payout (not approved yet, rejected, or zero payout)
+    None = 0,
+    /// Payout moved out of the pool into the claim payout reserve
+    Held = 1,
+    /// Payout transferred to the claimant
+    Released = 2,
+    /// Payout returned to the insurance pool by multisig clawback
+    ClawedBack = 3,
+}
+
+/// Per-claim pipeline state, stored beside `InsuranceClaim` (Issue #2054).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClaimSettlement {
+    /// Quorum mode snapshotted from the policy at submission
+    pub quorum_mode: ClaimQuorumMode,
+    /// Clawback window snapshotted from the policy at submission
+    pub clawback_window_ledgers: u64,
+    /// Amount debited from the insurance pool for this claim
+    pub payout: i128,
+    /// Ledger after which a held payout may be released
+    pub release_after: u64,
+    pub state: ClaimPayoutState,
+    /// Signers that approved clawing back the held payout
+    pub clawback_approvals: Vec<Address>,
 }
 
 #[contracttype]

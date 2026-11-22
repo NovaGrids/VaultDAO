@@ -890,11 +890,38 @@ pub fn release_funding_reserve(env: &Env, token: &Address, amount: i128) {
     adjust_reserve(env, ReserveKey::ReservedFunding(token.clone()), -amount);
 }
 
+pub fn get_reserved_bridge(env: &Env, token: &Address) -> i128 {
+    get_reserve(env, &ReserveKey::ReservedBridge(token.clone()))
+}
+
+pub fn reserve_bridge(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedBridge(token.clone()), amount);
+}
+
+pub fn release_bridge_reserve(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedBridge(token.clone()), -amount);
+}
+
+pub fn get_reserved_claim_payout(env: &Env, token: &Address) -> i128 {
+    get_reserve(env, &ReserveKey::ReservedClaimPayout(token.clone()))
+}
+
+pub fn reserve_claim_payout(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedClaimPayout(token.clone()), amount);
+}
+
+pub fn release_claim_payout_reserve(env: &Env, token: &Address, amount: i128) {
+    adjust_reserve(env, ReserveKey::ReservedClaimPayout(token.clone()), -amount);
+}
+
 /// Sum of every earmarked balance for `token`: vesting, escrow, stream,
-/// time-weighted locks, funding rounds, insurance pool, stake pool and collected
-/// fees (#1698, #1901, #1903).
+/// time-weighted locks, funding rounds, pending bridge transfers, held claim
+/// payouts, insurance pool, stake pool and collected fees
+/// (#1698, #1901, #1903, #2051, #2054).
 pub fn get_total_reserved(env: &Env, token: &Address) -> i128 {
     get_reserved_vesting(env, token)
+        .saturating_add(get_reserved_bridge(env, token))
+        .saturating_add(get_reserved_claim_payout(env, token))
         .saturating_add(get_reserved_escrow(env, token))
         .saturating_add(get_reserved_stream(env, token))
         .saturating_add(get_reserved_subscription(env, token))
@@ -3562,9 +3589,161 @@ pub fn get_bridge_record(
 pub fn set_bridge_record(env: &Env, record: &crate::types::BridgeRecord) {
     let key = FeatureKey::BridgeRecord(record.bridge_id.clone());
     env.storage().persistent().set(&key, record);
+    let ttl = bridge_record_ttl(env, record);
     env.storage()
         .persistent()
-        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
+        .extend_ttl(&key, ttl.min(INSTANCE_TTL_THRESHOLD), ttl);
+}
+
+/// Storage-rent-aware TTL for a bridge intent (#2051).
+///
+/// A pending intent must outlive its deadline plus the receipt challenge
+/// window (plus a day of slack for the timeout call), otherwise the record
+/// could be archived while funds are still reserved against it. Settled
+/// records keep the default `PROPOSAL_TTL` for auditability.
+pub fn bridge_record_ttl(env: &Env, record: &crate::types::BridgeRecord) -> u32 {
+    let now = env.ledger().sequence() as u64;
+    let window = get_bridge_receipt_config(env).challenge_window_ledgers;
+    let horizon = record
+        .deadline_ledger
+        .saturating_add(window)
+        .saturating_add(DAY_IN_LEDGERS as u64)
+        .saturating_sub(now);
+    let max_ttl = env.storage().max_ttl() as u64;
+    (horizon.max(PROPOSAL_TTL as u64).min(max_ttl)) as u32
+}
+
+pub fn get_bridge_receipt_config(env: &Env) -> crate::types::BridgeReceiptConfig {
+    env.storage()
+        .instance()
+        .get(&PipelineKey::BridgeReceiptConfig)
+        .unwrap_or(crate::types::BridgeReceiptConfig {
+            fraud_proof_verifier: None,
+            challenge_window_ledgers: 0,
+        })
+}
+
+pub fn set_bridge_receipt_config(env: &Env, config: &crate::types::BridgeReceiptConfig) {
+    env.storage()
+        .instance()
+        .set(&PipelineKey::BridgeReceiptConfig, config);
+}
+
+pub fn get_bridge_receipt(
+    env: &Env,
+    bridge_id: &BytesN<32>,
+) -> Option<crate::types::BridgeReceipt> {
+    env.storage()
+        .persistent()
+        .get(&PipelineKey::BridgeReceipt(bridge_id.clone()))
+}
+
+pub fn set_bridge_receipt(
+    env: &Env,
+    bridge_id: &BytesN<32>,
+    receipt: &crate::types::BridgeReceipt,
+    ttl: u32,
+) {
+    let key = PipelineKey::BridgeReceipt(bridge_id.clone());
+    env.storage().persistent().set(&key, receipt);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, ttl.min(INSTANCE_TTL_THRESHOLD), ttl);
+}
+
+// ============================================================================
+// Issue #2052: Capability-token runtime
+// ============================================================================
+
+pub fn get_capability_scope(env: &Env, id: &BytesN<32>) -> Option<crate::types::CapabilityScope> {
+    env.storage()
+        .persistent()
+        .get(&PipelineKey::CapabilityScope(id.clone()))
+}
+
+pub fn set_capability_scope(env: &Env, id: &BytesN<32>, scope: &crate::types::CapabilityScope) {
+    let key = PipelineKey::CapabilityScope(id.clone());
+    env.storage().persistent().set(&key, scope);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_capability_epoch(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&PipelineKey::CapabilityEpoch)
+        .unwrap_or(0)
+}
+
+pub fn set_capability_epoch(env: &Env, epoch: u64) {
+    env.storage()
+        .instance()
+        .set(&PipelineKey::CapabilityEpoch, &epoch);
+}
+
+/// Revocation-list lookup. Entries outlive the token record itself so a
+/// revoked ID can never be re-granted, even if the token record is removed.
+pub fn is_capability_revoked(env: &Env, id: &BytesN<32>) -> bool {
+    env.storage()
+        .persistent()
+        .has(&PipelineKey::CapabilityRevoked(id.clone()))
+}
+
+pub fn add_capability_revocation(env: &Env, id: &BytesN<32>) {
+    let key = PipelineKey::CapabilityRevoked(id.clone());
+    env.storage()
+        .persistent()
+        .set(&key, &(env.ledger().sequence() as u64));
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LONG_TTL_THRESHOLD, LONG_TTL);
+}
+
+// ============================================================================
+// Issue #2054: Insurance claim pipeline
+// ============================================================================
+
+pub fn get_insurance_claim_policy(env: &Env) -> crate::types::InsuranceClaimPolicy {
+    env.storage()
+        .instance()
+        .get(&PipelineKey::ClaimPolicy)
+        .unwrap_or_default()
+}
+
+pub fn set_insurance_claim_policy(env: &Env, policy: &crate::types::InsuranceClaimPolicy) {
+    env.storage().instance().set(&PipelineKey::ClaimPolicy, policy);
+}
+
+pub fn get_claim_settlement(env: &Env, claim_id: u64) -> Option<crate::types::ClaimSettlement> {
+    env.storage()
+        .persistent()
+        .get(&PipelineKey::ClaimSettlement(claim_id))
+}
+
+pub fn set_claim_settlement(env: &Env, claim_id: u64, settlement: &crate::types::ClaimSettlement) {
+    let key = PipelineKey::ClaimSettlement(claim_id);
+    env.storage().persistent().set(&key, settlement);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_claim_votes(env: &Env, claim_id: u64) -> Map<Address, bool> {
+    env.storage()
+        .persistent()
+        .get(&PipelineKey::ClaimVotes(claim_id))
+        .unwrap_or_else(|| Map::new(env))
+}
+
+pub fn record_claim_vote_direction(env: &Env, claim_id: u64, voter: &Address, approve: bool) {
+    let key = PipelineKey::ClaimVotes(claim_id);
+    let mut votes = get_claim_votes(env, claim_id);
+    votes.set(voter.clone(), approve);
+    env.storage().persistent().set(&key, &votes);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
 pub fn get_permissions(env: &Env, addr: &Address) -> Vec<PermissionGrant> {

@@ -148,6 +148,9 @@ const MAX_SIGNERS: u32 = 20;
 /// `batch_approve_proposals` call (Issue #2126).
 const MAX_BATCH_APPROVE: u32 = 20;
 
+/// Maximum delegation depth for capability tokens (root = 0) (Issue #2052).
+const MAX_CAPABILITY_DELEGATION_DEPTH: u32 = 3;
+
 /// Minimum admin rotation delay: 1440 ledgers ? 24 hours at 5 s/ledger.
 /// Enforced at both vault initialization and `set_admin_rotation_delay`.
 const MIN_ADMIN_ROTATION_DELAY: u64 = 1_440;
@@ -569,6 +572,10 @@ mod test_prop_spending_limits;
 mod test_prop_streaming;
 #[cfg(test)]
 mod test_prop_reentrancy;
+#[cfg(test)]
+mod test_bridge_receipt_2051;
+#[cfg(test)]
+mod test_capability_runtime_2052;
 
 #[cfg(test)]
 mod test_circular_dependency;
@@ -7010,6 +7017,7 @@ impl VaultDAO {
                     storage::set_capability_token(env, &token);
                 }
             }
+            storage::add_capability_revocation(env, &id);
         }
         storage::clear_capability_tokens_by_holder(env, signer);
     }
@@ -7399,6 +7407,22 @@ impl VaultDAO {
         };
 
         storage::set_insurance_claim(&env, &claim);
+
+        // Issue #2054: freeze the pipeline policy (quorum mode, clawback window)
+        // onto the claim so a later policy change cannot move the goalposts.
+        let policy = storage::get_insurance_claim_policy(&env);
+        storage::set_claim_settlement(
+            &env,
+            claim_id,
+            &types::ClaimSettlement {
+                quorum_mode: policy.quorum_mode,
+                clawback_window_ledgers: policy.clawback_window_ledgers,
+                payout: 0,
+                release_after: 0,
+                state: types::ClaimPayoutState::None,
+                clawback_approvals: Vec::new(&env),
+            },
+        );
         storage::extend_instance_ttl(&env);
 
         Ok(claim_id)
@@ -7474,14 +7498,20 @@ impl VaultDAO {
         // added after the claim was filed cannot vote on it. (An empty snapshot
         // means a legacy claim filed before snapshotting existed, which falls
         // back to the current-config check above.)
-        if !claim.eligible_signers.is_empty() && !claim.eligible_signers.contains(&voter) {
+        // Live-quorum claims (#2054) accept any current signer instead.
+        let live = Self::claim_is_live(&env, claim_id);
+        if !live
+            && !claim.eligible_signers.is_empty()
+            && !claim.eligible_signers.contains(&voter)
+        {
             return Err(VaultError::Unauthorized);
         }
         let staking_config = storage::get_staking_config(&env);
         let weight: i128 = if staking_config.enabled { 1_000_000 } else { 1 };
 
-        // Record vote
+        // Record vote (and its direction, so a live quorum can be re-tallied)
         storage::record_claim_vote(&env, claim_id, &voter);
+        storage::record_claim_vote_direction(&env, claim_id, &voter, approve);
 
         if approve {
             claim.approve_weight += weight;
@@ -7544,6 +7574,13 @@ impl VaultDAO {
             return Err(VaultError::ClaimAlreadyClosed);
         }
 
+        // Issue #2054: under the live policy, eligibility and the tally are
+        // recomputed from the signers at close (see `apply_live_claim_tally`).
+        let live = Self::claim_is_live(&env, claim_id);
+        if live {
+            Self::apply_live_claim_tally(&env, &config, &mut claim);
+        }
+
         let current_ledger = env.ledger().sequence() as u64;
         let window_elapsed = current_ledger > claim.vote_deadline;
         let everyone_voted =
@@ -7556,6 +7593,15 @@ impl VaultDAO {
 
         let required_voters = Self::claim_required_voters(&claim);
         let quorum_met = claim.voter_count >= required_voters;
+        if live {
+            events::emit_claim_live_quorum(
+                &env,
+                claim_id,
+                claim.voter_count,
+                required_voters,
+                claim.eligible_voters,
+            );
+        }
 
         let status = if !quorum_met {
             events::emit_claim_quorum_failed(
@@ -7576,12 +7622,41 @@ impl VaultDAO {
                 && claim.approve_weight.saturating_mul(10_000)
                     > total_weight.saturating_mul(claim.approval_threshold_bps as i128);
 
+            // Issue #2054: oracle gate. Any oracle failure (trap, malformed or
+            // future-dated attestation, stale attestation) returns an error,
+            // which rolls the whole close back: nothing is paid, the claim stays
+            // open and the close can be retried. A definitive "invalid" verdict
+            // rejects the claim like a failed vote.
+            let mut payout_cap = claim.amount;
+            let mut oracle_valid = true;
             if approved {
+                let policy = storage::get_insurance_claim_policy(&env);
+                if let Some(oracle) = policy.oracle {
+                    let attestation = Self::fetch_claim_attestation(
+                        &env,
+                        &oracle,
+                        &claim,
+                        policy.oracle_max_age_ledgers,
+                    )?;
+                    events::emit_claim_oracle_verdict(
+                        &env,
+                        claim_id,
+                        &oracle,
+                        attestation.valid,
+                        attestation.max_payout,
+                    );
+                    oracle_valid = attestation.valid;
+                    if attestation.max_payout > 0 {
+                        payout_cap = payout_cap.min(attestation.max_payout);
+                    }
+                }
+            }
+
+            if approved && oracle_valid {
                 let pool_balance = storage::get_insurance_pool(&env, &claim.token);
-                let payout = claim.amount.min(pool_balance); // cap at pool balance
+                let payout = payout_cap.min(pool_balance); // cap at pool balance
                 if payout > 0 {
-                    storage::subtract_from_insurance_pool(&env, &claim.token, payout);
-                    token::transfer(&env, &claim.token, &claim.claimant, payout);
+                    Self::settle_claim_payout(&env, &claim, payout, current_ledger);
                 }
                 if !claim.bond_settled {
                     token::transfer(&env, &claim.token, &claim.claimant, claim.bond_amount);
@@ -7615,7 +7690,9 @@ impl VaultDAO {
     /// Rounds up, so a 50% quorum over 3 signers requires 2 voters, not 1.
     fn claim_required_voters(claim: &InsuranceClaim) -> u32 {
         // Quorum is sized from the snapshot taken at submission, never from
-        // the live signer set (which may have grown or shrunk since).
+        // the live signer set (which may have grown or shrunk since). Under
+        // the live policy (#2054) `apply_live_claim_tally` replaces the
+        // snapshot with the signers at close before this is called.
         let eligible = if claim.eligible_signers.is_empty() {
             claim.eligible_voters
         } else {
@@ -7656,12 +7733,258 @@ impl VaultDAO {
         env: Env,
         claim_id: u64,
     ) -> Result<(u32, u32, u32), VaultError> {
-        let claim = storage::get_insurance_claim(&env, claim_id)?;
+        let mut claim = storage::get_insurance_claim(&env, claim_id)?;
+        // Live-quorum claims (#2054) report the quorum as it would be computed
+        // if voting closed now.
+        if !claim.voting_closed && Self::claim_is_live(&env, claim_id) {
+            let config = storage::get_config(&env)?;
+            Self::apply_live_claim_tally(&env, &config, &mut claim);
+        }
         Ok((
             claim.voter_count,
             Self::claim_required_voters(&claim),
             claim.eligible_voters,
         ))
+    }
+
+    // ========================================================================
+    // Issue #2054: Insurance claim pipeline (live quorum, oracle, clawback)
+    // ========================================================================
+
+    /// Whether a claim uses the live quorum policy. Claims without a stored
+    /// settlement predate #2054 and keep the snapshot policy.
+    fn claim_is_live(env: &Env, claim_id: u64) -> bool {
+        storage::get_claim_settlement(env, claim_id)
+            .map(|s| s.quorum_mode == types::ClaimQuorumMode::Live)
+            .unwrap_or(false)
+    }
+
+    /// Live quorum policy (#2054).
+    ///
+    /// The eligible set is the vault's signers **at vote close**, excluding the
+    /// claimant. Only votes from voters still in that set are counted (votes
+    /// from removed signers are dropped), and signers added after submission
+    /// may vote. The quorum is then `ceil(eligible * quorum_bps / 10_000)` of
+    /// that set, via `claim_required_voters`.
+    fn apply_live_claim_tally(env: &Env, config: &Config, claim: &mut InsuranceClaim) {
+        let staking_config = storage::get_staking_config(env);
+        let weight: i128 = if staking_config.enabled { 1_000_000 } else { 1 };
+        let votes = storage::get_claim_votes(env, claim.id);
+
+        let mut eligible = Vec::new(env);
+        let mut voter_count: u32 = 0;
+        let mut approve_weight: i128 = 0;
+        let mut reject_weight: i128 = 0;
+        for signer in config.signers.iter() {
+            if signer == claim.claimant {
+                continue;
+            }
+            if let Some(approve) = votes.get(signer.clone()) {
+                voter_count += 1;
+                if approve {
+                    approve_weight += weight;
+                } else {
+                    reject_weight += weight;
+                }
+            }
+            eligible.push_back(signer);
+        }
+
+        claim.eligible_voters = eligible.len();
+        claim.eligible_signers = eligible;
+        claim.voter_count = voter_count;
+        claim.approve_weight = approve_weight;
+        claim.reject_weight = reject_weight;
+    }
+
+    /// Ask the claim oracle for an attestation (#2054).
+    ///
+    /// Failure modes, all of which abort the payout:
+    /// - the oracle traps, is missing, or returns a value of the wrong shape → `OracleError`;
+    /// - the attestation is dated in the future or has a negative `max_payout` → `OracleError`;
+    /// - the attestation is older than `max_age_ledgers` (when non-zero) → `ClaimOracleStale`.
+    fn fetch_claim_attestation(
+        env: &Env,
+        oracle: &Address,
+        claim: &InsuranceClaim,
+        max_age_ledgers: u64,
+    ) -> Result<types::ClaimAttestation, VaultError> {
+        let attestation = match env.try_invoke_contract::<types::ClaimAttestation, soroban_sdk::Error>(
+            oracle,
+            &Symbol::new(env, "attest_claim"),
+            Vec::from_array(
+                env,
+                [
+                    claim.id.into_val(env),
+                    claim.claimant.into_val(env),
+                    claim.token.into_val(env),
+                    claim.amount.into_val(env),
+                    claim.evidence_hash.into_val(env),
+                ],
+            ),
+        ) {
+            Ok(Ok(attestation)) => attestation,
+            _ => return Err(VaultError::OracleError),
+        };
+
+        let now = env.ledger().sequence() as u64;
+        if attestation.attested_at > now || attestation.max_payout < 0 {
+            return Err(VaultError::OracleError);
+        }
+        if max_age_ledgers > 0 && now - attestation.attested_at > max_age_ledgers {
+            return Err(VaultError::ClaimOracleStale);
+        }
+        Ok(attestation)
+    }
+
+    /// Debit an approved payout from the insurance pool exactly once.
+    ///
+    /// With no clawback window the payout is transferred immediately. With a
+    /// window it moves into the claim payout reserve (still earmarked, so it
+    /// can't be spent or claimed again) until `release_insurance_payout` or a
+    /// multisig `approve_insurance_clawback` settles it.
+    fn settle_claim_payout(env: &Env, claim: &InsuranceClaim, payout: i128, now: u64) {
+        let mut settlement =
+            storage::get_claim_settlement(env, claim.id).unwrap_or(types::ClaimSettlement {
+                quorum_mode: types::ClaimQuorumMode::Snapshot,
+                clawback_window_ledgers: 0,
+                payout: 0,
+                release_after: 0,
+                state: types::ClaimPayoutState::None,
+                clawback_approvals: Vec::new(env),
+            });
+
+        storage::subtract_from_insurance_pool(env, &claim.token, payout);
+        settlement.payout = payout;
+        if settlement.clawback_window_ledgers > 0 {
+            storage::reserve_claim_payout(env, &claim.token, payout);
+            settlement.release_after = now.saturating_add(settlement.clawback_window_ledgers);
+            settlement.state = types::ClaimPayoutState::Held;
+            events::emit_claim_payout_held(env, claim.id, payout, settlement.release_after);
+        } else {
+            token::transfer(env, &claim.token, &claim.claimant, payout);
+            settlement.release_after = now;
+            settlement.state = types::ClaimPayoutState::Released;
+            events::emit_claim_payout_released(env, claim.id, &claim.claimant, payout);
+        }
+        storage::set_claim_settlement(env, claim.id, &settlement);
+    }
+
+    /// Release a held payout to the claimant once its clawback window has
+    /// passed (#2054). Permissionless; succeeds at most once.
+    ///
+    /// # Errors
+    /// * `ClaimPayoutNotPending`   - no payout is held for this claim.
+    /// * `ClaimClawbackWindowOpen` - the clawback window has not elapsed yet.
+    pub fn release_insurance_payout(env: Env, claim_id: u64) -> Result<i128, VaultError> {
+        require_not_paused(&env)?;
+        let claim = storage::get_insurance_claim(&env, claim_id)?;
+        let mut settlement =
+            storage::get_claim_settlement(&env, claim_id).ok_or(VaultError::ClaimPayoutNotPending)?;
+        if settlement.state != types::ClaimPayoutState::Held {
+            return Err(VaultError::ClaimPayoutNotPending);
+        }
+        if (env.ledger().sequence() as u64) <= settlement.release_after {
+            return Err(VaultError::ClaimClawbackWindowOpen);
+        }
+
+        storage::release_claim_payout_reserve(&env, &claim.token, settlement.payout);
+        token::transfer(&env, &claim.token, &claim.claimant, settlement.payout);
+        settlement.state = types::ClaimPayoutState::Released;
+        storage::set_claim_settlement(&env, claim_id, &settlement);
+        events::emit_claim_payout_released(&env, claim_id, &claim.claimant, settlement.payout);
+        Ok(settlement.payout)
+    }
+
+    /// Approve clawing back a held payout during its clawback window (#2054).
+    ///
+    /// Governed by the vault multisig: once `threshold` distinct current
+    /// signers have approved, the held payout returns to the insurance pool
+    /// (exactly once) and the claim becomes `ClawedBack`. Returns `true` when
+    /// this approval executed the clawback.
+    pub fn approve_insurance_clawback(
+        env: Env,
+        signer: Address,
+        claim_id: u64,
+    ) -> Result<bool, VaultError> {
+        signer.require_auth();
+        require_not_paused(&env)?;
+
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&signer) {
+            return Err(VaultError::Unauthorized);
+        }
+        let mut claim = storage::get_insurance_claim(&env, claim_id)?;
+        let mut settlement =
+            storage::get_claim_settlement(&env, claim_id).ok_or(VaultError::ClaimPayoutNotPending)?;
+        if settlement.state != types::ClaimPayoutState::Held {
+            return Err(VaultError::ClaimPayoutNotPending);
+        }
+        if (env.ledger().sequence() as u64) > settlement.release_after {
+            return Err(VaultError::ClaimClawbackWindowClosed);
+        }
+        if settlement.clawback_approvals.contains(&signer) {
+            return Err(VaultError::ClaimClawbackAlreadyApproved);
+        }
+
+        // Count only approvals from signers that are still signers.
+        settlement.clawback_approvals.push_back(signer.clone());
+        let mut approvals: u32 = 0;
+        for a in settlement.clawback_approvals.iter() {
+            if config.signers.contains(&a) {
+                approvals += 1;
+            }
+        }
+        let required = config.threshold.max(1);
+        events::emit_claim_clawback_approved(&env, claim_id, &signer, approvals, required);
+
+        let executed = approvals >= required;
+        if executed {
+            storage::release_claim_payout_reserve(&env, &claim.token, settlement.payout);
+            storage::add_to_insurance_pool(&env, &claim.token, settlement.payout);
+            settlement.state = types::ClaimPayoutState::ClawedBack;
+            claim.status = InsuranceClaimStatus::ClawedBack;
+            storage::set_insurance_claim(&env, &claim);
+            events::emit_claim_clawed_back(&env, claim_id, settlement.payout);
+        }
+        storage::set_claim_settlement(&env, claim_id, &settlement);
+        Ok(executed)
+    }
+
+    /// Pipeline state of a claim (quorum mode, payout, clawback approvals) (#2054).
+    pub fn get_claim_settlement(env: Env, claim_id: u64) -> Option<types::ClaimSettlement> {
+        storage::get_claim_settlement(&env, claim_id)
+    }
+
+    /// Read the insurance claim pipeline policy (#2054).
+    pub fn get_insurance_claim_policy(env: Env) -> types::InsuranceClaimPolicy {
+        storage::get_insurance_claim_policy(&env)
+    }
+
+    /// Update the insurance claim pipeline policy (Admin only, #2054).
+    ///
+    /// The quorum mode and clawback window are frozen onto each claim at
+    /// submission; the oracle settings are read when a claim closes, so a
+    /// broken oracle can be replaced without stranding open claims.
+    pub fn set_insurance_claim_policy(
+        env: Env,
+        admin: Address,
+        policy: types::InsuranceClaimPolicy,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        storage::set_insurance_claim_policy(&env, &policy);
+        storage::extend_instance_ttl(&env);
+        events::emit_claim_policy_set(
+            &env,
+            &admin,
+            policy.quorum_mode.clone() as u32,
+            policy.oracle.is_some(),
+            policy.clawback_window_ledgers,
+        );
+        Ok(())
     }
 
     /// Read the insurance claim voting parameters.
@@ -19621,7 +19944,15 @@ impl VaultDAO {
         storage::get_cross_vault_config(&env)
     }
 
-    /// Initiate a cross-vault bridge transfer with slippage and deadline protection
+    /// Initiate a cross-vault bridge transfer with slippage and deadline protection.
+    ///
+    /// Issue #2051: `amount` is **reserved** in this vault, not sent. It stays
+    /// earmarked (excluded from `available_balance`) until exactly one of:
+    /// - a receipt is confirmed and released → funds move to `target_vault`;
+    /// - the deadline passes unconfirmed → `expire_bridge_transfer` unlocks it;
+    /// - a fraud proof is accepted → `dispute_bridge_receipt` unlocks it.
+    ///
+    /// Requires the Treasurer role.
     pub fn bridge_to_vault(
         env: Env,
         caller: Address,
@@ -19633,6 +19964,10 @@ impl VaultDAO {
     ) -> Result<soroban_sdk::BytesN<32>, VaultError> {
         caller.require_auth();
         require_not_paused(&env)?;
+
+        if !Role::role_satisfies(Role::Treasurer, storage::get_role(&env, &caller)) {
+            return Err(VaultError::InsufficientRole);
+        }
 
         // Validate inputs
         if amount <= 0 || min_received < 0 || min_received > amount {
@@ -19667,10 +20002,14 @@ impl VaultDAO {
             return Err(VaultError::BridgeAlreadyExists);
         }
 
-        // Transfer tokens to target vault
-        token::transfer(&env, &token, &target_vault, amount);
+        // Reserve (do not send) the funds. Only unearmarked balance can back a
+        // bridge, so a pending bridge can never be double-spent by another flow.
+        if Self::available_balance(&env, &token) < amount {
+            return Err(VaultError::InsufficientBalance);
+        }
+        storage::reserve_bridge(&env, &token, amount);
 
-        // Create and store bridge record
+        // Create and store bridge record (TTL covers deadline + challenge window)
         let bridge_record = crate::types::BridgeRecord {
             bridge_id: bridge_id.clone(),
             source_vault: env.current_contract_address(),
@@ -19701,7 +20040,22 @@ impl VaultDAO {
         Ok(bridge_id)
     }
 
-    /// Confirm receipt of bridge transfer and validate slippage/deadline
+    /// Confirm receipt of a bridge transfer and validate slippage/deadline.
+    ///
+    /// Issue #2051:
+    /// - The confirmer must be the target vault, a registered bridge adapter
+    ///   (`BridgeConfig.bridge_adapters`), or a signer of this vault.
+    /// - Only the **first** valid receipt is accepted. A later receipt that
+    ///   disagrees (different amount or confirmer) fails with the stable
+    ///   `BridgeReceiptConflict`; an identical replay fails with
+    ///   `BridgeInvalidStatus`. Funds are therefore released at most once.
+    /// - After the deadline, confirmation fails with `BridgeDeadlineExceeded`
+    ///   and leaves the record untouched; call `expire_bridge_transfer`.
+    /// - `actual_amount < min_received` fails with `BridgeSlippageExceeded`
+    ///   (record stays `Initiated`); `actual_amount > amount` is `InvalidAmount`.
+    /// - With no challenge window configured the reserved amount is released
+    ///   to the target vault immediately; otherwise it is released by
+    ///   `release_bridge_transfer` once the window has passed undisputed.
     pub fn confirm_bridge_receipt(
         env: Env,
         caller: Address,
@@ -19715,79 +20069,183 @@ impl VaultDAO {
         let mut bridge_record = storage::get_bridge_record(&env, bridge_id.clone())
             .ok_or(VaultError::BridgeInvalidId)?;
 
+        // Conflicting or repeated receipts
+        if let Some(existing) = storage::get_bridge_receipt(&env, &bridge_id) {
+            if existing.actual_amount != actual_amount || existing.confirmer != caller {
+                return Err(VaultError::BridgeReceiptConflict);
+            }
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+
         // Validate status
         if bridge_record.status != crate::types::BridgeStatus::Initiated {
             return Err(VaultError::BridgeInvalidStatus);
         }
 
-        // Check deadline
+        // Confirmer authorization
+        let is_adapter = storage::get_bridge_config(&env)
+            .map(|c| c.bridge_adapters.contains(&caller))
+            .unwrap_or(false);
+        let is_signer = storage::get_config(&env)?.signers.contains(&caller);
+        if caller != bridge_record.target_vault && !is_adapter && !is_signer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // Check deadline (timeout is handled by `expire_bridge_transfer`)
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger > bridge_record.deadline_ledger {
-            // Return funds to source vault
-            token::transfer(
-                &env,
-                &bridge_record.token,
-                &bridge_record.source_vault,
-                bridge_record.amount,
-            );
-            bridge_record.status = crate::types::BridgeStatus::Returned;
-            bridge_record.finalized_at = current_ledger;
-            storage::set_bridge_record(&env, &bridge_record);
-            events::emit_bridge_funds_returned(
-                &env,
-                &bridge_id,
-                &bridge_record.source_vault,
-                bridge_record.amount,
-            );
             return Err(VaultError::BridgeDeadlineExceeded);
         }
 
         // Check slippage
+        if actual_amount > bridge_record.amount {
+            return Err(VaultError::InvalidAmount);
+        }
         if actual_amount < bridge_record.min_received {
-            // Return funds to source vault
-            token::transfer(
-                &env,
-                &bridge_record.token,
-                &bridge_record.source_vault,
-                bridge_record.amount,
-            );
-            bridge_record.status = crate::types::BridgeStatus::Rejected;
-            bridge_record.finalized_at = current_ledger;
-            storage::set_bridge_record(&env, &bridge_record);
-            events::emit_bridge_slippage_rejected(
-                &env,
-                &bridge_id,
-                &env.current_contract_address(),
-                actual_amount,
-                bridge_record.min_received,
-            );
             return Err(VaultError::BridgeSlippageExceeded);
         }
 
-        // Confirm the bridge
+        // Record the receipt and confirm the bridge
+        let receipt_config = storage::get_bridge_receipt_config(&env);
+        let mut receipt = crate::types::BridgeReceipt {
+            confirmer: caller.clone(),
+            actual_amount,
+            confirmed_at: current_ledger,
+            release_after: current_ledger.saturating_add(receipt_config.challenge_window_ledgers),
+            released: false,
+        };
         bridge_record.status = crate::types::BridgeStatus::Confirmed;
         bridge_record.actual_amount = actual_amount;
         bridge_record.finalized_at = current_ledger;
+
+        if receipt_config.challenge_window_ledgers == 0 {
+            Self::release_bridge_reservation(&env, &bridge_record);
+            receipt.released = true;
+        }
+
+        let ttl = storage::bridge_record_ttl(&env, &bridge_record);
+        storage::set_bridge_receipt(&env, &bridge_id, &receipt, ttl);
         storage::set_bridge_record(&env, &bridge_record);
         events::emit_bridge_receipt_confirmed(
             &env,
             &bridge_id,
-            &env.current_contract_address(),
+            &bridge_record.target_vault,
             actual_amount,
         );
 
         Ok(())
     }
 
-    /// Expire a bridge transfer whose receipt was never confirmed (Issue #2143).
+    /// Release the reserved funds of a confirmed bridge transfer to its target
+    /// vault once the receipt's challenge window has passed undisputed
+    /// (Issue #2051). Permissionless; succeeds at most once.
+    ///
+    /// # Errors
+    /// * `BridgeInvalidStatus`        - not `Confirmed`, or already released.
+    /// * `BridgeChallengeWindowActive`- the challenge window is still open.
+    pub fn release_bridge_transfer(
+        env: Env,
+        bridge_id: soroban_sdk::BytesN<32>,
+    ) -> Result<(), VaultError> {
+        require_not_paused(&env)?;
+
+        let bridge_record = storage::get_bridge_record(&env, bridge_id.clone())
+            .ok_or(VaultError::BridgeInvalidId)?;
+        if bridge_record.status != crate::types::BridgeStatus::Confirmed {
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+        let mut receipt =
+            storage::get_bridge_receipt(&env, &bridge_id).ok_or(VaultError::BridgeInvalidStatus)?;
+        if receipt.released {
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+        if (env.ledger().sequence() as u64) <= receipt.release_after {
+            return Err(VaultError::BridgeChallengeWindowActive);
+        }
+
+        Self::release_bridge_reservation(&env, &bridge_record);
+        receipt.released = true;
+        let ttl = storage::bridge_record_ttl(&env, &bridge_record);
+        storage::set_bridge_receipt(&env, &bridge_id, &receipt, ttl);
+        storage::set_bridge_record(&env, &bridge_record);
+        Ok(())
+    }
+
+    /// Dispute a confirmed-but-unreleased bridge receipt with a fraud proof
+    /// (Issue #2051).
+    ///
+    /// The proof is checked by the optional verifier configured with
+    /// `set_bridge_receipt_config`, via
+    /// `verify_bridge_fraud_proof(bridge_id, claimed_amount, proof) -> bool`.
+    /// When it returns `true` the reservation is unlocked (nothing is sent)
+    /// and the record becomes `Disputed`. A verifier that returns `false`,
+    /// traps, or is not configured yields `BridgeFraudProofRejected` and leaves
+    /// the receipt in place.
+    pub fn dispute_bridge_receipt(
+        env: Env,
+        disputer: Address,
+        bridge_id: soroban_sdk::BytesN<32>,
+        proof: Bytes,
+    ) -> Result<(), VaultError> {
+        disputer.require_auth();
+        require_not_paused(&env)?;
+
+        let mut bridge_record = storage::get_bridge_record(&env, bridge_id.clone())
+            .ok_or(VaultError::BridgeInvalidId)?;
+        if bridge_record.status != crate::types::BridgeStatus::Confirmed {
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+        let receipt =
+            storage::get_bridge_receipt(&env, &bridge_id).ok_or(VaultError::BridgeInvalidStatus)?;
+        let current_ledger = env.ledger().sequence() as u64;
+        if receipt.released || current_ledger > receipt.release_after {
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+
+        let verifier = storage::get_bridge_receipt_config(&env)
+            .fraud_proof_verifier
+            .ok_or(VaultError::BridgeFraudProofRejected)?;
+        let accepted = matches!(
+            env.try_invoke_contract::<bool, soroban_sdk::Error>(
+                &verifier,
+                &Symbol::new(&env, "verify_bridge_fraud_proof"),
+                Vec::from_array(
+                    &env,
+                    [
+                        bridge_id.clone().into_val(&env),
+                        receipt.actual_amount.into_val(&env),
+                        proof.into_val(&env),
+                    ],
+                ),
+            ),
+            Ok(Ok(true))
+        );
+        if !accepted {
+            return Err(VaultError::BridgeFraudProofRejected);
+        }
+
+        storage::release_bridge_reserve(&env, &bridge_record.token, bridge_record.amount);
+        bridge_record.status = crate::types::BridgeStatus::Disputed;
+        bridge_record.finalized_at = current_ledger;
+        storage::set_bridge_record(&env, &bridge_record);
+        events::emit_bridge_disputed(
+            &env,
+            &bridge_id,
+            &disputer,
+            receipt.actual_amount,
+            bridge_record.amount,
+        );
+        Ok(())
+    }
+
+    /// Expire a bridge transfer whose receipt was never confirmed (Issues #2143, #2051).
     ///
     /// Anyone may call this once the transfer's `deadline_ledger` has passed while
-    /// the record is still `Initiated`. The bridged amount is refunded to the
-    /// source vault and the record is marked `Returned`. Calls before the deadline
-    /// are rejected with `TimelockNotExpired`.
-    ///
-    /// This is a separate entrypoint because `confirm_bridge_receipt` returns an
-    /// error after the deadline, which reverts its refund. Here the refund persists.
+    /// the record is still `Initiated`. The reservation is unlocked, so the
+    /// funds (which never left the vault) become spendable again, and the record
+    /// is marked `Returned`. Calls before the deadline are rejected with
+    /// `TimelockNotExpired`; a second call fails with `BridgeInvalidStatus`, so
+    /// the reservation is unlocked exactly once.
     pub fn expire_bridge_transfer(
         env: Env,
         bridge_id: soroban_sdk::BytesN<32>,
@@ -19806,15 +20264,17 @@ impl VaultDAO {
             return Err(VaultError::TimelockNotExpired);
         }
 
-        token::transfer(
-            &env,
-            &bridge_record.token,
-            &bridge_record.source_vault,
-            bridge_record.amount,
-        );
+        storage::release_bridge_reserve(&env, &bridge_record.token, bridge_record.amount);
         bridge_record.status = crate::types::BridgeStatus::Returned;
         bridge_record.finalized_at = current_ledger;
         storage::set_bridge_record(&env, &bridge_record);
+        events::emit_bridge_timed_out(
+            &env,
+            &bridge_id,
+            &bridge_record.source_vault,
+            bridge_record.amount,
+            bridge_record.deadline_ledger,
+        );
         events::emit_bridge_funds_returned(
             &env,
             &bridge_id,
@@ -19823,6 +20283,71 @@ impl VaultDAO {
         );
 
         Ok(())
+    }
+
+    /// Re-extend the storage TTL of a bridge intent and its receipt so a
+    /// pending transfer cannot be archived while funds are reserved against
+    /// it (Issue #2051). Permissionless.
+    pub fn extend_bridge_intent_ttl(
+        env: Env,
+        bridge_id: soroban_sdk::BytesN<32>,
+    ) -> Result<(), VaultError> {
+        let bridge_record = storage::get_bridge_record(&env, bridge_id.clone())
+            .ok_or(VaultError::BridgeInvalidId)?;
+        storage::set_bridge_record(&env, &bridge_record);
+        if let Some(receipt) = storage::get_bridge_receipt(&env, &bridge_id) {
+            let ttl = storage::bridge_record_ttl(&env, &bridge_record);
+            storage::set_bridge_receipt(&env, &bridge_id, &receipt, ttl);
+        }
+        Ok(())
+    }
+
+    /// Configure the bridge receipt challenge window and optional fraud-proof
+    /// verifier (Admin only, Issue #2051). Applies to receipts confirmed after
+    /// this call.
+    pub fn set_bridge_receipt_config(
+        env: Env,
+        admin: Address,
+        config: crate::types::BridgeReceiptConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::Unauthorized);
+        }
+        storage::set_bridge_receipt_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+        events::emit_bridge_receipt_config_set(
+            &env,
+            &admin,
+            config.challenge_window_ledgers,
+            config.fraud_proof_verifier.is_some(),
+        );
+        Ok(())
+    }
+
+    /// Read the bridge receipt configuration (Issue #2051).
+    pub fn get_bridge_receipt_config(env: Env) -> crate::types::BridgeReceiptConfig {
+        storage::get_bridge_receipt_config(&env)
+    }
+
+    /// Read the accepted receipt of a bridge transfer, if any (Issue #2051).
+    pub fn get_bridge_receipt(
+        env: Env,
+        bridge_id: soroban_sdk::BytesN<32>,
+    ) -> Option<crate::types::BridgeReceipt> {
+        storage::get_bridge_receipt(&env, &bridge_id)
+    }
+
+    /// Total amount of `token` currently reserved by pending bridge transfers.
+    pub fn get_reserved_bridge_balance(env: Env, token: Address) -> i128 {
+        storage::get_reserved_bridge(&env, &token)
+    }
+
+    /// Unlock a bridge reservation and send the reserved amount to the target.
+    fn release_bridge_reservation(env: &Env, record: &crate::types::BridgeRecord) {
+        storage::release_bridge_reserve(env, &record.token, record.amount);
+        token::transfer(env, &record.token, &record.target_vault, record.amount);
+        events::emit_bridge_released(env, &record.bridge_id, &record.target_vault, record.amount);
     }
 
     /// Propose a cross-vault transfer. Creates a standard proposal that, when
@@ -22085,21 +22610,52 @@ impl VaultDAO {
     // ========================================================================
 
     /// Grant a capability token to an address. Only Admin can call this.
+    ///
+    /// The token is a root token for this vault with no cumulative amount
+    /// ceiling. Use [`Self::grant_capability_with_ceiling`] to cap the total
+    /// amount the token (and everything delegated from it) may authorize.
     pub fn grant_capability(
         env: Env,
         admin: Address,
+        token: CapabilityToken,
+    ) -> Result<(), VaultError> {
+        let vault = env.current_contract_address();
+        Self::grant_capability_internal(&env, &admin, token, vault, 0)
+    }
+
+    /// Grant a root capability token scoped to `vault` with a cumulative
+    /// `amount_ceiling` (0 = none) enforced across every use of the token and
+    /// its delegates (Issue #2052). `vault` must be this contract.
+    pub fn grant_capability_with_ceiling(
+        env: Env,
+        admin: Address,
+        token: CapabilityToken,
+        vault: Address,
+        amount_ceiling: i128,
+    ) -> Result<(), VaultError> {
+        Self::grant_capability_internal(&env, &admin, token, vault, amount_ceiling)
+    }
+
+    fn grant_capability_internal(
+        env: &Env,
+        admin: &Address,
         mut token: CapabilityToken,
+        vault: Address,
+        amount_ceiling: i128,
     ) -> Result<(), VaultError> {
         admin.require_auth();
-        let role = storage::get_role(&env, &admin);
+        let role = storage::get_role(env, admin);
         if !Role::role_satisfies(Role::Admin, role) {
             return Err(VaultError::InsufficientRole);
         }
 
-        if storage::get_capability_token(&env, &token.id).is_some() {
+        // IDs on the revocation list can never be reused.
+        if storage::get_capability_token(env, &token.id).is_some()
+            || storage::is_capability_revoked(env, &token.id)
+        {
             return Err(VaultError::CapabilityAlreadyExists);
         }
-        let config = storage::get_config(&env)?;
+        let config = storage::get_config(env)?;
         if !config.signers.contains(&token.granted_to) {
             return Err(VaultError::SignerNotFound);
         }
@@ -22107,30 +22663,164 @@ impl VaultDAO {
         if token.capabilities.is_empty()
             || (token.expires_at > 0 && token.expires_at < current_ledger)
             || (token.expires_at == 0 && token.max_uses == 0)
+            || vault != env.current_contract_address()
+            || amount_ceiling < 0
         {
             return Err(VaultError::CapabilityInvalid);
         }
 
         token.revoked = false;
         token.uses_count = 0;
-        storage::set_capability_token(&env, &token);
-        storage::add_capability_token_to_holder_index(&env, &token.granted_to, &token.id);
-        let token_id_bytes = token.id.to_array();
-        let audit_target = u64::from_le_bytes(
-            token_id_bytes[0..8]
-                .try_into()
-                .expect("capability token ID prefix is 8 bytes"),
-        );
-        storage::create_audit_entry(&env, AuditAction::CapabilityGranted, &admin, audit_target);
-        storage::extend_instance_ttl(&env);
-        events::emit_capability_granted(
-            &env,
+        storage::set_capability_token(env, &token);
+        storage::set_capability_scope(
+            env,
             &token.id,
-            &admin,
+            &types::CapabilityScope {
+                vault,
+                amount_ceiling,
+                spent: 0,
+                parent: None,
+                depth: 0,
+                epoch: storage::get_capability_epoch(env),
+                issuer: admin.clone(),
+            },
+        );
+        storage::add_capability_token_to_holder_index(env, &token.granted_to, &token.id);
+        storage::create_audit_entry(
+            env,
+            AuditAction::CapabilityGranted,
+            admin,
+            Self::capability_audit_target(&token.id),
+        );
+        storage::extend_instance_ttl(env);
+        events::emit_capability_granted(
+            env,
+            &token.id,
+            admin,
             &token.granted_to,
             token.capabilities.len(),
             token.expires_at,
             token.max_uses,
+        );
+        Ok(())
+    }
+
+    /// Delegate part of a capability to another signer (Issue #2052).
+    ///
+    /// `holder` must hold `parent_id`, which must itself be live. The child can
+    /// only narrow the parent: every capability must be covered by the parent
+    /// with an equal or smaller amount, expiry and remaining uses cannot exceed
+    /// the parent's, and the child's `amount_ceiling` cannot exceed the
+    /// parent's remaining ceiling. Spend through the child also counts against
+    /// every ancestor's ceiling. Depth is limited to
+    /// `MAX_CAPABILITY_DELEGATION_DEPTH`.
+    pub fn delegate_capability(
+        env: Env,
+        holder: Address,
+        parent_id: BytesN<32>,
+        mut child: CapabilityToken,
+        amount_ceiling: i128,
+    ) -> Result<(), VaultError> {
+        holder.require_auth();
+
+        let parent =
+            storage::get_capability_token(&env, &parent_id).ok_or(VaultError::CapabilityNotFound)?;
+        if parent.granted_to != holder {
+            return Err(VaultError::Unauthorized);
+        }
+        let chain = Self::live_capability_chain(&env, &parent_id, &parent)?;
+        let parent_scope = chain.get(0).unwrap().1;
+
+        if parent_scope.depth.saturating_add(1) > MAX_CAPABILITY_DELEGATION_DEPTH {
+            return Err(VaultError::CapabilityDelegationTooDeep);
+        }
+        if storage::get_capability_token(&env, &child.id).is_some()
+            || storage::is_capability_revoked(&env, &child.id)
+        {
+            return Err(VaultError::CapabilityAlreadyExists);
+        }
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&child.granted_to) {
+            return Err(VaultError::SignerNotFound);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        if child.capabilities.is_empty()
+            || (child.expires_at > 0 && child.expires_at < current_ledger)
+            || (child.expires_at == 0 && child.max_uses == 0)
+            || amount_ceiling < 0
+        {
+            return Err(VaultError::CapabilityInvalid);
+        }
+
+        // Scope: every child capability must be covered by the parent.
+        for cap in child.capabilities.iter() {
+            if !Self::capability_covers(&parent.capabilities, &cap) {
+                return Err(VaultError::CapabilityScopeEscalation);
+            }
+        }
+        // Expiry cannot outlive the parent.
+        if parent.expires_at > 0 && (child.expires_at == 0 || child.expires_at > parent.expires_at)
+        {
+            return Err(VaultError::CapabilityScopeEscalation);
+        }
+        // Uses cannot exceed the parent's remaining uses.
+        if parent.max_uses > 0 {
+            let remaining = parent.max_uses.saturating_sub(parent.uses_count);
+            if child.max_uses == 0 || child.max_uses > remaining {
+                return Err(VaultError::CapabilityScopeEscalation);
+            }
+        }
+        // Ceiling cannot exceed the parent's remaining ceiling.
+        if parent_scope.amount_ceiling > 0 {
+            let remaining = parent_scope.amount_ceiling.saturating_sub(parent_scope.spent);
+            if amount_ceiling == 0 || amount_ceiling > remaining {
+                return Err(VaultError::CapabilityScopeEscalation);
+            }
+        }
+
+        child.revoked = false;
+        child.uses_count = 0;
+        let depth = parent_scope.depth + 1;
+        storage::set_capability_token(&env, &child);
+        storage::set_capability_scope(
+            &env,
+            &child.id,
+            &types::CapabilityScope {
+                vault: parent_scope.vault.clone(),
+                amount_ceiling,
+                spent: 0,
+                parent: Some(parent_id.clone()),
+                depth,
+                epoch: storage::get_capability_epoch(&env),
+                issuer: holder.clone(),
+            },
+        );
+        storage::add_capability_token_to_holder_index(&env, &child.granted_to, &child.id);
+        storage::create_audit_entry(
+            &env,
+            AuditAction::CapabilityGranted,
+            &holder,
+            Self::capability_audit_target(&child.id),
+        );
+        storage::extend_instance_ttl(&env);
+        events::emit_capability_granted(
+            &env,
+            &child.id,
+            &holder,
+            &child.granted_to,
+            child.capabilities.len(),
+            child.expires_at,
+            child.max_uses,
+        );
+        events::emit_capability_delegated(
+            &env,
+            &child.id,
+            &parent_id,
+            &holder,
+            &child.granted_to,
+            depth,
+            amount_ceiling,
         );
         Ok(())
     }
@@ -22147,6 +22837,15 @@ impl VaultDAO {
         Self::consume_capability(&env, &caller, &token_id, action)
     }
 
+    /// Check and consume a capability inside a sensitive entrypoint.
+    ///
+    /// Issue #2052: a capability only stands in for the caller's *role*; the
+    /// action it authorizes still goes through the vault's normal threshold,
+    /// spending-limit and timelock policy, so a capability can never elevate
+    /// past what the vault itself would allow. Checks, in order: revocation
+    /// (token flag or revocation list), holder, epoch, vault scope, expiry,
+    /// uses, method/amount scope, then every ancestor's liveness, and finally
+    /// the cumulative amount ceiling of the token and each ancestor.
     fn consume_capability(
         env: &Env,
         caller: &Address,
@@ -22156,45 +22855,44 @@ impl VaultDAO {
         let mut token =
             storage::get_capability_token(env, token_id).ok_or(VaultError::CapabilityNotFound)?;
 
-        if token.revoked {
+        if token.revoked || storage::is_capability_revoked(env, token_id) {
             return Err(VaultError::CapabilityRevoked);
         }
         if token.granted_to != *caller {
             return Err(VaultError::Unauthorized);
         }
 
-        let current_ledger = env.ledger().sequence();
-        if token.expires_at > 0 && current_ledger > token.expires_at {
-            return Err(VaultError::CapabilityExpired);
-        }
+        let chain = Self::live_capability_chain(env, token_id, &token)?;
+
         if token.max_uses > 0 && token.uses_count >= token.max_uses {
             return Err(VaultError::CapabilityMaxUsesReached);
         }
-
-        // Check that the action is covered by this token
-        let mut covered = false;
-        for i in 0..token.capabilities.len() {
-            if let Some(cap) = token.capabilities.get(i) {
-                let matches = match (&cap, &action) {
-                    (Capability::InitiateStream(max), Capability::InitiateStream(req)) => {
-                        req <= max
-                    }
-                    (Capability::CreateProposal(max), Capability::CreateProposal(req)) => {
-                        req <= max
-                    }
-                    (Capability::ExecuteRecurring(id1), Capability::ExecuteRecurring(id2)) => {
-                        id1 == id2
-                    }
-                    _ => false,
-                };
-                if matches {
-                    covered = true;
-                    break;
-                }
-            }
-        }
-        if !covered {
+        if !Self::capability_covers(&token.capabilities, &action) {
             return Err(VaultError::CapabilityNotGranted);
+        }
+
+        // Cumulative ceilings: the amount counts against this token and every
+        // ancestor, so delegation can never widen the tree's total budget.
+        let amount: i128 = match &action {
+            Capability::InitiateStream(a) | Capability::CreateProposal(a) => (*a).max(0),
+            Capability::ExecuteRecurring(_) => 0,
+        };
+        let mut spent_here: i128 = 0;
+        for (i, (id, mut scope)) in chain.iter().enumerate() {
+            let spent = scope
+                .spent
+                .checked_add(amount)
+                .ok_or(VaultError::ArithmeticOverflow)?;
+            if scope.amount_ceiling > 0 && spent > scope.amount_ceiling {
+                return Err(VaultError::CapabilityCeilingExceeded);
+            }
+            if i == 0 {
+                spent_here = spent;
+            }
+            if amount > 0 {
+                scope.spent = spent;
+                storage::set_capability_scope(env, &id, &scope);
+            }
         }
 
         token.uses_count = token
@@ -22202,38 +22900,181 @@ impl VaultDAO {
             .checked_add(1)
             .ok_or(VaultError::CapabilityMaxUsesReached)?;
         storage::set_capability_token(env, &token);
+        events::emit_capability_used(
+            env,
+            token_id,
+            caller,
+            amount,
+            spent_here,
+            token.uses_count,
+        );
         Ok(())
     }
 
-    /// Revoke a capability token. Only Admin can call this.
+    /// Whether `action` is covered by one of `caps` (same method, amount
+    /// within the bound, or the same recurring payment ID).
+    fn capability_covers(caps: &Vec<Capability>, action: &Capability) -> bool {
+        for cap in caps.iter() {
+            let matches = match (&cap, action) {
+                (Capability::InitiateStream(max), Capability::InitiateStream(req)) => req <= max,
+                (Capability::CreateProposal(max), Capability::CreateProposal(req)) => req <= max,
+                (Capability::ExecuteRecurring(id1), Capability::ExecuteRecurring(id2)) => {
+                    id1 == id2
+                }
+                _ => false,
+            };
+            if matches {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Scope of a token; tokens granted before #2052 behave as root tokens
+    /// for this vault, with no ceiling, issued in epoch 0.
+    fn capability_scope_or_legacy(
+        env: &Env,
+        id: &BytesN<32>,
+        token: &CapabilityToken,
+    ) -> types::CapabilityScope {
+        storage::get_capability_scope(env, id).unwrap_or(types::CapabilityScope {
+            vault: env.current_contract_address(),
+            amount_ceiling: 0,
+            spent: 0,
+            parent: None,
+            depth: 0,
+            epoch: 0,
+            issuer: token.granted_to.clone(),
+        })
+    }
+
+    /// Validates `token` and all of its ancestors and returns
+    /// `[(id, scope)]` from the token up to its root.
+    ///
+    /// Any revoked (flag or revocation list), missing, expired, stale-epoch or
+    /// wrong-vault link invalidates the whole subtree below it.
+    fn live_capability_chain(
+        env: &Env,
+        token_id: &BytesN<32>,
+        token: &CapabilityToken,
+    ) -> Result<Vec<(BytesN<32>, types::CapabilityScope)>, VaultError> {
+        let current_ledger = env.ledger().sequence();
+        let epoch = storage::get_capability_epoch(env);
+        let this_vault = env.current_contract_address();
+
+        let mut chain = Vec::new(env);
+        let mut id = token_id.clone();
+        let mut current = token.clone();
+        // depth <= MAX, so at most MAX + 1 links are walked.
+        for _ in 0..=MAX_CAPABILITY_DELEGATION_DEPTH {
+            if current.revoked || storage::is_capability_revoked(env, &id) {
+                return Err(VaultError::CapabilityRevoked);
+            }
+            let scope = Self::capability_scope_or_legacy(env, &id, &current);
+            if scope.epoch != epoch {
+                return Err(VaultError::CapabilityEpochStale);
+            }
+            if scope.vault != this_vault {
+                return Err(VaultError::CapabilityInvalid);
+            }
+            if current.expires_at > 0 && current_ledger > current.expires_at {
+                return Err(VaultError::CapabilityExpired);
+            }
+            let parent = scope.parent.clone();
+            chain.push_back((id.clone(), scope));
+            match parent {
+                None => return Ok(chain),
+                Some(parent_id) => {
+                    // A removed ancestor counts as revoked.
+                    current = storage::get_capability_token(env, &parent_id)
+                        .ok_or(VaultError::CapabilityRevoked)?;
+                    id = parent_id;
+                }
+            }
+        }
+        Err(VaultError::CapabilityDelegationTooDeep)
+    }
+
+    fn capability_audit_target(id: &BytesN<32>) -> u64 {
+        let token_id_bytes = id.to_array();
+        u64::from_le_bytes(
+            token_id_bytes[0..8]
+                .try_into()
+                .expect("capability token ID prefix is 8 bytes"),
+        )
+    }
+
+    /// Revoke a capability token.
+    ///
+    /// Callable by an Admin, or by the holder that delegated the token
+    /// (Issue #2052). The ID is added to the revocation list, which also
+    /// invalidates every token delegated from it.
     pub fn revoke_capability(
         env: Env,
         admin: Address,
         token_id: BytesN<32>,
     ) -> Result<(), VaultError> {
         admin.require_auth();
-        let role = storage::get_role(&env, &admin);
-        if !Role::role_satisfies(Role::Admin, role) {
-            return Err(VaultError::InsufficientRole);
-        }
         let mut token =
             storage::get_capability_token(&env, &token_id).ok_or(VaultError::CapabilityNotFound)?;
+        let role = storage::get_role(&env, &admin);
+        if !Role::role_satisfies(Role::Admin, role) {
+            let is_delegator = storage::get_capability_scope(&env, &token_id)
+                .map(|scope| scope.parent.is_some() && scope.issuer == admin)
+                .unwrap_or(false);
+            if !is_delegator {
+                return Err(VaultError::InsufficientRole);
+            }
+        }
         token.revoked = true;
         storage::set_capability_token(&env, &token);
-        let token_id_bytes = token_id.to_array();
-        let audit_target = u64::from_le_bytes(
-            token_id_bytes[0..8]
-                .try_into()
-                .expect("capability token ID prefix is 8 bytes"),
-        );
+        storage::add_capability_revocation(&env, &token_id);
         storage::create_audit_entry(
             &env,
             AuditAction::CapabilityRevoked,
             &admin,
-            audit_target,
+            Self::capability_audit_target(&token_id),
         );
         events::emit_capability_revoked(&env, &token_id, &admin, &token.granted_to);
         Ok(())
+    }
+
+    /// Bump the capability epoch (Admin only, Issue #2052).
+    ///
+    /// Every token issued in an earlier epoch, together with its whole
+    /// delegation tree, stops working immediately (`CapabilityEpochStale`).
+    /// Returns the new epoch.
+    pub fn bump_capability_epoch(env: Env, admin: Address) -> Result<u64, VaultError> {
+        admin.require_auth();
+        if !Role::role_satisfies(Role::Admin, storage::get_role(&env, &admin)) {
+            return Err(VaultError::InsufficientRole);
+        }
+        let epoch = storage::get_capability_epoch(&env)
+            .checked_add(1)
+            .ok_or(VaultError::ArithmeticOverflow)?;
+        storage::set_capability_epoch(&env, epoch);
+        storage::create_audit_entry(&env, AuditAction::CapabilityRevoked, &admin, epoch);
+        storage::extend_instance_ttl(&env);
+        events::emit_capability_epoch_bumped(&env, &admin, epoch);
+        Ok(epoch)
+    }
+
+    /// Current capability epoch (Issue #2052).
+    pub fn get_capability_epoch(env: Env) -> u64 {
+        storage::get_capability_epoch(&env)
+    }
+
+    /// Runtime scope (ceiling, spend, parent, depth, epoch) of a capability (Issue #2052).
+    pub fn get_capability_scope(env: Env, token_id: BytesN<32>) -> Option<types::CapabilityScope> {
+        storage::get_capability_scope(&env, &token_id)
+    }
+
+    /// Whether `token_id` is on the revocation list (Issue #2052).
+    pub fn is_capability_revoked(env: Env, token_id: BytesN<32>) -> bool {
+        storage::is_capability_revoked(&env, &token_id)
+            || storage::get_capability_token(&env, &token_id)
+                .map(|t| t.revoked)
+                .unwrap_or(false)
     }
 
     /// Get a capability token by ID.

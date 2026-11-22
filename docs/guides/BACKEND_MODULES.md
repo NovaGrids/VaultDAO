@@ -186,6 +186,8 @@ The `EventPollingService` in `events/events.service.ts` runs a continuous pollin
 4. Uses exponential backoff on errors (up to `MAX_BACKOFF_MS` = 5 minutes)
 5. The `CircuitBreaker` trips after repeated RPC failures, preventing cascading errors
 
+> **Streaming-first alternative:** `StreamingEventIndexer` (`events/streaming-indexer.ts`) uses an RPC stream as the primary source and falls back to paginated `getEvents` when the stream stalls or disconnects. It dedupes by `(ledger, event_id)` across both modes and adjusts the page size under rate limits. See [backend/STREAMING_INDEXER.md](backend/STREAMING_INDEXER.md) for its modes, metrics and config knobs.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Polling

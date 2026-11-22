@@ -1898,7 +1898,11 @@ pub fn emit_bridge_receipt_confirmed(
     );
 }
 
-/// Emit when a bridge is rejected due to slippage
+/// Emit when a bridge is rejected due to slippage.
+///
+/// Unused since #2051: a slippage rejection now returns an error without
+/// changing state, so any event would be rolled back with the transaction.
+#[allow(dead_code)]
 pub fn emit_bridge_slippage_rejected(
     env: &Env,
     bridge_id: &soroban_sdk::BytesN<32>,
