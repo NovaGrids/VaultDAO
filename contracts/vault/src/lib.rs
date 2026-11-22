@@ -33,6 +33,7 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
+    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignerRotation, Comment, Condition,
     BridgeConfig, CancellationRecord, Capability, EscrowConsent, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
@@ -435,6 +436,8 @@ mod test_cold_signature_age;
 #[cfg(test)]
 mod test_cold_signer_pop;
 #[cfg(test)]
+mod test_issue_2082_2085;
+#[cfg(test)]
 mod test_cost_estimation;
 #[cfg(test)]
 mod test_cross_vault;
@@ -731,6 +734,9 @@ impl VaultDAO {
         // Quorum must not exceed total signers (0 means disabled)
         if config.quorum > config.signers.len() {
             return Err(VaultError::QuorumTooHigh);
+        }
+        if config.high_impact_threshold > 100 {
+            return Err(VaultError::InvalidThresholdConfig);
         }
         if config.spending_limit <= 0 || config.daily_limit <= 0 || config.weekly_limit <= 0 {
             return Err(VaultError::InvalidAmount);
@@ -6480,6 +6486,8 @@ impl VaultDAO {
         if config.signers.is_empty() {
             return Err(VaultError::NoSigners);
         }
+        if config.high_impact_threshold > 100 {
+            return Err(VaultError::InvalidThresholdConfig);
         // Issue #2137: per-token interval overrides may only tighten the global bound.
         for (_token, interval) in config.min_interval_per_token.iter() {
             if interval < MIN_RECURRING_INTERVAL {
@@ -11918,6 +11926,19 @@ impl VaultDAO {
             return Err(VaultError::ColdSignerProofMismatch);
         }
 
+        let current = storage::get_cold_signer_config(&env);
+        for i in 0..current.cold_signers.len() {
+            let existing_key = current.cold_signers.get_unchecked(i);
+            let existing_address = current.cold_signer_addresses.get_unchecked(i);
+            let retained = (0..n).any(|j| {
+                config.cold_signers.get_unchecked(j) == existing_key
+                    && config.cold_signer_addresses.get_unchecked(j) == existing_address
+            });
+            if !retained {
+                return Err(VaultError::ColdSignerRotationRequired);
+            }
+        }
+
         for i in 0..n {
             let public_key = config.cold_signers.get_unchecked(i);
             let signer_address = config.cold_signer_addresses.get_unchecked(i);
@@ -11937,6 +11958,178 @@ impl VaultDAO {
     /// Get the current cold-signer configuration.
     pub fn get_cold_signer_config(env: Env) -> types::ColdSignerConfig {
         storage::get_cold_signer_config(&env)
+    }
+
+    /// Propose replacing a cold signer's on-chain address.
+    ///
+    /// The existing Ed25519 public key remains paired with the replacement
+    /// address. The proposal requires the configured signer threshold and
+    /// starts the admin rotation delay once that threshold approves.
+    pub fn propose_cold_signer_rotation(
+        env: Env,
+        proposer: Address,
+        old_signer: Address,
+        new_signer: Address,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+        let role = storage::get_role(&env, &proposer);
+        if role != Role::Admin && role != Role::Treasurer {
+            return Err(VaultError::InsufficientRole);
+        }
+        if old_signer == new_signer {
+            return Err(VaultError::SignerAlreadyExists);
+        }
+
+        let cold_config = storage::get_cold_signer_config(&env);
+        let mut old_index = None;
+        for i in 0..cold_config.cold_signer_addresses.len() {
+            let address = cold_config.cold_signer_addresses.get_unchecked(i);
+            if address == old_signer {
+                old_index = Some(i);
+            } else if address == new_signer {
+                return Err(VaultError::SignerAlreadyExists);
+            }
+        }
+        if old_index.is_none() {
+            return Err(VaultError::NotAColdSigner);
+        }
+
+        let config = storage::get_config(&env)?;
+        let id = storage::increment_cold_signer_rotation_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+        let rotation = ColdSignerRotation {
+            id,
+            proposer: proposer.clone(),
+            old_signer: old_signer.clone(),
+            new_signer: new_signer.clone(),
+            approvals: Vec::new(&env),
+            signers: config.signers,
+            threshold: config.threshold,
+            status: ProposalStatus::Pending,
+            created_at: current_ledger,
+            expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
+            rotation_delay: config.admin_rotation_delay,
+            approved_at: 0,
+            execute_after_ledger: 0,
+        };
+        storage::set_cold_signer_rotation(&env, &rotation);
+        storage::extend_instance_ttl(&env);
+        storage::create_audit_entry(
+            &env,
+            AuditAction::ColdSignerRotation,
+            &proposer,
+            id,
+        );
+        events::emit_cold_signer_rotation_proposed(
+            &env,
+            id,
+            &proposer,
+            &old_signer,
+            &new_signer,
+        );
+        Ok(id)
+    }
+
+    /// Approve a pending cold signer rotation as a signer in its snapshot.
+    pub fn approve_cold_signer_rotation(
+        env: Env,
+        signer: Address,
+        rotation_id: u64,
+    ) -> Result<(), VaultError> {
+        signer.require_auth();
+        let mut rotation = storage::get_cold_signer_rotation(&env, rotation_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+        if rotation.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if env.ledger().sequence() as u64 > rotation.expires_at {
+            return Err(VaultError::ProposalExpired);
+        }
+        if !rotation.signers.contains(&signer) {
+            return Err(VaultError::NotASigner);
+        }
+        if rotation.approvals.contains(&signer) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        rotation.approvals.push_back(signer.clone());
+        if rotation.approvals.len() >= rotation.threshold {
+            rotation.status = ProposalStatus::Approved;
+            rotation.approved_at = env.ledger().sequence() as u64;
+            rotation.execute_after_ledger = rotation
+                .approved_at
+                .saturating_add(rotation.rotation_delay);
+        }
+        storage::set_cold_signer_rotation(&env, &rotation);
+        storage::create_audit_entry(
+            &env,
+            AuditAction::ColdSignerRotation,
+            &signer,
+            rotation_id,
+        );
+        events::emit_cold_signer_rotation_approved(
+            &env,
+            rotation_id,
+            &signer,
+            rotation.approvals.len(),
+            rotation.threshold,
+        );
+        Ok(())
+    }
+
+    /// Apply an approved cold signer rotation after its configured delay.
+    pub fn execute_cold_signer_rotation(
+        env: Env,
+        caller: Address,
+        rotation_id: u64,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        let mut rotation = storage::get_cold_signer_rotation(&env, rotation_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+        if rotation.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+        if (env.ledger().sequence() as u64) < rotation.execute_after_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        let mut cold_config = storage::get_cold_signer_config(&env);
+        let mut old_index = None;
+        for i in 0..cold_config.cold_signer_addresses.len() {
+            let address = cold_config.cold_signer_addresses.get_unchecked(i);
+            if address == rotation.old_signer {
+                old_index = Some(i);
+            } else if address == rotation.new_signer {
+                return Err(VaultError::SignerAlreadyExists);
+            }
+        }
+        let old_index = old_index.ok_or(VaultError::NotAColdSigner)?;
+        cold_config
+            .cold_signer_addresses
+            .set(old_index, rotation.new_signer.clone());
+        storage::set_cold_signer_config(&env, &cold_config);
+
+        rotation.status = ProposalStatus::Executed;
+        storage::set_cold_signer_rotation(&env, &rotation);
+        storage::extend_instance_ttl(&env);
+        storage::create_audit_entry(
+            &env,
+            AuditAction::ColdSignerRotation,
+            &caller,
+            rotation_id,
+        );
+        events::emit_cold_signer_rotation_executed(
+            &env,
+            rotation_id,
+            &rotation.old_signer,
+            &rotation.new_signer,
+        );
+        Ok(())
+    }
+
+    /// Retrieve a cold signer rotation proposal and its approval state.
+    pub fn get_cold_signer_rotation(env: Env, rotation_id: u64) -> Option<ColdSignerRotation> {
+        storage::get_cold_signer_rotation(&env, rotation_id)
     }
 
     /// Build the message a cold signer signs to prove possession of its key.
@@ -20749,6 +20942,7 @@ impl VaultDAO {
             }
         }
         storage::set_schema_version(&env, storage::CURRENT_SCHEMA_VERSION);
+        events::emit_migrated(&env, from_version, storage::CURRENT_SCHEMA_VERSION);
         Ok(())
     }
 
@@ -21655,11 +21849,13 @@ impl VaultDAO {
         // Maximum vesting duration (~2 years at ~5s/ledger) so schedules
         // cannot outlive any realistic storage TTL.
         const MAX_VESTING_DURATION_LEDGERS: u32 = 12_614_400;
-        if total <= 0
-            || end_ledger <= cliff_ledger
-            || end_ledger <= start_ledger
-            || cliff_ledger < start_ledger
-        {
+        if total <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        if end_ledger <= start_ledger {
+            return Err(VaultError::InvalidLedgerRange);
+        }
+        if end_ledger <= cliff_ledger || cliff_ledger < start_ledger {
             return Err(VaultError::InvalidAmount);
         }
         if start_ledger < current_ledger {
@@ -22122,6 +22318,9 @@ impl VaultDAO {
         allowed_proposal_ids: Vec<u64>,
     ) -> Result<u64, VaultError> {
         delegator.require_auth();
+        if expires_at_ledger <= env.ledger().sequence() {
+            return Err(VaultError::InvalidLedgerRange);
+        }
         let config = storage::get_config(&env)?;
         if !config.signers.contains(&delegator) {
             return Err(VaultError::NotASigner);

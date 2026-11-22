@@ -13,6 +13,55 @@ pub fn emit_initialized(env: &Env, admin: &Address, threshold: u32) {
     );
 }
 
+/// Emit when stored data migration succeeds.
+pub fn emit_migrated(env: &Env, from_version: u32, to_version: u32) {
+    env.events().publish(
+        (Symbol::new(env, "migrated"),),
+        (from_version, to_version),
+    );
+}
+
+/// Emit when a cold signer rotation is proposed.
+pub fn emit_cold_signer_rotation_proposed(
+    env: &Env,
+    rotation_id: u64,
+    proposer: &Address,
+    old_signer: &Address,
+    new_signer: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cold_signer_rotation_proposed"), rotation_id),
+        (proposer.clone(), old_signer.clone(), new_signer.clone()),
+    );
+}
+
+/// Emit when a signer approves a cold signer rotation.
+pub fn emit_cold_signer_rotation_approved(
+    env: &Env,
+    rotation_id: u64,
+    signer: &Address,
+    approvals: u32,
+    threshold: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cold_signer_rotation_approved"), rotation_id),
+        (signer.clone(), approvals, threshold),
+    );
+}
+
+/// Emit when a cold signer rotation is applied.
+pub fn emit_cold_signer_rotation_executed(
+    env: &Env,
+    rotation_id: u64,
+    old_signer: &Address,
+    new_signer: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cold_signer_rotation_executed"), rotation_id),
+        (old_signer.clone(), new_signer.clone()),
+    );
+}
+
 /// Emit when a new proposal is created (enhanced: includes token and insurance)
 pub fn emit_proposal_created(
     env: &Env,

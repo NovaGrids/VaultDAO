@@ -1582,6 +1582,27 @@ pub enum AuditAction {
     /// A streaming payment was created (#1914).
     /// `target` is the stream id.
     StreamCreated = 52,
+    /// A cold signer rotation was proposed, approved, or executed (#2085).
+    ColdSignerRotation = 53,
+}
+
+/// A governed replacement of a cold signer's on-chain address.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ColdSignerRotation {
+    pub id: u64,
+    pub proposer: soroban_sdk::Address,
+    pub old_signer: soroban_sdk::Address,
+    pub new_signer: soroban_sdk::Address,
+    pub approvals: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub signers: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub threshold: u32,
+    pub status: ProposalStatus,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub rotation_delay: u64,
+    pub approved_at: u64,
+    pub execute_after_ledger: u64,
 }
 
 /// Audit trail entry with cryptographic verification

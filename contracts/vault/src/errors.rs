@@ -342,6 +342,9 @@ pub enum VaultError {
     /// list passed to `set_cold_signer_config` differ in length (#2086)
     ColdSignerProofMismatch = 746,
 
+    /// Existing cold signers may only be replaced through governed rotation (#2085)
+    ColdSignerRotationRequired = 747,
+
     // =========================================================
     // Emergency pause / circuit breaker (#1084)
     // =========================================================
