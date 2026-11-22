@@ -27,7 +27,7 @@
     "@opentelemetry/instrumentation-express": "^0.69.0",
     "@opentelemetry/instrumentation-http": "^0.221.0",
     "@opentelemetry/sdk-node": "^0.221.0",
-    "express": "^5.1.0",
+    "express": "^5.3.0",
     "ioredis": "5.6.1",
     "@stellar/stellar-sdk": "^12.2.0",
     "ws": "^8.21.2",
