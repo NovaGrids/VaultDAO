@@ -17,6 +17,27 @@ import {
   SnapshotService,
   MemorySnapshotAdapter,
 } from "../../snapshots/index.js";
+import { existsSync } from "node:fs";
+import {
+  InMemoryStorageAdapter,
+  type StorageAdapter,
+} from "../../../shared/storage/storage.adapter.js";
+import { SqliteStorageAdapter } from "../../../shared/storage/sqlite.storage.adapter.js";
+import {
+  ReplayProjectionWriter,
+  type ProjectionWrite,
+  type ProposalProjection,
+  type RecurringProjection,
+} from "./replay-projections.js";
+import {
+  buildReconciliationReport,
+  computeProgress,
+  formatReconciliationReport,
+} from "./replay-report.js";
+
+/** SQLite tables holding the replay projections. */
+export const REPLAY_PROPOSAL_PROJECTION_TABLE = "replay_proposal_projections";
+export const REPLAY_RECURRING_PROJECTION_TABLE = "replay_recurring_projections";
 
 /**
  * Parses command line arguments into ReplayOptions.
@@ -34,6 +55,10 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
     outputDir: undefined as string | undefined,
     eventTypes: undefined as string[] | undefined,
     outputFormat: undefined as ReplayOutputFormat | undefined,
+    checkpointEvery: undefined as number | undefined,
+    resume: true,
+    resumeToken: undefined as string | undefined,
+    projectionDbPath: undefined as string | undefined,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -159,6 +184,43 @@ export function parseReplayArgs(args: string[]): ReplayOptions {
         }
         break;
 
+      case "--checkpoint-every":
+        if (nextArg !== undefined && !nextArg.startsWith("-")) {
+          const every = parseInt(nextArg, 10);
+          if (isNaN(every) || every < 1) {
+            throw new Error(
+              `Invalid checkpoint interval: ${nextArg}. Must be a positive integer number of ledgers.`,
+            );
+          }
+          options.checkpointEvery = every;
+          i++;
+        } else {
+          throw new Error(`--checkpoint-every requires a ledger count argument.`);
+        }
+        break;
+
+      case "--resume-token":
+        if (nextArg !== undefined && !nextArg.startsWith("-")) {
+          options.resumeToken = nextArg;
+          i++;
+        } else {
+          throw new Error(`--resume-token requires a token argument.`);
+        }
+        break;
+
+      case "--no-resume":
+        options.resume = false;
+        break;
+
+      case "--projection-db":
+        if (nextArg !== undefined && !nextArg.startsWith("-")) {
+          options.projectionDbPath = nextArg;
+          i++;
+        } else {
+          throw new Error(`--projection-db requires a SQLite file path argument.`);
+        }
+        break;
+
       case "--verbose":
       case "-v":
         options.verbose = true;
@@ -211,8 +273,12 @@ Options:
   -c, --contract-id <id>     Contract ID to replay events for (default: env config)
   -r, --rpc <url>            Soroban RPC URL (default: env config)
   -o, --output <dir>         Output directory for cursor files (default: current directory)
-  -w, --clear                Wipe existing proposal and snapshot state before replay
-  -d, --dry-run              Run without persisting state or processing events
+      --checkpoint-every <n> Persist a checkpoint + resume token every n ledgers (default: batch size)
+      --resume-token <token> Resume from an explicit token printed by a previous run
+      --no-resume            Ignore the stored checkpoint and start at --from-ledger
+      --projection-db <path> SQLite file for replay projections (default: DATABASE_PATH)
+  -w, --clear                Wipe existing proposal, snapshot and projection state before replay
+  -d, --dry-run              Print would-be projection writes without mutating storage
   -v, --verbose              Enable verbose logging output
       --type <types>         Filter by event types (comma-separated, e.g. PROPOSAL_CREATED,SIGNER_ADDED)
       --format <fmt>         Output format: 'human' (default) or 'json'
@@ -240,6 +306,9 @@ Examples:
   # Replay only signer events in human-readable format
   npm run replay -- --type SIGNER_ADDED,SIGNER_REMOVED --format human
 
+  # Checkpointed resync of a contract range (re-running resumes after a crash)
+  npm run replay -- --from-ledger 1000 --to-ledger 90000 --contract-id CDABC... --checkpoint-every 500
+
 Environment Variables:
   CONTRACT_ID              Contract ID for the VaultDAO contract
   SOROBAN_RPC_URL          Soroban RPC endpoint URL
@@ -247,10 +316,13 @@ Environment Variables:
 
 Files:
   .event-cursor.json       Cursor file tracking the last processed ledger
+  .replay-checkpoint.json  Checkpoint + resume token, stored next to the cursor file
 
 Notes:
   - The command reuses existing event normalization logic from the events module
   - Cursor files allow safe resumption if the process is interrupted
+  - Projections are idempotent: replaying an overlapping range skips events
+    that were already applied
   - Use --dry-run first to test your configuration before a full backfill
   - Verbose mode (-v) shows detailed event processing information
 `);
@@ -285,10 +357,31 @@ export async function executeReplay(args: string[]): Promise<void> {
   const snapshotAdapter = new MemorySnapshotAdapter();
   const snapshotService = new SnapshotService(snapshotAdapter);
 
+  const isJsonOutput = options.outputFormat === "json";
+  const contractId = options.contractId ?? env.contractId;
+  const projectionStores = openProjectionStores(
+    options.projectionDbPath ?? env.databasePath,
+    options.dryRun,
+  );
+  const projectionWriter = new ReplayProjectionWriter({
+    ...projectionStores,
+    dryRun: options.dryRun,
+    onWrite: options.dryRun
+      ? (write) => printWouldBeWrite(write, isJsonOutput)
+      : undefined,
+  });
+
   if (options.clear) {
     console.log("[replay-cli] Clearing existing state...");
     await proposalPersistence.clear();
-    await snapshotAdapter.clearSnapshot(options.contractId ?? env.contractId);
+    await snapshotAdapter.clearSnapshot(contractId);
+    if (options.dryRun) {
+      console.log("[replay-cli] Dry run: projection tables are left untouched");
+    } else {
+      await projectionStores.proposals.clear();
+      await projectionStores.recurring.clear();
+      await service.clearCheckpoint();
+    }
   }
 
   // Wire consumers to replay service
@@ -298,6 +391,14 @@ export async function executeReplay(args: string[]): Promise<void> {
   service.registerConsumer(async (event) => {
     await snapshotService.processEvent(event);
   });
+  // Critical: a failed projection write must stop the run before the next
+  // checkpoint claims those ledgers were applied.
+  service.registerBatchConsumer(
+    async (events) => {
+      await projectionWriter.applyBatch(events);
+    },
+    { critical: true },
+  );
 
   // Check for existing cursor
   const hasCursor = await service.hasExistingCursor();
@@ -311,6 +412,13 @@ export async function executeReplay(args: string[]): Promise<void> {
     );
   }
 
+  const storedCheckpoint = options.dryRun ? null : await service.loadCheckpoint();
+  if (storedCheckpoint && options.resume !== false && !options.resumeToken) {
+    console.log(
+      `[replay-cli] Found replay checkpoint ${storedCheckpoint.replayId} at ledger ${storedCheckpoint.lastCheckpointLedger}${storedCheckpoint.completed ? " (completed)" : ""}; it is resumed when it matches this contract and range`,
+    );
+  }
+
   if (options.eventTypes) {
     console.log(`[replay-cli] Filtering event types: ${options.eventTypes.join(", ")}`);
   }
@@ -321,7 +429,6 @@ export async function executeReplay(args: string[]): Promise<void> {
   const typeFilter = options.eventTypes
     ? new Set(options.eventTypes.map((t) => t.toUpperCase()))
     : null;
-  const isJsonOutput = options.outputFormat === "json";
 
   service.registerConsumer(async (event) => {
     if (typeFilter && !typeFilter.has(event.type)) return;
@@ -341,14 +448,20 @@ export async function executeReplay(args: string[]): Promise<void> {
 
   try {
     const stats = await service.replay((currentStats, currentLedger) => {
+      const progress = computeProgress(currentStats, currentLedger);
+      if (isJsonOutput) {
+        console.log(JSON.stringify({ type: "progress", ...progress }));
+        return;
+      }
+
       // Print progress: Replayed ledger X/Y (Z events) every 1000 ledgers
       const progressLedger = Math.floor(currentLedger / 1000) * 1000;
       if (progressLedger > lastReportedLedger) {
         lastReportedLedger = progressLedger;
         const target =
-          currentStats.endLedger > 0 ? currentStats.endLedger : "?";
+          currentStats.targetLedger > 0 ? currentStats.targetLedger : "?";
         console.log(
-          `Replayed ledger ${currentLedger}/${target} (${currentStats.totalEventsProcessed} events)`,
+          `Replayed ledger ${currentLedger}/${target} (${currentStats.totalEventsProcessed} events, ${progress.percentComplete}%, ${progress.eventsPerSecond} ev/s, checkpoint ${progress.lastCheckpointLedger ?? "-"})`,
         );
       }
 
@@ -359,7 +472,21 @@ export async function executeReplay(args: string[]): Promise<void> {
       }
     });
 
+    const report = buildReconciliationReport({
+      contractId,
+      dryRun: options.dryRun,
+      fromLedger: options.startLedger,
+      stats,
+      projections: projectionWriter.summary(),
+      checkpoint: service.getLastCheckpoint(),
+    });
+
     console.log("");
+    if (isJsonOutput) {
+      console.log(JSON.stringify({ type: "report", ...report }));
+    } else {
+      console.log(formatReconciliationReport(report));
+    }
     console.log("[replay-cli] Replay completed successfully!");
 
     if (stats.errorCount > 0) {
@@ -374,6 +501,49 @@ export async function executeReplay(args: string[]): Promise<void> {
     console.error(`[replay-cli] Fatal error: ${errorMessage}`);
     process.exit(1);
   }
+}
+
+/**
+ * Opens the proposal / recurring projection stores.
+ *
+ * In dry-run mode a database file that does not exist yet is never created:
+ * in-memory stores stand in for it, so a dry run leaves the disk untouched.
+ */
+export function openProjectionStores(
+  dbPath: string,
+  dryRun: boolean,
+): {
+  proposals: StorageAdapter<ProposalProjection>;
+  recurring: StorageAdapter<RecurringProjection>;
+} {
+  if (dbPath === ":memory:" || (dryRun && !existsSync(dbPath))) {
+    return {
+      proposals: new InMemoryStorageAdapter<ProposalProjection>(),
+      recurring: new InMemoryStorageAdapter<RecurringProjection>(),
+    };
+  }
+  return {
+    proposals: new SqliteStorageAdapter<ProposalProjection>(
+      dbPath,
+      REPLAY_PROPOSAL_PROJECTION_TABLE,
+    ),
+    recurring: new SqliteStorageAdapter<RecurringProjection>(
+      dbPath,
+      REPLAY_RECURRING_PROJECTION_TABLE,
+    ),
+  };
+}
+
+/** Prints one dry-run would-be write. */
+export function printWouldBeWrite(write: ProjectionWrite, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ type: "would_write", ...write }));
+    return;
+  }
+  const status = (write.record as { status?: string }).status ?? "";
+  console.log(
+    `[dry-run] would write ${write.projection} ${write.key} <- ${write.eventType} (${write.eventId}) status=${status}`,
+  );
 }
 
 // Main entry point for CLI execution
