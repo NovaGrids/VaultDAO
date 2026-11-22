@@ -62,7 +62,7 @@
     "yjs": "^13.6.29"
   },
   "devDependencies": {
-    "@babel/plugin-transform-runtime": "^7.29.0",
+    "@babel/plugin-transform-runtime": "^8.1.2",
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.45.0",
     "@size-limit/file": "^11.2.0",
