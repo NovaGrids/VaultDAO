@@ -6,10 +6,24 @@ import type { MetricsRegistry } from "../health/metrics.registry.js";
 
 /** Default per-run execution budget; a hung run (e.g. a stuck RPC call) fails after this. */
 export const DEFAULT_JOB_TIMEOUT_MS = 30_000;
+/** Default grace period on shutdown: how long to wait for in-flight jobs before exiting. */
+export const DEFAULT_SHUTDOWN_IDLE_TIMEOUT_MS = 30_000;
 /** Counter incremented when a tick is skipped because the previous run is still in flight. */
 export const JOB_SKIPPED_OVERLAP_COUNTER = "job_skipped_overlap";
 /** `lastRunError` recorded when a run exceeds its execution timeout. */
 export const EXECUTION_TIMEOUT_ERROR = "execution_timeout";
+
+function resolveShutdownIdleTimeoutMs(): number {
+  const raw = process.env.SCHEDULED_JOB_SHUTDOWN_IDLE_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_SHUTDOWN_IDLE_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SHUTDOWN_IDLE_TIMEOUT_MS;
+  }
+  return parsed;
+}
 
 export interface ScheduledJobContext {
   readonly now: () => Date;
@@ -50,8 +64,13 @@ export class ScheduledJobRunner {
   private readonly handles = new Map<string, NodeJS.Timeout>();
   /** Jobs with a run currently in flight; used to skip overlapping ticks. */
   private readonly inFlight = new Set<string>();
+  /** In-flight run promises keyed by job name, awaited during graceful shutdown. */
+  private readonly inFlightRuns = new Map<string, Promise<void>>();
   private heartbeatHandle?: NodeJS.Timeout;
   private started = false;
+  private shuttingDown = false;
+  private readonly shutdownIdleTimeoutMs = resolveShutdownIdleTimeoutMs();
+  private readonly signalHandlers = new Map<NodeJS.Signals, () => void>();
 
   constructor(private readonly options: ScheduledJobRunnerOptions = {}) {
     options.metricsRegistry?.register(
@@ -105,9 +124,91 @@ export class ScheduledJobRunner {
     }, 300_000);
     this.heartbeatHandle.unref();
 
+    this.registerSignalHandlers();
+
     this.logger.info("scheduled job runner started", {
       jobCount: this.jobs.size,
     });
+  }
+
+  private registerSignalHandlers(): void {
+    for (const signal of ["SIGTERM", "SIGINT"] as const) {
+      if (this.signalHandlers.has(signal)) {
+        continue;
+      }
+      const handler = (): void => {
+        void this.handleSignal(signal);
+      };
+      this.signalHandlers.set(signal, handler);
+      process.once(signal, handler);
+    }
+  }
+
+  private unregisterSignalHandlers(): void {
+    for (const [signal, handler] of this.signalHandlers) {
+      process.removeListener(signal, handler);
+    }
+    this.signalHandlers.clear();
+  }
+
+  private async handleSignal(signal: NodeJS.Signals): Promise<void> {
+    this.logger.info("received shutdown signal", { signal });
+    try {
+      await this.shutdown();
+    } catch (err) {
+      this.logger.warn("error during graceful shutdown", {
+        signal,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    process.exit(0);
+  }
+
+  /**
+   * Stop scheduling new ticks and wait for in-flight jobs to finish.
+   * Resolves once all in-flight runs settle or the idle timeout elapses.
+   */
+  public async shutdown(idleTimeoutMs: number = this.shutdownIdleTimeoutMs): Promise<void> {
+    if (this.shuttingDown) {
+      return;
+    }
+    this.shuttingDown = true;
+    this.unregisterSignalHandlers();
+    this.stop();
+
+    const pending = Array.from(this.inFlightRuns.values());
+    if (pending.length === 0) {
+      this.logger.info("scheduled job runner shutdown complete: no in-flight jobs");
+      return;
+    }
+
+    this.logger.info("scheduled job runner waiting for in-flight jobs", {
+      jobCount: pending.length,
+      idleTimeoutMs,
+    });
+
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), idleTimeoutMs);
+      timer.unref();
+    });
+
+    try {
+      const result = await Promise.race([
+        Promise.allSettled(pending).then(() => "drained" as const),
+        timeout,
+      ]);
+      if (result === "timeout") {
+        this.logger.warn("scheduled job runner shutdown idle timeout reached", {
+          idleTimeoutMs,
+          remainingJobs: this.inFlightRuns.size,
+        });
+      } else {
+        this.logger.info("scheduled job runner shutdown complete: in-flight jobs finished");
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   public stop(): void {
@@ -173,6 +274,10 @@ export class ScheduledJobRunner {
   }
 
   private async runJobSafely(job: ScheduledJob): Promise<void> {
+    if (this.shuttingDown) {
+      this.logger.warn("scheduled job run skipped: runner is shutting down", { job: job.name });
+      return;
+    }
     // Never run the same job twice concurrently (e.g. a slow RPC outlasting the
     // interval), which could otherwise double-execute payments.
     if (this.inFlight.has(job.name)) {
@@ -181,10 +286,13 @@ export class ScheduledJobRunner {
       return;
     }
     this.inFlight.add(job.name);
+    const runPromise = this.executeJob(job);
+    this.inFlightRuns.set(job.name, runPromise);
     try {
-      await this.executeJob(job);
+      await runPromise;
     } finally {
       this.inFlight.delete(job.name);
+      this.inFlightRuns.delete(job.name);
     }
   }
 

@@ -24,6 +24,7 @@ This document defines the attack surface of the VaultDAO smart contract (`contra
    - [1.4 Spending Limit Bypass](#14-spending-limit-bypass)
    - [1.5 Integer Overflow Points](#15-integer-overflow-points)
    - [1.6 Contract Upgrade Mechanism](#16-contract-upgrade-mechanism--governance-is-disconnected-from-execution)
+   - [1.7 Audit Log Compaction and Inclusion Proofs](#17-audit-log-compaction-and-inclusion-proofs)
 2. [Known Assumptions and Invariants](#2-known-assumptions-and-invariants)
 3. [Out of Scope](#3-out-of-scope)
 4. [Prior Issues and Resolutions](#4-prior-issues-and-resolutions)
@@ -216,6 +217,44 @@ This was not exploited or executed against a live network as part of this review
 **Residual risk: High.** This is rated High independent of the conservative-bias instruction — a contract upgrade path that is either completely non-functional or silently deploys unintended code is a severe finding by any standard. If the team's intent is "this feature is incomplete and not yet meant to be used," that itself needs to be stated explicitly somewhere reachable by an auditor or by anyone inspecting the public interface (e.g., the function should be feature-flagged off, or `execute_upgrade` should return a not-implemented error), rather than appearing as a fully wired, multi-sig-gated, timelocked governance feature that silently does the wrong thing.
 
 **Recommendation for auditors:** treat this as the highest-priority item in the entire document. Confirm directly (in a test environment, not by static reading) what `update_current_contract_wasm([0u8; 32])` actually does, and verify with the team whether `propose_upgrade`/`execute_upgrade` are meant to be reachable in the current release at all.
+### 1.7 Audit Log Compaction and Inclusion Proofs
+
+The audit trail (`create_audit_entry`) is a hash chain: every `AuditEntry` stores `prev_hash` and `hash = compute_audit_hash(id, action, actor, target, timestamp, prev_hash)`. Left alone it grows without bound in Persistent storage, so it is compacted into Merkle-rooted epochs.
+
+**Affected functions:** `compact_audit_epoch` / `create_audit_checkpoint` (same operation), `set_audit_retention_policy`, `get_audit_retention_policy`, `get_audit_checkpoint`, `get_audit_checkpoint_leaves`, `get_audit_inclusion_proof`, `verify_archived_audit_entry`, `verify_audit_entry`, `get_audit_hot_range`, and the existing getters `get_audit_entry`, `get_audit_trail`, `verify_audit_chain`, `verify_audit_trail_full`.
+
+**Retention policy (hot vs. cold).** `AuditRetentionPolicy { hot_window_entries, batch_size }` (Admin only; `batch_size` 1..=200). The newest `hot_window_entries` entries are *hot*: they always stay individually stored and are never compacted. Older entries are *cold* and may be compacted `batch_size` at a time. The default (`hot_window_entries = 0`, `batch_size = 100`) is the historical checkpoint behaviour.
+
+**Epoch compaction.** `compact_audit_epoch(admin)` takes the next `batch_size` cold entries after the previous epoch and:
+
+1. builds the Merkle root over their leaves (leaf = entry `hash` as little-endian `u64`, zero-padded to 32 bytes; parent = `sha256(left || right)`; the last node of an odd-sized level is promoted unchanged) and commits it in an `AuditCheckpoint { from_entry_id, to_entry_id, merkle_root }`;
+2. stores the batch's leaf hashes (`get_audit_checkpoint_leaves`) so proofs can still be generated on-chain;
+3. records the hash of the last compacted entry as the chain anchor for the first hot entry;
+4. emits `audit_compacted(checkpoint_id; from_entry_id, to_entry_id, merkle_root, leaf_hashes)` alongside the existing `audit_checkpoint` event;
+5. removes the raw entries.
+
+It fails with `InvalidAmount` if fewer than `batch_size` cold entries exist outside the hot window, and with `Unauthorized` for a non-Admin caller.
+
+**Off-chain archive.** Before compacting, an archiver reads the cold entries with `get_audit_trail` / `get_audit_entry` (or the event stream) and stores them. The `audit_compacted` event's `leaf_hashes` let the archive check it holds exactly the entries that were committed.
+
+**Inclusion proofs.** `get_audit_inclusion_proof(checkpoint_id, entry_id)` returns the sibling path for an archived entry. `verify_archived_audit_entry(checkpoint_id, entry, proof)` returns `true` only if:
+
+- `entry.id` lies in the checkpoint's range (its leaf position is derived from the ID, so a genuine leaf cannot be passed off at another position);
+- `entry.hash` equals the hash recomputed from the entry's fields (editing `action`, `actor`, `target`, `timestamp`, `prev_hash` or `hash` fails);
+- the proof has exactly the expected length and folds to the committed `merkle_root`.
+
+`verify_audit_entry(checkpoint_id, entry_hash, proof, leaf_index)` is the hash-only variant. It now walks the same tree shape as the root builder, so leaves whose path crosses a promoted node verify correctly (previously the last leaves of a 100-entry batch could not be proven).
+
+**Hot-window getters.** `get_audit_entry` and `get_audit_trail` keep working for hot IDs (compacted IDs are absent; `get_audit_hot_range()` returns `(first_hot_id, last_id)`). `get_audit_entry_count` still counts every entry ever written. `verify_audit_chain(from, to)` accepts `from = first_hot_id` and links it to the compaction anchor; a range starting inside a compacted epoch fails with `AuditChainBroken` (use inclusion proofs there). `verify_audit_trail_full` verifies from the first hot entry, checking its `prev_hash` against the anchor.
+
+**Existing mitigations:** compaction is Admin-only and append-only (epochs are sequential and never overlap); the hot window guarantees recent history is always directly readable; each epoch root is committed in Persistent storage with TTL extension.
+
+**What is not mitigated:** compaction is irreversible — if no archive copied the cold entries first, only their hashes remain on-chain (enough to prove a leaf someone still holds, not to recover its contents). Leaves are the 64-bit chain hash, so the scheme's collision resistance is bounded by `compute_audit_hash`'s 64-bit output, not by SHA-256.
+
+**Residual risk: Low.** Integrity of committed history is preserved; the residual concerns are operational (archive before compacting) and the 64-bit leaf width.
+
+**Tests:** `contracts/vault/src/test_audit_compaction_2062.rs` (proof verifies for every archived leaf, tampered leaf fails, hot-window getters and chain checks survive compaction, hot window is never compacted).
+
 ## 2. Known Assumptions and Invariants
 
 These are stated as formal properties — conditions that should hold for every reachable contract state — rather than prose descriptions. Each includes the function(s) responsible for upholding it, and the test(s) intended to verify it. Where a property is **violated by a known bug**, that is stated explicitly rather than omitted.

@@ -92,6 +92,8 @@ These are the only parameters `propose_config_change` accepts.
 | `TimelockDelay` | 4 | `timelock_delay` | `v ≥ 0` | None. Governance only |
 | `Quorum` | 5 | `quorum` | `v ≤ signers.len()` | `update_quorum` (Admin) |
 | `FullQuorumThreshold` | 6 | `full_quorum_threshold` | `v ≥ 0` (0 disables) | None. `set_full_quorum_threshold` always fails |
+| `ReputationHalfLife` | 7 | `reputation_config.decay_half_life_ledgers` | `v ≥ 0` (0 disables decay) | None. `set_reputation_config` always fails (Issue #2145) |
+| `ReputationDecayFloor` | 8 | `reputation_config.decay_min_score` | `0 ≤ v ≤ 1000` | None. `set_reputation_config` always fails (Issue #2145) |
 
 Governance does not check the limit hierarchy (`spending ≤ daily ≤ weekly`), but `update_limits` does. A governance change to one limit can therefore leave the three limits inconsistent.
 
@@ -146,7 +148,8 @@ These module settings live in their own storage keys. **None of them go through 
 | Whitelist / blacklist entries, list mode | Admin | `add_to_whitelist`, `remove_from_whitelist`, `add_to_blacklist`, `remove_from_blacklist`, `set_list_mode` |
 | Insurance, fee, gas, cost model, gas oracle | Admin | `set_insurance_config`, `set_insurance_voting_config`, `set_fee_structure`, `set_gas_config`, `update_cost_model`, `set_gas_price_oracle` |
 | Price oracle, DEX, bridge, cross-vault | Admin | `update_oracle_config` / `set_oracle_config`, `set_dex_config`, `set_bridge_config`, `set_cross_vault_config` |
-| Cold-signer, reputation, time-weighted voting | Admin | `set_cold_signer_config`, `set_reputation_config`, `set_time_weighted_config` |
+| Cold-signer, time-weighted voting | Admin | `set_cold_signer_config`, `set_time_weighted_config` |
+| Reputation decay (governance only) | Governance | `ConfigParam::ReputationHalfLife`, `ConfigParam::ReputationDecayFloor` (`set_reputation_config` is disabled) |
 | Streams auto-complete | Admin | `set_stream_auto_complete` |
 | Templates | Admin | `update_template`, `update_var_template`, `set_template_status` |
 | Holiday calendar, snapshot interval, pause cooldown, emergency | Admin | `set_holiday_calendar`, `set_snapshot_interval`, `set_pause_cooldown_config`, `configure_emergency` |

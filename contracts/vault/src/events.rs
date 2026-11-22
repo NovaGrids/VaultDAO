@@ -345,6 +345,14 @@ pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address, p
     );
 }
 
+/// Emit when proposal creation is rejected before an ID is assigned.
+pub fn emit_proposal_creation_rejected(env: &Env, proposer: &Address, reason: Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_rejected"), proposer.clone()),
+        reason,
+    );
+}
+
 /// Emit when a signer casts a rejection vote, tracking progress toward the
 /// rejection threshold.
 ///
@@ -2865,4 +2873,192 @@ pub fn emit_batch_created(env: &Env, batch_id: u64, creator: &Address, proposal_
 pub fn emit_gas_oracle_cleared(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "gas_oracle_cleared"),), admin.clone());
+}
+
+// ============================================================================
+// Issue #2055: Stream pause policy and burst caps
+// ============================================================================
+
+/// Emit when the vault-wide stream pause policy changes.
+///
+/// Topics: `("stream_pause_policy",)`
+/// Data:   `(admin, max_pause_secs, action)`
+pub fn emit_stream_pause_policy_set(env: &Env, admin: &Address, max_pause_secs: u64, action: u32) {
+    env.events().publish(
+        (Symbol::new(env, "stream_pause_policy"),),
+        (admin.clone(), max_pause_secs, action),
+    );
+}
+
+/// Emit when a paused stream outlives the pause policy and the policy is applied.
+///
+/// Topics: `("stream_pause_expired", stream_id)`
+/// Data:   `(action, paused_at, applied_at)`
+pub fn emit_stream_pause_expired(
+    env: &Env,
+    stream_id: u64,
+    action: u32,
+    paused_at: u64,
+    applied_at: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_pause_expired"), stream_id),
+        (action, paused_at, applied_at),
+    );
+}
+
+/// Emit when a stream payout pushes its window above the base cap and into
+/// the burst allowance.
+///
+/// Topics: `("stream_burst_used", stream_id)`
+/// Data:   `(window_total, base_cap, effective_cap, window_start_ledger)`
+pub fn emit_stream_burst_used(
+    env: &Env,
+    stream_id: u64,
+    window_total: i128,
+    base_cap: i128,
+    effective_cap: i128,
+    window_start_ledger: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "stream_burst_used"), stream_id),
+        (window_total, base_cap, effective_cap, window_start_ledger),
+    );
+}
+
+// ============================================================================
+// Issue #2057: TWAP guard and routed swaps
+// ============================================================================
+
+/// Emit when the TWAP guard configuration changes.
+///
+/// Topics: `("twap_config",)`
+/// Data:   `(admin, window_secs, max_deviation_bps, min_observations)`
+pub fn emit_twap_config_set(
+    env: &Env,
+    admin: &Address,
+    window_secs: u64,
+    max_deviation_bps: u32,
+    min_observations: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "twap_config"),),
+        (admin.clone(), window_secs, max_deviation_bps, min_observations),
+    );
+}
+
+/// Emit when an oracle observation is recorded.
+///
+/// Topics: `("price_observed", asset)`
+/// Data:   `(price, timestamp)`
+pub fn emit_price_observed(env: &Env, asset: &Address, price: i128, timestamp: u64) {
+    env.events().publish(
+        (Symbol::new(env, "price_observed"), asset.clone()),
+        (price, timestamp),
+    );
+}
+
+/// Emit when a routed swap settles all legs.
+///
+/// Topics: `("routed_swap", proposal_id)`
+/// Data:   `(dex, token_in, token_out, amount_in, amount_out, hops)`
+#[allow(clippy::too_many_arguments)]
+pub fn emit_routed_swap_executed(
+    env: &Env,
+    proposal_id: u64,
+    dex: &Address,
+    token_in: &Address,
+    token_out: &Address,
+    amount_in: i128,
+    amount_out: i128,
+    hops: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "routed_swap"), proposal_id),
+        (
+            dex.clone(),
+            token_in.clone(),
+            token_out.clone(),
+            amount_in,
+            amount_out,
+            hops,
+        ),
+    );
+}
+
+// ============================================================================
+// Issue #2059: Recovery ceremony
+// ============================================================================
+
+/// Emit when a recovery is cancelled because a newer one superseded it.
+///
+/// Topics: `("recovery_superseded", old_id)`
+/// Data:   `new_id`
+pub fn emit_recovery_superseded(env: &Env, old_id: u64, new_id: u64) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_superseded"), old_id), new_id);
+}
+
+/// Emit when an open recovery is closed because it expired.
+///
+/// Topics: `("recovery_expired", proposal_id)`
+/// Data:   `(approvals_cleared, cancel_votes_cleared)`
+pub fn emit_recovery_expired(env: &Env, proposal_id: u64, approvals: u32, cancel_votes: u32) {
+    env.events().publish(
+        (Symbol::new(env, "recovery_expired"), proposal_id),
+        (approvals, cancel_votes),
+    );
+}
+
+/// Emit when the recovery epoch advances.
+///
+/// Topics: `("recovery_epoch",)`
+/// Data:   `new_epoch`
+pub fn emit_recovery_epoch_advanced(env: &Env, new_epoch: u64) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_epoch"),), new_epoch);
+}
+
+/// Emit when the competing-recovery policy changes.
+///
+/// Topics: `("recovery_policy",)`
+/// Data:   `(admin, policy)`
+pub fn emit_recovery_policy_set(env: &Env, admin: &Address, policy: u32) {
+    env.events()
+        .publish((Symbol::new(env, "recovery_policy"),), (admin.clone(), policy));
+}
+
+// ============================================================================
+// Issue #2062: Audit compaction
+// ============================================================================
+
+/// Emit when an audit epoch is compacted. `leaf_hashes` is the archive feed:
+/// together with the entries read before compaction it lets an off-chain
+/// archive rebuild every inclusion proof.
+///
+/// Topics: `("audit_compacted", checkpoint_id)`
+/// Data:   `(from_entry_id, to_entry_id, merkle_root, leaf_hashes)`
+pub fn emit_audit_epoch_compacted(
+    env: &Env,
+    checkpoint_id: u64,
+    from_entry_id: u64,
+    to_entry_id: u64,
+    merkle_root: &soroban_sdk::BytesN<32>,
+    leaf_hashes: &Vec<u64>,
+) {
+    env.events().publish(
+        (Symbol::new(env, "audit_compacted"), checkpoint_id),
+        (from_entry_id, to_entry_id, merkle_root.clone(), leaf_hashes.clone()),
+    );
+}
+
+/// Emit when the audit retention policy changes.
+///
+/// Topics: `("audit_retention",)`
+/// Data:   `(admin, hot_window_entries, batch_size)`
+pub fn emit_audit_retention_set(env: &Env, admin: &Address, hot_window_entries: u64, batch_size: u32) {
+    env.events().publish(
+        (Symbol::new(env, "audit_retention"),),
+        (admin.clone(), hot_window_entries, batch_size),
+    );
 }

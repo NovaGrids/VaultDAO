@@ -221,6 +221,12 @@ fn test_expiry_refund_is_idempotent() {
             crate::storage::PROPOSAL_TTL,
             crate::storage::PROPOSAL_TTL * 2,
         );
+        let pending_key = crate::storage::DataKey::PendingProposalsByProposer(admin.clone());
+        env.storage().persistent().extend_ttl(
+            &pending_key,
+            crate::storage::PROPOSAL_TTL,
+            crate::storage::PROPOSAL_TTL * 2,
+        );
         crate::storage::extend_instance_ttl(&env);
     });
     // Hop in TTL-safe steps, touching the token contract each hop so its

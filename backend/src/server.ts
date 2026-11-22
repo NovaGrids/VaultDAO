@@ -54,6 +54,7 @@ import { ContractStateValidator } from "./modules/contracts/contract-state-valid
 import { VaultService } from "./modules/vault/vault.service.js";
 import { DatabaseSync } from "node:sqlite";
 import { configureWalMode } from "./shared/storage/sqlite-wal.js";
+import { runMigrations } from "./shared/storage/migrations.js";
 
 export interface BackendRuntime {
   readonly startedAt: string;
@@ -260,6 +261,23 @@ export async function startServer(
     cacheManager,
     lifecycleManager: lifecycleManager ?? null,
   };
+
+  // ── Schema migrations ─────────────────────────────────────────────────────
+  // Run pending migrations before accepting connections so the schema is
+  // always up to date (fresh installs and incremental upgrades alike).
+  {
+    const migrationLogger = createLogger("vaultdao-migrations");
+    const migrationDb = new DatabaseSync(env.databasePath ?? ":memory:");
+    try {
+      configureWalMode(migrationDb);
+      const result = runMigrations(migrationDb);
+      migrationLogger.info(
+        `schema migrations applied: ${result.applied.length} (current version: ${result.currentVersion ?? "none"})`,
+      );
+    } finally {
+      migrationDb.close();
+    }
+  }
 
   const app = await createApp(env, runtime);
 
