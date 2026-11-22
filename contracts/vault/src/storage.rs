@@ -407,6 +407,8 @@ pub enum FeatureKey {
     MetricsBucketBaseline,
     /// Pending config change proposal ID -> u64
     PendingConfig,
+    /// Ledger sequence of the last successful `update_threshold` call -> u64 (#2146 cooldown)
+    LastThresholdChangeLedger,
     /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
     WhitelistEntry(Address),
     /// Multi-phase proposal by base proposal ID -> MultiPhaseProposal (issue #1096)
@@ -5843,6 +5845,19 @@ pub fn set_pending_config_proposal(env: &Env, proposal_id: u64) {
 
 pub fn clear_pending_config_proposal(env: &Env) {
     env.storage().instance().remove(&FeatureKey::PendingConfig);
+}
+
+/// Ledger of the last successful `update_threshold` call (Issue #2146).
+pub fn get_last_threshold_change_ledger(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::LastThresholdChangeLedger)
+}
+
+pub fn set_last_threshold_change_ledger(env: &Env, ledger: u64) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::LastThresholdChangeLedger, &ledger);
 }
 
 // ============================================================================
