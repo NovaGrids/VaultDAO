@@ -524,6 +524,8 @@ mod test_whitelist_proposal;
 #[cfg(test)]
 mod test_circular_dependency;
 #[cfg(test)]
+mod test_change_vote_execution_window;
+#[cfg(test)]
 mod test_cleanup_expired_capabilities;
 #[cfg(test)]
 mod test_cold_signature_replay;
@@ -802,6 +804,7 @@ impl VaultDAO {
             approval_timeout_ledgers: 0,
             exec_window_ledgers: 0, // Set via set_exec_window_ledgers post-init (Issue #1349)
             upgrade_timelock_delay: config.upgrade_timelock_delay,
+            max_pending_per_signer: 50,
             // Participation scoring defaults; tune via update_participation_config (Issue #1093).
             participation: ParticipationConfig {
                 min_participation_rate: 50,
@@ -1203,6 +1206,29 @@ impl VaultDAO {
         )
     }
 
+    fn check_pending_proposal_limit(
+        env: &Env,
+        proposer: &Address,
+        requested: u32,
+        config: &Config,
+    ) -> Result<(), VaultError> {
+        if storage::get_role(env, proposer) == Role::Admin {
+            return Ok(());
+        }
+        if storage::get_pending_proposal_count(env, proposer)
+            .saturating_add(requested)
+            > config.max_pending_per_signer
+        {
+            events::emit_proposal_creation_rejected(
+                env,
+                proposer,
+                Symbol::new(env, "pending_cap_exceeded"),
+            );
+            return Err(VaultError::ExceedsProposerPendingLimit);
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn propose_transfer_internal(
         env: Env,
@@ -1250,6 +1276,7 @@ impl VaultDAO {
                 return Err(VaultError::InsufficientRole);
             }
         }
+        Self::check_pending_proposal_limit(&env, &proposer, 1, &config)?;
 
         // 4. Validate recipient against lists
         Self::validate_recipient(&env, &recipient)?;
@@ -1659,6 +1686,7 @@ impl VaultDAO {
         if !Role::role_satisfies(Role::Treasurer, role) {
             return Err(VaultError::InsufficientRole);
         }
+        Self::check_pending_proposal_limit(&env, &proposer, transfers.len(), &config)?;
 
         // Velocity check once for the batch (use first transfer token for per-token tracking)
         let batch_token = if transfers.is_empty() {
@@ -2400,6 +2428,18 @@ impl VaultDAO {
         }
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let current_ledger = env.ledger().sequence() as u64;
+        if (proposal.status == ProposalStatus::Approved
+            || proposal.status == ProposalStatus::Scheduled)
+            && proposal.approved_at > 0
+            && config.exec_window_ledgers > 0
+            && current_ledger
+                > proposal
+                    .approved_at
+                    .saturating_add(config.exec_window_ledgers)
+        {
+            return Err(VaultError::ProposalExecutionWindowExpired);
+        }
         if !proposal.snapshot_signers.contains(&signer) {
             return Err(VaultError::VoterNotInSnapshot);
         }
@@ -2411,7 +2451,6 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotPending);
         }
 
-        let current_ledger = env.ledger().sequence() as u64;
         if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
             expire_approved_proposal(&env, &mut proposal, ProposalExpiryCause::Deadline);
             return Ok(());
@@ -4755,6 +4794,54 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Return the amount currently accrued and unclaimed from an active stream.
+    ///
+    /// This read-only view uses the same timestamp cap, rate calculation, and
+    /// claimed-amount subtraction as `trigger_stream_payment`.
+    pub fn get_stream_claimable(env: Env, stream_id: u64) -> Result<i128, VaultError> {
+        let stream = storage::get_streaming_payment(&env, stream_id)?;
+        if stream.status != StreamStatus::Active {
+            return Err(VaultError::StreamNotActive);
+        }
+
+        let now = env.ledger().timestamp();
+        let effective_now = if now > stream.end_timestamp {
+            stream.end_timestamp
+        } else {
+            now
+        };
+        let elapsed_since_update = effective_now.saturating_sub(stream.last_update_timestamp);
+        let total_active_seconds = stream.accumulated_seconds + elapsed_since_update;
+        let gross_claimable = (stream.rate * total_active_seconds as i128).min(stream.total_amount);
+        Ok(gross_claimable.saturating_sub(stream.claimed_amount))
+    }
+
+    /// Return active stream IDs for a recipient, in ascending order.
+    ///
+    /// Pass the last returned ID as `after_id` to fetch the next page. Pages
+    /// are capped at 100 IDs.
+    pub fn list_streams_by_recipient(
+        env: Env,
+        recipient: Address,
+        after_id: u64,
+        limit: u32,
+    ) -> Vec<u64> {
+        let cap = limit.min(100);
+        let mut streams = Vec::new(&env);
+        if cap == 0 {
+            return streams;
+        }
+        for stream_id in storage::get_stream_ids_by_recipient(&env, &recipient) {
+            if stream_id > after_id {
+                streams.push_back(stream_id);
+                if streams.len() >= cap {
+                    break;
+                }
+            }
+        }
+        streams
+    }
+
     // ========================================================================
     // Recipient List Management
     // ========================================================================
@@ -4865,6 +4952,7 @@ impl VaultDAO {
                 approval_timeout_ledgers: 0,
                 exec_window_ledgers: 0,
                 upgrade_timelock_delay: MIN_UPGRADE_TIMELOCK,
+                max_pending_per_signer: 50,
                 participation: ParticipationConfig {
                     min_participation_rate: 50,
                     low_participation_streak_n: 3,
@@ -19421,7 +19509,13 @@ impl VaultDAO {
     /// `SchemaVersionMismatch`. Add one `if` step per version bump below.
     pub fn migrate(env: Env, admin: Address, from_version: u32) -> Result<(), VaultError> {
         admin.require_auth();
-        storage::get_config_unchecked(&env)?;
+        if !env
+            .storage()
+            .instance()
+            .has(&storage::DataKey::Config)
+        {
+            return Err(VaultError::NotInitialized);
+        }
         if storage::get_role(&env, &admin) != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
@@ -19429,7 +19523,39 @@ impl VaultDAO {
         if stored != from_version || from_version > storage::CURRENT_SCHEMA_VERSION {
             return Err(VaultError::SchemaVersionMismatch);
         }
-        // Version 0 -> 1: pre-versioning deployments; no data rewrite needed.
+        if from_version == storage::CURRENT_SCHEMA_VERSION {
+            storage::get_config_unchecked(&env)?;
+        }
+        if from_version < 2 {
+            let config: Config = storage::get_config_v1_unchecked(&env)?.into();
+            storage::set_config(&env, &config);
+
+            for proposal_id in
+                storage::get_proposal_ids_for_status(&env, ProposalStatus::Pending)
+            {
+                if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                    if proposal.status == ProposalStatus::Pending {
+                        storage::index_pending_proposal_for_proposer(
+                            &env,
+                            &proposal.proposer,
+                            proposal_id,
+                        );
+                    }
+                }
+            }
+
+            for stream_id in 1..storage::get_next_stream_id(&env) {
+                if let Ok(stream) = storage::get_streaming_payment(&env, stream_id) {
+                    if stream.status == StreamStatus::Active {
+                        storage::index_active_stream_for_recipient(
+                            &env,
+                            &stream.recipient,
+                            stream_id,
+                        );
+                    }
+                }
+            }
+        }
         storage::set_schema_version(&env, storage::CURRENT_SCHEMA_VERSION);
         Ok(())
     }
