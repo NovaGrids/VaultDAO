@@ -33,7 +33,7 @@
     "diff-match-patch": "^1.0.5",
     "fuse.js": "^7.1.0",
     "html2canvas": "^1.4.1",
-    "i18next": "^25.8.13",
+    "i18next": "^27.2.2",
     "i18next-browser-languagedetector": "^8.2.1",
     "i18next-http-backend": "^3.0.2",
     "ipfs-http-client": "^60.0.1",
