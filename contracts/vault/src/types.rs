@@ -207,10 +207,105 @@ pub struct Config {
     /// Minimum delay in ledgers for the upgrade timelock (≥ 17_280 ≈ 24 h at 5 s/ledger).
     /// Enforced at initialization and must satisfy MIN_UPGRADE_TIMELOCK.
     pub upgrade_timelock_delay: u64,
+    /// Maximum pending proposals per signer (default: 50).
+    /// Kept under Soroban's 30-character contract field-name limit.
+    pub max_pending_per_signer: u32,
 
     // ---- Issue #1093: Signer Participation Scoring ----
     // Grouped so `Config` stays within the 40-field contracttype limit.
     pub participation: ParticipationConfig,
+}
+
+/// Config layout persisted before the pending-proposal cap was added.
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConfigV1 {
+    pub signers: Vec<Address>,
+    pub signer_tiers: Map<Address, SignerTier>,
+    pub full_quorum_threshold: i128,
+    pub threshold: u32,
+    pub quorum: u32,
+    pub quorum_percentage: u32,
+    pub spending_limit: i128,
+    pub daily_limit: i128,
+    pub weekly_limit: i128,
+    pub timelock_threshold: i128,
+    pub timelock_delay: u64,
+    pub velocity_limit: VelocityConfig,
+    pub threshold_strategy: ThresholdStrategy,
+    pub pre_execution_hooks: Vec<Address>,
+    pub post_execution_hooks: Vec<Address>,
+    pub default_voting_deadline: u64,
+    pub veto_addresses: Vec<Address>,
+    pub veto_window_ledgers: u64,
+    pub retry_config: RetryConfig,
+    pub recovery_config: RecoveryConfig,
+    pub supported_tokens: Vec<Address>,
+    pub token_daily_limits: Vec<i128>,
+    pub token_weekly_limits: Vec<i128>,
+    pub stream_max_window_amount: i128,
+    pub burst_factor: u32,
+    pub staking_config: StakingConfig,
+    pub proposal_id_prefix: u64,
+    pub whitelist_mode: bool,
+    pub grace_period_ledgers: u64,
+    pub vote_weight: VoteWeight,
+    pub high_impact_threshold: u32,
+    pub admin_rotation_delay: u64,
+    pub auto_topup_amount: i128,
+    pub tier_usage_tracking: bool,
+    pub arbitration_timeout_ledgers: u64,
+    pub approval_timeout_ledgers: u64,
+    pub exec_window_ledgers: u64,
+    pub upgrade_timelock_delay: u64,
+    pub participation: ParticipationConfig,
+}
+
+impl From<ConfigV1> for Config {
+    fn from(old: ConfigV1) -> Self {
+        Self {
+            signers: old.signers,
+            signer_tiers: old.signer_tiers,
+            full_quorum_threshold: old.full_quorum_threshold,
+            threshold: old.threshold,
+            quorum: old.quorum,
+            quorum_percentage: old.quorum_percentage,
+            spending_limit: old.spending_limit,
+            daily_limit: old.daily_limit,
+            weekly_limit: old.weekly_limit,
+            timelock_threshold: old.timelock_threshold,
+            timelock_delay: old.timelock_delay,
+            velocity_limit: old.velocity_limit,
+            threshold_strategy: old.threshold_strategy,
+            pre_execution_hooks: old.pre_execution_hooks,
+            post_execution_hooks: old.post_execution_hooks,
+            default_voting_deadline: old.default_voting_deadline,
+            veto_addresses: old.veto_addresses,
+            veto_window_ledgers: old.veto_window_ledgers,
+            retry_config: old.retry_config,
+            recovery_config: old.recovery_config,
+            supported_tokens: old.supported_tokens,
+            token_daily_limits: old.token_daily_limits,
+            token_weekly_limits: old.token_weekly_limits,
+            stream_max_window_amount: old.stream_max_window_amount,
+            burst_factor: old.burst_factor,
+            staking_config: old.staking_config,
+            proposal_id_prefix: old.proposal_id_prefix,
+            whitelist_mode: old.whitelist_mode,
+            grace_period_ledgers: old.grace_period_ledgers,
+            vote_weight: old.vote_weight,
+            high_impact_threshold: old.high_impact_threshold,
+            admin_rotation_delay: old.admin_rotation_delay,
+            auto_topup_amount: old.auto_topup_amount,
+            tier_usage_tracking: old.tier_usage_tracking,
+            arbitration_timeout_ledgers: old.arbitration_timeout_ledgers,
+            approval_timeout_ledgers: old.approval_timeout_ledgers,
+            exec_window_ledgers: old.exec_window_ledgers,
+            upgrade_timelock_delay: old.upgrade_timelock_delay,
+            max_pending_per_signer: 50,
+            participation: old.participation,
+        }
+    }
 }
 
 /// Signer participation scoring thresholds (Issue #1093).
@@ -1314,6 +1409,8 @@ pub enum SwapProposal {
     UnstakeLp(Address, Address, i128),
     /// Claim farming rewards: (farm)
     ClaimRewards(Address),
+    /// Guarded swap with TWAP, slippage band and multi-hop path (Issue #2057)
+    RoutedSwap(RoutedSwapArgs),
 }
 
 /// DEX operation result
@@ -1931,6 +2028,9 @@ pub struct RecoveryProposal {
     pub execution_after: u64,
     /// Last ledger on which this proposal can still be approved or executed
     pub expires_at: u64,
+    /// Recovery epoch the proposal was opened in (Issue #2059). Approvals
+    /// and execution are refused once the vault's epoch has moved on.
+    pub epoch: u64,
 }
 
 /// Recovery configuration change proposal (Issue #1702)
@@ -3332,4 +3432,115 @@ pub struct ClawbackRequest {
     pub approvals: u32,
     /// Number of votes (approve or reject) cast so far (Issue #1911)
     pub votes: u32,
+}
+
+// ============================================================================
+// Issue #2055: Streaming pause TTL policy
+// ============================================================================
+
+/// What happens to a stream that stays paused longer than
+/// `StreamPausePolicy::max_pause_secs`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum PauseExpiryAction {
+    /// The stream is cancelled: accrued tokens go to the recipient and the
+    /// unearned remainder is refunded to the sender.
+    AutoCancel = 0,
+    /// The stream is treated as resumed at `pause_start + max_pause_secs`.
+    /// The schedule is extended by at most `max_pause_secs`.
+    AutoResume = 1,
+}
+
+/// Vault-wide bound on how long a stream may stay paused.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamPausePolicy {
+    /// Maximum pause length in seconds. `0` disables the policy.
+    pub max_pause_secs: u64,
+    /// Action applied once a pause outlives `max_pause_secs`.
+    pub action: PauseExpiryAction,
+}
+
+// ============================================================================
+// Issue #2057: TWAP-guarded multi-hop swaps
+// ============================================================================
+
+/// Time-weighted average price guard applied to swap execution.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TwapGuardConfig {
+    /// Look-back window in seconds over which the TWAP is computed. Must be > 0.
+    pub window_secs: u64,
+    /// Maximum allowed deviation of the spot price from the TWAP, in basis points.
+    pub max_deviation_bps: u32,
+    /// Minimum number of observations inside the window. Fewer fails closed.
+    pub min_observations: u32,
+}
+
+/// A recorded oracle price sample used to build the TWAP.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PriceObservation {
+    pub price: i128,
+    /// Oracle-reported price timestamp (seconds)
+    pub timestamp: u64,
+}
+
+/// Arguments of a guarded, optionally multi-hop swap.
+///
+/// `path[0]` is sold and `path[len - 1]` is bought. Every intermediate token
+/// must net to zero: whatever a leg produces is consumed in full by the next.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RoutedSwapArgs {
+    pub dex: Address,
+    /// Token route, 2..=4 entries, no repeats
+    pub path: Vec<Address>,
+    pub amount_in: i128,
+    /// Minimum amount of the final token. Must be > 0.
+    pub min_amount_out: i128,
+    /// Maximum slippage of the final output against the oracle-implied output,
+    /// in basis points. Capped by `DexConfig::max_slippage_bps`.
+    pub max_slippage_bps: u32,
+}
+
+/// One settled leg of a routed swap.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwapLeg {
+    pub token_in: Address,
+    pub token_out: Address,
+    pub amount_in: i128,
+    pub amount_out: i128,
+}
+
+// ============================================================================
+// Issue #2059: Recovery ceremony policy
+// ============================================================================
+
+/// How `initiate_recovery` treats an already-open recovery.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RecoveryCompetitionPolicy {
+    /// A second recovery is refused while one is open (default).
+    Reject = 0,
+    /// A new recovery cancels an open `Pending` one. An `Approved` recovery
+    /// is never superseded: it can only be cancelled by a guardian quorum.
+    Supersede = 1,
+}
+
+// ============================================================================
+// Issue #2062: Audit log compaction
+// ============================================================================
+
+/// Retention policy for hot (individually stored) audit entries.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditRetentionPolicy {
+    /// Number of most recent entries that are never compacted.
+    pub hot_window_entries: u64,
+    /// Number of entries folded into one compaction epoch (1..=200).
+    pub batch_size: u32,
 }

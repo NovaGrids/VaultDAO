@@ -116,6 +116,23 @@ export interface BackendEnv {
    * Default: 30000 (30 s). Env var: `JOB_SHUTDOWN_IDLE_TIMEOUT_MS`.
    */
   readonly jobShutdownIdleTimeoutMs: number;
+  /**
+   * Total retry budget, in seconds, for a single webhook delivery.
+   *
+   * Once the cumulative time spent retrying a delivery exceeds this budget,
+   * the delivery is moved to the per-webhook dead-letter queue instead of
+   * being retried again.
+   *
+   * Default: 86,400 (24 hours). Env var: `WEBHOOK_MAX_TOTAL_RETRY_SECONDS`.
+   */
+  readonly webhookMaxTotalRetrySeconds: number;
+  /**
+   * Value of the `Content-Security-Policy` header emitted on all JSON API
+   * responses.
+   *
+   * Default: `"default-src 'none'"`. Env var: `CONTENT_SECURITY_POLICY`.
+   */
+  readonly contentSecurityPolicy: string;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -338,6 +355,8 @@ export function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     notificationsCleanupJobIntervalMs: 86_400_000,
     notificationsRetentionDays: 7,
     jobShutdownIdleTimeoutMs: 30_000,
+    webhookMaxTotalRetrySeconds: 86_400,
+    contentSecurityPolicy: "default-src 'none'",
     ...overrides,
   };
 }
@@ -507,6 +526,15 @@ export function loadEnv(): BackendEnv {
     30_000,
     issues,
   );
+  const webhookMaxTotalRetrySeconds = readPort(
+    "WEBHOOK_MAX_TOTAL_RETRY_SECONDS",
+    86_400,
+    issues,
+  );
+  const contentSecurityPolicy = readString(
+    "CONTENT_SECURITY_POLICY",
+    "default-src 'none'",
+  );
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -631,5 +659,7 @@ export function loadEnv(): BackendEnv {
     notificationsCleanupJobIntervalMs,
     notificationsRetentionDays,
     jobShutdownIdleTimeoutMs,
+    webhookMaxTotalRetrySeconds,
+    contentSecurityPolicy,
   };
 }

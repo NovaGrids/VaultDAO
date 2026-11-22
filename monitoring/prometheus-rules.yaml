@@ -19,7 +19,6 @@ groups:
           component: backend
         annotations:
           summary: "High error rate detected"
-          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#higherrorrate"
           description: |
             5xx responses for {{ $labels.service }} are arriving at {{ $value | humanize }}/s
             Affected endpoint: {{ $labels.endpoint }}
@@ -120,6 +119,21 @@ groups:
           description: |
             Event queue depth is {{ $value }} / 10000
             Processing rate: {{ $labels.processing_rate }} events/sec
+
+      # Dead-Letter Queue Alerts (Issue #2148)
+      #
+      # Fires when any contract's unprocessed dead-letter depth stays above 100,
+      # i.e. failures are accumulating faster than they are being processed.
+      - alert: DeadLetterQueueDepthHigh
+        expr: max by (contract) (vaultdao_dlq_depth) > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: events
+        annotations:
+          summary: "Dead-letter queue is accumulating failures"
+          description: |
+            Dead-letter depth for contract {{ $labels.contract }} is {{ $value }} (threshold: 100)
 
       # Storage Alerts
       - alert: StorageUsageCritical

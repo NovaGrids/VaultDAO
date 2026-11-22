@@ -7,7 +7,8 @@ The official TypeScript SDK for building on VaultDAO — a decentralized treasur
 ## Table of Contents
 
 1. [Installation](#installation)
-2. [Quick Start](#quick-start)
+2. [Migrating Between Versions](#migrating-between-versions)
+3. [Quick Start](#quick-start)
 3. [Authentication with Freighter](#authentication-with-freighter)
 4. [Core Concepts](#core-concepts)
 5. [Creating Your First Proposal](#creating-your-first-proposal)
@@ -19,14 +20,16 @@ The official TypeScript SDK for building on VaultDAO — a decentralized treasur
 11. [Streaming Payments](#streaming-payments)
 12. [Escrow Operations](#escrow-operations)
 13. [Vesting Schedules](#vesting-schedules)
-14. [Token Locks](#token-locks)
-15. [Funding Rounds](#funding-rounds)
-16. [Proposal Templates](#proposal-templates)
-17. [Recovery Operations](#recovery-operations)
-18. [Error Handling](#error-handling)
-19. [TypeScript Types Reference](#typescript-types-reference)
-20. [Common Mistakes](#common-mistakes)
-21. [Examples](#examples)
+14. [Scoped Delegation](#scoped-delegation)
+15. [Cold Signer Approvals](#cold-signer-approvals)
+16. [Token Locks](#token-locks)
+17. [Funding Rounds](#funding-rounds)
+18. [Proposal Templates](#proposal-templates)
+19. [Recovery Operations](#recovery-operations)
+20. [Error Handling](#error-handling)
+21. [TypeScript Types Reference](#typescript-types-reference)
+22. [Common Mistakes](#common-mistakes)
+23. [Examples](#examples)
 
 ---
 
@@ -42,6 +45,17 @@ npm install @vaultdao/sdk
 - A Stellar account funded on the target network
 
 For TypeScript projects, all types are included — no separate `@types` package needed.
+
+---
+
+## Migrating Between Versions
+
+Before upgrading the SDK across a **contract schema version bump**, read the [Migration Guide](./MIGRATION.md). It has a section per breaking SDK version describing breaking API changes, new required parameters, and deprecated functions, so you know exactly what to change in your code.
+
+- [`sdk/CHANGELOG.md`](./CHANGELOG.md) lists *what* changed in each release.
+- [`sdk/MIGRATION.md`](./MIGRATION.md) explains *what you need to change* in your code, and which SDK version to upgrade to for a given contract schema version.
+
+If you are on an older SDK version and the on-chain contract has been upgraded, consult the migration guide first — older SDK versions may not be compatible with the new contract schema.
 
 ---
 
@@ -840,9 +854,115 @@ const schedule = await getVestingSchedule(scheduleId, beneficiary.publicKey, opt
 
 // Admin cancels; unvested tokens return to the vault
 await signAndSubmit(await cancelVesting(admin.publicKey, scheduleId, opts), opts);
+
+// Page through every schedule ID in the vault
+const firstPage = await listVestingIds(0, 100, caller, opts);
+const nextPage = await listVestingIdsAfter(firstPage.at(-1) ?? 0n, 100, caller, opts);
 ```
 
+`createVestingSchedule` returns a **proposal**. The schedule only exists after that proposal is approved and executed.
+
 See [sdk/examples/create-vesting.ts](./examples/create-vesting.ts).
+
+---
+
+## Scoped Delegation
+
+A signer can let another address vote on its behalf, limited to proposals up to `maxAmount`, until `expiresAtLedger`, and optionally only on a list of proposal IDs. This supports sub-committee voting. A delegator can have at most 3 active scoped delegations.
+
+```typescript
+import {
+  createScopedDelegation,
+  voteAsDelegate,
+  revokeScopedDelegation,
+  getScopedDelegation,
+  getDelegatorScopedDelegations,
+} from "@vaultdao/sdk";
+
+// Delegator: let the committee lead vote on proposals 12 and 13, up to 5,000 XLM
+await signAndSubmit(
+  await createScopedDelegation(
+    signer.publicKey,
+    {
+      delegate: "GCOMMITTEE...",
+      maxAmount: 50_000_000_000n,
+      expiresAtLedger: currentLedger + 120_960,
+      allowedProposalIds: [12n, 13n], // omit or [] for any proposal
+    },
+    opts,
+  ),
+  opts,
+);
+
+// Delegate: approve (true) or abstain (false) for the delegator
+await signAndSubmit(
+  await voteAsDelegate(committee.publicKey, { delegationId, proposalId: 12n, approve: true }, opts),
+  opts,
+);
+
+const delegation = await getScopedDelegation(delegationId, caller, opts); // null if missing
+
+// Delegator or Admin revokes
+await signAndSubmit(await revokeScopedDelegation(signer.publicKey, delegationId, opts), opts);
+```
+
+The contract rejects a delegate vote if the delegation is revoked or expired, the proposal is outside its scope or above `maxAmount`, or the delegator or delegate already voted on the proposal.
+
+---
+
+## Cold Signer Approvals
+
+Cold signers are Ed25519 keys held on hardware wallets or air-gapped devices. A cold key never signs a Stellar transaction. It signs a short payload offline, and any online account submits that signature.
+
+### Cold signature payload format
+
+| Field | Size | Value |
+| --- | --- | --- |
+| Signed message | 8 bytes | `proposalId` as an unsigned 64-bit **little-endian** integer |
+| `signature` | 64 bytes (128 hex chars) | `Ed25519.sign(coldPrivateKey, message)` |
+| `publicKey` | 32 bytes (64 hex chars) | Raw Ed25519 public key. Must be in `ColdSignerConfig.coldSigners` |
+| `createdAtLedger` | u32 | Ledger the signature was produced against |
+
+Example: proposal `7` → message `0700000000000000`.
+
+`buildColdSignatureMessage(proposalId)` returns these bytes. The contract checks, in this order:
+
+1. Cold signing is configured (`coldSigThreshold > 0`), otherwise `ColdSignerConfigNotSet`.
+2. `createdAtLedger` is not in the future (`ColdSignatureFutureDated`) and, when `maxColdSigAgeLedgers > 0`, not older than that many ledgers (`ColdSignatureTooOld`).
+3. `publicKey` is a registered cold signer (`NotAColdSigner`).
+4. The same signature bytes were not submitted before (`ColdSignatureAlreadySubmitted`).
+5. The Ed25519 signature verifies. If not, the call aborts.
+
+Submitted signatures expire after `coldSigExpiry` ledgers.
+
+```typescript
+import {
+  buildColdSignatureMessage,
+  approveWithColdSignature,
+  getColdSignerConfig,
+  getColdSignatureCount,
+} from "@vaultdao/sdk";
+
+// Offline, on the hardware wallet / air-gapped device:
+const message = buildColdSignatureMessage(7n);
+const signatureHex = toHex(await hardwareWallet.signEd25519(message));
+
+// Online, any funded account submits it:
+const xdr = await approveWithColdSignature(
+  relayer.publicKey,
+  { proposalId: 7n, signature: signatureHex, publicKey: coldPublicKeyHex, createdAtLedger },
+  opts,
+);
+await signAndSubmit(xdr, opts);
+
+const config = await getColdSignerConfig(caller, opts);
+const count = await getColdSignatureCount(7n, caller, opts);
+const ready = count >= config.coldSigThreshold;
+```
+
+### Registering cold signers
+
+`setColdSignerConfig(admin, config, proofs, opts)` replaces the cold signer set. Every key needs a **proof of possession**: an Ed25519 signature by that key over `buildColdSignerPopMessage(contractId, coldSignerAddress, publicKeyHex)`. See [SIGNING_GUIDE.md §5.5](../docs/guides/SIGNING_GUIDE.md#55-registering-a-cold-signer-proof-of-possession) for the byte layout.
 
 ---
 

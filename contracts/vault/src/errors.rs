@@ -338,6 +338,10 @@ pub enum VaultError {
     /// Max cold signer count reached (5)
     TooManyColdSigners = 745,
 
+    /// `cold_signers`, `cold_signer_addresses` and the proof-of-possession
+    /// list passed to `set_cold_signer_config` differ in length (#2086)
+    ColdSignerProofMismatch = 746,
+
     // =========================================================
     // Emergency pause / circuit breaker (#1084)
     // =========================================================
@@ -558,6 +562,39 @@ pub enum VaultError {
     // =========================================================
     /// A single proposer's pending reservations would exceed the per-proposer cap
     ExceedsProposerPendingLimit = 1207,
+
+    // =========================================================
+    // Threshold change cooldown (#2146)
+    // =========================================================
+    /// `update_threshold` was called again before `admin_rotation_delay` ledgers elapsed
+    ThresholdChangeCooldown = 1208,
+
+    // =========================================================
+    // Issue #2055: Stream pause TTL
+    // =========================================================
+    /// Stream has been paused longer than the pause policy allows and the
+    /// policy is `AutoCancel`; it can no longer be resumed
+    StreamPauseExpired = 1209,
+
+    // =========================================================
+    // Issue #2057: TWAP-guarded swaps
+    // =========================================================
+    /// Not enough fresh oracle observations to build a TWAP (fails closed)
+    TwapUnavailable = 1210,
+    /// Spot price deviates from the TWAP by more than `max_deviation_bps`
+    TwapDeviationExceeded = 1211,
+    /// Swap output is outside the configured slippage band
+    SwapSlippageExceeded = 1212,
+    /// Swap path is malformed (too short/long, repeated token, broken leg)
+    SwapPathInvalid = 1213,
+
+    // =========================================================
+    // Issue #2059: Recovery ceremony
+    // =========================================================
+    /// Recovery proposal belongs to an older recovery epoch
+    RecoveryEpochStale = 1214,
+    /// Recovery approval signature was already used
+    RecoverySignatureReplayed = 1215,
 }
 
 // Compatibility markers for CI source checks:

@@ -5,8 +5,23 @@ import { env } from '../config/env';
 const MAX_PREVIEW_BYTES = 10 * 1024 * 1024; // 10 MB
 const CACHE_PREFIX = 'ipfs_verify_';
 
+const ALLOWED_MIME_TYPES = new Set<string>([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'application/pdf',
+]);
+
 type VerifyStatus = 'idle' | 'loading' | 'verified' | 'failed' | 'error';
 type FileCategory = 'pdf' | 'image' | 'text' | 'binary';
+
+function normalizeMimeType(contentType: string): string {
+  return contentType.split(';')[0].trim().toLowerCase();
+}
+
+function isAllowedMimeType(mimeType: string): boolean {
+  return ALLOWED_MIME_TYPES.has(normalizeMimeType(mimeType));
+}
 
 interface IPFSAttachmentViewerProps {
   cid: string;
@@ -61,6 +76,7 @@ const IPFSAttachmentViewer: React.FC<IPFSAttachmentViewerProps> = ({
   const [computedHash, setComputedHash] = useState<string | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [fileCategory, setFileCategory] = useState<FileCategory>('binary');
+  const [mimeType, setMimeType] = useState<string>('');
   const [textContent, setTextContent] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -85,9 +101,11 @@ const IPFSAttachmentViewer: React.FC<IPFSAttachmentViewerProps> = ({
       if (!response.ok) throw new Error(`Gateway error: ${response.status}`);
 
       const contentType = response.headers.get('content-type') ?? '';
+      const normalizedMime = normalizeMimeType(contentType);
       const contentLength = parseInt(response.headers.get('content-length') ?? '0', 10);
       const category = detectFileCategory(fileName, contentType);
       setFileCategory(category);
+      setMimeType(normalizedMime);
       setFileSize(contentLength);
 
       if (!response.body) throw new Error('No response body');
@@ -125,14 +143,12 @@ const IPFSAttachmentViewer: React.FC<IPFSAttachmentViewerProps> = ({
       onVerify?.(verified);
       setStatus(verified ? 'verified' : 'failed');
 
-      if (totalLength <= MAX_PREVIEW_BYTES) {
-        const blob = new Blob([combined], { type: 'application/octet-stream' });
+      if (totalLength <= MAX_PREVIEW_BYTES && isAllowedMimeType(normalizedMime)) {
+        // Only create an object URL for allowlisted types; the blob is typed with
+        // the allowlisted MIME so the browser cannot execute injected content.
+        const blob = new Blob([combined], { type: normalizedMime });
         const url = URL.createObjectURL(blob);
         setObjectUrl(url);
-
-        if (category === 'text') {
-          setTextContent(new TextDecoder().decode(combined));
-        }
       }
 
       setProgress(100);
@@ -228,7 +244,27 @@ const IPFSAttachmentViewer: React.FC<IPFSAttachmentViewerProps> = ({
       );
     }
 
-    if (fileCategory === 'image') {
+    // Only allowlisted MIME types may be rendered inline. Everything else
+    // (text/html, image/svg+xml, application/javascript, text/plain, …) is
+    // rendered as a plain download link to prevent XSS via attachments.
+    if (!isAllowedMimeType(mimeType)) {
+      return (
+        <div className="flex flex-col items-center justify-center h-32 gap-2 text-gray-400 text-sm">
+          <Code className="h-8 w-8 opacity-40" />
+          <span>Preview not available for this file type — download only</span>
+          <a
+            href={gatewayUrl}
+            download={fileName}
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-purple-400 hover:text-purple-300 underline"
+          >
+            <Download className="h-4 w-4" /> {fileName}
+          </a>
+        </div>
+      );
+    }
+
+    if (mimeType === 'image/png' || mimeType === 'image/jpeg' || mimeType === 'image/gif') {
       return (
         <img
           src={objectUrl}
@@ -238,32 +274,24 @@ const IPFSAttachmentViewer: React.FC<IPFSAttachmentViewerProps> = ({
       );
     }
 
-    if (fileCategory === 'pdf') {
+    if (mimeType === 'application/pdf') {
       return (
         <iframe
           src={objectUrl}
           title={fileName}
+          sandbox=""
           className="w-full h-96 rounded border border-gray-700"
         />
-      );
-    }
-
-    if (fileCategory === 'text' && textContent !== null) {
-      return (
-        <pre className="bg-gray-900 text-green-300 text-xs p-4 rounded overflow-auto max-h-80 whitespace-pre-wrap break-words">
-          <code>{textContent}</code>
-        </pre>
       );
     }
 
     return (
       <div className="flex flex-col items-center justify-center h-32 gap-2 text-gray-400 text-sm">
         <Code className="h-8 w-8 opacity-40" />
-        <span>Binary file — download only</span>
+        <span>Preview not available for this file type — download only</span>
         <a
           href={gatewayUrl}
           download={fileName}
-          target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-1 text-purple-400 hover:text-purple-300 underline"
         >

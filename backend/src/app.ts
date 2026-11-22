@@ -95,6 +95,9 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
   app.use((_req: Request, res: Response, next: NextFunction) => {
     res.set("X-Content-Type-Options", "nosniff");
     res.set("X-Frame-Options", "DENY");
+    // Content-Security-Policy — applied to every response (including errors)
+    // so browser-based clients cannot execute reflected payloads.
+    res.setHeader("Content-Security-Policy", env.contentSecurityPolicy);
 
     if (env.nodeEnv === "production") {
       res.set(
@@ -504,7 +507,9 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
       authMiddleware,
       hmacMiddleware,
       createJsonWithRawBody({ limit: env.webhooksRequestBodyLimit }),
-      createWebhookRouter(runtime.webhookDeliveryService),
+      createWebhookRouter(runtime.webhookDeliveryService, {
+        maxTotalRetrySeconds: env.webhookMaxTotalRetrySeconds,
+      }),
     );
   }
 

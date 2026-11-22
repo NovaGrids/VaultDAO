@@ -126,6 +126,18 @@ export interface DeadLetterAttemptMetric {
   readonly at: number;
 }
 
+/** Prometheus gauge: current dead-letter depth per contract (Issue #2148). */
+export const DLQ_DEPTH_METRIC = "vaultdao_dlq_depth";
+
+/**
+ * Minimal gauge sink for dead-letter depth. `MetricsRegistry` satisfies this
+ * structurally, so the service does not depend on the health module.
+ */
+export interface DeadLetterDepthSink {
+  register(name: string, help: string, type: "gauge"): void;
+  setGauge(name: string, value: number, labels?: Record<string, string>): void;
+}
+
 export class DeadLetterService {
   private readonly store = new Map<string, DeadLetterEntry>();
   private readonly maxRetries: number;
@@ -133,6 +145,9 @@ export class DeadLetterService {
   private readonly storage?: DeadLetterStorageAdapter;
   private readonly maxMetrics: number;
   private readonly metrics: DeadLetterAttemptMetric[] = [];
+  private readonly depthSink?: DeadLetterDepthSink;
+  /** Contracts that have had a depth sample published, so drained ones reset to 0. */
+  private publishedContracts = new Set<string>();
   private loaded = false;
 
   constructor(options?: {
@@ -140,11 +155,41 @@ export class DeadLetterService {
     backoffMs?: number[];
     storage?: DeadLetterStorageAdapter;
     maxMetrics?: number;
+    depthSink?: DeadLetterDepthSink;
   }) {
     this.maxRetries = options?.maxRetries ?? 5;
     this.backoffMs = options?.backoffMs ?? [1000, 2000, 4000, 8000, 16000];
     this.storage = options?.storage;
     this.maxMetrics = options?.maxMetrics ?? 100;
+    this.depthSink = options?.depthSink;
+    this.depthSink?.register(
+      DLQ_DEPTH_METRIC,
+      "Number of unprocessed dead-letter records per contract",
+      "gauge",
+    );
+  }
+
+  /**
+   * Publish the current depth of each contract to the gauge sink. Called after
+   * every mutation so the gauge increments on add and decrements on removal
+   * or successful processing. Contracts that drained to zero are reported as 0
+   * rather than left with a stale value.
+   */
+  private publishDepth(): void {
+    if (!this.depthSink) return;
+    const depths = new Map<string, number>();
+    for (const entry of this.store.values()) {
+      depths.set(entry.contractId, (depths.get(entry.contractId) ?? 0) + 1);
+    }
+    for (const contractId of this.publishedContracts) {
+      if (!depths.has(contractId)) {
+        this.depthSink.setGauge(DLQ_DEPTH_METRIC, 0, { contract: contractId });
+      }
+    }
+    for (const [contractId, depth] of depths) {
+      this.depthSink.setGauge(DLQ_DEPTH_METRIC, depth, { contract: contractId });
+    }
+    this.publishedContracts = new Set(depths.keys());
   }
 
   /**
@@ -158,6 +203,7 @@ export class DeadLetterService {
       this.store.set(entry.id, entry);
     }
     this.loaded = true;
+    this.publishDepth();
     logger.info("dead-letter store hydrated", { count: entries.length });
   }
 
@@ -168,6 +214,7 @@ export class DeadLetterService {
 
   public async add(entry: DeadLetterEntry): Promise<void> {
     this.store.set(entry.id, { ...entry, processed: false });
+    this.publishDepth();
     await this.persist();
     logger.info("dead-letter added to backend store", { id: entry.id, recordId: entry.recordId });
   }
@@ -208,7 +255,10 @@ export class DeadLetterService {
 
   public async remove(id: string): Promise<boolean> {
     const deleted = this.store.delete(id);
-    if (deleted) await this.persist();
+    if (deleted) {
+      this.publishDepth();
+      await this.persist();
+    }
     return deleted;
   }
 
@@ -227,6 +277,7 @@ export class DeadLetterService {
         await handler();
         // success
         this.store.delete(id);
+        this.publishDepth();
         await this.persist();
         this.recordMetric(id, attempt, true);
         logger.info("dead-letter processed successfully", { id, attempt });

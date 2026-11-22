@@ -318,6 +318,8 @@ Revoke immediately if a laptop is lost, a relationship changes, or a delegate be
 
 ## 5. Emergency and QR cold-storage signing
 
+> **Full cold-storage procedure:** This section covers the QR / Mobile Signing path in the dashboard. For the complete offline workflow — constructing and serializing the payload on an online machine, signing it with an air-gapped Ed25519 key, and submitting it via `approve_with_cold_sig` — see **[COLD_SIGNING_GUIDE.md](COLD_SIGNING_GUIDE.md)**, which includes a worked `stellar-sdk` CLI example.
+
 For high-value vaults, some signers keep keys on air-gapped or mobile devices. VaultDAO supports a **Mobile Signing** path via `QRSignature`.
 
 ### 5.1 Where to find QR signing
@@ -363,6 +365,60 @@ Emergency hygiene:
 - Ensure the companion app expects the same network and contract.
 - Fall back to Freighter on a secure online machine if policy allows.
 - Contact Admin / Security Officer if integrity checks or submission fail repeatedly.
+
+### 5.5 Registering a cold signer: proof of possession
+
+An Admin registers cold signers by calling `set_cold_signer_config`. The vault will not accept a cold signer's Ed25519 public key unless the key holder signs a **proof of possession** (PoP). This stops an Admin from registering a key they do not control, which would set up the cold signer set ahead of a future key compromise.
+
+**Who does what**
+
+1. The Admin tells each cold signer the vault contract address (`C...`) and the on-chain address (`G...` or `C...`) the key will be registered under.
+2. Each cold signer builds the PoP message below on its offline device, signs it with the cold key, and returns the 64-byte signature to the Admin.
+3. The Admin calls `set_cold_signer_config(caller, config, proofs)`, where `proofs[i]` is the signature for `config.cold_signers[i]` and `config.cold_signer_addresses[i]`.
+
+**Message format (v1)**
+
+```text
+message = "VaultDAO:cold-signer-pop:v1"           27 ASCII bytes, domain separator
+        || XDR(ScVal::Address(vault contract))    the vault the key is joining
+        || XDR(ScVal::Address(cold signer addr))  the address the key is paired with
+        || public_key                             32 raw Ed25519 public-key bytes
+
+proof   = Ed25519.sign(cold_private_key, message)  64 bytes
+```
+
+`XDR(ScVal::Address(x))` is the XDR encoding of the address as a Soroban `ScVal`. This is what `Address::to_xdr` produces in the contract and `Address.fromString(x).toScVal().toXDR()` produces in `@stellar/stellar-sdk`. A contract address (`C...`) encodes to 40 bytes and an account address (`G...`) to 44 bytes. So a v1 message for a `G...` cold signer address on a vault is 27 + 40 + 44 + 32 = 143 bytes.
+
+**What the format binds**
+
+| Field | Prevents |
+| --- | --- |
+| Domain separator | A PoP signature being mistaken for a proposal-approval signature, or the other way round |
+| Vault address | Replaying one vault's proof into another vault |
+| Cold signer address | Pairing a proven key with a different on-chain address |
+| Public key | Using a proof for one key to register another key |
+
+**Contract checks**
+
+- `cold_signers`, `cold_signer_addresses` and `proofs` must all be the same length, otherwise the call fails with `ColdSignerProofMismatch` (746).
+- Every proof is checked with `ed25519_verify` on **every** call, including for keys that were already registered. If any proof fails, the call aborts and the stored config does not change.
+- An empty cold signer set needs no proofs. Use one to disable cold signing.
+
+**SDK**
+
+```typescript
+import { Keypair } from "@stellar/stellar-sdk";
+import { buildColdSignerPopMessage, setColdSignerConfig } from "@vaultdao/sdk";
+
+// On the cold device:
+const message = buildColdSignerPopMessage(vaultContractId, coldSignerAddress, coldPublicKeyHex);
+const proofHex = Buffer.from(coldKeypair.sign(Buffer.from(message))).toString("hex");
+
+// Admin, online:
+const xdr = await setColdSignerConfig(adminPublicKey, config, [proofHex], opts);
+```
+
+The vector in `contracts/vault/src/test_cold_signer_pop.rs` (`test_sdk_generated_proof_verifies`) and `sdk/src/delegation-cold-signer.test.ts` keep the contract and SDK message builders the same.
 
 ---
 
@@ -435,4 +491,4 @@ Print or keep this beside your signing machine:
 
 ---
 
-*Document owner: Treasury operations. For contract-level behavior see `docs/reference/ARCHITECTURE.md` and `docs/reference/SECURITY.md`. For developer wallet wiring see `docs/guides/WALLET_INTEGRATION.md`.*
+*Document owner: Treasury operations. For contract-level behavior see `docs/reference/ARCHITECTURE.md` and `docs/reference/SECURITY.md`. For developer wallet wiring see `docs/guides/WALLET_INTEGRATION.md`. For offline / air-gapped approval see `docs/guides/COLD_SIGNING_GUIDE.md`.*

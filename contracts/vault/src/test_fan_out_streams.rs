@@ -179,6 +179,46 @@ fn test_stream_not_found() {
 }
 
 #[test]
+fn test_list_streams_by_recipient_empty_single_and_paginated_multi() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, token, _vault_contract) = setup(&env);
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&admin, &10_000);
+
+    let recipient = Address::generate(&env);
+    let other_recipient = Address::generate(&env);
+
+    assert!(client
+        .list_streams_by_recipient(&recipient, &0, &10)
+        .is_empty());
+
+    let first = client.create_stream(&admin, &recipient, &token, &1, &100, &100);
+    assert_eq!(
+        client.list_streams_by_recipient(&recipient, &0, &10),
+        soroban_sdk::vec![&env, first]
+    );
+
+    let second = client.create_stream(&admin, &recipient, &token, &1, &100, &100);
+    let _other = client.create_stream(&admin, &other_recipient, &token, &1, &100, &100);
+    assert_eq!(
+        client.list_streams_by_recipient(&recipient, &0, &1),
+        soroban_sdk::vec![&env, first]
+    );
+    assert_eq!(
+        client.list_streams_by_recipient(&recipient, &first, &1),
+        soroban_sdk::vec![&env, second]
+    );
+
+    env.ledger().with_mut(|ledger| ledger.timestamp += 100);
+    client.claim_stream(&recipient, &first);
+    assert_eq!(
+        client.list_streams_by_recipient(&recipient, &0, &10),
+        soroban_sdk::vec![&env, second]
+    );
+}
+
+#[test]
 fn test_claim_never_exceeds_accrued_amount() {
     let env = Env::default();
     env.mock_all_auths();

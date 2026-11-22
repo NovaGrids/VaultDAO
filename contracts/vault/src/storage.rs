@@ -55,6 +55,8 @@ pub enum DataKey {
     RoleIndex,
     /// Proposal by ID -> Proposal
     Proposal(u64),
+    /// Pending proposal IDs for a proposer -> Vec<u64>
+    PendingProposalsByProposer(Address),
     /// Next proposal ID counter -> u64
     NextProposalId,
     /// Priority queue index (u32 priority level) -> Vec<u64>
@@ -97,6 +99,8 @@ pub enum DataKey {
     ApprovalLedger(u64, Address),
     /// Streaming payment by ID
     Stream(u64),
+    /// Active stream IDs for a recipient -> Vec<u64>
+    StreamsByRecipient(Address),
     /// Next stream payment ID counter -> u64
     NextStreamId,
     /// Cancellation record by proposal ID
@@ -267,6 +271,37 @@ pub enum ReserveKey {
     ReservedFunding(Address),
 }
 
+/// Storage keys for streaming pause policy, TWAP swaps, recovery epochs and
+/// audit compaction (Issues #2055, #2057, #2059, #2062).
+#[contracttype(export = false)]
+#[derive(Clone)]
+pub enum HardeningKey {
+    /// Vault-wide stream pause policy -> StreamPausePolicy
+    StreamPausePolicy,
+    /// Cumulative amount clawed back from a stream (stream_id) -> i128
+    StreamClawed(u64),
+    /// TWAP guard configuration -> TwapGuardConfig
+    TwapConfig,
+    /// Ring buffer of oracle observations (asset) -> Vec<PriceObservation>
+    PriceObservations(Address),
+    /// Legs settled by a routed swap (proposal_id) -> Vec<SwapLeg>
+    SwapLegs(u64),
+    /// Current recovery epoch -> u64
+    RecoveryEpoch,
+    /// Competing-recovery policy -> RecoveryCompetitionPolicy
+    RecoveryCompetitionPolicy,
+    /// Consumed recovery approval signature (sha256 of signature) -> bool
+    UsedRecoverySig(BytesN<32>),
+    /// Audit retention policy -> AuditRetentionPolicy
+    AuditRetention,
+    /// Leaf hashes of a compacted audit epoch (checkpoint_id) -> Vec<u64>
+    AuditCheckpointLeaves(u64),
+    /// Highest audit entry ID that has been compacted -> u64
+    AuditCompactedThrough,
+    /// Hash of the last compacted audit entry (chain anchor) -> u64
+    AuditAnchorHash,
+}
+
 #[contracttype(export = false)]
 #[derive(Clone)]
 pub enum CalendarKey {
@@ -403,6 +438,8 @@ pub enum FeatureKey {
     MetricsBucketBaseline,
     /// Pending config change proposal ID -> u64
     PendingConfig,
+    /// Ledger sequence of the last successful `update_threshold` call -> u64 (#2146 cooldown)
+    LastThresholdChangeLedger,
     /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
     WhitelistEntry(Address),
     /// Multi-phase proposal by base proposal ID -> MultiPhaseProposal (issue #1096)
@@ -874,7 +911,7 @@ pub fn set_initialized(env: &Env) {
 
 /// Current storage schema version. Bump when stored types change and add a
 /// step to `VaultDAO::migrate`.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Stored schema version; deployments that predate versioning report 0.
 pub fn get_schema_version(env: &Env) -> u32 {
@@ -904,6 +941,13 @@ pub fn get_config(env: &Env) -> Result<Config, VaultError> {
 
 /// Config read that skips the schema version check (used only by `migrate`).
 pub fn get_config_unchecked(env: &Env) -> Result<Config, VaultError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Config)
+        .ok_or(VaultError::NotInitialized)
+}
+
+pub fn get_config_v1_unchecked(env: &Env) -> Result<crate::types::ConfigV1, VaultError> {
     env.storage()
         .instance()
         .get(&DataKey::Config)
@@ -1047,10 +1091,21 @@ pub fn proposal_exists(env: &Env, id: u64) -> bool {
 
 pub fn set_proposal(env: &Env, proposal: &Proposal) {
     let key = DataKey::Proposal(proposal.id);
+    let previous: Option<Proposal> = env.storage().persistent().get(&key);
     env.storage().persistent().set(&key, proposal);
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    if let Some(previous) = previous.as_ref() {
+        if previous.status == ProposalStatus::Pending
+            && (proposal.status != ProposalStatus::Pending || previous.proposer != proposal.proposer)
+        {
+            remove_pending_proposal_for_proposer(env, &previous.proposer, proposal.id);
+        }
+    }
+    if proposal.status == ProposalStatus::Pending {
+        add_pending_proposal_for_proposer(env, &proposal.proposer, proposal.id);
+    }
     // Maintain StatusIndex
     let status_u32 = proposal.status.clone() as u32;
     let idx_key = DataKey::StatusIndex(status_u32);
@@ -1075,6 +1130,63 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
     } else {
         remove_from_timelock_ready_index(env, proposal.id);
     }
+}
+
+fn add_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
+    let key = DataKey::PendingProposalsByProposer(proposer.clone());
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if !ids.contains(proposal_id) {
+        ids.push_back(proposal_id);
+    }
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn index_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
+    add_pending_proposal_for_proposer(env, proposer, proposal_id);
+}
+
+fn remove_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
+    let key = DataKey::PendingProposalsByProposer(proposer.clone());
+    let Some(ids): Option<Vec<u64>> = env.storage().persistent().get(&key) else {
+        return;
+    };
+    let mut remaining = Vec::new(env);
+    for id in ids {
+        if id != proposal_id {
+            remaining.push_back(id);
+        }
+    }
+    if remaining.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &remaining);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    }
+}
+
+pub fn get_pending_proposal_count(env: &Env, proposer: &Address) -> u32 {
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::PendingProposalsByProposer(proposer.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    ids.len()
+}
+
+pub fn get_proposal_ids_for_status(env: &Env, status: ProposalStatus) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StatusIndex(status as u32))
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -1779,10 +1891,87 @@ pub fn increment_stream_id(env: &Env) -> u64 {
 
 pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
     let key = DataKey::Stream(stream.id);
+    let previous: Option<crate::types::StreamingPayment> =
+        env.storage().persistent().get(&key);
     env.storage().persistent().set(&key, stream);
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    if let Some(previous) = previous.as_ref() {
+        if previous.status == crate::types::StreamStatus::Active
+            && (stream.status != crate::types::StreamStatus::Active
+                || previous.recipient != stream.recipient)
+        {
+            remove_stream_for_recipient(env, &previous.recipient, stream.id);
+        }
+    }
+    if stream.status == crate::types::StreamStatus::Active
+        && previous.as_ref().map_or(true, |old| {
+            old.status != crate::types::StreamStatus::Active || old.recipient != stream.recipient
+        })
+    {
+        add_stream_for_recipient(env, &stream.recipient, stream.id);
+    }
+}
+
+fn add_stream_for_recipient(env: &Env, recipient: &Address, stream_id: u64) {
+    let key = DataKey::StreamsByRecipient(recipient.clone());
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if ids.contains(stream_id) {
+        return;
+    }
+    let mut sorted = Vec::new(env);
+    let mut inserted = false;
+    for id in ids {
+        if !inserted && stream_id < id {
+            sorted.push_back(stream_id);
+            inserted = true;
+        }
+        sorted.push_back(id);
+    }
+    if !inserted {
+        sorted.push_back(stream_id);
+    }
+    env.storage().persistent().set(&key, &sorted);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+fn remove_stream_for_recipient(env: &Env, recipient: &Address, stream_id: u64) {
+    let key = DataKey::StreamsByRecipient(recipient.clone());
+    let Some(ids): Option<Vec<u64>> = env.storage().persistent().get(&key) else {
+        return;
+    };
+    let mut remaining = Vec::new(env);
+    for id in ids {
+        if id != stream_id {
+            remaining.push_back(id);
+        }
+    }
+    if remaining.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &remaining);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    }
+}
+
+pub fn get_stream_ids_by_recipient(env: &Env, recipient: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StreamsByRecipient(recipient.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn index_active_stream_for_recipient(env: &Env, recipient: &Address, stream_id: u64) {
+    add_stream_for_recipient(env, recipient, stream_id);
 }
 
 pub fn get_streaming_payment(
@@ -5689,6 +5878,19 @@ pub fn clear_pending_config_proposal(env: &Env) {
     env.storage().instance().remove(&FeatureKey::PendingConfig);
 }
 
+/// Ledger of the last successful `update_threshold` call (Issue #2146).
+pub fn get_last_threshold_change_ledger(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::LastThresholdChangeLedger)
+}
+
+pub fn set_last_threshold_change_ledger(env: &Env, ledger: u64) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::LastThresholdChangeLedger, &ledger);
+}
+
 // ============================================================================
 // Recipient whitelist helper
 // ============================================================================
@@ -5989,4 +6191,211 @@ pub fn set_keeper_hook_count(env: &Env, count: u32) {
         PERSISTENT_TTL_THRESHOLD,
         PERSISTENT_TTL,
     );
+}
+
+// ============================================================================
+// Issue #2055: Stream pause policy and clawback tracking
+// ============================================================================
+
+pub fn get_stream_pause_policy(env: &Env) -> crate::types::StreamPausePolicy {
+    env.storage()
+        .instance()
+        .get(&HardeningKey::StreamPausePolicy)
+        .unwrap_or(crate::types::StreamPausePolicy {
+            max_pause_secs: 0,
+            action: crate::types::PauseExpiryAction::AutoResume,
+        })
+}
+
+pub fn set_stream_pause_policy(env: &Env, policy: &crate::types::StreamPausePolicy) {
+    env.storage()
+        .instance()
+        .set(&HardeningKey::StreamPausePolicy, policy);
+}
+
+pub fn get_stream_clawed(env: &Env, stream_id: u64) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&HardeningKey::StreamClawed(stream_id))
+        .unwrap_or(0)
+}
+
+pub fn add_stream_clawed(env: &Env, stream_id: u64, amount: i128) {
+    let key = HardeningKey::StreamClawed(stream_id);
+    let total = get_stream_clawed(env, stream_id).saturating_add(amount);
+    env.storage().persistent().set(&key, &total);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Issue #2057: TWAP guard and price observations
+// ============================================================================
+
+/// Maximum observations kept per asset; older samples are dropped first.
+pub const MAX_PRICE_OBSERVATIONS: u32 = 24;
+
+pub fn get_twap_config(env: &Env) -> Option<crate::types::TwapGuardConfig> {
+    env.storage().instance().get(&HardeningKey::TwapConfig)
+}
+
+pub fn set_twap_config(env: &Env, config: &crate::types::TwapGuardConfig) {
+    env.storage().instance().set(&HardeningKey::TwapConfig, config);
+}
+
+pub fn get_price_observations(env: &Env, asset: &Address) -> Vec<crate::types::PriceObservation> {
+    env.storage()
+        .persistent()
+        .get(&HardeningKey::PriceObservations(asset.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Append an observation. A sample whose timestamp is not newer than the last
+/// one replaces nothing and is ignored, so the buffer stays strictly ordered.
+/// Returns `true` if the sample was stored.
+pub fn push_price_observation(
+    env: &Env,
+    asset: &Address,
+    obs: &crate::types::PriceObservation,
+) -> bool {
+    let key = HardeningKey::PriceObservations(asset.clone());
+    let mut list = get_price_observations(env, asset);
+    if let Some(last) = list.last() {
+        if obs.timestamp <= last.timestamp {
+            return false;
+        }
+    }
+    list.push_back(obs.clone());
+    while list.len() > MAX_PRICE_OBSERVATIONS {
+        list.pop_front();
+    }
+    env.storage().persistent().set(&key, &list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    true
+}
+
+pub fn set_swap_legs(env: &Env, proposal_id: u64, legs: &Vec<crate::types::SwapLeg>) {
+    let key = HardeningKey::SwapLegs(proposal_id);
+    env.storage().persistent().set(&key, legs);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_swap_legs(env: &Env, proposal_id: u64) -> Vec<crate::types::SwapLeg> {
+    env.storage()
+        .persistent()
+        .get(&HardeningKey::SwapLegs(proposal_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+// ============================================================================
+// Issue #2059: Recovery epoch, competition policy, signature replay
+// ============================================================================
+
+pub fn get_recovery_epoch(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&HardeningKey::RecoveryEpoch)
+        .unwrap_or(0)
+}
+
+/// Move to the next recovery epoch and return it.
+pub fn bump_recovery_epoch(env: &Env) -> u64 {
+    let next = get_recovery_epoch(env).saturating_add(1);
+    env.storage().instance().set(&HardeningKey::RecoveryEpoch, &next);
+    next
+}
+
+pub fn get_recovery_competition_policy(env: &Env) -> crate::types::RecoveryCompetitionPolicy {
+    env.storage()
+        .instance()
+        .get(&HardeningKey::RecoveryCompetitionPolicy)
+        .unwrap_or(crate::types::RecoveryCompetitionPolicy::Reject)
+}
+
+pub fn set_recovery_competition_policy(
+    env: &Env,
+    policy: crate::types::RecoveryCompetitionPolicy,
+) {
+    env.storage()
+        .instance()
+        .set(&HardeningKey::RecoveryCompetitionPolicy, &policy);
+}
+
+pub fn is_recovery_sig_used(env: &Env, sig_hash: &BytesN<32>) -> bool {
+    env.storage()
+        .persistent()
+        .has(&HardeningKey::UsedRecoverySig(sig_hash.clone()))
+}
+
+pub fn mark_recovery_sig_used(env: &Env, sig_hash: &BytesN<32>) {
+    let key = HardeningKey::UsedRecoverySig(sig_hash.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Issue #2062: Audit compaction
+// ============================================================================
+
+pub fn get_audit_retention_policy(env: &Env) -> crate::types::AuditRetentionPolicy {
+    env.storage()
+        .instance()
+        .get(&HardeningKey::AuditRetention)
+        .unwrap_or(crate::types::AuditRetentionPolicy {
+            hot_window_entries: 0,
+            batch_size: 100,
+        })
+}
+
+pub fn set_audit_retention_policy(env: &Env, policy: &crate::types::AuditRetentionPolicy) {
+    env.storage()
+        .instance()
+        .set(&HardeningKey::AuditRetention, policy);
+}
+
+pub fn set_audit_checkpoint_leaves(env: &Env, checkpoint_id: u64, leaves: &Vec<u64>) {
+    let key = HardeningKey::AuditCheckpointLeaves(checkpoint_id);
+    env.storage().persistent().set(&key, leaves);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_audit_checkpoint_leaves(env: &Env, checkpoint_id: u64) -> Option<Vec<u64>> {
+    env.storage()
+        .persistent()
+        .get(&HardeningKey::AuditCheckpointLeaves(checkpoint_id))
+}
+
+/// Highest compacted audit entry ID (0 if nothing has been compacted).
+pub fn get_audit_compacted_through(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&HardeningKey::AuditCompactedThrough)
+        .unwrap_or(0)
+}
+
+/// Hash of the last compacted entry, used as `prev_hash` anchor for the
+/// first hot entry.
+pub fn get_audit_anchor_hash(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&HardeningKey::AuditAnchorHash)
+        .unwrap_or(0)
+}
+
+pub fn set_audit_compaction_anchor(env: &Env, through_id: u64, anchor_hash: u64) {
+    env.storage()
+        .instance()
+        .set(&HardeningKey::AuditCompactedThrough, &through_id);
+    env.storage()
+        .instance()
+        .set(&HardeningKey::AuditAnchorHash, &anchor_hash);
 }
