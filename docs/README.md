@@ -31,6 +31,7 @@ Hands-on how-tos for building and operating features.
 - [Streaming payments](guides/STREAMING.md)
 - [Phased treasury disbursements](guides/PHASED_DISBURSEMENTS.md)
 - [Funding rounds](guides/FUNDING_ROUNDS.md)
+- [Escrow](guides/ESCROW.md)
 - [Delegation](guides/DELEGATION_GUIDE.md)
 - [Expiration](guides/EXPIRATION_GUIDE.md)
 - [Approval timeout](guides/APPROVAL_TIMEOUT.md)
