@@ -27,6 +27,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
 
   # Backend Service: Node.js Indexer and Notifications API
@@ -71,6 +72,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 30s
     # For local development hot reloading, we override the production CMD
     command: npm run dev
 
@@ -94,6 +96,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5173"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     # Vite dev server requires --host to bind and accept host network connections (port 5173)
     command: npm run dev -- --host
 

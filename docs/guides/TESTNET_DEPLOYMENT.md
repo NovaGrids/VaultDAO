@@ -306,3 +306,18 @@ SCENARIOS=1 node --import tsx/esm runner.ts
 3. Document it in the table above.
 4. Test it locally before opening a PR:
    `SCENARIOS=N node --import tsx/esm runner.ts`
+## Proposal ID Prefix Uniqueness (multi-vault coordination)
+
+`proposal_id_prefix` in `InitConfig` namespaces proposal IDs so that cross-vault
+proposals from different vaults do not collide. Requirements:
+
+- The value must be a multiple of `1_000_000`, or `0` to disable namespacing.
+- Every vault on the same network must use a **different** prefix. Vaults that share
+  a prefix generate colliding proposal IDs, and `get_cross_vault_proposal` can return
+  another vault's data.
+- `execute_cross_vault` rejects any proposal whose ID is outside the executing
+  vault's prefix (`InvalidProposalIdPrefix`).
+
+Before deploying a second vault for coordination, pick a prefix that no existing
+vault uses, for example `1_000_000` for the first, `2_000_000` for the second, and
+so on, and record it in your deployment notes.

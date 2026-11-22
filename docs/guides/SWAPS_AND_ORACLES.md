@@ -1,7 +1,7 @@
 # DEX Swaps and Price Oracle Guide
 
 **Audience:** Operators who configure the price oracle and DEX allow-list, and treasurers who propose swaps and liquidity actions.
-**Goal:** Explain how the oracle interface, staleness checks, DEX whitelist, `SwapProposal` variants, and slippage and price-impact checks work, and where the current implementation is still simulated.
+**Goal:** Explain how the oracle interface, staleness checks, TWAP guard, DEX whitelist, `SwapProposal` variants (including guarded multi-hop `RoutedSwap`), and slippage and price-impact checks work, and where the current implementation is still simulated.
 
 > **Status:** The swap execution path is partly simulated. Swap amounts are computed locally, not by calling a DEX contract. The validation rules in this guide are enforced; the external DEX call is not yet wired. See [section 7](#7-current-limitations).
 
@@ -17,6 +17,7 @@
 6. [Execution and validation](#6-execution-and-validation)
 7. [Current limitations](#7-current-limitations)
 8. [Worked examples](#8-worked-examples)
+9. [TWAP guard and routed swaps](#9-twap-guard-and-routed-swaps)
 
 ---
 
@@ -128,6 +129,7 @@ Each `SwapProposal` variant carries its own fields:
 | `StakeLp(farm, lp_token, amount)` | Farm, LP token, amount | Stakes LP tokens in a farm | Farm on allow-list |
 | `UnstakeLp(farm, lp_token, amount)` | Farm, LP token, amount | Unstakes LP tokens | Farm on allow-list |
 | `ClaimRewards(farm)` | Farm | Claims farming rewards | Farm on allow-list |
+| `RoutedSwap(RoutedSwapArgs)` | DEX, token `path`, `amount_in`, `min_amount_out`, `max_slippage_bps` | Guarded single- or multi-hop swap from `path[0]` to the last token | See [section 9](#9-twap-guard-and-routed-swaps) |
 
 Use `min_amount_out`, `min_lp_tokens`, and the `min_token_*` fields as your slippage protection. A value of `0` accepts any result.
 
@@ -177,7 +179,8 @@ Read this section before relying on swaps in production.
 
 - **No external DEX call yet.** `Swap` computes the output locally at a fixed simulated rate (99% of `amount_in`, a 1% simulated slippage). The code marks the external call as a TODO. Output is therefore not what a live pool would return.
 - **Liquidity actions are simulated.** `AddLiquidity` estimates LP tokens as `(amount_a + amount_b) / 2`. `RemoveLiquidity` and the farm variants also use simulated amounts.
-- **`max_slippage_bps` and `min_liquidity` are stored but not enforced** on the swap paths in the current code. Use `min_amount_out` and the other `min_*` fields for slippage protection until this changes.
+- **`max_slippage_bps` is enforced only for `RoutedSwap`**, as the upper bound of each proposal's slippage band. `min_liquidity` is stored but not enforced. For the other variants use `min_amount_out` and the other `min_*` fields.
+- **`RoutedSwap` legs are simulated** at 1% per hop, like `Swap`. The validation (TWAP, slippage band, intermediate invariants) is enforced; the DEX router call is not yet wired.
 - **Oracle prices are read at execution time**, not at proposal time. A price move between approval and execution affects the price-impact check.
 
 ---
@@ -226,3 +229,82 @@ A proposal for a router that is not in `enabled_dexs` is refused at `propose_swa
 - [Treasury risk management](TREASURY_RISK_MANAGEMENT.md)
 - [Governance parameter sensitivity](GOVERNANCE_PARAMETERS.md)
 - [Insurance and staking](INSURANCE_AND_STAKING.md)
+
+---
+
+## 9. TWAP guard and routed swaps
+
+### 9.1 TWAP guard
+
+`set_twap_config(admin, TwapGuardConfig)` (Admin only):
+
+| Field | Meaning |
+|-------|---------|
+| `window_secs` | Look-back window for the TWAP, in seconds. Must be > 0 |
+| `max_deviation_bps` | Maximum distance between spot and TWAP, in basis points (≤ 10 000) |
+| `min_observations` | Minimum samples inside the window. Must be > 0 |
+
+Observations are recorded by `record_price_observation(asset)`, a permissionless call for keepers. It reads the oracle with the same staleness check as `get_asset_price` (a stale price is refused with `OraclePriceStale`) and stores `(price, oracle_timestamp)`. A sample not newer than the last one is not stored again. Up to 24 samples are kept per asset; the oldest are dropped first.
+
+The TWAP weights each sample by how long it stood: until the next sample, or until now for the newest one.
+
+```
+twap = Σ price_i × (t_{i+1} − t_i) / Σ (t_{i+1} − t_i)
+```
+
+When the guard runs on an asset with spot price `spot`:
+
+| Condition | Result |
+|-----------|--------|
+| Spot price stale | `OraclePriceStale` (722) — the swap aborts |
+| Fewer than `min_observations` samples in the window | `TwapUnavailable` (1209) — fails closed |
+| `|spot − twap| × 10 000 / twap > max_deviation_bps` | `TwapDeviationExceeded` (1210) |
+
+For a `RoutedSwap` the guard is mandatory: with no TWAP config the swap fails with `TwapUnavailable`. For a plain `Swap` it runs only once a TWAP config is set.
+
+Reads: `get_twap_config()`, `get_price_observations(asset)`, `get_twap(asset)`.
+
+### 9.2 `RoutedSwap`
+
+```
+RoutedSwapArgs {
+    dex: Address,
+    path: Vec<Address>,      // 2..=4 tokens, no repeats; path[0] is sold, last is bought
+    amount_in: i128,         // > 0
+    min_amount_out: i128,    // > 0
+    max_slippage_bps: u32,   // ≤ DexConfig.max_slippage_bps
+}
+```
+
+At `propose_swap` the route is validated (`SwapPathInvalid` (1212) for a bad path, `InvalidAmount` for a non-positive amount, `SwapSlippageExceeded` (1211) for a band wider than the DEX allows, `DexError` for an unknown DEX) and every token in the path must be supported.
+
+At `execute_swap_proposal`, everything is checked before anything is recorded:
+
+1. Every token in the path is priced fresh. A stale price aborts with `OraclePriceStale`.
+2. Every token passes the TWAP guard.
+3. Each leg is computed. The intermediate balance invariant is checked: what leg *i* produces of token *i+1* is exactly what leg *i+1* consumes, so no intermediate token is left in or taken from the treasury.
+4. Slippage of the final output against the oracle-implied output (`amount_in × price(path[0]) / price(last)`) must be at most `max_slippage_bps` and at most `max_price_impact_bps`, and the output must be at least `min_amount_out`. Otherwise the call fails with `SwapSlippageExceeded`.
+
+Any failure returns an error and Soroban discards the whole invocation, so **no partial leg is ever left settled**: no `SwapResult`, no legs and no events are stored, and the proposal stays `Approved`. On success the legs are stored (`get_swap_legs(proposal_id)`), the `SwapResult` records the final output and the slippage in `price_impact_bps`, and `routed_swap(proposal_id; dex, token_in, token_out, amount_in, amount_out, hops)` is emitted.
+
+### 9.3 Spending limits and circuit breaker
+
+Only `path[0]` leaves the treasury. The proposal reserves `amount_in` of `path[0]` against the per-proposal, daily, weekly and per-token limits once, at `propose_swap`, and the hourly circuit breaker counts the same amount at execution. Intermediate tokens net to zero and the bought token flows in, so neither is counted as outflow. A failed execution reverts, so the reservation stays with the still-approved proposal and is released by the normal cancel or expiry paths.
+
+### 9.4 Example
+
+```text
+set_twap_config(admin, { window_secs: 600, max_deviation_bps: 500, min_observations: 2 })
+// keeper, every few minutes, for each token on the route:
+record_price_observation(<token>)
+
+propose_swap(treasurer, RoutedSwap({
+    dex: <router>,
+    path: [<USDC>, <XLM>, <EURC>],
+    amount_in: 1_000,
+    min_amount_out: 950,
+    max_slippage_bps: 300,
+}), ...)
+```
+
+With prices equal across the route, the simulated output is 980 (1% per hop), a 2% slippage, so the swap settles. With `max_slippage_bps: 150` it would abort with `SwapSlippageExceeded` and leave nothing behind.

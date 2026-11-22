@@ -34,6 +34,20 @@ Run:
 k6 run load-tests/approval-load.js
 ```
 
+### stream-load.js
+Simulates 50 concurrent `trigger_stream_payment` calls against the same stream, the most likely production stress pattern for payroll vaults (many payments firing against one stream at once).
+
+**Metrics:**
+- Trigger latency (p99 < 2000ms)
+- Error rate < 1%
+
+Run:
+```bash
+k6 run load-tests/stream-load.js
+```
+
+The scenario fails if p99 latency exceeds 2 seconds or the error rate exceeds 1% (enforced via `options.thresholds`).
+
 ### comprehensive-load.js
 Full end-to-end load test simulating 100 users performing create, approve, and execute operations over 10 minutes.
 
@@ -76,6 +90,21 @@ BASE_URL=https://api.example.com API_KEY=your-key k6 run load-tests/comprehensiv
 WS_URL=wss://api.example.com/ws VAULT_CONTRACT_ID=CABCDEF... k6 run load-tests/websocket-load.js
 ```
 
+## Baseline Results
+
+Reference performance numbers for every script in this directory are recorded in [BASELINE.md](./BASELINE.md), together with the hardware/cloud spec they were measured on. Use it to judge whether a change has degraded performance.
+
+**Reference environment (summary):** 4 vCPU / 16 GB RAM application instance, managed PostgreSQL 16 (4 vCPU / 16 GB), Node.js 20 LTS backend, single region, tests driven from a separate 2 vCPU load-generator host on the same network. Full details, including versions and database settings, are in [BASELINE.md](./BASELINE.md).
+
+### Comparing against the baseline
+
+1. Run the **same script** with the **same parameters** as the baseline (same VU counts, stages/durations, and environment variables). Do not change `BASE_URL`, `API_KEY`, `WS_URL`, or `VAULT_CONTRACT_ID` semantics between runs.
+2. Record p50, p95, p99 and throughput (requests/sec, or messages/sec for `websocket-load.js`) from the k6 summary.
+3. Compare against the matching row in [BASELINE.md](./BASELINE.md) and flag a regression if either:
+   - **Latency:** p50, p95 or p99 increases by **more than 10%** versus the baseline, or
+   - **Throughput:** sustained throughput drops by **more than 5%** versus the baseline.
+4. If a regression is flagged, re-run once to rule out noise, then note the delta and the suspected cause in the PR description. Intentional changes that shift the baseline should update [BASELINE.md](./BASELINE.md) in the same PR.
+
 ## Interpreting Results
 
 ### Latency Percentiles
@@ -102,15 +131,13 @@ Requests per second handled by the system. Indicates capacity.
 
 `websocket-load.js` was authored against the subscription protocol implemented in `backend/src/modules/websocket/websocket.server.ts` (topics of the form `notification:events:<TYPE>`, with legacy short names like `PROPOSAL_CREATED` normalized server-side). `k6`'s `ws` module is not available in every environment that can run this repository's test suite, so no k6 binary was available to execute a live 1000-VU run here — the script has been validated for protocol correctness against the server's message contract and unit-tested message flows (`websocket.server.test.ts`, `websocket.subscription-limit.test.ts`), not executed end-to-end at load.
 
-Run it against a real deployment and record results here using this template:
+Run it against a real deployment with:
 
 ```bash
 WS_URL=wss://<host>/ws VAULT_CONTRACT_ID=<contract-id> k6 run load-tests/websocket-load.js
 ```
 
-| Date | Environment | VUs | Connection success | Subscription success | p95 delivery latency | p99 delivery latency | Notes |
-| ---- | ----------- | --- | ------------------- | --------------------- | --------------------- | --------------------- | ----- |
-| _fill in_ | _fill in_ | 1000 | | | | | |
+Recorded results for this script (reference environment, VU counts, connection/subscription success rates, and p50/p95/p99 delivery latency) live in [BASELINE.md](./BASELINE.md). Add new runs there rather than in this guide, and compare against the baseline using the tolerance described in [Comparing against the baseline](#comparing-against-the-baseline).
 
 **Target thresholds** (enforced by the script's `options.thresholds`):
 - P99 message delivery latency < 500ms
@@ -122,6 +149,17 @@ If the P99 threshold is breached under 1000 concurrent connections, check:
 - `vaultdao_ws_connections_active` and event broadcast fan-out cost in `EventWebSocketServer`
 - Node.js event loop lag on the backend process (a single-threaded WS broadcast loop degrades with connection count)
 - Whether `wsMaxSubscriptionsPerClient` (see `backend/src/config/env.ts`) is set high enough to avoid rejected subscriptions inflating the failure rate
+
+## CI Benchmark Regression Gate
+
+Contract benchmarks in `contracts/vault/benches/contract.rs` are run in CI via `cargo bench`, and the results are uploaded as a build artifact. On subsequent runs, `scripts/compare_benchmarks.py` compares the new results against the previous artifact and fails the build if any metric degrades by more than **15%**. Baselines are tracked for `approve_proposal`, `execute_proposal`, and `batch_propose_transfers`.
+
+If CI fails on the benchmark gate, reproduce locally with:
+
+```bash
+cargo bench --manifest-path contracts/vault/Cargo.toml
+python scripts/compare_benchmarks.py <previous-results> <current-results>
+```
 
 ## Performance Benchmarks
 

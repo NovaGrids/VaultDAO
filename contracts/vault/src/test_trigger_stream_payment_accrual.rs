@@ -207,6 +207,37 @@ fn test_trigger_exact_accrued_amount_succeeds() {
     assert_eq!(stream.status, StreamStatus::Active);
 }
 
+#[test]
+fn test_get_stream_claimable_matches_accrual_and_caps_at_total() {
+    let env = Env::default();
+    let (client, _admin, _recipient, _token, stream_id) = setup(&env);
+
+    env.ledger().set_timestamp(100);
+    assert_eq!(client.get_stream_claimable(&stream_id), 100);
+    assert_eq!(client.get_stream(&stream_id).claimed_amount, 0);
+
+    env.ledger().set_timestamp(DURATION + 100);
+    assert_eq!(client.get_stream_claimable(&stream_id), TOTAL);
+}
+
+#[test]
+fn test_get_stream_claimable_subtracts_claimed_amount_and_rejects_inactive() {
+    let env = Env::default();
+    let (client, _admin, recipient, _token, stream_id) = setup(&env);
+
+    env.ledger().set_timestamp(100);
+    client.trigger_stream_payment(&recipient, &stream_id, &100i128);
+    env.ledger().set_timestamp(200);
+    assert_eq!(client.get_stream_claimable(&stream_id), 100);
+
+    env.ledger().set_timestamp(DURATION);
+    client.claim_stream(&recipient, &stream_id);
+    assert_eq!(
+        client.try_get_stream_claimable(&stream_id),
+        Err(Ok(VaultError::StreamNotActive))
+    );
+}
+
 // ============================================================================
 // 5. accumulated_seconds is rolled — claim_stream after trigger is correct
 // ============================================================================
