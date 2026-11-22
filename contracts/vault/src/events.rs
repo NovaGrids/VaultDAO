@@ -296,6 +296,14 @@ pub fn emit_proposal_rejected(env: &Env, proposal_id: u64, rejector: &Address, p
     );
 }
 
+/// Emit when proposal creation is rejected before an ID is assigned.
+pub fn emit_proposal_creation_rejected(env: &Env, proposer: &Address, reason: Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "proposal_rejected"), proposer.clone()),
+        reason,
+    );
+}
+
 /// Emit when a signer casts a rejection vote, tracking progress toward the
 /// rejection threshold.
 ///

@@ -55,6 +55,8 @@ pub enum DataKey {
     RoleIndex,
     /// Proposal by ID -> Proposal
     Proposal(u64),
+    /// Pending proposal IDs for a proposer -> Vec<u64>
+    PendingProposalsByProposer(Address),
     /// Next proposal ID counter -> u64
     NextProposalId,
     /// Priority queue index (u32 priority level) -> Vec<u64>
@@ -97,6 +99,8 @@ pub enum DataKey {
     ApprovalLedger(u64, Address),
     /// Streaming payment by ID
     Stream(u64),
+    /// Active stream IDs for a recipient -> Vec<u64>
+    StreamsByRecipient(Address),
     /// Next stream payment ID counter -> u64
     NextStreamId,
     /// Cancellation record by proposal ID
@@ -434,6 +438,8 @@ pub enum FeatureKey {
     MetricsBucketBaseline,
     /// Pending config change proposal ID -> u64
     PendingConfig,
+    /// Ledger sequence of the last successful `update_threshold` call -> u64 (#2146 cooldown)
+    LastThresholdChangeLedger,
     /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
     WhitelistEntry(Address),
     /// Multi-phase proposal by base proposal ID -> MultiPhaseProposal (issue #1096)
@@ -905,7 +911,7 @@ pub fn set_initialized(env: &Env) {
 
 /// Current storage schema version. Bump when stored types change and add a
 /// step to `VaultDAO::migrate`.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Stored schema version; deployments that predate versioning report 0.
 pub fn get_schema_version(env: &Env) -> u32 {
@@ -935,6 +941,13 @@ pub fn get_config(env: &Env) -> Result<Config, VaultError> {
 
 /// Config read that skips the schema version check (used only by `migrate`).
 pub fn get_config_unchecked(env: &Env) -> Result<Config, VaultError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Config)
+        .ok_or(VaultError::NotInitialized)
+}
+
+pub fn get_config_v1_unchecked(env: &Env) -> Result<crate::types::ConfigV1, VaultError> {
     env.storage()
         .instance()
         .get(&DataKey::Config)
@@ -1078,10 +1091,21 @@ pub fn proposal_exists(env: &Env, id: u64) -> bool {
 
 pub fn set_proposal(env: &Env, proposal: &Proposal) {
     let key = DataKey::Proposal(proposal.id);
+    let previous: Option<Proposal> = env.storage().persistent().get(&key);
     env.storage().persistent().set(&key, proposal);
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    if let Some(previous) = previous.as_ref() {
+        if previous.status == ProposalStatus::Pending
+            && (proposal.status != ProposalStatus::Pending || previous.proposer != proposal.proposer)
+        {
+            remove_pending_proposal_for_proposer(env, &previous.proposer, proposal.id);
+        }
+    }
+    if proposal.status == ProposalStatus::Pending {
+        add_pending_proposal_for_proposer(env, &proposal.proposer, proposal.id);
+    }
     // Maintain StatusIndex
     let status_u32 = proposal.status.clone() as u32;
     let idx_key = DataKey::StatusIndex(status_u32);
@@ -1106,6 +1130,63 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
     } else {
         remove_from_timelock_ready_index(env, proposal.id);
     }
+}
+
+fn add_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
+    let key = DataKey::PendingProposalsByProposer(proposer.clone());
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if !ids.contains(proposal_id) {
+        ids.push_back(proposal_id);
+    }
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+}
+
+pub fn index_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
+    add_pending_proposal_for_proposer(env, proposer, proposal_id);
+}
+
+fn remove_pending_proposal_for_proposer(env: &Env, proposer: &Address, proposal_id: u64) {
+    let key = DataKey::PendingProposalsByProposer(proposer.clone());
+    let Some(ids): Option<Vec<u64>> = env.storage().persistent().get(&key) else {
+        return;
+    };
+    let mut remaining = Vec::new(env);
+    for id in ids {
+        if id != proposal_id {
+            remaining.push_back(id);
+        }
+    }
+    if remaining.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &remaining);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
+    }
+}
+
+pub fn get_pending_proposal_count(env: &Env, proposer: &Address) -> u32 {
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::PendingProposalsByProposer(proposer.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    ids.len()
+}
+
+pub fn get_proposal_ids_for_status(env: &Env, status: ProposalStatus) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StatusIndex(status as u32))
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -1810,10 +1891,87 @@ pub fn increment_stream_id(env: &Env) -> u64 {
 
 pub fn set_streaming_payment(env: &Env, stream: &crate::types::StreamingPayment) {
     let key = DataKey::Stream(stream.id);
+    let previous: Option<crate::types::StreamingPayment> =
+        env.storage().persistent().get(&key);
     env.storage().persistent().set(&key, stream);
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    if let Some(previous) = previous.as_ref() {
+        if previous.status == crate::types::StreamStatus::Active
+            && (stream.status != crate::types::StreamStatus::Active
+                || previous.recipient != stream.recipient)
+        {
+            remove_stream_for_recipient(env, &previous.recipient, stream.id);
+        }
+    }
+    if stream.status == crate::types::StreamStatus::Active
+        && previous.as_ref().map_or(true, |old| {
+            old.status != crate::types::StreamStatus::Active || old.recipient != stream.recipient
+        })
+    {
+        add_stream_for_recipient(env, &stream.recipient, stream.id);
+    }
+}
+
+fn add_stream_for_recipient(env: &Env, recipient: &Address, stream_id: u64) {
+    let key = DataKey::StreamsByRecipient(recipient.clone());
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if ids.contains(stream_id) {
+        return;
+    }
+    let mut sorted = Vec::new(env);
+    let mut inserted = false;
+    for id in ids {
+        if !inserted && stream_id < id {
+            sorted.push_back(stream_id);
+            inserted = true;
+        }
+        sorted.push_back(id);
+    }
+    if !inserted {
+        sorted.push_back(stream_id);
+    }
+    env.storage().persistent().set(&key, &sorted);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+fn remove_stream_for_recipient(env: &Env, recipient: &Address, stream_id: u64) {
+    let key = DataKey::StreamsByRecipient(recipient.clone());
+    let Some(ids): Option<Vec<u64>> = env.storage().persistent().get(&key) else {
+        return;
+    };
+    let mut remaining = Vec::new(env);
+    for id in ids {
+        if id != stream_id {
+            remaining.push_back(id);
+        }
+    }
+    if remaining.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &remaining);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    }
+}
+
+pub fn get_stream_ids_by_recipient(env: &Env, recipient: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StreamsByRecipient(recipient.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn index_active_stream_for_recipient(env: &Env, recipient: &Address, stream_id: u64) {
+    add_stream_for_recipient(env, recipient, stream_id);
 }
 
 pub fn get_streaming_payment(
@@ -5718,6 +5876,19 @@ pub fn set_pending_config_proposal(env: &Env, proposal_id: u64) {
 
 pub fn clear_pending_config_proposal(env: &Env) {
     env.storage().instance().remove(&FeatureKey::PendingConfig);
+}
+
+/// Ledger of the last successful `update_threshold` call (Issue #2146).
+pub fn get_last_threshold_change_ledger(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::LastThresholdChangeLedger)
+}
+
+pub fn set_last_threshold_change_ledger(env: &Env, ledger: u64) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::LastThresholdChangeLedger, &ledger);
 }
 
 // ============================================================================

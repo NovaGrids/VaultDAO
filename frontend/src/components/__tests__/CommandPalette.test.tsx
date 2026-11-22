@@ -12,7 +12,8 @@
  * - modKey() returns platform-aware label
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CommandPalette, modKey } from '../CommandPalette';
 import type { PaletteAction } from '../CommandPalette';
@@ -501,6 +502,144 @@ describe('CommandPalette', () => {
 
     await waitFor(() => {
       expect(mockRejectProposal).toHaveBeenCalledWith(43);
+    });
+  });
+});
+
+// ─── Keyboard navigation & focus management (Issue #2149) ────────────────────
+
+describe('CommandPalette keyboard navigation and focus management', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    document.body.innerHTML = '';
+  });
+
+  it('Tab keeps focus inside the palette instead of leaving it', async () => {
+    const user = userEvent.setup();
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    await waitFor(() => expect(input).toHaveFocus());
+
+    await user.tab();
+    expect(input).toHaveFocus();
+    expect(screen.getByRole('dialog', { name: /command palette/i })).toContainElement(
+      document.activeElement as HTMLElement,
+    );
+  });
+
+  it('Shift+Tab keeps focus inside the palette', async () => {
+    const user = userEvent.setup();
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    await waitFor(() => expect(input).toHaveFocus());
+
+    await user.tab({ shift: true });
+    expect(input).toHaveFocus();
+  });
+
+  it('pulls focus back to the search input when something outside the palette takes focus', async () => {
+    render(<CommandPalette actions={makeActions()} />);
+    const outside = document.createElement('button');
+    outside.textContent = 'Outside';
+    document.body.appendChild(outside);
+
+    dispatchKey('k', { ctrlKey: true });
+    const input = screen.getByRole('combobox');
+    await waitFor(() => expect(input).toHaveFocus());
+
+    act(() => outside.focus());
+
+    expect(outside).not.toHaveFocus();
+    expect(input).toHaveFocus();
+  });
+
+  it('ArrowDown and Enter work when focus is on the listbox, not only the input', async () => {
+    const actions = makeActions();
+    render(<CommandPalette actions={actions} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const listbox = screen.getByRole('listbox');
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+    });
+
+    fireEvent.keyDown(listbox, { key: 'Enter' });
+    // Second item in the default (grouped) order is "Go to Analytics" under Navigation.
+    expect(actions[1].action).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape returns focus to the element that opened the palette', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button type="button">Open</button>
+        <CommandPalette actions={makeActions()} />
+      </>,
+    );
+    const opener = screen.getByRole('button', { name: 'Open' });
+    opener.focus();
+    expect(opener).toHaveFocus();
+
+    await user.keyboard('{Control>}k{/Control}');
+    await waitFor(() => expect(screen.getByRole('combobox')).toHaveFocus());
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /command palette/i })).not.toBeInTheDocument();
+    });
+    expect(opener).toHaveFocus();
+  });
+
+  it('executing an action via Enter closes the palette and returns focus to the trigger', async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    render(
+      <>
+        <button type="button">Open</button>
+        <CommandPalette actions={actions} />
+      </>,
+    );
+    const opener = screen.getByRole('button', { name: 'Open' });
+    opener.focus();
+
+    await user.keyboard('{Control>}k{/Control}');
+    await waitFor(() => expect(screen.getByRole('combobox')).toHaveFocus());
+
+    // First item in the grouped default order is the first navigation command.
+    await user.keyboard('{Enter}');
+
+    expect(actions[0].action).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog', { name: /command palette/i })).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
+  it('arrow keys move the active option through the typed keyboard path', async () => {
+    const user = userEvent.setup();
+    render(<CommandPalette actions={makeActions()} />);
+    dispatchKey('k', { ctrlKey: true });
+
+    const input = screen.getByRole('combobox');
+    await waitFor(() => expect(input).toHaveFocus());
+
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    await waitFor(() => {
+      expect(screen.getAllByRole('option')[2]).toHaveAttribute('aria-selected', 'true');
+    });
+
+    await user.keyboard('{ArrowUp}');
+    await waitFor(() => {
+      expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
     });
   });
 });
