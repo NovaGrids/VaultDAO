@@ -33,7 +33,7 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
+    BridgeConfig, CancellationRecord, Capability, EscrowConsent, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
     DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
@@ -333,6 +333,7 @@ fn calculate_impact_score(
 // mod test_escrow_multisig_arbitration;
 // #[cfg(test)]
 // mod test_escrow_timeout;
+mod test_escrow_mutual_consent;
 // #[cfg(test)]
 // mod test_fees;
 // #[cfg(test)]
@@ -16392,6 +16393,109 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Release an escrow by mutual consent of funder and recipient (Issue #2142).
+    ///
+    /// No arbitrator is involved. The funder and the recipient each call this
+    /// with the amount they agree the recipient should receive from the escrow's
+    /// remaining balance. The first call records that party's consent. The second
+    /// call, with the same amount, settles: `release_amount` goes to the recipient
+    /// and the rest of the remaining balance is returned to the funder.
+    ///
+    /// A second call with a different amount is rejected with `InvalidAmount`, and
+    /// the first party's consent stays recorded. Only the funder or the recipient
+    /// may call this; admins cannot release on their behalf.
+    pub fn consent_release_escrow(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        release_amount: i128,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        require_not_paused(&env)?;
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+
+        let is_funder = caller == escrow.funder;
+        if !is_funder && caller != escrow.recipient {
+            return Err(VaultError::Unauthorized);
+        }
+
+        if escrow.status != EscrowStatus::Active
+            && escrow.status != EscrowStatus::MilestonesComplete
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        let remaining = escrow.total_amount - escrow.released_amount;
+        if release_amount < 0 || release_amount > remaining {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let mut consent = storage::get_escrow_consent(&env, escrow_id).unwrap_or(EscrowConsent {
+            funder_amount: None,
+            recipient_amount: None,
+        });
+
+        // Record the caller's consent. A party may only consent once, and must agree
+        // with the amount the other party already recorded.
+        if is_funder {
+            if consent.funder_amount.is_some() {
+                return Err(VaultError::AlreadyApproved);
+            }
+            if consent.recipient_amount.is_some_and(|a| a != release_amount) {
+                return Err(VaultError::InvalidAmount);
+            }
+            consent.funder_amount = Some(release_amount);
+        } else {
+            if consent.recipient_amount.is_some() {
+                return Err(VaultError::AlreadyApproved);
+            }
+            if consent.funder_amount.is_some_and(|a| a != release_amount) {
+                return Err(VaultError::InvalidAmount);
+            }
+            consent.recipient_amount = Some(release_amount);
+        }
+
+        if consent.funder_amount.is_some() && consent.recipient_amount.is_some() {
+            let current_ledger = env.ledger().sequence() as u64;
+            let to_recipient = release_amount;
+            let to_funder = remaining - release_amount;
+
+            if to_recipient > 0 {
+                token::transfer(&env, &escrow.token, &escrow.recipient, to_recipient);
+                storage::release_escrow_reserve(&env, &escrow.token, to_recipient);
+                events::emit_escrow_released(
+                    &env,
+                    escrow_id,
+                    &escrow.recipient,
+                    to_recipient,
+                    false,
+                );
+            }
+            if to_funder > 0 {
+                token::transfer(&env, &escrow.token, &escrow.funder, to_funder);
+                storage::release_escrow_reserve(&env, &escrow.token, to_funder);
+                events::emit_escrow_released(&env, escrow_id, &escrow.funder, to_funder, true);
+            }
+
+            escrow.released_amount = escrow.total_amount;
+            escrow.status = if to_recipient > 0 {
+                EscrowStatus::Released
+            } else {
+                EscrowStatus::Refunded
+            };
+            escrow.finalized_at = current_ledger;
+            storage::set_escrow(&env, &escrow);
+            storage::remove_escrow_consent(&env, escrow_id);
+        } else {
+            storage::set_escrow_consent(&env, escrow_id, &consent);
+        }
+
+        storage::create_audit_entry(&env, AuditAction::EscrowReleased, &caller, escrow_id);
+
+        Ok(())
+    }
+
     /// Query escrow details
     pub fn get_escrow_info(env: Env, escrow_id: u64) -> Result<Escrow, VaultError> {
         storage::get_escrow(&env, escrow_id)
@@ -18867,6 +18971,52 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Expire a bridge transfer whose receipt was never confirmed (Issue #2143).
+    ///
+    /// Anyone may call this once the transfer's `deadline_ledger` has passed while
+    /// the record is still `Initiated`. The bridged amount is refunded to the
+    /// source vault and the record is marked `Returned`. Calls before the deadline
+    /// are rejected with `TimelockNotExpired`.
+    ///
+    /// This is a separate entrypoint because `confirm_bridge_receipt` returns an
+    /// error after the deadline, which reverts its refund. Here the refund persists.
+    pub fn expire_bridge_transfer(
+        env: Env,
+        bridge_id: soroban_sdk::BytesN<32>,
+    ) -> Result<(), VaultError> {
+        require_not_paused(&env)?;
+
+        let mut bridge_record = storage::get_bridge_record(&env, bridge_id.clone())
+            .ok_or(VaultError::BridgeInvalidId)?;
+
+        if bridge_record.status != crate::types::BridgeStatus::Initiated {
+            return Err(VaultError::BridgeInvalidStatus);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if current_ledger <= bridge_record.deadline_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        token::transfer(
+            &env,
+            &bridge_record.token,
+            &bridge_record.source_vault,
+            bridge_record.amount,
+        );
+        bridge_record.status = crate::types::BridgeStatus::Returned;
+        bridge_record.finalized_at = current_ledger;
+        storage::set_bridge_record(&env, &bridge_record);
+        events::emit_bridge_funds_returned(
+            &env,
+            &bridge_id,
+            &bridge_record.source_vault,
+            bridge_record.amount,
+        );
+
+        Ok(())
+    }
+
     /// Propose a cross-vault transfer. Creates a standard proposal that, when
     /// approved and executed via `execute_cross_vault`, will invoke each target
     /// vault's `execute_proposal` via cross-contract call.
@@ -18990,6 +19140,14 @@ impl VaultDAO {
         require_not_paused(&env)?;
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Issue #2144: a vault only executes proposals from its own ID namespace.
+        // If two vaults share a prefix, IDs collide and cross-vault lookups can
+        // return another vault's data, so the registered prefix is enforced here.
+        let prefix = storage::get_config(&env)?.proposal_id_prefix;
+        if prefix != 0 && (proposal_id / 1_000_000) * 1_000_000 != prefix {
+            return Err(VaultError::InvalidProposalIdPrefix);
+        }
 
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
@@ -19958,31 +20116,21 @@ impl VaultDAO {
     // Reputation Config (Issue: feature/reputation-system)
     // ========================================================================
 
-    /// Set the admin-configurable reputation decay parameters.
+    /// Direct update of the reputation decay parameters is no longer allowed.
     ///
-    /// Only Admin can call this. Emits `rep_config_updated` and `config_updated`.
-    ///
-    /// # Arguments
-    /// * `admin`  - Admin address (must authorize)
-    /// * `config` - New `ReputationConfig` with `decay_half_life_ledgers` and `decay_min_score`
+    /// Reputation parameters affect voting power, so they must go through the
+    /// governance flow (Issue #2145): `propose_config_change` with
+    /// `ConfigParam::ReputationHalfLife` / `ConfigParam::ReputationDecayFloor`,
+    /// then `approve_config_change` to the governance threshold, then
+    /// `execute_config_change`. This call always returns `InsufficientRole`,
+    /// the same as `set_full_quorum_threshold`.
     pub fn set_reputation_config(
-        env: Env,
+        _env: Env,
         admin: Address,
-        config: ReputationConfig,
+        _config: ReputationConfig,
     ) -> Result<(), VaultError> {
         admin.require_auth();
-
-        if storage::get_role(&env, &admin) != Role::Admin {
-            return Err(VaultError::Unauthorized);
-        }
-
-        storage::set_reputation_config(&env, &config);
-        storage::extend_instance_ttl(&env);
-
-        events::emit_reputation_config_updated(&env, &admin);
-        events::emit_config_updated(&env, &admin);
-
-        Ok(())
+        Err(VaultError::InsufficientRole)
     }
 
     /// Get the current reputation decay configuration.
@@ -22122,6 +22270,17 @@ impl VaultDAO {
                     return Err(VaultError::InvalidAmount);
                 }
             }
+            // Issue #2145: reputation parameters are routed through governance.
+            ConfigParam::ReputationHalfLife => {
+                if new_value < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
+            ConfigParam::ReputationDecayFloor => {
+                if !(0..=1000).contains(&new_value) {
+                    return Err(VaultError::InvalidAmount);
+                }
+            }
         }
 
         let current_ledger = env.ledger().sequence() as u64;
@@ -22220,6 +22379,19 @@ impl VaultDAO {
             // Issue #1634: apply full_quorum_threshold via governance, not direct admin call.
             ConfigParam::FullQuorumThreshold => {
                 config.full_quorum_threshold = gp.new_value;
+            }
+            // Issue #2145: reputation config is applied only through this path.
+            ConfigParam::ReputationHalfLife => {
+                let mut rep = storage::get_reputation_config(&env);
+                rep.decay_half_life_ledgers = gp.new_value as u64;
+                storage::set_reputation_config(&env, &rep);
+                events::emit_reputation_config_updated(&env, &caller);
+            }
+            ConfigParam::ReputationDecayFloor => {
+                let mut rep = storage::get_reputation_config(&env);
+                rep.decay_min_score = gp.new_value as u32;
+                storage::set_reputation_config(&env, &rep);
+                events::emit_reputation_config_updated(&env, &caller);
             }
         }
 

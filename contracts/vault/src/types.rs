@@ -93,7 +93,13 @@ pub struct InitConfig {
     /// Post-execution hook addresses
     pub post_execution_hooks: Vec<Address>,
 
-    /// Proposal ID namespace prefix for multi-vault coordination (must be multiple of 1_000_000)
+    /// Proposal ID namespace prefix for multi-vault coordination.
+    ///
+    /// Must be a multiple of 1_000_000, or 0 to disable namespacing. Each vault
+    /// must use a prefix no other vault uses: two vaults with the same prefix
+    /// generate colliding proposal IDs, and `get_cross_vault_proposal` can then
+    /// return the other vault's data. Proposals whose ID is outside this vault's
+    /// prefix are rejected by `execute_cross_vault` (InvalidProposalIdPrefix).
     pub proposal_id_prefix: u64,
     /// Whether recipient whitelist enforcement is enabled (issue #1094)
     pub whitelist_mode: bool,
@@ -2167,6 +2173,19 @@ pub struct Escrow {
     pub rejection_votes: u32,
 }
 
+/// Pending mutual-consent release for an escrow (Issue #2142).
+///
+/// Each party records the release amount they agree to. Settlement happens once
+/// both parties have recorded the same amount.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowConsent {
+    /// Amount the funder consented to release to the recipient (None = not yet consented)
+    pub funder_amount: Option<i128>,
+    /// Amount the recipient consented to release to themselves (None = not yet consented)
+    pub recipient_amount: Option<i128>,
+}
+
 // ============================================================================
 // Time-Weighted Voting (Issue: feature/time-weighted-voting)
 // ============================================================================
@@ -3292,6 +3311,12 @@ pub enum ConfigParam {
     /// workflow; direct admin updates via `set_full_quorum_threshold` are
     /// rejected (issue #1634).
     FullQuorumThreshold = 6,
+    /// Reputation decay half-life in ledgers (Issue #2145). 0 disables decay.
+    /// Changes must go through governance; `set_reputation_config` is rejected.
+    ReputationHalfLife = 7,
+    /// Reputation decay floor score, 0..=1000 (Issue #2145).
+    /// Changes must go through governance; `set_reputation_config` is rejected.
+    ReputationDecayFloor = 8,
 }
 
 #[contracttype]
