@@ -13,7 +13,6 @@ export interface FilterState {
 export interface ProposalWithTags {
   id?: string | number;
   tags?: string[];
-  [key: string]: unknown;
 }
 
 export interface ProposalFiltersProps {
