@@ -49,6 +49,10 @@ import { KeyboardShortcuts } from "../KeyboardShortcuts";
 import { CommandPalette, modKey } from "../CommandPalette";
 import type { PaletteAction } from "../CommandPalette";
 import ThemeToggle from '../ThemeToggle';
+import { PendingTransactionsBanner } from "../PendingTransactionsBanner";
+import { useOfflineSync } from "../../hooks/useOfflineSync";
+import { useVaultContract } from "../../hooks/useVaultContract";
+import { removeQueuedAction } from "../../utils/offlineQueue";
 
 const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
@@ -65,8 +69,14 @@ const DashboardLayout: React.FC = () => {
   const onboarding = useOnboarding();
   const location = useLocation();
   const navigate = useNavigate();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+
+  // Offline queue integration — wire the XDR submitter from useVaultContract
+  const { submitSignedXdr } = useVaultContract();
+  const { queuedActions, isReplaying, replayQueue, refreshQueue } = useOfflineSync({
+    submitXdr: submitSignedXdr,
+  });
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
   const [isNotificationDropdownOpen, setIsNotificationDropdownOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -314,6 +324,18 @@ const DashboardLayout: React.FC = () => {
           </div>
         </header>
         <main id="main-content" className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50 dark:bg-gray-900 transition-colors">
+          {queuedActions.length > 0 && (
+            <div className="mb-4">
+              <PendingTransactionsBanner
+                actions={queuedActions}
+                isReplaying={isReplaying}
+                onRetryAll={() => void replayQueue()}
+                onDismiss={(id) => {
+                  void removeQueuedAction(id).then(() => refreshQueue());
+                }}
+              />
+            </div>
+          )}
           <LayoutErrorBoundary>
             <Outlet />
           </LayoutErrorBoundary>
