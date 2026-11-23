@@ -3325,3 +3325,305 @@ pub fn emit_reservation_released(
         (token.clone(), amount, status),
     );
 }
+
+// ============================================================================
+// Issue #2230: Vault factory + template registry events
+// ============================================================================
+
+/// Emitted by a deployed vault when initialized via `VaultFactory`.
+///
+/// Topics: `("factory_template_version", factory)`
+/// Data:   `(template_id, template_version, wasm_hash, license_hash, attested)`
+pub fn emit_factory_template_version(
+    env: &Env,
+    factory: &Address,
+    template_id: &String,
+    template_version: u32,
+    wasm_hash: &soroban_sdk::BytesN<32>,
+    license_hash: &soroban_sdk::BytesN<32>,
+    attested: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "factory_template_version"), factory.clone()),
+        (
+            template_id.clone(),
+            template_version,
+            wasm_hash.clone(),
+            license_hash.clone(),
+            attested,
+        ),
+    );
+}
+
+/// Emitted when `VaultFactory` is initialized.
+pub fn emit_factory_initialized(
+    env: &Env,
+    admin: &Address,
+    require_attestation: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "factory_initialized"),),
+        (admin.clone(), require_attestation),
+    );
+}
+
+/// Emitted when `VaultFactory` updates its attestation policy or maintainer key.
+pub fn emit_factory_policy_updated(
+    env: &Env,
+    admin: &Address,
+    require_attestation: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "factory_policy_updated"), admin.clone()),
+        require_attestation,
+    );
+}
+
+/// Emitted when a template version is registered in `VaultFactory`.
+pub fn emit_factory_template_registered(
+    env: &Env,
+    template_id: &String,
+    version: u32,
+    wasm_hash: &soroban_sdk::BytesN<32>,
+    license_uri: &String,
+    license_hash: &soroban_sdk::BytesN<32>,
+    attested: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_registered"), version),
+        (
+            template_id.clone(),
+            wasm_hash.clone(),
+            license_uri.clone(),
+            license_hash.clone(),
+            attested,
+        ),
+    );
+}
+
+/// Emitted when a registered template version receives a verified maintainer attestation.
+pub fn emit_factory_template_attested(env: &Env, template_id: &String, version: u32) {
+    env.events().publish(
+        (Symbol::new(env, "template_attested"), version),
+        template_id.clone(),
+    );
+}
+
+/// Emitted when a template version's upgradeable configuration preset is updated.
+pub fn emit_factory_template_preset_upgraded(
+    env: &Env,
+    template_id: &String,
+    version: u32,
+    preset_revision: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "template_preset_upgraded"), version),
+        (template_id.clone(), preset_revision),
+    );
+}
+
+/// Emitted when a template version is deprecated by the factory admin.
+pub fn emit_factory_template_deprecated(env: &Env, template_id: &String, version: u32) {
+    env.events().publish(
+        (Symbol::new(env, "template_deprecated"), version),
+        template_id.clone(),
+    );
+}
+
+/// Emitted by `VaultFactory` when a vault instance is deployed from a template version.
+pub fn emit_factory_vault_deployed(
+    env: &Env,
+    vault_address: &Address,
+    template_id: &String,
+    version: u32,
+    wasm_hash: &soroban_sdk::BytesN<32>,
+    deployer: &Address,
+    attested: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "factory_vault_deployed"), vault_address.clone()),
+        (
+            template_id.clone(),
+            version,
+            wasm_hash.clone(),
+            deployer.clone(),
+            attested,
+        ),
+    );
+}
+
+// ============================================================================
+// Missing event emitters from #2209 merge
+// ============================================================================
+
+pub fn emit_claim_live_quorum(
+    env: &Env,
+    claim_id: u64,
+    voter_count: u32,
+    required_voters: u32,
+    eligible_voters: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_live_quorum"), claim_id),
+        (voter_count, required_voters, eligible_voters),
+    );
+}
+
+pub fn emit_claim_oracle_verdict(
+    env: &Env,
+    claim_id: u64,
+    oracle: &Address,
+    valid: bool,
+    max_payout: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_oracle_verdict"), claim_id),
+        (oracle.clone(), valid, max_payout),
+    );
+}
+
+pub fn emit_claim_payout_held(env: &Env, claim_id: u64, payout: i128, release_after: u64) {
+    env.events().publish(
+        (Symbol::new(env, "claim_payout_held"), claim_id),
+        (payout, release_after),
+    );
+}
+
+pub fn emit_claim_payout_released(env: &Env, claim_id: u64, claimant: &Address, payout: i128) {
+    env.events().publish(
+        (Symbol::new(env, "claim_payout_released"), claim_id),
+        (claimant.clone(), payout),
+    );
+}
+
+pub fn emit_claim_clawback_approved(
+    env: &Env,
+    claim_id: u64,
+    signer: &Address,
+    approvals: u32,
+    required: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_clawback_approved"), claim_id),
+        (signer.clone(), approvals, required),
+    );
+}
+
+pub fn emit_claim_clawed_back(env: &Env, claim_id: u64, payout: i128) {
+    env.events().publish(
+        (Symbol::new(env, "claim_clawed_back"), claim_id),
+        payout,
+    );
+}
+
+pub fn emit_claim_policy_set(
+    env: &Env,
+    admin: &Address,
+    quorum_mode: u32,
+    has_oracle: bool,
+    clawback_window_ledgers: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "claim_policy_set"), admin.clone()),
+        (quorum_mode, has_oracle, clawback_window_ledgers),
+    );
+}
+
+pub fn emit_bridge_disputed(
+    env: &Env,
+    bridge_id: &soroban_sdk::BytesN<32>,
+    disputer: &Address,
+    actual_amount: i128,
+    expected_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_disputed"), bridge_id.clone()),
+        (disputer.clone(), actual_amount, expected_amount),
+    );
+}
+
+pub fn emit_bridge_timed_out(
+    env: &Env,
+    bridge_id: &soroban_sdk::BytesN<32>,
+    source_vault: &Address,
+    amount: i128,
+    deadline_ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_timed_out"), bridge_id.clone()),
+        (source_vault.clone(), amount, deadline_ledger),
+    );
+}
+
+pub fn emit_bridge_receipt_config_set(
+    env: &Env,
+    admin: &Address,
+    challenge_window_ledgers: u64,
+    has_verifier: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_receipt_cfg"), admin.clone()),
+        (challenge_window_ledgers, has_verifier),
+    );
+}
+
+pub fn emit_bridge_released(
+    env: &Env,
+    bridge_id: &soroban_sdk::BytesN<32>,
+    target_vault: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bridge_released"), bridge_id.clone()),
+        (target_vault.clone(), amount),
+    );
+}
+
+pub fn emit_capability_delegated(
+    env: &Env,
+    child_id: &soroban_sdk::BytesN<32>,
+    parent_id: &soroban_sdk::BytesN<32>,
+    holder: &Address,
+    granted_to: &Address,
+    depth: u32,
+    amount_ceiling: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "capability_delegated"), child_id.clone()),
+        (
+            parent_id.clone(),
+            holder.clone(),
+            granted_to.clone(),
+            depth,
+            amount_ceiling,
+        ),
+    );
+}
+
+pub fn emit_capability_used(
+    env: &Env,
+    token_id: &soroban_sdk::BytesN<32>,
+    caller: &Address,
+    amount: i128,
+    spent_here: i128,
+    uses_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "capability_used"), token_id.clone()),
+        (caller.clone(), amount, spent_here, uses_count),
+    );
+}
+
+pub fn emit_capability_epoch_bumped(env: &Env, admin: &Address, epoch: u64) {
+    env.events().publish(
+        (Symbol::new(env, "capability_epoch_bumped"), admin.clone()),
+        epoch,
+    );
+}
+
+pub fn emit_rejection_threshold_changed(env: &Env, admin: &Address, threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "rejection_threshold_changed"), admin.clone()),
+        threshold,
+    );
+}

@@ -404,6 +404,53 @@ export const ERROR_REGISTRY: Readonly<
     example:
       "Executing a transfer with a capability scoped to a different payment.",
   },
+
+  // ── 12xx: Vault Factory & Template Registry ─────────────────────────────
+  [VaultErrorCode.TemplateAlreadyExists]: {
+    code: VaultErrorCode.TemplateAlreadyExists,
+    name: "TemplateAlreadyExists",
+    category: "Template",
+    description:
+      "A template with the same ID and version is already registered in the factory.",
+    example:
+      "Calling register_factory_template for a (template_id, version) pair that already exists.",
+  },
+  [VaultErrorCode.TemplateNotAttested]: {
+    code: VaultErrorCode.TemplateNotAttested,
+    name: "TemplateNotAttested",
+    category: "Template",
+    description:
+      "The requested template does not have a valid maintainer attestation while the factory requires attestation.",
+    example:
+      "Calling deploy_vault for a community template before a maintainer attests it.",
+  },
+  [VaultErrorCode.FactoryNotInitialized]: {
+    code: VaultErrorCode.FactoryNotInitialized,
+    name: "FactoryNotInitialized",
+    category: "Initialization",
+    description:
+      "The vault factory contract has not been initialized yet.",
+    example:
+      "Calling register_factory_template or deploy_vault before init_factory.",
+  },
+  [VaultErrorCode.InvalidFactoryTemplate]: {
+    code: VaultErrorCode.InvalidFactoryTemplate,
+    name: "InvalidFactoryTemplate",
+    category: "Template",
+    description:
+      "The template metadata failed validation (empty ID, schema, license URI, version 0, or zero hash).",
+    example:
+      "Registering a factory template with version 0 or an all-zero WASM hash.",
+  },
+  [VaultErrorCode.DeployedVaultNotFound]: {
+    code: VaultErrorCode.DeployedVaultNotFound,
+    name: "DeployedVaultNotFound",
+    category: "Template",
+    description:
+      "No factory deployment record exists for the requested vault address.",
+    example:
+      "Calling get_deployed_vault for an address not deployed by this factory.",
+  },
 } as const;
 
 // ---------------------------------------------------------------------------

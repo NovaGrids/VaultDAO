@@ -111,7 +111,7 @@ fn test_empty_signer_snapshot_error_on_proposal_creation() {
 fn test_get_signer_snapshot_for_debugging() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+    let (client, admin, signer1, _signer2, contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -202,7 +202,7 @@ fn test_supersede_proposal_basic() {
 fn test_supersede_proposal_authorization_check() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+    let (client, admin, signer1, _signer2, contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -633,7 +633,7 @@ fn test_get_executable_proposals_limit_cap() {
 fn test_batch_approve_proposals_all_success() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+    let (client, admin, signer1, _signer2, contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -661,6 +661,7 @@ fn test_batch_approve_proposals_all_success() {
         );
     }
 
+    use soroban_sdk::testutils::Events as _;
     let events = env.events().all();
     let mut approved_events = 0u32;
     for event in events.iter() {
@@ -681,7 +682,7 @@ fn test_batch_approve_proposals_all_success() {
 fn test_batch_approve_proposals_mixed_results() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+    let (client, admin, signer1, _signer2, contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -726,7 +727,7 @@ fn test_batch_approve_proposals_mixed_results() {
 fn test_batch_approve_proposals_exceeds_cap() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+    let (client, admin, signer1, _signer2, contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env
@@ -752,7 +753,7 @@ fn test_batch_approve_proposals_exceeds_cap() {
 fn test_batch_approve_proposals_at_cap() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, signer1, _signer2, _contract_id) = setup(&env);
+    let (client, admin, signer1, _signer2, contract_id) = setup(&env);
 
     let token_admin = Address::generate(&env);
     let token = env

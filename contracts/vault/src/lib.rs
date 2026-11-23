@@ -12,6 +12,7 @@
 mod bridge;
 mod errors;
 mod events;
+pub mod factory;
 mod storage;
 mod token;
 // `pub` so that external crates (the fuzz targets in fuzz/, which drive the
@@ -33,12 +34,11 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignerRotation, Comment, Condition,
-    BridgeConfig, CancellationRecord, Capability, EscrowConsent, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
+    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignerRotation, Comment, Condition, EscrowConsent,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
     DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
-    ExecutionFeeEstimate, ForceRotationRequest, FundingMilestone, FundingMilestoneStatus,
+    ExecutionFeeEstimate, FactoryProvenance, ForceRotationRequest, FundingMilestone, FundingMilestoneStatus,
     FundingRound, FundingRoundConfig, FundingRoundStatus, GasConfig, GasPriceOracleConfig,
     GasPriceSource, GovernanceProposal, HolidayBehavior, HolidayCalendar, HookEventType, HookFailure,
     HookRegistration, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
@@ -368,6 +368,7 @@ fn calculate_impact_score(
 // mod test_escrow_multisig_arbitration;
 // #[cfg(test)]
 // mod test_escrow_timeout;
+#[cfg(test)]
 mod test_escrow_mutual_consent;
 // #[cfg(test)]
 // mod test_fees;
@@ -661,6 +662,7 @@ mod test_recovery_signer_validation;
 mod test_recovery_cancel_votes;
 #[cfg(test)]
 mod test_recurring;
+#[cfg(test)]
 mod test_recurring_token_min_interval;
 #[cfg(test)]
 mod test_reentrancy;
@@ -701,6 +703,8 @@ mod test_supersession_migration_2058;
 mod test_config_change_controls_2060;
 #[cfg(test)]
 mod test_treasury_risk_2061;
+#[cfg(test)]
+mod test_factory_2230;
 #[cfg(test)]
 mod test_subscription_auto_topup;
 #[cfg(test)]
@@ -1108,6 +1112,58 @@ impl VaultDAO {
         storage::set_fee_structure(&env, &fee_structure);
 
         Ok(())
+    }
+
+    /// Initialize a vault deployed by [`factory::VaultFactory`], recording
+    /// on-chain factory + template provenance and emitting the
+    /// `factory_template_version` event from the deployed vault itself.
+    pub fn initialize_from_factory(
+        env: Env,
+        provenance: FactoryProvenance,
+        admin: Address,
+        signers: Vec<Address>,
+        template: VaultTemplate,
+        base_spending_limit: i128,
+    ) -> Result<(), VaultError> {
+        provenance.factory.require_auth();
+        if provenance.template_id.is_empty()
+            || provenance.template_version == 0
+            || provenance.license_uri.is_empty()
+        {
+            return Err(VaultError::InvalidFactoryTemplate);
+        }
+
+        Self::initialize_from_template(
+            env.clone(),
+            admin,
+            template,
+            signers,
+            base_spending_limit,
+        )?;
+
+        let stored = FactoryProvenance {
+            deployed_at_ledger: env.ledger().sequence() as u64,
+            ..provenance
+        };
+        storage::set_factory_provenance(&env, &stored);
+
+        events::emit_factory_template_version(
+            &env,
+            &stored.factory,
+            &stored.template_id,
+            stored.template_version,
+            &stored.wasm_hash,
+            &stored.license_hash,
+            stored.attested,
+        );
+
+        Ok(())
+    }
+
+    /// Return the factory provenance recorded when this vault was deployed via
+    /// `VaultFactory`, or `None` if initialized directly.
+    pub fn get_factory_provenance(env: Env) -> Option<FactoryProvenance> {
+        storage::get_factory_provenance(&env)
     }
 
     // ========================================================================
@@ -6728,6 +6784,7 @@ impl VaultDAO {
         }
         if config.high_impact_threshold > 100 {
             return Err(VaultError::InvalidThresholdConfig);
+        }
         // Issue #2137: per-token interval overrides may only tighten the global bound.
         for (_token, interval) in config.min_interval_per_token.iter() {
             if interval < MIN_RECURRING_INTERVAL {
@@ -24381,8 +24438,8 @@ impl VaultDAO {
     ) -> Result<(), VaultError> {
         admin.require_auth();
 
-        let stored_admin = storage::get_admin(&env);
-        if stored_admin != admin {
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&admin) || storage::get_role(&env, &admin) != Role::Admin {
             return Err(VaultError::Unauthorized);
         }
 
