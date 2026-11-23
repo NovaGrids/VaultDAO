@@ -65,6 +65,7 @@ export interface Proposal {
   threshold: number;
   approvedBy: string[];
   createdAt: string;
+  tags?: string[];
 }
 
 const Proposals: React.FC = () => {
@@ -117,7 +118,8 @@ const Proposals: React.FC = () => {
       statuses: [],
       dateRange: { from: '', to: '' },
       amountRange: { min: '', max: '' },
-      sortBy: 'newest'
+      sortBy: 'newest',
+      tags: [],
     };
     return searchParamsToFilters(searchParams, defaults);
   });
@@ -137,7 +139,8 @@ const Proposals: React.FC = () => {
       statuses: [],
       dateRange: { from: '', to: '' },
       amountRange: { min: '', max: '' },
-      sortBy: 'newest'
+      sortBy: 'newest',
+      tags: [],
     };
     const newFilters = searchParamsToFilters(searchParams, defaults);
     if (JSON.stringify(newFilters) !== JSON.stringify(activeFilters)) {
@@ -307,7 +310,13 @@ const Proposals: React.FC = () => {
       const to = activeFilters.dateRange.to ? new Date(activeFilters.dateRange.to).setHours(23, 59, 59, 999) : Infinity;
       const matchesDate = proposalDate >= from && proposalDate <= to;
 
-      return matchesSearch && matchesStatus && matchesAmount && matchesDate;
+      // Tags filter
+      const matchesTags =
+        !activeFilters.tags ||
+        activeFilters.tags.length === 0 ||
+        (Array.isArray(p.tags) && activeFilters.tags.some((t) => p.tags?.includes(t)));
+
+      return matchesSearch && matchesStatus && matchesAmount && matchesDate && matchesTags;
     });
 
     return [...filtered].sort((a, b) => {
@@ -562,7 +571,11 @@ const Proposals: React.FC = () => {
           </div>
         </div>
 
-        <ProposalFilters proposalCount={filteredProposals.length} onFilterChange={setActiveFilters} />
+        <ProposalFilters
+          proposalCount={filteredProposals.length}
+          onFilterChange={setActiveFilters}
+          proposals={localProposals}
+        />
 
         <div className="mt-6 grid grid-cols-1 gap-4">
           {loading ? (
