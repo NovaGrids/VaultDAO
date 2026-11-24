@@ -4,7 +4,6 @@ import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 import type { WebhookDeliveryService } from "./webhook.service.js";
 import { validateWebhookUrl } from "./webhook.url-validator.js";
-import { getWebhookDlq } from "./webhooks.js";
 
 /**
  * Webhook management routes.
@@ -14,7 +13,10 @@ import { getWebhookDlq } from "./webhooks.js";
  * GET    /api/v1/webhooks/:id/deliveries — delivery history for a webhook
  * GET    /api/v1/webhooks/:id/dlq        — dead-lettered deliveries for a webhook
  */
-export function createWebhookRouter(service: WebhookDeliveryService) {
+export function createWebhookRouter(
+  service: WebhookDeliveryService,
+  options: { maxTotalRetrySeconds?: number } = {},
+) {
   const router = Router();
 
   /** POST /api/v1/webhooks — register a webhook */
@@ -37,7 +39,7 @@ export function createWebhookRouter(service: WebhookDeliveryService) {
     const urlCheck = validateWebhookUrl(url);
     if (!urlCheck.ok) {
       error(res, {
-        message: urlCheck.message,
+        message: urlCheck.message ?? "invalid webhook url",
         status: 400,
         code: ErrorCode.VALIDATION_ERROR,
       });
@@ -108,8 +110,37 @@ export function createWebhookRouter(service: WebhookDeliveryService) {
       });
       return;
     }
-    const deliveries = getWebhookDlq(id);
+    const deliveries = service.getDeadLettersForWebhook(id);
     success(res, { webhookId: id, deliveries, total: deliveries.length });
+  });
+
+  // `maxTotalRetrySeconds` bounds the wall-clock budget a single delivery
+  // may spend in backoff before it is dead-lettered; kept on the router so
+  // operators can read it back from a replay attempt's logs.
+  const maxTotalRetrySeconds = options.maxTotalRetrySeconds ?? 300;
+
+  /** POST /api/v1/webhooks/:id/replay — retry dead-lettered deliveries */
+  router.post("/:id/replay", async (req: Request, res: Response) => {
+    const id = String(req.params.id ?? "");
+    if (!service.get(id)) {
+      error(res, {
+        message: "Webhook not found",
+        status: 404,
+        code: ErrorCode.NOT_FOUND,
+      });
+      return;
+    }
+    const deadLetters = service.getDeadLettersForWebhook(id);
+    let replayed = 0;
+    for (const dlq of deadLetters) {
+      if (await service.replayDeadLetter(dlq.id)) replayed += 1;
+    }
+    success(res, {
+      webhookId: id,
+      replayed,
+      attempted: deadLetters.length,
+      maxTotalRetrySeconds,
+    });
   });
 
   return router;

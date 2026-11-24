@@ -238,6 +238,13 @@ export class WebhookDeliveryService {
     return existed;
   }
 
+  /** Fetch a registered webhook by id (without its secret). */
+  public get(id: string): Omit<WebhookRegistration, "secret"> | null {
+    const registration = this.webhooks.get(id);
+    if (!registration) return null;
+    return { id, url: registration.url, topics: registration.topics, createdAt: registration.createdAt };
+  }
+
   /**
    * List all registered webhooks (secrets omitted).
    */
