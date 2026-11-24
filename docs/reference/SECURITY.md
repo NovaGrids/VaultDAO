@@ -198,3 +198,19 @@ The execution-webhook circuit breaker is per destination URL within a backend pr
 Use the SQLite leased queue for `recurring-payment`, `snapshot-rebuild`, `webhook-delivery`, and `cursor-cleanup` work. Its idempotency key is derived from `(jobType, vault, businessId, period)` and is unique across workers. Workers claim jobs under a lease, acknowledge only with the lease owner token, and return failed work with exponential backoff. Expired leases are eligible for another worker; jobs that reach their configured attempt limit move to the DLQ and cannot block unrelated work.
 
 The admin-only `GET /api/v1/jobs/dlq` endpoint lists dead letters (`offset` and `limit` supported); `POST /api/v1/jobs/dlq/:id/redrive` requeues one entry with its attempt counter reset. Monitor `vaultdao_queue_depth` and `vaultdao_queue_lease_timeouts_total`. Redrive only after correcting the underlying failure and confirm the worker's idempotent handler before replaying externally visible effects.
+
+## Cold Storage Approval Path: Age Gates And Anti-Replay Nonces (#2226)
+
+Cold storage signatures are mixed with hot signers on large outflows, so the contract enforces a **window** (both a minimum and a maximum age) plus per-proposal approval nonces. All knobs live in `ColdSignerConfig` and are set through `set_cold_signer_config` (admin-only, requires proof-of-possession for every key):
+
+- `max_cold_sig_age_ledgers` — upper bound on how old a cold signature may be when submitted. A signature dated further back is rejected with `ColdSignatureTooOld` (1110); a signature dated in the future is rejected with `ColdSignatureFutureDated` (1111) so the bound cannot be sidestepped by lying about the creation ledger.
+- `min_cold_sig_age_ledgers` — **lower bound**, applied only when the proposal's amount is at or above `cold_min_age_amount_threshold`. A too-fresh cold signature on such an outflow is rejected with `ColdSignatureTooFresh` (1112). This breaks the pattern where an offline device is used in the same session the outflow is prepared. `0` disables the gate; below-threshold proposals keep the exact previous approval path.
+
+Anti-replay uses two independent mechanisms with distinct errors:
+
+- **Per-proposal approval nonce.** Each proposal owns one immutable nonce (`get_proposal_approval_nonce`); the signed message is `proposal_id_le || approval_nonce_le`. A signature minted for one proposal fails with `ColdSignatureNonceMismatch` (1113) when submitted against any other proposal — reuse *across* proposals is rejected, not just reuse on the same one.
+- **Consumed-signature set.** The hash of the raw signature bytes is recorded on first use. Resubmitting the exact signature fails with `ColdSignatureAlreadySubmitted` (741).
+
+Aggregate enforcement happens at execution: a proposal whose amount is at or above `cold_min_age_amount_threshold` cannot execute until the valid cold signature count reaches `cold_sig_threshold`; otherwise `InsufficientColdWeight` (1114) is returned. This error is deliberately distinct from the per-submission errors: `ColdSignatureTooOld`/`TooFresh`/`FutureDated` mean one *stale or rushed* signature, `ColdSignatureNonceMismatch`/`AlreadySubmitted` mean a *replayed* one, and `InsufficientColdWeight` means the submissions were individually fine but the total cold *weight* is below policy.
+
+Operators enabling the gate should pick `min_cold_sig_age_ledgers` no larger than the hottest operational flow can tolerate (a signature that is forced to age past the proposal's execution window locks the outflow until a fresh, properly aged signature is produced), and set `cold_min_age_amount_threshold` at the point where cold storage participation is mandatory. Both default to `0`, so existing vaults are unaffected until an admin opts in.
