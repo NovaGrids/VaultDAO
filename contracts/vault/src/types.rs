@@ -3216,6 +3216,20 @@ pub struct ColdSignerConfig {
     /// signed. A value of `0` disables the check, preserving the previous
     /// behaviour for vaults that have not opted in.
     pub max_cold_sig_age_ledgers: u64,
+    /// Minimum age, in ledgers, a cold signature must have when the proposal
+    /// it approves moves an amount at or above
+    /// `cold_min_age_amount_threshold` (#2226).
+    ///
+    /// Large outflows mix hot approvals with cold storage; a too-fresh cold
+    /// signature on a large transfer suggests the offline device was used in
+    /// the same session the outflow was prepared, which is exactly the
+    /// pattern an age window exists to break. `0` disables the minimum-age
+    /// gate, preserving the previous behaviour for vaults that have not
+    /// opted in.
+    pub min_cold_sig_age_ledgers: u64,
+    /// Amount (in the proposal's token, smallest unit) at or above which the
+    /// minimum cold-signature age gate applies. `0` disables the gate.
+    pub cold_min_age_amount_threshold: i128,
 }
 
 impl ColdSignerConfig {
@@ -3226,6 +3240,10 @@ impl ColdSignerConfig {
             cold_sig_threshold: 0,
             cold_sig_expiry: 17280,            // ~1 day at 5 s/ledger
             max_cold_sig_age_ledgers: 120_960, // ~7 days at 5 s/ledger
+            // Opt-in: below-threshold (default) vaults keep the exact
+            // previous approval path until an admin configures the gate.
+            min_cold_sig_age_ledgers: 0,
+            cold_min_age_amount_threshold: 0,
         }
     }
 }

@@ -41,6 +41,10 @@ fn setup_cold(env: &Env, max_age: u64) -> (VaultDAOClient<'_>, Address, BytesN<3
         cold_sig_threshold: 1,
         cold_sig_expiry: 17_280,
         max_cold_sig_age_ledgers: max_age,
+        // Minimum-age gate stays off in the max-age suite; it is exercised by
+        // the dedicated too-fresh test (#2226).
+        min_cold_sig_age_ledgers: 0,
+        cold_min_age_amount_threshold: 0,
     };
 
     // set_cold_signer_config requires the Admin role, so initialise first.
@@ -114,8 +118,9 @@ fn test_signature_older_than_max_age_rejected() {
 
     let signature = BytesN::from_array(&env, &[1u8; 64]);
     let created_at = 1u32;
+    let nonce = client.get_proposal_approval_nonce(&0u64);
 
-    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &created_at);
+    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &created_at, &nonce);
     assert_eq!(result, Err(Ok(VaultError::ColdSignatureTooOld)));
 }
 
@@ -129,8 +134,9 @@ fn test_future_dated_signature_rejected() {
 
     let current = env.ledger().sequence();
     let signature = BytesN::from_array(&env, &[2u8; 64]);
+    let nonce = client.get_proposal_approval_nonce(&0u64);
 
-    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &(current + 100));
+    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &(current + 100), &nonce);
     assert_eq!(result, Err(Ok(VaultError::ColdSignatureFutureDated)));
 }
 
@@ -148,9 +154,10 @@ fn test_zero_max_age_disables_the_check() {
     });
 
     let signature = BytesN::from_array(&env, &[3u8; 64]);
+    let nonce = client.get_proposal_approval_nonce(&0u64);
 
     // The age gate must not be what rejects this submission.
-    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &1u32);
+    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &1u32, &nonce);
     assert_ne!(result, Err(Ok(VaultError::ColdSignatureTooOld)));
 }
 
@@ -168,8 +175,9 @@ fn test_signature_at_exact_age_limit_passes_age_gate() {
     });
 
     let signature = BytesN::from_array(&env, &[4u8; 64]);
+    let nonce = client.get_proposal_approval_nonce(&0u64);
 
-    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &created_at);
+    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &created_at, &nonce);
     assert_ne!(result, Err(Ok(VaultError::ColdSignatureTooOld)));
 }
 
@@ -186,8 +194,9 @@ fn test_signature_one_ledger_past_limit_rejected() {
     });
 
     let signature = BytesN::from_array(&env, &[5u8; 64]);
+    let nonce = client.get_proposal_approval_nonce(&0u64);
 
-    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &created_at);
+    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &created_at, &nonce);
     assert_eq!(result, Err(Ok(VaultError::ColdSignatureTooOld)));
 }
 
@@ -203,8 +212,9 @@ fn test_unconfigured_vault_reports_config_error() {
 
     let signature = BytesN::from_array(&env, &[6u8; 64]);
     let pubkey = BytesN::from_array(&env, &[7u8; 32]);
+    let nonce = client.get_proposal_approval_nonce(&0u64);
 
-    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &1u32);
+    let result = client.try_submit_cold_signature(&0u64, &signature, &pubkey, &1u32, &nonce);
     assert_eq!(result, Err(Ok(VaultError::ColdSignerConfigNotSet)));
 }
 
