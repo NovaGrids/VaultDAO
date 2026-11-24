@@ -20,6 +20,7 @@ communication templates), see [PRODUCTION_RUNBOOK.md](./PRODUCTION_RUNBOOK.md#in
   - [EventProcessingLagHigh](#eventprocessinglaghigh)
   - [EventProcessingLagCritical](#eventprocessinglagcritical)
   - [EventQueueFull](#eventqueuefull)
+  - [DeadLetterQueueDepthHigh](#deadletterqueuedepthhigh)
 - [Storage](#storage)
   - [StorageUsageCritical](#storageusagecritical)
   - [StorageUsageWarning](#storageusagewarning)
@@ -251,6 +252,32 @@ communication templates), see [PRODUCTION_RUNBOOK.md](./PRODUCTION_RUNBOOK.md#in
 - If the queue reaches its hard cap, new events may be dropped — check for gaps in processed events once the queue drains and consider the [Event Cursor Reset procedure](./PRODUCTION_RUNBOOK.md#4-event-cursor-reset) to replay any missed range.
 
 **Escalation path:** Page backend on-call immediately — risk of event loss. Escalate to team lead if queue depth is not decreasing within 10 minutes of remediation.
+
+---
+
+### DeadLetterQueueDepthHigh
+
+**Severity:** warning · **Component:** events
+
+**Description:** Unprocessed dead-letter depth for a contract has stayed above 100 for 5 minutes — failures are accumulating faster than they are being retried.
+
+**Likely cause:**
+- A poison event that keeps failing normalization/persistence and is repeatedly re-queued.
+- A downstream dependency (database, RPC) failing for a sustained period.
+- A recent deploy that changed an event schema so old events no longer normalize.
+
+**Investigation steps:**
+1. Identify the affected contract from `{{ $labels.contract }}`.
+2. Inspect the dead-letter entries for that contract and group by failure reason.
+3. Check `RPCProviderDown`/`AllRPCProvidersFailing` and database health for the same window.
+4. Compare against recent deploys touching normalizers or the event schema.
+
+**Resolution:**
+- Fix the normalizer/schema mismatch and replay the dead-letter range.
+- Resolve the downstream dependency; the queue should drain once it recovers.
+- Quarantine genuinely poison events so they stop blocking the retry loop, then investigate separately.
+
+**Escalation path:** Backend on-call. Escalate to team lead if depth keeps growing after 15 minutes of remediation, since it indicates ongoing event loss risk.
 
 ---
 

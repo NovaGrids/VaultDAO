@@ -43,6 +43,27 @@ The following issues should use normal public issues or pull requests unless the
 
 When in doubt, report privately. Maintainers can redirect out-of-scope reports to the public tracker after triage.
 
+### WebSocket authorization gateway
+
+The event WebSocket server (`backend/src/modules/websocket/websocket.server.ts`)
+is **default deny**: a connection receives no events until it sends an explicit
+`subscribe` message. Additional controls:
+
+- **ACL on subscribe and publish.** An optional `WebSocketAcl` (installed with
+  `setAcl`) is consulted on `subscribe` (`canSubscribe`) and on every broadcast
+  (`canPublish`). A cross-contract subscription is rejected with
+  `SUBSCRIPTION_FORBIDDEN`; events for contracts a client did not name are never
+  delivered.
+- **Subscribe churn limit.** At most 10 subscribe requests per second per
+  connection; excess requests receive `SUBSCRIBE_RATE_LIMIT` and increment
+  `ws_subscribe_rejected_total`.
+- **Per-connection backpressure.** Slow consumers (send buffer above 1 MiB)
+  have messages dropped and are disconnected with close code 4409 after 5
+  consecutive pressure strikes; drops increment `ws_messages_dropped_total`.
+
+Reports that bypass these controls — for example, receiving events from a
+contract without an explicit, authorized subscription — are in scope.
+
 ## Reporting Process
 
 Do not open a public GitHub issue, pull request, discussion, or social media thread for a suspected security vulnerability.

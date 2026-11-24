@@ -502,6 +502,41 @@ if existing.is_some() {
 // Ensure delegate doesn't delegate back to delegator
 ```
 
+## Conviction, Redelegation Locks, and Vote Receipts
+
+Production deployments use the conviction model implemented in
+`backend/src/modules/governance/` (issue #2223).
+
+### Conviction / weight decay
+
+Decay parameters are validated on every config change:
+
+- `decayBps` — basis points of weight removed per step (`0..10000`)
+- `stepLedgers` — ledgers between steps (positive integer)
+- `floorBps` — minimum weight retained in basis points of the original
+
+`decayWeight(weight, elapsedLedgers, params)` uses integer exponentiation on
+`bigint` values. There is no floating point and no per-ledger iteration, so the
+result is identical on every ledger. The retained weight never falls below the
+`floorBps` floor. Amounts above `Number.MAX_SAFE_INTEGER` are exact.
+
+### Redelegation lock
+
+Vaults that set `optIn: true` freeze their delegation while any ballot is open,
+plus an optional `lockLedgers` tail after close. `assertRedelegationAllowed`
+throws `REDELEGATION_LOCKED` for a mid-ballot redirect, which freezes the vote
+snapshot at ballot open instead of allowing power to be flash-reassigned.
+
+Events: `delegate`, `undelegate`, `lock`, `unlock`.
+
+### Vote receipts
+
+Each vote emits a `vote_receipt` event containing the SHA-256 hash of a
+canonical serialization of `(proposalId, choice, voter, weight, ledger)`. The
+hash is stable for identical inputs regardless of object key order. Only the
+hash is published — the strategy used to derive the weight is not leaked, so
+off-chain indexers can attest receipts without learning private strategy.
+
 ## Additional Resources
 
 - [Implementation Documentation](../DELEGATION_IMPLEMENTATION.md)
