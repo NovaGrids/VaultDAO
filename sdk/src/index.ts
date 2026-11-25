@@ -74,6 +74,60 @@ export {
   getAllErrorEntries,
 } from "./errors";
 
+// Typed contract errors (#2064)
+export type { ContractErrorFamily } from "./typed-errors";
+export {
+  ContractErrorCode,
+  TypedVaultError,
+  InitializationError,
+  AuthorizationError,
+  ProposalError,
+  SpendingLimitError,
+  ConfigurationError,
+  TokenError,
+  WhitelistError,
+  InsuranceError,
+  StakingError,
+  DelegationError,
+  CapabilityError,
+  PauseError,
+  UpgradeError,
+  BatchError,
+  SwapError,
+  StreamingError,
+  contractErrorFamily,
+  createContractError,
+  isKnownContractErrorCode,
+  toTypedVaultError,
+} from "./typed-errors";
+
+// Shared RPC client (#2064)
+export { getRpcServer, isLocalhostUrl, resolveAllowHttp } from "./rpc";
+
+// Simulation with resource estimates (#2064)
+export type {
+  ResourceEstimate,
+  SimulationEstimate,
+  VoteMethod,
+  PauseMethod,
+  InsuranceMethod,
+  StakingMethod,
+  WhitelistMethod,
+  BatchMethod,
+  SwapMethod,
+} from "./simulate";
+export {
+  simulateContractCall,
+  extractResourceEstimate,
+  simulateVote,
+  simulatePause,
+  simulateInsurance,
+  simulateStaking,
+  simulateWhitelist,
+  simulateBatch,
+  simulateSwap,
+} from "./simulate";
+
 // Utility functions
 export type { WalletConnection } from "./utils";
 export {

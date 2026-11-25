@@ -26,10 +26,11 @@ The official TypeScript SDK for building on VaultDAO — a decentralized treasur
 17. [Funding Rounds](#funding-rounds)
 18. [Proposal Templates](#proposal-templates)
 19. [Recovery Operations](#recovery-operations)
-20. [Error Handling](#error-handling)
-21. [TypeScript Types Reference](#typescript-types-reference)
-22. [Common Mistakes](#common-mistakes)
-23. [Examples](#examples)
+20. [Governance Surface, Typed Errors & Simulation](#governance-surface-typed-errors--simulation)
+21. [Error Handling](#error-handling)
+22. [TypeScript Types Reference](#typescript-types-reference)
+23. [Common Mistakes](#common-mistakes)
+24. [Examples](#examples)
 
 ---
 
@@ -1108,6 +1109,88 @@ await signAndSubmit(approveXdr, opts);
 const executeXdr = await executeRecovery(wallet.publicKey, recoveryId, opts);
 await signAndSubmit(executeXdr, opts);
 ```
+
+---
+
+## Governance Surface, Typed Errors & Simulation
+
+The SDK exposes the complete governance surface from the root entry point. Every binding
+builds a signed-ready transaction XDR; use `signAndSubmit()` to broadcast it.
+
+### Public API by family
+
+| Family | Exports |
+| --- | --- |
+| Vote variants | `abstainProposal`, `changeVote`, `vetoProposal`, `cancelProposal`, `amendProposal`, `supersedeProposal` |
+| Emergency controls | `pauseVault`, `unpauseVault`, `configureEmergency`, `getPauseState`, `getPauseCooldownRemaining` |
+| Insurance & staking | `submitInsuranceClaim`, `voteOnInsuranceClaim`, `closeInsuranceClaimVoting`, `getInsuranceClaim`, `enableAutoCompound`, `compoundStake`, `updateStakingConfig`, `proposeStakeWithdrawal` |
+| Recipient policy | `setListMode`, `addToWhitelist`, `addToBlacklist`, `bulkAddToWhitelist`, `bulkRemoveFromWhitelist`, `bulkAddToBlacklist`, `bulkRemoveFromBlacklist` |
+| Batch execution | `createBatch`, `executeBatch`, `batchExecuteProposals`, `batchProposeTransfers`, `createBatchOrchestrator` |
+| Swaps | `proposeSwap`, `executeSwapProposal`, `getSwapResult`, `setDexConfig` |
+| Shared RPC | `getRpcServer`, `resolveAllowHttp`, `isLocalhostUrl` |
+| Typed errors | `parseError`, `TypedVaultError`, `ProposalError`, `PauseError`, `InsuranceError`, `StakingError`, `WhitelistError`, `BatchError`, `SwapError`, `UpgradeError`, `createContractError`, `ContractErrorCode` |
+| Simulation | `simulateContractCall`, `simulateVote`, `simulatePause`, `simulateInsurance`, `simulateStaking`, `simulateWhitelist`, `simulateBatch`, `simulateSwap` |
+
+### Shared RPC client
+
+All bindings use one cached `rpc.Server` per RPC URL / `allowHttp` combination. Plain HTTP is
+enabled automatically for localhost (e.g. Stellar Quickstart) and can be forced for custom
+endpoints with `allowHttp`:
+
+```typescript
+import { buildOptions, getRpcServer } from "@vaultdao/sdk";
+
+const opts = buildOptions("custom", "CXXXX...", {
+  rpcUrl: "http://localhost:8000/soroban/rpc",
+  networkPassphrase: "Standalone Network ; February 2017",
+  allowHttp: true,
+});
+
+const server = getRpcServer(opts); // reused by every subsequent SDK call
+```
+
+### Typed errors
+
+`parseError()` understands both on-chain `Error(Contract, N)` codes and the legacy SDK code
+range, and returns a family-specific error class:
+
+```typescript
+import { PauseError, parseError, signAndSubmit, pauseVault } from "@vaultdao/sdk";
+
+try {
+  await signAndSubmit(await pauseVault(caller, opts), opts);
+} catch (err) {
+  const parsed = parseError(err);
+  if (parsed instanceof PauseError) {
+    console.error("Vault is paused or pause is in cooldown:", parsed.code);
+  }
+}
+```
+
+### Simulating before submitting
+
+Simulation helpers never submit a transaction. They return the decoded return value, a
+normalised `resourceEstimate` (`cpuInstructions`, `memoryBytes`, `minResourceFee`,
+`latestLedger`) and the simulated state diff:
+
+```typescript
+import { simulateVote, simulatePause, simulateSwap } from "@vaultdao/sdk";
+import { addressToScVal, u64ToScVal } from "@vaultdao/sdk";
+
+const vote = await simulateVote(
+  "abstain_proposal",
+  [addressToScVal(caller), u64ToScVal(7n)],
+  opts,
+  caller,
+);
+console.log(vote.resourceEstimate.cpuInstructions, vote.stateDiff.changes.length);
+
+const pause = await simulatePause("pause_vault", [addressToScVal(caller)], opts, caller);
+const swap = await simulateSwap("execute_swap_proposal", [addressToScVal(caller), u64ToScVal(3n)], opts, caller);
+```
+
+`simulateContractCall(method, args, opts, sourceKey)` is the generic form; the family helpers
+simply narrow the accepted method names.
 
 ---
 
