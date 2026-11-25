@@ -5259,6 +5259,43 @@ pub fn set_multi_phase_proposal(env: &Env, mp: &MultiPhaseProposal) {
 }
 
 // ============================================================================
+// Issue #2224: Phased disbursement schedules
+// ============================================================================
+
+pub fn get_next_disbursement_schedule_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextDisbursementScheduleId)
+        .unwrap_or(1)
+}
+
+pub fn increment_disbursement_schedule_id(env: &Env) -> u64 {
+    let id = get_next_disbursement_schedule_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDisbursementScheduleId, &(id + 1));
+    id
+}
+
+pub fn get_disbursement_schedule(
+    env: &Env,
+    id: u64,
+) -> Result<crate::types::DisbursementSchedule, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DisbursementSchedule(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn set_disbursement_schedule(env: &Env, schedule: &crate::types::DisbursementSchedule) {
+    let key = DataKey::DisbursementSchedule(schedule.id);
+    env.storage().persistent().set(&key, schedule);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+// ============================================================================
 // Issue #1097: Capability Tokens
 // ============================================================================
 

@@ -2791,6 +2791,33 @@ pub fn emit_phase_rolled_back(env: &Env, proposal_id: u64, phase_index: u32, exe
     );
 }
 
+/// Structured failure for a gated disbursement tranche (Issue #2224).
+/// Topics: `("disbursement_tranche_failed", schedule_id)`.
+pub fn emit_disbursement_tranche_failed(
+    env: &Env,
+    failure: &crate::types::DisbursementFailure,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "disbursement_tranche_failed"),
+            failure.schedule_id,
+        ),
+        (failure.tranche_id, failure.code, failure.reason.clone()),
+    );
+}
+
+/// Emitted once when a schedule's reservation is released (Issue #2224).
+/// Topics: `("disbursement_reservation_released", schedule_id)`.
+pub fn emit_disbursement_reservation_released(env: &Env, schedule_id: u64, amount: i128) {
+    env.events().publish(
+        (
+            Symbol::new(env, "disbursement_reservation_released"),
+            schedule_id,
+        ),
+        amount,
+    );
+}
+
 // ============================================================================
 // Issue #1940: state changes that previously emitted no event
 // ============================================================================

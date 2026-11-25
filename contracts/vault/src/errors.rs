@@ -188,6 +188,16 @@ pub enum VaultError {
     /// A phase's recipient is not permitted (not whitelisted or blacklisted)
     PhaseRecipientNotAllowed = 624,
 
+    // Issue #2224: phased disbursement schedules
+    /// Total schedule amount exceeds the treasury commitment limit
+    ScheduleOverCommitted = 625,
+    /// Tranche ID does not exist in the schedule
+    ScheduleTrancheNotFound = 626,
+    /// A dependency proposal or escrow gate has not cleared
+    ScheduleGateNotCleared = 627,
+    /// The schedule was already cancelled or aborted
+    ScheduleAlreadyCancelled = 628,
+
     // =========================================================
     // Issue #1097: Capability Tokens
     // =========================================================

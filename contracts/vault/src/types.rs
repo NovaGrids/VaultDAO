@@ -2937,6 +2937,74 @@ pub struct MultiPhaseProposal {
 }
 
 // ============================================================================
+// Issue #2224: Phased disbursement schedules with dependency gates
+// ============================================================================
+
+/// Status of a single disbursement tranche.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TrancheStatus {
+    Pending = 0,
+    Executed = 1,
+    Blocked = 2,
+    Failed = 3,
+    Cancelled = 4,
+}
+
+/// What to do when a tranche fails and later tranches remain.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum PartialFailPolicy {
+    /// Abort the remaining schedule and release its reservation.
+    Abort = 0,
+    /// Mark the failed tranche and let independent tranches continue.
+    Continue = 1,
+}
+
+/// One tranche of a phased disbursement schedule.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisbursementTranche {
+    pub id: u32,
+    pub amount: i128,
+    pub unlock_ledger: u64,
+    /// Proposal that must be `Executed` before this tranche can pay.
+    pub depends_on_proposal: Option<u64>,
+    /// Escrow that must be `Released` before this tranche can pay.
+    pub depends_on_escrow: Option<u64>,
+    pub status: TrancheStatus,
+}
+
+/// A budgeted, dependency-gated disbursement schedule.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisbursementSchedule {
+    pub id: u64,
+    pub proposer: Address,
+    pub recipient: Address,
+    pub token: Address,
+    pub tranches: Vec<DisbursementTranche>,
+    pub policy: PartialFailPolicy,
+    /// Total amount reserved at creation; released exactly once on
+    /// completion, abort, or cancellation.
+    pub reserved_amount: i128,
+    pub reservation_released: bool,
+    pub cancelled: bool,
+}
+
+/// Structured failure emitted when a tranche cannot execute.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisbursementFailure {
+    pub schedule_id: u64,
+    pub tranche_id: u32,
+    pub code: u32,
+    pub reason: Symbol,
+}
+
+// ============================================================================
 // Issue #1097: Cross-Contract Capability Tokens
 // ============================================================================
 
