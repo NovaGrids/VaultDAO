@@ -65,6 +65,7 @@ export const DEMO_PROPOSALS: Proposal[] = [
     threshold: 3,
     approvedBy: [SIGNERS[0], SIGNERS[1]],
     createdAt: daysAgo(1, 9),
+    tags: ['payroll', 'operations'],
   },
   {
     id: '102',
@@ -79,6 +80,7 @@ export const DEMO_PROPOSALS: Proposal[] = [
     threshold: 3,
     approvedBy: [SIGNERS[0]],
     createdAt: daysAgo(2, 14),
+    tags: ['audit', 'security'],
   },
   {
     id: '103',
@@ -93,6 +95,7 @@ export const DEMO_PROPOSALS: Proposal[] = [
     threshold: 3,
     approvedBy: [SIGNERS[0], SIGNERS[1], SIGNERS[2]],
     createdAt: daysAgo(4, 11),
+    tags: ['community', 'grants'],
   },
   {
     id: '98',
@@ -107,6 +110,7 @@ export const DEMO_PROPOSALS: Proposal[] = [
     threshold: 3,
     approvedBy: [SIGNERS[0], SIGNERS[1], SIGNERS[2]],
     createdAt: daysAgo(8, 16),
+    tags: ['treasury', 'liquidity'],
   },
   {
     id: '95',
@@ -121,6 +125,7 @@ export const DEMO_PROPOSALS: Proposal[] = [
     threshold: 3,
     approvedBy: [SIGNERS[3]],
     createdAt: daysAgo(12, 10),
+    tags: ['operations'],
   },
 ];
 

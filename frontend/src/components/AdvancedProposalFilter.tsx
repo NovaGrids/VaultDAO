@@ -8,7 +8,7 @@
  * - Shows active filter count badge on the toggle button
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SlidersHorizontal, X, Bookmark, ChevronDown, ChevronUp } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import SavedSearches from './SavedSearches';
@@ -53,12 +53,16 @@ interface AdvancedProposalFilterProps {
   onFilterChange: (filters: AdvancedFilterState) => void;
   availableTags?: string[];
   proposalCount?: number;
+  tagCounts?: Record<string, number>;
+  proposals?: Array<{ tags?: string[] }>;
 }
 
 const AdvancedProposalFilter: React.FC<AdvancedProposalFilterProps> = ({
   onFilterChange,
   availableTags = [],
   proposalCount,
+  tagCounts,
+  proposals,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [open, setOpen] = useState(false);
@@ -68,6 +72,22 @@ const AdvancedProposalFilter: React.FC<AdvancedProposalFilterProps> = ({
   const [filters, setFilters] = useState<AdvancedFilterState>(() =>
     searchParamsToFilters(searchParams, DEFAULTS)
   );
+
+  const effectiveTagCounts = useMemo(() => {
+    if (tagCounts) return tagCounts;
+    if (proposals && proposals.length > 0) {
+      const counts: Record<string, number> = {};
+      for (const p of proposals) {
+        if (Array.isArray(p.tags)) {
+          for (const t of p.tags) {
+            if (t) counts[t] = (counts[t] || 0) + 1;
+          }
+        }
+      }
+      return counts;
+    }
+    return undefined;
+  }, [tagCounts, proposals]);
 
   // Debounce text fields before emitting
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -412,21 +432,40 @@ const AdvancedProposalFilter: React.FC<AdvancedProposalFilterProps> = ({
             <div className="mt-4">
               <p className="mb-2 text-xs font-medium text-gray-400">Tags</p>
               <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by tag">
-                {availableTags.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => toggleTag(t)}
-                    aria-pressed={filters.tags.includes(t)}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                      filters.tags.includes(t)
-                        ? 'bg-blue-600 text-white'
-                        : 'border border-gray-600 bg-gray-900 text-gray-300 hover:border-blue-500'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
+                {availableTags.map((t) => {
+                  const count = effectiveTagCounts ? effectiveTagCounts[t] ?? 0 : undefined;
+                  const isSelected = filters.tags.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => toggleTag(t)}
+                      aria-pressed={isSelected}
+                      aria-label={count !== undefined ? `Tag ${t}, ${count} proposals` : undefined}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                        isSelected
+                          ? 'bg-blue-600 text-white'
+                          : 'border border-gray-600 bg-gray-900 text-gray-300 hover:border-blue-500'
+                      }`}
+                    >
+                      <span>{t}</span>
+                      {count !== undefined && (
+                        <span
+                          data-testid={`advanced-tag-badge-${t}`}
+                          className={`inline-flex items-center justify-center px-1.5 py-0.2 rounded-full text-[10px] font-semibold min-w-[16px] ${
+                            isSelected
+                              ? 'bg-blue-700 text-white'
+                              : count === 0
+                              ? 'bg-gray-800 text-gray-500'
+                              : 'bg-gray-800 text-gray-300'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
