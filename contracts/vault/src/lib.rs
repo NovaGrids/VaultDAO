@@ -690,6 +690,8 @@ mod test_pause_all_streams_2138;
 #[cfg(test)]
 mod test_escrows_by_arbitrator_2139;
 #[cfg(test)]
+mod test_escrow_arbitrator_changed_2141;
+#[cfg(test)]
 mod test_stream_invariants_2055;
 #[cfg(test)]
 mod test_swap_twap_2057;
@@ -17449,6 +17451,44 @@ impl VaultDAO {
     /// Return all escrow IDs assigned to an arbitrator (Issue #2139).
     pub fn get_escrows_by_arbitrator(env: Env, arbitrator: Address) -> Vec<u64> {
         storage::get_escrows_by_arbitrator(&env, &arbitrator)
+    }
+
+    /// Replace an escrow's designated arbitrator (Admin only, Issue #2141).
+    pub fn replace_escrow_arbitrator(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        new_arbitrator: Address,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        if storage::get_role(&env, &caller) != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        if escrow.status.is_terminal() {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if new_arbitrator == escrow.funder
+            || new_arbitrator == escrow.recipient
+            || new_arbitrator == escrow.arbitrator
+        {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let old_arbitrator = escrow.arbitrator.clone();
+        storage::remove_escrow_for_arbitrator(&env, &old_arbitrator, escrow_id);
+        storage::add_escrow_for_arbitrator(&env, &new_arbitrator, escrow_id);
+        escrow.arbitrator = new_arbitrator.clone();
+        storage::set_escrow(&env, &escrow);
+
+        events::emit_escrow_arbitrator_changed(
+            &env,
+            escrow_id,
+            &old_arbitrator,
+            &new_arbitrator,
+        );
+        Ok(())
     }
 
     // ========================================================================

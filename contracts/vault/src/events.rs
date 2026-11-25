@@ -1239,6 +1239,20 @@ pub fn emit_milestone_completed(env: &Env, escrow_id: u64, milestone_id: u64, co
 }
 
 /// Emit when escrow funds are released
+/// Emitted when an escrow's designated arbitrator is replaced.
+/// Topics: ("escrow_arbitrator_changed", escrow_id); data: (old, new).
+pub fn emit_escrow_arbitrator_changed(
+    env: &Env,
+    escrow_id: u64,
+    old_arbitrator: &Address,
+    new_arbitrator: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_arbitrator_changed"), escrow_id),
+        (old_arbitrator.clone(), new_arbitrator.clone()),
+    );
+}
+
 pub fn emit_escrow_released(
     env: &Env,
     escrow_id: u64,

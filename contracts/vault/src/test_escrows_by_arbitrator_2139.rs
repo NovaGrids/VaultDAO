@@ -30,11 +30,35 @@ fn test_get_escrows_by_arbitrator_single_and_multiple() {
     let mut milestones = Vec::new(&env);
     milestones.push_back(milestone(1));
 
-    let id1 = client.create_escrow(&admin, &recipient, &token, &1_000, &milestones, &1_000, &arb1);
+    let id1 = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &1_000,
+        &milestones,
+        &1_000,
+        &arb1,
+    );
     assert_eq!(client.get_escrows_by_arbitrator(&arb1), vec![&env, id1]);
 
-    let id2 = client.create_escrow(&admin, &recipient, &token, &1_000, &milestones, &1_000, &arb1);
-    let id3 = client.create_escrow(&admin, &recipient, &token, &1_000, &milestones, &1_000, &arb2);
+    let id2 = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &1_000,
+        &milestones,
+        &1_000,
+        &arb1,
+    );
+    let id3 = client.create_escrow(
+        &admin,
+        &recipient,
+        &token,
+        &1_000,
+        &milestones,
+        &1_000,
+        &arb2,
+    );
     assert_eq!(
         client.get_escrows_by_arbitrator(&arb1),
         vec![&env, id1, id2]
