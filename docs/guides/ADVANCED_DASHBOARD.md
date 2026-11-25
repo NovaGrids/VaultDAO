@@ -219,3 +219,19 @@ Edit `utils/dashboardTemplates.ts`:
 **Export not working**: Verify html2canvas and jspdf are installed
 
 **Mobile gestures not working**: Ensure touch events are not blocked by other handlers
+
+## Governance Simulation Lab
+
+The **Governance Simulation Lab** (`/dashboard/simulation-lab`) lets power users dry-run governance transactions against live or fixture vault state before signing.
+
+### Supported Actions
+- **Create Proposal**: Dry-run `propose_transfer` against per-proposal, daily, and weekly spending limits.
+- **Vote**: Dry-run `approve`, `reject`, or `abstain` votes against quorum and threshold rules.
+- **Execute**: Dry-run `execute_proposal` to verify spendable balance and circuit-breaker headroom.
+- **Swap**: Dry-run DEX swaps with TWAP oracle freshness and slippage checks.
+
+### Reading the Preview Panel
+- **Estimated Fees & Soroban Resources**: Displays projected total fee (XLM and stroops), resource fee, CPU instructions, memory footprint, and ledger read/write counts.
+- **Spending Limit Impact**: Shows before/after utilization for per-proposal, daily, and weekly limits using accessible progress bars and explicit `[WITHIN LIMIT]` / `[EXCEEDS LIMIT]` text badges.
+- **Circuit Breaker Headroom**: Computes `spendable = max(0, balance - earmarked - pending - locked)` and remaining hourly breaker headroom (`SAFE`, `LOW HEADROOM`, or `BREAKER TRIPPED`).
+- **Pre-flight Warnings & Typed SDK Errors**: Surfaces `CRITICAL` / `WARNING` alerts for paused vaults (`VAULT_PAUSED`), stale oracle feeds (`STALE_ORACLE`), and low breaker headroom, and decodes simulation reverts into typed SDK errors (e.g., `ExceedsDailyLimit #42`, `TwapUnavailable #1210`, `TokenCircuitBreakerTripped #1224`) with remediation hints.

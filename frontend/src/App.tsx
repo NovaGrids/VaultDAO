@@ -17,6 +17,7 @@ const Templates = lazy(() => import('./app/dashboard/Templates'));
 const RecurringPayments = lazy(() => import('./app/dashboard/RecurringPayments'));
 const EscrowPage = lazy(() => import('./app/dashboard/Escrow'));
 const GovernancePage = lazy(() => import('./app/dashboard/Governance'));
+const SimulationLabPage = lazy(() => import('./app/dashboard/SimulationLabPage'));
 const ErrorDashboard = lazy(() => import('./components/ErrorDashboard'));
 const IncidentWarRoom = lazy(() => import('./components/IncidentWarRoom'));
 
@@ -46,6 +47,7 @@ function App() {
               <Route path="recurring-payments" element={<RecurringPayments />} />
               <Route path="escrow" element={<EscrowPage />} />
               <Route path="governance" element={<GovernancePage />} />
+              <Route path="simulation-lab" element={<SimulationLabPage />} />
               <Route path="settings" element={<Settings />} />
               <Route path="errors" element={<ErrorDashboard />} />
               <Route path="incident-war-room" element={<IncidentWarRoom />} />
