@@ -112,6 +112,12 @@ pub enum VaultError {
     ClaimQuorumNotMet = 248,
     /// Voting for this claim has already been closed and tallied
     ClaimAlreadyClosed = 249,
+    // Issue #2054: Claim oracle & clawback settlement
+    ClaimOracleStale = 1230,
+    ClaimPayoutNotPending = 1231,
+    ClaimClawbackWindowOpen = 1232,
+    ClaimClawbackWindowClosed = 1233,
+    ClaimClawbackAlreadyApproved = 1234,
     // Issue #1081: Multi-Token Vault
     TokenAlreadySupported = 250,
     TokenNotSupported = 251,
@@ -691,6 +697,20 @@ pub enum VaultError {
     // =========================================================
     /// This token's outflow circuit breaker is tripped
     TokenCircuitBreakerTripped = 1224,
+
+    // =========================================================
+    // Issue #2230: Vault factory + template registry
+    // =========================================================
+    /// Template ID + version is already registered in the factory
+    TemplateAlreadyExists = 1225,
+    /// Template is not attested by the maintainer key while factory policy requires attestation
+    TemplateNotAttested = 1226,
+    /// Factory contract has not been initialized yet
+    FactoryNotInitialized = 1227,
+    /// Factory template metadata failed validation (empty ID/schema/license or zero hash)
+    InvalidFactoryTemplate = 1228,
+    /// No factory deployment record exists for the requested vault address
+    DeployedVaultNotFound = 1229,
 }
 
 // Compatibility markers for CI source checks:

@@ -176,21 +176,23 @@ fn prepare(w: &World, state: State, dispute_at: u32) {
 fn act(w: &World, action: Action) -> Result<(), VaultError> {
     let c = &w.client;
     let id = &w.escrow_id;
-    let res = match action {
-        Action::Release => c.try_release_escrow(&w.recipient, id).map(|r| r.map(|_| ())),
-        Action::ReleaseMilestones => c
-            .try_release_escrow_milestones(&w.recipient, id)
-            .map(|r| r.map(|_| ())),
-        Action::Dispute => c.try_dispute_escrow(&w.funder, id, &Symbol::new(&w.env, "late")),
-        Action::CompleteSecond => c.try_complete_milestone(&w.funder, id, &2),
-        Action::ResolveToRecipient => c.try_resolve_escrow_dispute(&w.arbitrator, id, &true),
-        Action::ResolveToFunder => c.try_resolve_escrow_dispute(&w.arbitrator, id, &false),
-        Action::AutoResolve => c.try_auto_resolve_escrow(id),
-    };
-    match res {
-        Ok(Ok(())) => Ok(()),
-        Err(Ok(e)) => Err(e),
-        other => panic!("unexpected host result: {:?}", other),
+    fn normalize<T: core::fmt::Debug, E: core::fmt::Debug>(
+        r: Result<Result<T, E>, Result<VaultError, soroban_sdk::InvokeError>>,
+    ) -> Result<(), VaultError> {
+        match r {
+            Ok(Ok(_)) => Ok(()),
+            Err(Ok(e)) => Err(e),
+            other => panic!("unexpected host result: {:?}", other),
+        }
+    }
+    match action {
+        Action::Release => normalize(c.try_release_escrow(&w.recipient, id)),
+        Action::ReleaseMilestones => normalize(c.try_release_escrow_milestones(&w.recipient, id)),
+        Action::Dispute => normalize(c.try_dispute_escrow(&w.funder, id, &Symbol::new(&w.env, "late"))),
+        Action::CompleteSecond => normalize(c.try_complete_milestone(&w.funder, id, &2)),
+        Action::ResolveToRecipient => normalize(c.try_resolve_escrow_dispute(&w.arbitrator, id, &true)),
+        Action::ResolveToFunder => normalize(c.try_resolve_escrow_dispute(&w.arbitrator, id, &false)),
+        Action::AutoResolve => normalize(c.try_auto_resolve_escrow(id)),
     }
 }
 

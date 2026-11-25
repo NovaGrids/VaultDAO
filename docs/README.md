@@ -44,6 +44,7 @@ Hands-on how-tos for building and operating features.
 - [Subscription management](guides/SUBSCRIPTION_GUIDE.md)
 - [Advanced dashboard](guides/ADVANCED_DASHBOARD.md)
 - [Widget development](guides/WIDGET_DEVELOPMENT.md)
+- [Community vault templates & factory](guides/COMMUNITY_TEMPLATES.md)
 
 ### Frontend
 

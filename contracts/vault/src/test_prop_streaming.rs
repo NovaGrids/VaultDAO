@@ -114,6 +114,7 @@ fn setup(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Address) {
             vote_weight: VoteWeight::Flat,
             high_impact_threshold: 70,
             admin_rotation_delay: 1_440,
+            upgrade_timelock_delay: 17_280,
         },
     );
 

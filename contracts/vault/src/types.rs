@@ -128,7 +128,7 @@ pub struct ExpiryBatch {
 }
 
 /// Vault configuration
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     /// List of authorized signers
@@ -274,6 +274,7 @@ pub(crate) struct ConfigV1 {
 
 impl From<ConfigV1> for Config {
     fn from(old: ConfigV1) -> Self {
+        let env = old.signers.env().clone();
         Self {
             signers: old.signers,
             signer_tiers: old.signer_tiers,
@@ -298,6 +299,7 @@ impl From<ConfigV1> for Config {
             supported_tokens: old.supported_tokens,
             token_daily_limits: old.token_daily_limits,
             token_weekly_limits: old.token_weekly_limits,
+            min_interval_per_token: Map::new(&env),
             stream_max_window_amount: old.stream_max_window_amount,
             burst_factor: old.burst_factor,
             staking_config: old.staking_config,
@@ -1526,7 +1528,7 @@ pub struct CrossChainProposal {
 }
 
 /// Chain identifier for cross-chain operations
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum AuditAction {
@@ -4034,4 +4036,30 @@ pub struct TreasuryRiskSnapshot {
     pub locked: i128,
     pub spendable: i128,
     pub breaker_tripped: bool,
+}
+
+// ============================================================================
+// Issue #2230: Vault factory + template registry provenance
+// ============================================================================
+
+/// On-chain provenance recorded on a vault deployed via `VaultFactory`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FactoryProvenance {
+    /// Address of the factory contract that deployed this vault
+    pub factory: Address,
+    /// Registered template identifier (e.g. "treasury-standard")
+    pub template_id: String,
+    /// Pinned template version number
+    pub template_version: u32,
+    /// WASM hash of the deployed vault template
+    pub wasm_hash: BytesN<32>,
+    /// License URI recorded in the template registry
+    pub license_uri: String,
+    /// SHA-256 hash of the canonical license text
+    pub license_hash: BytesN<32>,
+    /// Whether the template carried a valid maintainer attestation at deploy time
+    pub attested: bool,
+    /// Ledger sequence when the vault was initialized via the factory
+    pub deployed_at_ledger: u64,
 }

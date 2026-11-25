@@ -343,6 +343,44 @@ export type {
   CacheMetrics,
 } from "./cache";
 
+// Vault factory & template registry (Issue #2230)
+export {
+  ATTESTATION_DOMAIN,
+  computeLicenseHash,
+  buildTemplateAttestationMessage,
+  signTemplateAttestation,
+  verifyTemplateAttestation,
+  verifyRegistryMetadata,
+  initFactory,
+  setFactoryPolicy,
+  registerFactoryTemplate,
+  attestFactoryTemplate,
+  upgradeTemplatePreset,
+  deprecateFactoryTemplate,
+  deployVault,
+  getFactoryPolicy,
+  getFactoryTemplate,
+  getLatestTemplateVersion,
+  listFactoryTemplates,
+  getDeployedVault,
+  listDeployedVaults,
+  getFactoryProvenance,
+} from "./factory";
+export type {
+  FactoryPolicy,
+  TemplateFeeTier,
+  VoteWeightModel,
+  VaultTemplatePreset,
+  TemplateVersionRecord,
+  DeployedVaultRecord,
+  FactoryProvenance,
+  AttestationPayloadInput,
+  RegisterFactoryTemplateParams,
+  DeployVaultParams,
+  VerifyRegistryMetadataOptions,
+  RegistryVerificationResult,
+} from "./factory";
+
 // Multi-vault sessions: cached read footprints + shared retry budget (#2065)
 export type {
   SessionKey,

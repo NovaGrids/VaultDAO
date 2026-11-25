@@ -283,6 +283,10 @@ pub enum ReserveKey {
     ReservedFunding(Address),
     /// Amount held by approved but unexecuted proposals (#2061)
     ReservedPending(Address),
+    /// Amount held by initiated bridge transfers (#2051)
+    ReservedBridge(Address),
+    /// Amount held by pending insurance claim payouts (#2054)
+    ReservedClaimPayout(Address),
 }
 
 /// Storage keys for escrow arbitration panels, supersession vote migration,
@@ -572,10 +576,22 @@ pub enum FeatureKey {
     KeeperHooks(u32),
     /// Total keeper hook count across all event types -> u32
     KeeperHookCount,
-    /// Number of rejection votes required to reject a proposal -> u32
-    RejectionThreshold,
     /// Cold signer rotation proposal -> ColdSignerRotation (#2085)
     ColdSignerRotation(u64),
+}
+
+/// Pipeline storage keys for bridge receipts, capability runtime, and claim settlement (#2209).
+#[contracttype(export = false)]
+#[derive(Clone)]
+pub enum PipelineKey {
+    BridgeReceiptConfig,
+    BridgeReceipt(BytesN<32>),
+    CapabilityScope(BytesN<32>),
+    CapabilityEpoch,
+    CapabilityRevoked(BytesN<32>),
+    ClaimPolicy,
+    ClaimSettlement(u64),
+    ClaimVotes(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -1237,7 +1253,7 @@ fn snapshot_proposal_voting_weights(env: &Env, proposal: &Proposal) {
         let Some(signer) = proposal.snapshot_signers.get(i) else {
             continue;
         };
-        let weight = match (strategy, get_token_lock(env, &signer)) {
+        let weight = match (strategy.clone(), get_token_lock(env, &signer)) {
             (VotingStrategy::Quadratic, Some(lock)) if lock.is_active => {
                 integer_sqrt(lock.amount)
             }
@@ -1247,7 +1263,7 @@ fn snapshot_proposal_voting_weights(env: &Env, proposal: &Proposal) {
             }
             _ => 1,
         };
-        let key = FeatureKey::ProposalVotingWeight(proposal.id, signer);
+        let key = FeatureKey::ProposalVotingWeight(proposal.id, signer.clone());
         env.storage().persistent().set(&key, &weight);
         env.storage()
             .persistent()
@@ -3462,28 +3478,6 @@ pub fn get_metrics(env: &Env) -> VaultMetrics {
 
 pub fn set_metrics(env: &Env, metrics: &VaultMetrics) {
     env.storage().instance().set(&FeatureKey::Metrics, metrics);
-}
-
-// ============================================================================
-// Rejection Threshold (#2127)
-// ============================================================================
-
-/// Default rejection threshold, used until an admin sets one explicitly.
-pub const DEFAULT_REJECTION_THRESHOLD: u32 = 0;
-
-/// Read the governed rejection threshold.
-pub fn get_rejection_threshold(env: &Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&FeatureKey::RejectionThreshold)
-        .unwrap_or(DEFAULT_REJECTION_THRESHOLD)
-}
-
-/// Persist the governed rejection threshold.
-pub fn set_rejection_threshold(env: &Env, threshold: u32) {
-    env.storage()
-        .instance()
-        .set(&FeatureKey::RejectionThreshold, &threshold);
 }
 
 pub fn metrics_on_execution(env: &Env, gas_used: u64, execution_time_ledgers: u64) {
@@ -7209,4 +7203,28 @@ pub fn sync_pending_reservation(env: &Env, proposal: &Proposal) {
         );
         crate::events::emit_reservation_created(env, proposal.id, &proposal.token, proposal.amount);
     }
+}
+
+// ============================================================================
+// Issue #2230: Factory provenance storage
+// ============================================================================
+
+#[contracttype(export = false)]
+#[derive(Clone)]
+enum FactoryProvenanceKey {
+    Provenance,
+}
+
+/// Persist the factory + template version provenance on a deployed vault.
+pub fn set_factory_provenance(env: &Env, provenance: &crate::types::FactoryProvenance) {
+    env.storage()
+        .instance()
+        .set(&FactoryProvenanceKey::Provenance, provenance);
+}
+
+/// Return the factory provenance if this vault was initialized via `VaultFactory`.
+pub fn get_factory_provenance(env: &Env) -> Option<crate::types::FactoryProvenance> {
+    env.storage()
+        .instance()
+        .get(&FactoryProvenanceKey::Provenance)
 }

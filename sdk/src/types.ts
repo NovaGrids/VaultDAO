@@ -404,6 +404,13 @@ export enum VaultErrorCode {
   VestingNotFound = 1161,
   LockAlreadyActive = 1162,
   VestingCapReached = 1163,
+
+  // 12xx — Vault factory & template registry (Issue #2230)
+  TemplateAlreadyExists = 1225,
+  TemplateNotAttested = 1226,
+  FactoryNotInitialized = 1227,
+  InvalidFactoryTemplate = 1228,
+  DeployedVaultNotFound = 1229,
 }
 
 /** Thrown when the contract returns a known error code. */
