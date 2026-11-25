@@ -17,6 +17,10 @@ import type {
 } from "./transactions.types.js";
 import { decodeMemo } from "../../shared/utils/memo.js";
 import { resolveIndexCursorWindow, buildCursorWindow } from "../../shared/pagination.js";
+import { fetchWithTimeout } from "../../shared/http/fetchWithTimeout.js";
+
+/** Hard upper bound on a single Horizon HTTP fetch (issue #2071). */
+const HORIZON_FETCH_TIMEOUT_MS = 5_000;
 
 interface IndexedEntry {
   tx: Transaction;
@@ -60,8 +64,18 @@ class TransactionIndex {
   replace(contractId: string, entries: IndexedEntry[]): void {
     const byHash = new Map<string, IndexedEntry>();
     const byProposal = new Map<string, IndexedEntry[]>();
+    const seenByProposal = new Map<string, Set<string>>();
     for (const entry of entries) {
       byHash.set(entry.tx.transactionHash, entry);
+      // A proposal may be indexed more than once during a replay. Keep one
+      // entry per transaction hash so byProposal results never duplicate.
+      let seen = seenByProposal.get(entry.tx.proposalId);
+      if (!seen) {
+        seen = new Set<string>();
+        seenByProposal.set(entry.tx.proposalId, seen);
+      }
+      if (seen.has(entry.tx.transactionHash)) continue;
+      seen.add(entry.tx.transactionHash);
       const arr = byProposal.get(entry.tx.proposalId) ?? [];
       arr.push(entry);
       byProposal.set(entry.tx.proposalId, arr);
@@ -337,8 +351,10 @@ export class TransactionsService {
     decodedMemo: string | null;
   }> {
     try {
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${this.horizonUrl}/transactions/${encodeURIComponent(txHash)}`,
+        undefined,
+        HORIZON_FETCH_TIMEOUT_MS,
       );
       if (!res.ok) return { decodedProposalId: null, decodedMemo: null };
       const json = await res.json();
@@ -406,8 +422,12 @@ export class TransactionsService {
     return tx;
   }
 
+  /**
+   * Mark the index stale without discarding it. `ensureIndex` builds the new
+   * index first and swaps it in atomically, so a failed replay leaves the last
+   * good index serving reads instead of an empty one (issue #2071).
+   */
   invalidateIndex(contractId: string): void {
     this.indexTimestamps.delete(contractId);
-    this.index.clear(contractId);
   }
 }

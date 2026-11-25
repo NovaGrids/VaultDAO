@@ -76,6 +76,7 @@ struct World<'a> {
 fn milestones(env: &Env) -> Vec<Milestone> {
     let mut v = Vec::new(env);
     v.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 40,
         release_ledger: 0,
@@ -83,6 +84,7 @@ fn milestones(env: &Env) -> Vec<Milestone> {
         completion_ledger: 0,
     });
     v.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 60,
         release_ledger: 0,

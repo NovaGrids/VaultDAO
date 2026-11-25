@@ -307,6 +307,34 @@ export const PROPOSALS_EXECUTED_COUNTER = "proposals_executed_total";
  *
  * Call once at startup (idempotent — re-registration overwrites metadata).
  */
+/**
+ * Observability pack series (issue #2073). Registered eagerly so `/metrics`
+ * exposes the documented series even before the first error or queue event.
+ * All are unlabelled to keep cardinality flat (see load-tests/CARDINALITY_NOTES.md).
+ */
+export function registerObservabilityMetrics(registry: MetricsRegistry): void {
+  registry.register(
+    "vaultdao_rpc_errors_total",
+    "Total failed RPC requests",
+    "counter",
+  );
+  registry.register(
+    "vaultdao_event_processing_lag_seconds",
+    "Event processing lag behind the chain tip in seconds",
+    "gauge",
+  );
+  registry.register(
+    "vaultdao_event_queue_depth",
+    "Number of events waiting to be processed",
+    "gauge",
+  );
+  registry.register(
+    "vaultdao_ws_slow_consumer_disconnects_total",
+    "Total WebSocket clients disconnected for slow consumption",
+    "counter",
+  );
+}
+
 export function registerProposalThroughputMetrics(
   registry: MetricsRegistry,
 ): void {

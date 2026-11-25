@@ -16,8 +16,11 @@ interface ToastContainerProps {
 const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onDismiss }) => {
   return (
     <div
-      className="fixed z-[9999] pointer-events-none"
+      role="region"
       aria-label="Notification container"
+      aria-live="polite"
+      aria-atomic="true"
+      className="fixed z-[9999] pointer-events-none"
     >
       {/* Mobile: bottom-center, full-width with margins */}
       {/* Tablet/Desktop: bottom-right */}

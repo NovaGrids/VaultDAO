@@ -1981,3 +1981,47 @@ See [ESCROW.md](../guides/ESCROW.md).
 | `token_breaker_reset` | `(symbol, token: Address)` | `admin: Address` |
 | `reservation_created` | `(symbol, proposal_id: u64)` | `(token, amount: i128)` |
 | `reservation_released` | `(symbol, proposal_id: u64)` | `(token, amount: i128, status: u32)` |
+
+## Dual-source transaction truth and conflict reports (#2227)
+
+Transaction truth is ingested through two independent paths and reconciled into one canonical model:
+
+- **Soroban path** — executed-proposal activities from the contract event pipeline carry the on-chain transaction hash, amount, recipient and success bit, normalized by `normalizeSorobanEvent`.
+- **Horizon path** — the `tx-truth-horizon` job drains every hash the Soroban path has seen, fetching the matching Horizon transaction envelope plus its payment operation, normalized by `normalizeHorizonTransaction`.
+
+The canonical model (`CanonicalTransaction`) keeps `amount` as a decimal string in the asset's smallest unit, `memo` as the raw source value (null when absent), and a boolean `success` bit, so the two sources are compared apples-to-apples.
+
+### Conflict detection
+
+When both sources have delivered the same transaction hash, they are compared on **amount**, **memo**, and **success**. Any divergence creates a conflict record holding *both* source records; the non-preferred source is retained verbatim and is never silently overwritten, even if it is re-ingested. A re-ingest of the same source is a no-op. Conflicts are bounded at 10,000 retained records (oldest dropped first).
+
+### Source precedence
+
+| Operation kind | Preferred source |
+| --- | --- |
+| Contract calls (`invoke_host_function`, vault contract events) | **Soroban events** |
+| Classic payments (payment, create_account, path payments, account_merge) | **Horizon operations** |
+
+While a conflict is unresolved, the canonical view served for the hash follows this precedence. An operator closes the conflict with an explicit resolution, after which the chosen source is served. The rejected record stays on the conflict for audit.
+
+### Admin API
+
+All routes are under `/api/v1/admin/tx-truth`, guarded by the admin API key and HMAC verification:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /admin/tx-truth/conflicts?status=unresolved` | List conflicts (default: unresolved) |
+| `GET /admin/tx-truth/conflicts/:id` | One conflict with both source records and the disagreeing fields |
+| `POST /admin/tx-truth/conflicts/:id/resolve` | Body `{"resolution":"horizon"\|"soroban"}` picks the truthful source |
+| `POST /admin/tx-truth/ingest` | Body `{"source":"horizon"\|"soroban","transaction":{...}}` injects a raw record (used for divergent-fixture injection and backfill) |
+| `GET /admin/tx-truth/stats` | Transactions tracked, reconciled, conflicts, unresolved count, Horizon backlog, conflict rate |
+
+### Metrics
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `vaultdao_tx_truth_reconciled_total` | counter | Transactions seen by both ingest paths |
+| `vaultdao_tx_truth_conflict_total` | counter | Conflicts detected |
+| `vaultdao_tx_truth_conflict_rate` | gauge | conflicts detected / transactions reconciled |
+
+Operators should alert on a sustained non-zero conflict rate; a spike usually means one ingest path is lagging, mis-parsing amounts, or a memo/ success-bit bug in a normalizer.

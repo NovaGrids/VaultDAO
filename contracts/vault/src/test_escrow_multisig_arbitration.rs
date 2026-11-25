@@ -89,6 +89,7 @@ fn create_escrow(
     let recipient = Address::generate(env);
     let mut milestones = Vec::new(env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -234,6 +235,7 @@ fn create_escrow_with_arbitrator(
     let recipient = Address::generate(env);
     let mut milestones = Vec::new(env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -310,6 +312,7 @@ fn test_1896_conflicted_arbitrator_rejected_at_creation() {
     let recipient = Address::generate(&env);
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

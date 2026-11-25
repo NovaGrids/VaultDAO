@@ -22,7 +22,7 @@ groups:
           description: |
             5xx responses for {{ $labels.service }} are arriving at {{ $value | humanize }}/s
             Affected endpoint: {{ $labels.endpoint }}
-          runbook_url: "https://github.com/rdj-savyy/VaultDAO/blob/main/docs/reference/PRODUCTION_RUNBOOK.md#7-high-error-rate-response"
+          runbook_url: "https://github.com/Valreb001/VaultDAO/blob/main/docs/reference/RUNBOOK_ALERTS.md#higherrorrate"
 
       - alert: HighLatency
         expr: |

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { FileText, Download, Calendar, Eye, CheckSquare, X, Table, Clock, Trash2, Mail } from 'lucide-react';
 import { generateSOC2Report, generateISO27001Report } from '../utils/reportGenerator';
 import { exportCompliancePDF, exportComplianceCSV } from '../utils/reportExport';
@@ -9,6 +9,7 @@ import { prepareChainedAuditLog } from '../utils/auditVerification';
 import { env } from '../config/env';
 import { buildReportPreviewHtml, buildPdfPreviewHtml, buildCsvPreviewHtml } from '../utils/compliancePreview';
 import { evaluateComplianceRules } from '../utils/complianceRules';
+import ComplianceRuleResults from './ComplianceRuleResults';
 
 type ReportType = 'SOC2' | 'ISO27001' | 'Custom';
 type ScheduleFrequency = 'weekly' | 'monthly';
@@ -285,6 +286,12 @@ const ComplianceReports: React.FC = () => {
     }
   };
 
+  const ruleEvaluation = useMemo(
+    () => evaluateComplianceRules(filterDataByDateRange()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [auditData, config.startDate, config.endDate]
+  );
+
   const buildExportData = () => {
     const entries = filterDataByDateRange();
     const { rules, score } = evaluateComplianceRules(entries);
@@ -512,6 +519,8 @@ const ComplianceReports: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <ComplianceRuleResults evaluation={ruleEvaluation} />
 
           {/* Preview Panel */}
           <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6">

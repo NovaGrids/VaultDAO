@@ -77,6 +77,32 @@ export const WS_CLOSE_SLOW_CONSUMER = 4409;
 /** Counter for broadcast messages dropped for pressured clients. */
 export const WS_METRIC_MESSAGES_DROPPED = "ws_messages_dropped_total";
 
+/** Counter for slow consumers disconnected by backpressure. */
+export const WS_METRIC_SLOW_CONSUMER_DISCONNECTS =
+  "vaultdao_ws_slow_consumer_disconnects_total";
+
+/** Counter for subscribe requests rejected by the churn limiter or ACL. */
+export const WS_METRIC_SUBSCRIBE_REJECTED = "ws_subscribe_rejected_total";
+
+/** Sliding window and maximum subscribe requests per connection. */
+export const WS_SUBSCRIBE_CHURN_WINDOW_MS = 1_000;
+export const WS_SUBSCRIBE_CHURN_MAX = 10;
+
+/**
+ * Authorization gateway contract. The server is default-deny: with no ACL
+ * installed, clients may only receive events for the contracts they explicitly
+ * subscribed to. An ACL may further restrict both the subscribe and the publish
+ * path (cross-contract leakage is rejected in both directions).
+ */
+export interface WebSocketAcl {
+  canSubscribe(
+    connectionId: string,
+    topics: string[],
+    contractIds: string[],
+  ): boolean;
+  canPublish?(connectionId: string, event: ContractEvent): boolean;
+}
+
 /** Per-client send buffer high-water mark triggering backpressure. */
 export const WS_MAX_CLIENT_BUFFERED_BYTES = 1024 * 1024;
 
@@ -198,6 +224,9 @@ export class EventWebSocketServer extends EventEmitter {
   private readonly authTimeoutMs: number;
   private readonly maxConnections: number;
   private readonly maxConnectionsPerIp: number;
+  private acl: WebSocketAcl | null = null;
+  /** Recent subscribe timestamps per connection, for churn limiting. */
+  private subscribeChurn: Map<string, number[]> = new Map();
 
   constructor(
     server: Server,
@@ -247,6 +276,11 @@ export class EventWebSocketServer extends EventEmitter {
     registry.register(
       WS_METRIC_MESSAGES_DROPPED,
       "Total broadcast messages dropped for pressured WebSocket clients",
+      "counter",
+    );
+    registry.register(
+      WS_METRIC_SUBSCRIBE_REJECTED,
+      "Total WebSocket subscribe requests rejected by ACL or churn limit",
       "counter",
     );
     registry.registerHistogram(
@@ -723,6 +757,8 @@ export class EventWebSocketServer extends EventEmitter {
     }
 
     this.clients.delete(ws);
+    this.subscribeChurn.delete(sub.connectionId);
+    this.backpressureStrikes.delete(ws);
     logger.info("client disconnected", {
       connectionId: sub.connectionId ?? connectionId,
     });
@@ -767,6 +803,46 @@ export class EventWebSocketServer extends EventEmitter {
     }
 
     const topics = validation.filter.eventTypes;
+
+    // Rate-limit subscribe churn so a client cannot churn subscriptions to
+    // force repeated ACL checks / index work.
+    if (!this.allowSubscribeChurn(connectionId)) {
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "SUBSCRIBE_RATE_LIMIT",
+          message: "Too many subscribe requests",
+        }),
+      );
+      return;
+    }
+
+    // ACL check on the subscribe path. Default-deny already applies at publish
+    // time; the ACL may additionally forbid a topic/contract combination.
+    const requestedContractIds: string[] = Array.isArray(message?.contractIds)
+      ? (message.contractIds as unknown[]).filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        )
+      : [];
+    if (
+      this.acl &&
+      !this.acl.canSubscribe(connectionId, topics, requestedContractIds)
+    ) {
+      this.metrics?.incrementCounter(WS_METRIC_SUBSCRIBE_REJECTED);
+      logger.warn("subscribe rejected by ACL", {
+        connectionId,
+        topics,
+        contractIds: requestedContractIds,
+      });
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "SUBSCRIPTION_FORBIDDEN",
+          message: "Subscription not authorized for this connection",
+        }),
+      );
+      return;
+    }
 
     for (const t of topics) {
       // normalize: accept legacy short names like 'proposal_executed' and full 'notification:events:FOO'
@@ -906,6 +982,27 @@ export class EventWebSocketServer extends EventEmitter {
     });
   }
 
+  /** Install (or clear, with `null`) the authorization gateway. */
+  public setAcl(acl: WebSocketAcl | null): void {
+    this.acl = acl;
+  }
+
+  /** Reject subscribe floods: at most WS_SUBSCRIBE_CHURN_MAX per window. */
+  private allowSubscribeChurn(connectionId: string): boolean {
+    const now = Date.now();
+    const recent = (this.subscribeChurn.get(connectionId) ?? []).filter(
+      (t) => now - t < WS_SUBSCRIBE_CHURN_WINDOW_MS,
+    );
+    if (recent.length >= WS_SUBSCRIBE_CHURN_MAX) {
+      this.subscribeChurn.set(connectionId, recent);
+      this.metrics?.incrementCounter(WS_METRIC_SUBSCRIBE_REJECTED);
+      return false;
+    }
+    recent.push(now);
+    this.subscribeChurn.set(connectionId, recent);
+    return true;
+  }
+
   private findWs(connectionId: string): WebSocket | undefined {
     for (const [ws, sub] of this.clients) {
       if (sub.connectionId === connectionId) return ws;
@@ -944,6 +1041,7 @@ export class EventWebSocketServer extends EventEmitter {
       if (strikes >= WS_SLOW_CONSUMER_CLOSE_AFTER) {
         this.backpressureStrikes.delete(ws);
         try {
+          this.metrics?.incrementCounter(WS_METRIC_SLOW_CONSUMER_DISCONNECTS);
           ws.close(
             WS_CLOSE_SLOW_CONSUMER,
             "Slow consumer: send buffer exceeded",
@@ -1006,6 +1104,15 @@ export class EventWebSocketServer extends EventEmitter {
       // Only deliver to authenticated or subscribed clients.
       if (sub.state === "connecting") return;
 
+      // ACL check on the publish path: even an event for a subscribed contract
+      // is dropped when the gateway denies this connection.
+      if (
+        this.acl?.canPublish &&
+        !this.acl.canPublish(sub.connectionId, event)
+      ) {
+        return;
+      }
+
       // Per-contract scoping: skip events for contracts the client did not ask for.
       if (
         sub.contractIds &&
@@ -1062,6 +1169,8 @@ export class EventWebSocketServer extends EventEmitter {
       ws.terminate();
     }
     this.clients.clear();
+    this.subscribeChurn.clear();
+    this.backpressureStrikes.clear();
     this.wss.close();
   }
 

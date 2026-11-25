@@ -74,6 +74,60 @@ export {
   getAllErrorEntries,
 } from "./errors";
 
+// Typed contract errors (#2064)
+export type { ContractErrorFamily } from "./typed-errors";
+export {
+  ContractErrorCode,
+  TypedVaultError,
+  InitializationError,
+  AuthorizationError,
+  ProposalError,
+  SpendingLimitError,
+  ConfigurationError,
+  TokenError,
+  WhitelistError,
+  InsuranceError,
+  StakingError,
+  DelegationError,
+  CapabilityError,
+  PauseError,
+  UpgradeError,
+  BatchError,
+  SwapError,
+  StreamingError,
+  contractErrorFamily,
+  createContractError,
+  isKnownContractErrorCode,
+  toTypedVaultError,
+} from "./typed-errors";
+
+// Shared RPC client (#2064)
+export { getRpcServer, isLocalhostUrl, resolveAllowHttp } from "./rpc";
+
+// Simulation with resource estimates (#2064)
+export type {
+  ResourceEstimate,
+  SimulationEstimate,
+  VoteMethod,
+  PauseMethod,
+  InsuranceMethod,
+  StakingMethod,
+  WhitelistMethod,
+  BatchMethod,
+  SwapMethod,
+} from "./simulate";
+export {
+  simulateContractCall,
+  extractResourceEstimate,
+  simulateVote,
+  simulatePause,
+  simulateInsurance,
+  simulateStaking,
+  simulateWhitelist,
+  simulateBatch,
+  simulateSwap,
+} from "./simulate";
+
 // Utility functions
 export type { WalletConnection } from "./utils";
 export {
@@ -326,3 +380,38 @@ export type {
   VerifyRegistryMetadataOptions,
   RegistryVerificationResult,
 } from "./factory";
+
+// Multi-vault sessions: cached read footprints + shared retry budget (#2065)
+export type {
+  SessionKey,
+  SessionIdentity,
+  ReadFootprint,
+  ReadResult,
+  SessionRequest,
+  ReadRequest,
+  WriteRequest,
+  BoundReadRequest,
+  BoundWriteRequest,
+  SessionEventBase,
+  CacheHitEvent,
+  RetryDecisionContext,
+  RetryEvent,
+  RetryExhaustionReason,
+  RetryBudgetExhaustedErrorInit,
+  SessionManagerOptions,
+  SessionStats,
+  SessionManagerStats,
+  SessionSummary,
+  ReadLoader,
+} from "./session-manager";
+export {
+  VaultSession,
+  VaultSessionManager,
+  SessionManager,
+  RetryBudgetExhaustedError,
+  RetryExhaustedError,
+  makeSessionKey,
+  sessionKey,
+  isIdempotentMethod,
+  isRetryableError,
+} from "./session-manager";

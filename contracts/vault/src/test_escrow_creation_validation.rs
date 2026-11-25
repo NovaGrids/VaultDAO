@@ -7,6 +7,18 @@ use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn milestone(id: u64, percentage: u32) -> Milestone {
     Milestone {
+        amount: 0,
+        id,
+        percentage,
+        release_ledger: 0,
+        is_completed: false,
+        completion_ledger: 0,
+    }
+}
+
+fn milestone_with_amount(id: u64, percentage: u32, amount: i128) -> Milestone {
+    Milestone {
+        amount,
         id,
         percentage,
         release_ledger: 0,
@@ -258,4 +270,88 @@ fn test_create_escrow_accepts_valid_parameters() {
         &arbitrator,
     );
     assert_eq!(escrow_id, 1);
+}
+
+#[test]
+fn test_create_escrow_accepts_matching_milestone_amounts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup(&env);
+    let token = supported_token(&env, &client, &admin);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+
+    let recipient = Address::generate(&env);
+    let arbitrator = Address::generate(&env);
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(milestone_with_amount(1, 40, 2_000));
+    milestones.push_back(milestone_with_amount(2, 60, 3_000));
+
+    assert_eq!(
+        client.create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &5_000,
+            &milestones,
+            &1_000,
+            &arbitrator,
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_create_escrow_rejects_over_summed_milestone_amounts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup(&env);
+    let token = supported_token(&env, &client, &admin);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+
+    let recipient = Address::generate(&env);
+    let arbitrator = Address::generate(&env);
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(milestone_with_amount(1, 50, 3_000));
+    milestones.push_back(milestone_with_amount(2, 50, 3_000));
+
+    assert_eq!(
+        client.try_create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &5_000,
+            &milestones,
+            &1_000,
+            &arbitrator,
+        ),
+        Err(Ok(VaultError::InvalidAmount))
+    );
+}
+
+#[test]
+fn test_create_escrow_rejects_under_summed_milestone_amounts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup(&env);
+    let token = supported_token(&env, &client, &admin);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&admin, &10_000);
+
+    let recipient = Address::generate(&env);
+    let arbitrator = Address::generate(&env);
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(milestone_with_amount(1, 50, 2_000));
+    milestones.push_back(milestone_with_amount(2, 50, 2_000));
+
+    assert_eq!(
+        client.try_create_escrow(
+            &admin,
+            &recipient,
+            &token,
+            &5_000,
+            &milestones,
+            &1_000,
+            &arbitrator,
+        ),
+        Err(Ok(VaultError::InvalidAmount))
+    );
 }

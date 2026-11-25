@@ -70,6 +70,14 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
+    /// Phased disbursement schedule (Issue #2224) -> DisbursementSchedule
+    DisbursementSchedule(u64),
+    /// Next disbursement schedule ID -> u64
+    NextDisbursementScheduleId,
+    /// Per-payment catch-up budget in stroops (Issue #2225) -> i128
+    RecurringCatchUpBudget(u64),
+    /// Per-payment missed-cycle policy (Issue #2225) -> MissedCyclePolicy
+    RecurringMissedCyclePolicy(u64),
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
     /// Recipient list mode
@@ -181,6 +189,8 @@ pub enum DataKey {
     ColdSigIndex(u64),
     /// Replay-prevention set: signature hash -> bool
     ColdSigUsed(soroban_sdk::BytesN<32>),
+    /// Per-proposal approval nonce (issue #2226) -> u64
+    ColdSigApprovalNonce(u64),
     // ---- Issue #1083: Variable Template Storage ----
     /// Variable-substitution template by ID -> VarTemplate
     VarTemplate(u64),
@@ -376,6 +386,8 @@ pub enum FeatureKey {
     FunderEscrows(Address),
     /// Escrow IDs by recipient address -> Vec<u64>
     RecipientEscrows(Address),
+    /// Escrow IDs by arbitrator address -> Vec<u64> (Issue #2139)
+    EscrowsByArbitrator(Address),
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
     /// Token lock by owner address -> TokenLock
@@ -476,6 +488,8 @@ pub enum FeatureKey {
     MetricsBucketBaseline,
     /// Pending config change proposal ID -> u64
     PendingConfig,
+    /// Pinned upgrade awaiting its apply ledger -> PendingUpgrade (#2063)
+    PendingUpgrade,
     /// Ledger sequence of the last successful `update_threshold` call -> u64 (#2146 cooldown)
     LastThresholdChangeLedger,
     /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
@@ -1917,6 +1931,43 @@ pub fn get_recurring_payment(
         .persistent()
         .get(&DataKey::Recurring(id))
         .ok_or(VaultError::ProposalNotFound)
+}
+
+// Issue #2225: per-payment catch-up budget and missed-cycle policy.
+pub fn set_recurring_catch_up_budget(env: &Env, payment_id: u64, budget: i128) {
+    let key = DataKey::RecurringCatchUpBudget(payment_id);
+    env.storage().persistent().set(&key, &budget);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_recurring_catch_up_budget(env: &Env, payment_id: u64) -> Option<i128> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecurringCatchUpBudget(payment_id))
+}
+
+pub fn set_recurring_missed_cycle_policy(
+    env: &Env,
+    payment_id: u64,
+    policy: crate::types::MissedCyclePolicy,
+) {
+    let key = DataKey::RecurringMissedCyclePolicy(payment_id);
+    env.storage().persistent().set(&key, &policy);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_recurring_missed_cycle_policy(
+    env: &Env,
+    payment_id: u64,
+) -> crate::types::MissedCyclePolicy {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecurringMissedCyclePolicy(payment_id))
+        .unwrap_or(crate::types::MissedCyclePolicy::PayUpToBudget)
 }
 
 // ============================================================================
@@ -4190,6 +4241,44 @@ pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
+pub fn get_escrows_by_arbitrator(env: &Env, arbitrator: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::EscrowsByArbitrator(arbitrator.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_escrow_for_arbitrator(env: &Env, arbitrator: &Address, escrow_id: u64) {
+    let key = DataKey::EscrowsByArbitrator(arbitrator.clone());
+    let mut escrows = get_escrows_by_arbitrator(env, arbitrator);
+    if !escrows.contains(escrow_id) {
+        escrows.push_back(escrow_id);
+    }
+    env.storage().persistent().set(&key, &escrows);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn remove_escrow_for_arbitrator(env: &Env, arbitrator: &Address, escrow_id: u64) {
+    let key = DataKey::EscrowsByArbitrator(arbitrator.clone());
+    let escrows = get_escrows_by_arbitrator(env, arbitrator);
+    let mut remaining = Vec::new(env);
+    for id in escrows {
+        if id != escrow_id {
+            remaining.push_back(id);
+        }
+    }
+    if remaining.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &remaining);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+    }
+}
+
 // ============================================================================
 // Time-weighted Voting
 // ============================================================================
@@ -5208,6 +5297,43 @@ pub fn set_multi_phase_proposal(env: &Env, mp: &MultiPhaseProposal) {
 }
 
 // ============================================================================
+// Issue #2224: Phased disbursement schedules
+// ============================================================================
+
+pub fn get_next_disbursement_schedule_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextDisbursementScheduleId)
+        .unwrap_or(1)
+}
+
+pub fn increment_disbursement_schedule_id(env: &Env) -> u64 {
+    let id = get_next_disbursement_schedule_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDisbursementScheduleId, &(id + 1));
+    id
+}
+
+pub fn get_disbursement_schedule(
+    env: &Env,
+    id: u64,
+) -> Result<crate::types::DisbursementSchedule, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DisbursementSchedule(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn set_disbursement_schedule(env: &Env, schedule: &crate::types::DisbursementSchedule) {
+    let key = DataKey::DisbursementSchedule(schedule.id);
+    env.storage().persistent().set(&key, schedule);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+// ============================================================================
 // Issue #1097: Capability Tokens
 // ============================================================================
 
@@ -5884,6 +6010,35 @@ pub fn mark_cold_sig_used(env: &Env, sig_hash: &BytesN<32>) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
 
+/// Issue #2226: per-proposal approval nonce.
+///
+/// Every proposal gets exactly one nonce, derived from the proposal id and
+/// the ledger at which the nonce was first requested, and it is immutable
+/// afterwards. A cold signer binds the nonce into the signed message, so a
+/// signature minted for one proposal can never be submitted against another
+/// (the nonce check fails), while a signature reused on the same proposal is
+/// stopped by the `ColdSigUsed` set.
+pub fn get_or_create_proposal_nonce(env: &Env, proposal_id: u64) -> u64 {
+    let key = DataKey::ColdSigApprovalNonce(proposal_id);
+    if let Some(nonce) = env.storage().persistent().get::<u64>(&key) {
+        return nonce;
+    }
+    let mut material = soroban_sdk::Bytes::new(env);
+    material.extend_from_array(&proposal_id.to_le_bytes());
+    material.extend_from_array(&env.ledger().sequence().to_le_bytes());
+    let digest: BytesN<32> = env.crypto().sha256(&material).into();
+    let bytes = digest.to_array();
+    let nonce = u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+    env.storage().persistent().set(&key, &nonce);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    nonce
+}
+
 /// Count valid (non-expired) cold signatures for a proposal.
 pub fn count_valid_cold_sigs(env: &Env, proposal_id: u64, expiry_ledgers: u32) -> u32 {
     let current_ledger = env.ledger().sequence();
@@ -6292,6 +6447,31 @@ pub fn set_pending_config_proposal(env: &Env, proposal_id: u64) {
 
 pub fn clear_pending_config_proposal(env: &Env) {
     env.storage().instance().remove(&FeatureKey::PendingConfig);
+}
+
+// ============================================================================
+// Pinned Contract Upgrade (Issue #2063)
+// ============================================================================
+
+/// The single upgrade proposal currently pinned for execution, if any.
+pub fn get_pending_upgrade(env: &Env) -> Option<crate::types::PendingUpgrade> {
+    env.storage().instance().get(&FeatureKey::PendingUpgrade)
+}
+
+/// Pin an upgrade proposal. Callers must ensure no other upgrade is pending.
+pub fn set_pending_upgrade(env: &Env, pending: &crate::types::PendingUpgrade) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::PendingUpgrade, pending);
+    extend_instance_ttl(env);
+}
+
+/// Remove the pending upgrade after a successful apply or an explicit cancel.
+pub fn clear_pending_upgrade(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&FeatureKey::PendingUpgrade);
+    extend_instance_ttl(env);
 }
 
 /// Ledger of the last successful `update_threshold` call (Issue #2146).

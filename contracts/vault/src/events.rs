@@ -3,7 +3,7 @@
 //! Standardized events for proposal lifecycle and admin actions.
 
 use crate::types::{FundingRoundConfig, ProposalAmendment, SignerTier};
-use soroban_sdk::{Address, Env, String, Symbol, Vec};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol, Vec};
 
 /// Emit when contract is initialized
 pub fn emit_initialized(env: &Env, admin: &Address, threshold: u32) {
@@ -18,6 +18,46 @@ pub fn emit_migrated(env: &Env, from_version: u32, to_version: u32) {
     env.events().publish(
         (Symbol::new(env, "migrated"),),
         (from_version, to_version),
+    );
+}
+
+/// Emit when an upgrade is proposed and its WASM hash is pinned (Issue #2063).
+pub fn emit_upgrade_proposed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    wasm_hash: &BytesN<32>,
+    earliest_apply_ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "upgrade_proposed"), proposal_id),
+        (proposer.clone(), wasm_hash.clone(), earliest_apply_ledger),
+    );
+}
+
+/// Emit when a pending upgrade is cancelled before it is applied (Issue #2063).
+pub fn emit_upgrade_cancelled(
+    env: &Env,
+    proposal_id: u64,
+    canceller: &Address,
+    wasm_hash: &BytesN<32>,
+) {
+    env.events().publish(
+        (Symbol::new(env, "upgrade_cancelled"), proposal_id),
+        (canceller.clone(), wasm_hash.clone()),
+    );
+}
+
+/// Emit when a pinned upgrade is successfully applied (Issue #2063).
+pub fn emit_upgrade_applied(
+    env: &Env,
+    proposal_id: u64,
+    wasm_hash: &BytesN<32>,
+    ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "upgrade_applied"), proposal_id),
+        (wasm_hash.clone(), ledger),
     );
 }
 
@@ -1239,6 +1279,20 @@ pub fn emit_milestone_completed(env: &Env, escrow_id: u64, milestone_id: u64, co
 }
 
 /// Emit when escrow funds are released
+/// Emitted when an escrow's designated arbitrator is replaced.
+/// Topics: ("escrow_arbitrator_changed", escrow_id); data: (old, new).
+pub fn emit_escrow_arbitrator_changed(
+    env: &Env,
+    escrow_id: u64,
+    old_arbitrator: &Address,
+    new_arbitrator: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_arbitrator_changed"), escrow_id),
+        (old_arbitrator.clone(), new_arbitrator.clone()),
+    );
+}
+
 pub fn emit_escrow_released(
     env: &Env,
     escrow_id: u64,
@@ -1678,6 +1732,15 @@ pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, update
     env.events().publish(
         (Symbol::new(env, "stream_status"), stream_id),
         (status, updated_by.clone()),
+    );
+}
+
+/// Emitted when an emergency signer or admin pauses all active streams.
+/// Topics: ("all_streams_paused", paused_count); data: (reason, caller).
+pub fn emit_all_streams_paused(env: &Env, paused_count: u32, reason: &Symbol, caller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "all_streams_paused"), paused_count),
+        (reason.clone(), caller.clone()),
     );
 }
 
@@ -2188,6 +2251,21 @@ pub fn emit_recurring_payment_jittered(
     env.events().publish(
         (Symbol::new(env, "recurring_pay_jittered"), payment_id),
         (nominal_next_ledger, jittered_next_ledger, jitter_offset),
+    );
+}
+
+/// Emit when catch-up is capped by the per-period budget or missed-cycle
+/// policy (Issue #2225). Topics: `("recurring_catch_up_budgeted", payment_id)`.
+pub fn emit_recurring_catch_up_budgeted(
+    env: &Env,
+    payment_id: u64,
+    due_periods: u32,
+    paid_periods: u32,
+    budget: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "recurring_catch_up_budgeted"), payment_id),
+        (due_periods, paid_periods, budget),
     );
 }
 
@@ -2773,6 +2851,33 @@ pub fn emit_phase_rolled_back(env: &Env, proposal_id: u64, phase_index: u32, exe
     env.events().publish(
         (Symbol::new(env, "phase_rolled_back"), proposal_id),
         (phase_index, executor.clone()),
+    );
+}
+
+/// Structured failure for a gated disbursement tranche (Issue #2224).
+/// Topics: `("disbursement_tranche_failed", schedule_id)`.
+pub fn emit_disbursement_tranche_failed(
+    env: &Env,
+    failure: &crate::types::DisbursementFailure,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "disbursement_tranche_failed"),
+            failure.schedule_id,
+        ),
+        (failure.tranche_id, failure.code, failure.reason.clone()),
+    );
+}
+
+/// Emitted once when a schedule's reservation is released (Issue #2224).
+/// Topics: `("disbursement_reservation_released", schedule_id)`.
+pub fn emit_disbursement_reservation_released(env: &Env, schedule_id: u64, amount: i128) {
+    env.events().publish(
+        (
+            Symbol::new(env, "disbursement_reservation_released"),
+            schedule_id,
+        ),
+        amount,
     );
 }
 

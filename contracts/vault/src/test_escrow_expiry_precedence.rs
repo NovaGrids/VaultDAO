@@ -25,6 +25,7 @@ fn test_completed_milestones_paid_to_recipient_after_expiry() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -69,6 +70,7 @@ fn test_partial_completion_then_expiry_splits_funds() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 60,
         release_ledger: 0,
@@ -76,6 +78,7 @@ fn test_partial_completion_then_expiry_splits_funds() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 40,
         release_ledger: 0,

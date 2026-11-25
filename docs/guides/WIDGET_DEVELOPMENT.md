@@ -554,3 +554,12 @@ async function createNotificationWidget() {
 ## License
 
 Widget SDK is MIT licensed. Widgets can use any license compatible with the VaultDAO platform.
+
+## Sandbox constraints for widget authors
+
+- **No direct network.** The sandbox CSP sets `connect-src 'none'`; load data through the SDK (`widgetSDK.fetchData`), which requires the matching permission in your manifest. A denied permission returns a `permission_denied` result and never reaches the host data API.
+- **No external resources.** Scripts, styles and images must be inline (images as `data:` URLs). Remote `<script>`, `<link>` and `<iframe>` sources are blocked.
+- **Navigation is allowlisted.** `navigate(path)` needs the `navigation` permission and only accepts exact host routes (for example `/dashboard/proposals`). Query strings, fragments and absolute URLs are rejected.
+- **Settings persist.** `setConfig(settings)` stores a plain JSON object (max 64 KiB) that is returned by `getConfig()` after a reload. Do not put secrets in settings.
+- **Widget ids** must match `^[a-z0-9-]{1,64}$`.
+- **Events.** `proposalCreated` fires once per new proposal; do not rely on it for replay of historic proposals.

@@ -69,23 +69,90 @@ export default function TransactionSimulator(props: TransactionSimulatorProps) {
 
     return (
         <div className="space-y-3">
-            <button type="button" onClick={handleSimulate} disabled={disabled || simulating} className="w-full min-h-[44px] rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{simulating ? 'Simulating...' : 'Simulate'}</button>
-            {result && <div className={`rounded-lg border p-3 text-sm ${result.success ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
-                <p className="font-semibold text-white">{result.success ? 'Simulation successful' : 'Simulation failed'}</p>
-                {result.error && <p className="mt-1 text-red-200">{result.error}</p>}
-                <div className="mt-2 grid gap-1 text-gray-200">
-                    <p>Estimated fee: {result.feeXLM} XLM</p>
-                    <p>Resource fee: {result.resourceFee} XLM</p>
-                    <p>CPU instructions: {usage.cpuInsns}</p>
-                    <p>Memory bytes: {usage.memBytes}</p>
+            <button
+                type="button"
+                onClick={handleSimulate}
+                disabled={disabled || simulating}
+                className="w-full min-h-[44px] rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+                {simulating ? 'Simulating...' : 'Simulate'}
+            </button>
+            {result && (
+                <div
+                    className={`rounded-lg border p-3 text-sm ${
+                        result.success
+                            ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300'
+                            : 'border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300'
+                    }`}
+                >
+                    <p
+                        className={`font-semibold ${
+                            result.success
+                                ? 'text-green-800 dark:text-green-200'
+                                : 'text-red-800 dark:text-red-200'
+                        }`}
+                    >
+                        {result.success ? 'Simulation successful' : 'Simulation failed'}
+                    </p>
+                    {result.error && (
+                        <p className="mt-1 text-red-700 dark:text-red-300">{result.error}</p>
+                    )}
+                    <div className="mt-2 grid gap-1 text-gray-700 dark:text-gray-200">
+                        <p>Estimated fee: {result.feeXLM} XLM</p>
+                        <p>Resource fee: {result.resourceFee} XLM</p>
+                        <p>CPU instructions: {usage.cpuInsns}</p>
+                        <p>Memory bytes: {usage.memBytes}</p>
+                    </div>
+                    {result.stateChanges && result.stateChanges.length > 0 && (
+                        <div className="mt-2 space-y-1 text-xs text-gray-700 dark:text-gray-300">
+                            {result.stateChanges.map((change, index) => (
+                                <div
+                                    key={`${change.type}-${index}`}
+                                    className="rounded border border-gray-200 bg-white/80 p-2 dark:border-gray-700 dark:bg-gray-900/50"
+                                >
+                                    <p className="font-semibold uppercase text-gray-900 dark:text-gray-100">
+                                        {change.type}
+                                    </p>
+                                    <p className="text-gray-700 dark:text-gray-300">{change.description}</p>
+                                    <p className="text-gray-600 dark:text-gray-400">
+                                        {change.before ? `Before: ${change.before}` : 'Before: -'}
+                                    </p>
+                                    <p className="text-gray-600 dark:text-gray-400">
+                                        {change.after ? `After: ${change.after}` : 'After: -'}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    <div className="mt-3 flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setResult(null)}
+                            className="min-h-[44px] flex-1 rounded-lg bg-gray-200 px-3 py-2 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+                        >
+                            Simulate Again
+                        </button>
+                        {result.success && onProceed && (
+                            <button
+                                type="button"
+                                onClick={onProceed}
+                                className="min-h-[44px] flex-1 rounded-lg bg-purple-600 px-3 py-2 text-white hover:bg-purple-700 dark:bg-purple-600 dark:hover:bg-purple-500"
+                            >
+                                {actionLabel}
+                            </button>
+                        )}
+                        {onCancel && (
+                            <button
+                                type="button"
+                                onClick={onCancel}
+                                className="min-h-[44px] flex-1 rounded-lg bg-gray-200 px-3 py-2 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+                            >
+                                Cancel
+                            </button>
+                        )}
+                    </div>
                 </div>
-                {result.stateChanges && result.stateChanges.length > 0 && <div className="mt-2 space-y-1 text-xs text-gray-300">{result.stateChanges.map((change, index) => <div key={`${change.type}-${index}`} className="rounded border border-gray-700 bg-gray-900/50 p-2"><p className="font-semibold uppercase">{change.type}</p><p>{change.description}</p><p>{change.before ? `Before: ${change.before}` : 'Before: -'}</p><p>{change.after ? `After: ${change.after}` : 'After: -'}</p></div>)}</div>}
-                <div className="mt-3 flex gap-2">
-                    <button type="button" onClick={() => setResult(null)} className="min-h-[44px] flex-1 rounded-lg bg-gray-700 px-3 py-2 text-white hover:bg-gray-600">Simulate Again</button>
-                    {result.success && onProceed && <button type="button" onClick={onProceed} className="min-h-[44px] flex-1 rounded-lg bg-purple-600 px-3 py-2 text-white hover:bg-purple-700">{actionLabel}</button>}
-                    {onCancel && <button type="button" onClick={onCancel} className="min-h-[44px] flex-1 rounded-lg bg-gray-700 px-3 py-2 text-white hover:bg-gray-600">Cancel</button>}
-                </div>
-            </div>}
+            )}
         </div>
     );
 }

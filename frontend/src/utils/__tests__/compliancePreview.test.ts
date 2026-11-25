@@ -108,3 +108,30 @@ describe('compliance preview markup', () => {
     expect(html).not.toContain('Score: 0%');
   });
 });
+
+describe('evidence in previews', () => {
+  it('escapes hostile evidence fields rendered into the PDF preview', () => {
+    const html = buildPdfPreviewHtml({
+      vaultAddress: 'CVAULT',
+      reportPeriod: { start: '2026-01-01', end: '2026-01-31' },
+      complianceScore: 0,
+      reportType: 'Custom',
+      entries: [],
+      rules: [
+        {
+          id: 'r',
+          label: PAYLOAD,
+          evaluated: 1,
+          violations: 1,
+          status: 'review',
+          evidence: [
+            { entryId: PAYLOAD, sourceEventId: '', action: PAYLOAD, timestamp: 't', note: `<script>alert(1)</script> ${PAYLOAD}` },
+          ],
+        },
+      ],
+    });
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+});

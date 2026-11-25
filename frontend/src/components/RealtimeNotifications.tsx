@@ -73,10 +73,19 @@ export function RealtimeNotifications() {
   }
 
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2 w-96 max-w-full">
+    <div
+      role="region"
+      aria-label="Notification container"
+      aria-live="polite"
+      aria-atomic="true"
+      className="fixed top-4 right-4 z-50 space-y-2 w-96 max-w-full"
+    >
       {notifications.map((notification) => (
         <div
           key={notification.id}
+          role={notification.type === 'error' ? 'alert' : 'status'}
+          aria-live={notification.type === 'error' ? 'assertive' : 'polite'}
+          aria-atomic="true"
           className={`bg-gray-900/95 backdrop-blur-md border ${getBorderColor(
             notification.type
           )} rounded-xl shadow-2xl p-4 animate-slide-in-right`}

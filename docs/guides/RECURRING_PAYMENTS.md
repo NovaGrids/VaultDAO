@@ -401,6 +401,32 @@ Operator impact:
 
 - First cycle executes on schedule.
 - Later cycles apply a deterministic jitter offset within a window.
+- The offset is recomputable by any keeper:
+  `jitter_offset = LE_U32_first4(SHA256(LE_U64(payment_id) || LE_U64(creation_ledger))) % jitter_window`.
+  `jitter_window` is capped on-chain at 10% of the interval and stored on the
+  payment alongside `jitter_offset`. A `recurring_pay_jittered` event is emitted
+  with `(nominal_next_ledger, jittered_next_ledger, jitter_offset)` whenever the
+  offset is applied. Golden vectors live in
+  `contracts/vault/src/test_recurring_catchup_policy.rs`.
+
+### Catch-up budget and missed-cycle policy (Issue #2225)
+
+Treasurers can configure `set_recurring_catch_up_controls(payment_id, budget, policy)`:
+
+- `PayUpToBudget` (default) pays as many whole cycles as fit in `budget` and in
+  the daily/weekly/per-token spending limits.
+- `Skip` discards missed cycles and pays only the current cycle.
+- `PayOne` pays exactly one cycle for the entire outage window.
+
+`budget` is a per-execution cap; it is always further reduced by the vault's
+spending limits. A `recurring_catch_up_budgeted` event reports how many periods
+were due versus paid. `get_recurring_catch_up_controls` returns the active
+settings (default budget: daily limit, default policy: `PayUpToBudget`).
+
+Backend keepers additionally take a fencing lease keyed by
+`(vault, payment_id, next_payment_ledger)`. Only the holder of the latest
+monotonic fencing token may publish a due-payment trigger; see the
+[keeper runbook](./KEEPER_RUNBOOK.md).
 
 ---
 

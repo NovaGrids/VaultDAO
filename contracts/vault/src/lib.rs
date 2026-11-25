@@ -34,7 +34,8 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignerRotation, Comment, Condition, EscrowConsent,
+    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus,
+    ColdSignerRotation, Comment, Condition, EscrowConsent,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
     DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
@@ -44,7 +45,7 @@ use types::{
     HookRegistration, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
     InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
     NotificationPreferencesV2, NotificationPrefs, OptionalProposalOperation,
-    OptionalVaultOracleConfig, ParticipationConfig, PauseCooldownConfig,
+    OptionalVaultOracleConfig, ParticipationConfig, PauseCooldownConfig, PendingUpgrade,
     Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase,
     ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig,
     RecoveryConfigChangeProposal, RecoveryProposal, RecoveryStatus, RecurringPayment,
@@ -518,6 +519,8 @@ mod test_stream_create_validation;
 mod test_stream_pause_extension;
 #[cfg(test)]
 mod test_recurring_catchup_budget;
+mod test_recurring_catchup_policy;
+mod test_disbursement_schedules;
 #[cfg(test)]
 mod test_trigger_stream_payment_accrual;
 #[cfg(test)]
@@ -546,6 +549,8 @@ mod test_threshold_min_init;
 mod test_threshold_unilateral_reduction;
 #[cfg(test)]
 mod test_timelock_ready_queue;
+#[cfg(test)]
+mod test_upgrade_timelock_hash;
 #[cfg(test)]
 mod test_upgrade_timelock_min;
 #[cfg(test)]
@@ -687,6 +692,12 @@ mod test_stream_burst_config;
 mod test_stream_clawback;
 #[cfg(test)]
 mod test_stream_pause_ttl;
+#[cfg(test)]
+mod test_pause_all_streams_2138;
+#[cfg(test)]
+mod test_escrows_by_arbitrator_2139;
+#[cfg(test)]
+mod test_escrow_arbitrator_changed_2141;
 #[cfg(test)]
 mod test_stream_invariants_2055;
 #[cfg(test)]
@@ -2828,6 +2839,12 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotApproved);
         }
 
+        // Cold-storage approval gate (#2226): proposals whose amount is at or
+        // above `cold_min_age_amount_threshold` cannot execute until the
+        // cold-signature weight meets `cold_sig_threshold`. Below-threshold
+        // proposals are untouched — the gate returns Ok immediately.
+        Self::check_cold_approval_weight(env.clone(), proposal_id)?;
+
         // Check expiration (even approved proposals can expire)
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger > proposal.expires_at {
@@ -4272,6 +4289,263 @@ impl VaultDAO {
     ) -> Result<MultiPhaseProposal, VaultError> {
         storage::get_multi_phase_proposal(&env, proposal_id)
             .ok_or(VaultError::MultiPhaseProposalNotFound)
+    }
+
+    // ========================================================================
+    // Issue #2224: Phased disbursement schedules with dependency gates
+    // ========================================================================
+
+    /// Create a phased disbursement schedule.
+    ///
+    /// The full schedule is reserved up front: creation is rejected if the sum
+    /// of tranches exceeds the spending limit or the currently spendable
+    /// treasury balance. Gates (`unlock_ledger`, dependency proposal/escrow IDs)
+    /// are checked again when each tranche executes.
+    pub fn create_disbursement_schedule(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token: Address,
+        tranches: Vec<crate::types::DisbursementTranche>,
+        policy: crate::types::PartialFailPolicy,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+        if !Role::role_satisfies(Role::Treasurer, storage::get_role(&env, &proposer)) {
+            return Err(VaultError::InsufficientRole);
+        }
+        if tranches.is_empty() || tranches.len() > 5 {
+            return Err(VaultError::TooManyPhases);
+        }
+        Self::validate_recipient(&env, &recipient)?;
+
+        let config = storage::get_config(&env)?;
+        let mut total: i128 = 0;
+        let mut prepared: Vec<crate::types::DisbursementTranche> = Vec::new(&env);
+        for i in 0..tranches.len() {
+            let t = tranches.get(i).unwrap();
+            if t.amount <= 0 {
+                return Err(VaultError::InvalidAmount);
+            }
+            total = total.saturating_add(t.amount);
+            prepared.push_back(crate::types::DisbursementTranche {
+                id: t.id,
+                amount: t.amount,
+                unlock_ledger: t.unlock_ledger,
+                depends_on_proposal: t.depends_on_proposal,
+                depends_on_escrow: t.depends_on_escrow,
+                status: crate::types::TrancheStatus::Pending,
+            });
+        }
+        if total > config.spending_limit || Self::available_balance(&env, &token) < total {
+            return Err(VaultError::ScheduleOverCommitted);
+        }
+
+        let id = storage::increment_disbursement_schedule_id(&env);
+        let schedule = crate::types::DisbursementSchedule {
+            id,
+            proposer: proposer.clone(),
+            recipient,
+            token,
+            tranches: prepared,
+            policy,
+            reserved_amount: total,
+            reservation_released: false,
+            cancelled: false,
+        };
+        storage::set_disbursement_schedule(&env, &schedule);
+        Ok(id)
+    }
+
+    /// Read a disbursement schedule including tranche statuses.
+    pub fn get_disbursement_schedule(
+        env: Env,
+        schedule_id: u64,
+    ) -> Result<crate::types::DisbursementSchedule, VaultError> {
+        storage::get_disbursement_schedule(&env, schedule_id)
+    }
+
+    /// Execute one tranche. Gate failures are emitted as structured events;
+    /// with `PartialFailPolicy::Abort` the remaining schedule is cancelled and
+    /// the reservation released, while `Continue` only marks that tranche failed.
+    pub fn execute_disbursement_tranche(
+        env: Env,
+        caller: Address,
+        schedule_id: u64,
+        tranche_id: u32,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        if !Role::role_satisfies(Role::Treasurer, storage::get_role(&env, &caller)) {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut schedule = storage::get_disbursement_schedule(&env, schedule_id)?;
+        if schedule.cancelled {
+            return Err(VaultError::ScheduleAlreadyCancelled);
+        }
+        let index = schedule
+            .tranches
+            .iter()
+            .position(|t| t.id == tranche_id)
+            .ok_or(VaultError::ScheduleTrancheNotFound)?;
+        if schedule.tranches.get(index).unwrap().status
+            != crate::types::TrancheStatus::Pending
+        {
+            return Err(VaultError::ScheduleTrancheNotFound);
+        }
+
+        let tranche = schedule.tranches.get(index).unwrap();
+        let current_ledger = env.ledger().sequence();
+        if tranche.unlock_ledger > current_ledger {
+            Self::fail_disbursement_tranche(
+                &env,
+                &mut schedule,
+                index,
+                VaultError::ScheduleGateNotCleared as u32,
+                Symbol::new(&env, "ledger"),
+            );
+            return Ok(());
+        }
+        if let Some(dep_id) = tranche.depends_on_proposal {
+            match storage::get_proposal(&env, dep_id) {
+                Ok(dep) if dep.status == ProposalStatus::Executed => {}
+                _ => {
+                    Self::fail_disbursement_tranche(
+                        &env,
+                        &mut schedule,
+                        index,
+                        VaultError::ScheduleGateNotCleared as u32,
+                        Symbol::new(&env, "proposal"),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        if let Some(escrow_id) = tranche.depends_on_escrow {
+            match storage::get_escrow(&env, escrow_id) {
+                Ok(escrow) if escrow.status == crate::types::EscrowStatus::Released => {}
+                _ => {
+                    Self::fail_disbursement_tranche(
+                        &env,
+                        &mut schedule,
+                        index,
+                        VaultError::ScheduleGateNotCleared as u32,
+                        Symbol::new(&env, "escrow"),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        Self::validate_recipient(&env, &schedule.recipient)?;
+        if token::try_transfer(&env, &schedule.token, &schedule.recipient, tranche.amount).is_err()
+        {
+            Self::fail_disbursement_tranche(
+                &env,
+                &mut schedule,
+                index,
+                VaultError::InsufficientBalance as u32,
+                Symbol::new(&env, "transfer"),
+            );
+            return Ok(());
+        }
+
+        let mut executed = schedule.tranches.get(index).unwrap();
+        executed.status = crate::types::TrancheStatus::Executed;
+        schedule.tranches.set(index, executed);
+        storage::set_disbursement_schedule(&env, &schedule);
+        env.events().publish(
+            (
+                Symbol::new(&env, "disbursement_tranche_executed"),
+                schedule_id,
+            ),
+            tranche_id,
+        );
+
+        if schedule
+            .tranches
+            .iter()
+            .all(|t| t.status == crate::types::TrancheStatus::Executed)
+        {
+            Self::release_disbursement_reservation(&env, &mut schedule);
+            storage::set_disbursement_schedule(&env, &schedule);
+        }
+        Ok(())
+    }
+
+    /// Cancel a schedule and release its reservation exactly once.
+    pub fn cancel_disbursement_schedule(
+        env: Env,
+        proposer: Address,
+        schedule_id: u64,
+    ) -> Result<(), VaultError> {
+        proposer.require_auth();
+        if !Role::role_satisfies(
+            Role::Treasurer,
+            storage::get_role(&env, &proposer),
+        ) {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut schedule = storage::get_disbursement_schedule(&env, schedule_id)?;
+        if schedule.cancelled {
+            return Err(VaultError::ScheduleAlreadyCancelled);
+        }
+        schedule.cancelled = true;
+        for i in 0..schedule.tranches.len() {
+            let mut t = schedule.tranches.get(i).unwrap();
+            if t.status != crate::types::TrancheStatus::Executed {
+                t.status = crate::types::TrancheStatus::Cancelled;
+                schedule.tranches.set(i, t);
+            }
+        }
+        Self::release_disbursement_reservation(&env, &mut schedule);
+        storage::set_disbursement_schedule(&env, &schedule);
+        Ok(())
+    }
+
+    fn fail_disbursement_tranche(
+        env: &Env,
+        schedule: &mut crate::types::DisbursementSchedule,
+        index: u32,
+        code: u32,
+        reason: Symbol,
+    ) {
+        let failure = crate::types::DisbursementFailure {
+            schedule_id: schedule.id,
+            tranche_id: schedule.tranches.get(index).unwrap().id,
+            code,
+            reason: reason.clone(),
+        };
+        crate::events::emit_disbursement_tranche_failed(env, &failure);
+
+        if schedule.policy == crate::types::PartialFailPolicy::Abort {
+            for i in 0..schedule.tranches.len() {
+                let mut t = schedule.tranches.get(i).unwrap();
+                if t.status == crate::types::TrancheStatus::Pending {
+                    t.status = crate::types::TrancheStatus::Blocked;
+                    schedule.tranches.set(i, t);
+                }
+            }
+            schedule.cancelled = true;
+            Self::release_disbursement_reservation(env, schedule);
+        } else {
+            let mut t = schedule.tranches.get(index).unwrap();
+            t.status = crate::types::TrancheStatus::Failed;
+            schedule.tranches.set(index, t);
+        }
+        storage::set_disbursement_schedule(env, schedule);
+    }
+
+    fn release_disbursement_reservation(
+        env: &Env,
+        schedule: &mut crate::types::DisbursementSchedule,
+    ) {
+        if schedule.reservation_released {
+            return;
+        }
+        schedule.reservation_released = true;
+        crate::events::emit_disbursement_reservation_released(
+            env,
+            schedule.id,
+            schedule.reserved_amount,
+        );
     }
 
     /// Amend a pending proposal and require fresh re-approval.
@@ -7286,24 +7560,11 @@ impl VaultDAO {
         let max_jitter = (interval / 10) as u32;
         let effective_jitter_window = jitter_window.min(max_jitter);
 
-        // Compute deterministic jitter offset: sha256(id || creation_ledger) % jitter_window
-        // No jitter for the first payment (offset is stored but next_payment_ledger is unshifted
-        // so first execution happens promptly at creation_ledger + interval).
-        let jitter_offset = if effective_jitter_window > 0 {
-            let mut hash_input = soroban_sdk::Bytes::new(&env);
-            hash_input.append(&soroban_sdk::Bytes::from_array(&env, &id.to_le_bytes()));
-            hash_input.append(&soroban_sdk::Bytes::from_array(
-                &env,
-                &current_ledger.to_le_bytes(),
-            ));
-            let digest = env.crypto().sha256(&hash_input);
-            // Take the first 4 bytes of the hash as a u32 for modulo
-            let b = digest.to_array();
-            let raw = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            raw % effective_jitter_window
-        } else {
-            0
-        };
+        // Deterministic jitter (Issue #2225): sha256(id || creation_ledger) % window.
+        // Keepers recompute the same offset with the public helper and the stored
+        // jitter_window; the first cycle is never shifted.
+        let jitter_offset =
+            deterministic_jitter_offset(&env, id, current_ledger, effective_jitter_window);
 
         let payment = crate::RecurringPayment {
             id,
@@ -7333,6 +7594,50 @@ impl VaultDAO {
         storage::set_recurring_payment(&env, &payment);
 
         Ok(id)
+    }
+
+    /// Configure catch-up controls for a recurring payment (Issue #2225).
+    ///
+    /// `budget` is the maximum amount that may be paid by a single execution,
+    /// including catch-up cycles. It is always additionally bounded by the
+    /// vault's daily/weekly and per-token spending limits. Only a Treasurer
+    /// may change it.
+    pub fn set_recurring_catch_up_controls(
+        env: Env,
+        proposer: Address,
+        payment_id: u64,
+        budget: i128,
+        policy: crate::types::MissedCyclePolicy,
+    ) -> Result<(), VaultError> {
+        proposer.require_auth();
+        if !Role::role_satisfies(
+            Role::Treasurer,
+            storage::get_role(&env, &proposer),
+        ) {
+            return Err(VaultError::InsufficientRole);
+        }
+        if budget <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        storage::get_recurring_payment(&env, payment_id)?;
+        storage::set_recurring_catch_up_budget(&env, payment_id, budget);
+        storage::set_recurring_missed_cycle_policy(&env, payment_id, policy);
+        Ok(())
+    }
+
+    /// Read the effective catch-up controls. A payment without explicit
+    /// configuration defaults to the daily spending limit and `PayUpToBudget`.
+    pub fn get_recurring_catch_up_controls(
+        env: Env,
+        payment_id: u64,
+    ) -> Result<(i128, crate::types::MissedCyclePolicy), VaultError> {
+        storage::get_recurring_payment(&env, payment_id)?;
+        let config = storage::get_config(&env)?;
+        Ok((
+            storage::get_recurring_catch_up_budget(&env, payment_id)
+                .unwrap_or(config.daily_limit),
+            storage::get_recurring_missed_cycle_policy(&env, payment_id),
+        ))
     }
 
     // ========================================================================
@@ -8499,6 +8804,13 @@ impl VaultDAO {
         // Check spending limits for total amount
         let config = storage::get_config(&env)?;
 
+        // Issue #2225: catch-up is policy driven and capped per period. The
+        // configured budget can never lift the global spending limits.
+        let catch_up_budget = storage::get_recurring_catch_up_budget(&env, payment_id)
+            .unwrap_or(config.daily_limit)
+            .min(config.daily_limit);
+        let policy = storage::get_recurring_missed_cycle_policy(&env, payment_id);
+
         let today = storage::get_day_number(&env);
         let spent_today = storage::get_daily_spent(&env, today);
         let week = storage::get_week_number(&env);
@@ -8515,12 +8827,20 @@ impl VaultDAO {
             ));
         }
 
-        // Bounded catch-up (#1916): a long outage must not wedge the schedule
-        // with a lump sum over the budgets. Pay as many whole periods as fit
-        // within the remaining daily/weekly/token budgets instead.
-        let mut payable = total_payments;
-        if payment.amount > 0 {
-            let mut fit = total_payments;
+        // Bounded catch-up (#1916, #2225): a long outage must not wedge the
+        // schedule with a lump sum over the budgets. `Skip`/`PayOne` collapse
+        // the window to a single cycle; `PayUpToBudget` pays whole cycles up
+        // to the per-period catch-up budget, then to the spending limits.
+        let mut payable = match policy {
+            crate::types::MissedCyclePolicy::Skip
+            | crate::types::MissedCyclePolicy::PayOne => 1u64,
+            crate::types::MissedCyclePolicy::PayUpToBudget => total_payments,
+        };
+        if payable > 0 && payment.amount > 0 {
+            let mut fit = payable;
+            if policy == crate::types::MissedCyclePolicy::PayUpToBudget {
+                fit = fit.min((catch_up_budget / payment.amount).max(0) as u64);
+            }
             fit = fit.min(
                 ((config.daily_limit.saturating_sub(spent_today)) / payment.amount).max(0) as u64,
             );
@@ -8556,6 +8876,15 @@ impl VaultDAO {
             return Err(VaultError::ExceedsDailyLimit);
         }
         let total_amount = payment.amount * payable as i128;
+        if payable < total_payments {
+            crate::events::emit_recurring_catch_up_budgeted(
+                &env,
+                payment_id,
+                total_payments.min(u32::MAX as u64) as u32,
+                payable.min(u32::MAX as u64) as u32,
+                catch_up_budget,
+            );
+        }
 
         // Revalidate recipient against current whitelist/blacklist policies.
         Self::validate_recipient(&env, &payment.recipient)?;
@@ -8602,7 +8931,13 @@ impl VaultDAO {
         // Update payment schedule.
         // After the first payment (payment_count was 0), apply jitter to all subsequent cycles.
         let was_first_payment = payment.payment_count == 0;
-        let nominal_next_ledger = payment.next_payment_ledger + payable * payment.interval;
+        // Skip/PayOne deliberately discard the rest of the outage window so a
+        // later keeper call cannot replay the same burst from old ledgers.
+        let nominal_next_ledger = if policy == crate::types::MissedCyclePolicy::PayUpToBudget {
+            payment.next_payment_ledger + payable * payment.interval
+        } else {
+            current_ledger + payment.interval
+        };
         payment.next_payment_ledger = nominal_next_ledger;
         if !was_first_payment && payment.jitter_window > 0 {
             payment.next_payment_ledger = payment
@@ -12828,25 +13163,51 @@ impl VaultDAO {
     /// Verifies the signature over the proposal hash using `soroban_sdk::crypto::ed25519_verify`.
     /// Prevents replay by recording a hash of the raw signature bytes.
     ///
-    /// # Signature age
+    /// # Approval nonce (#2226)
+    /// The signed message is `SHA-256(proposal_id_le || approval_nonce_le)`,
+    /// where `approval_nonce` is the per-proposal nonce issued by
+    /// [`Self::get_proposal_approval_nonce`]. Because each proposal owns a
+    /// distinct immutable nonce, a signature minted for one proposal fails
+    /// with [`VaultError::ColdSignatureNonceMismatch`] when submitted against
+    /// any other proposal — the replay is rejected across proposals, not only
+    /// twice on the same one.
+    ///
+    /// # Signature age window
     /// `created_at_ledger` is the ledger the signature was produced against.
-    /// It is checked against `ColdSignerConfig::max_cold_sig_age_ledgers`:
-    /// replay prevention alone only stops a signature being used *twice*, it
-    /// does not stop one produced offline long ago from being used once, far
-    /// in the future, to approve a proposal that did not exist when it was
-    /// signed. Set `max_cold_sig_age_ledgers` to `0` to disable the check.
+    /// It is checked against `ColdSignerConfig::max_cold_sig_age_ledgers`
+    /// (upper bound, [`VaultError::ColdSignatureTooOld`]) and, when the
+    /// proposal's amount is at or above
+    /// `ColdSignerConfig::cold_min_age_amount_threshold`, against
+    /// `min_cold_sig_age_ledgers` (lower bound,
+    /// [`VaultError::ColdSignatureTooFresh`]). Replay prevention alone only
+    /// stops a signature being used *twice*, it does not stop one produced
+    /// offline long ago from being used once, far in the future, to approve a
+    /// proposal that did not exist when it was signed; the minimum age keeps
+    /// large outflows from being pushed through with a cold signature minted
+    /// in the same session the outflow was prepared. Either bound can be
+    /// disabled by setting its config field to `0`.
     ///
     /// # Errors
     /// - [`VaultError::ColdSignatureTooOld`] if the signature is older than
-    ///   the configured maximum age.
-    /// - [`VaultError::ColdSignatureFutureDated`] if `created_at_ledger` is
-    ///   ahead of the current ledger.
+    ///   the configured maximum age (stale).
+    /// - [`VaultError::ColdSignatureTooFresh`] if an above-threshold proposal
+    ///   is being approved with a signature younger than the configured
+    ///   minimum age.
+    /// - [`VaultError::ColdSignatureNonceMismatch`] if the approval nonce does
+    ///   not match the one issued for this proposal (replayed across
+    ///   proposals).
+    /// - [`VaultError::ColdSignatureAlreadySubmitted`] if this exact signature
+    ///   was already consumed (replayed on the same proposal).
+    /// - [`VaultError::InsufficientColdWeight`] is *not* raised here — it is
+    ///   reported by [`Self::check_cold_approval_weight`] when a proposal is
+    ///   executed without enough total cold weight.
     pub fn submit_cold_signature(
         env: Env,
         proposal_id: u64,
         signature: BytesN<64>,
         public_key: BytesN<32>,
         created_at_ledger: u32,
+        approval_nonce: u64,
     ) -> Result<(), VaultError> {
         let cold_config = storage::get_cold_signer_config(&env);
 
@@ -12854,9 +13215,25 @@ impl VaultDAO {
             return Err(VaultError::ColdSignerConfigNotSet);
         }
 
-        // Age check runs before signature verification so a stale signature is
-        // rejected on the cheapest possible path.
+        // Age checks run before signature verification so a stale or too-fresh
+        // signature is rejected on the cheapest possible path.
         Self::assert_cold_signature_age(&env, &cold_config, created_at_ledger)?;
+
+        // Minimum-age window for above-threshold amounts (#2226). A proposal
+        // that does not exist cannot be above any threshold, so the lookup
+        // simply disables the gate rather than blocking the path below.
+        let min_age = cold_config.min_cold_sig_age_ledgers;
+        let amount_threshold = cold_config.cold_min_age_amount_threshold;
+        if min_age > 0 && amount_threshold > 0 {
+            if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                if proposal.amount >= amount_threshold {
+                    let age_ledgers = (env.ledger().sequence() - created_at_ledger) as u64;
+                    if age_ledgers < min_age {
+                        return Err(VaultError::ColdSignatureTooFresh);
+                    }
+                }
+            }
+        }
 
         let mut signer_idx: Option<u32> = None;
         for (i, pk) in cold_config.cold_signers.iter().enumerate() {
@@ -12867,21 +13244,29 @@ impl VaultDAO {
         }
         let signer_idx = signer_idx.ok_or(VaultError::NotAColdSigner)?;
 
+        // Per-proposal approval nonce (#2226): binding the nonce into the
+        // signed message rejects any attempt to submit a signature that was
+        // minted for a different proposal.
+        let expected_nonce = storage::get_or_create_proposal_nonce(&env, proposal_id);
+        if approval_nonce != expected_nonce {
+            return Err(VaultError::ColdSignatureNonceMismatch);
+        }
+
         // Replay prevention: hash the raw signature bytes and check uniqueness
         let sig_hash: BytesN<32> = env.crypto().sha256(&signature.clone().to_xdr(&env)).into();
         if storage::is_cold_sig_used(&env, &sig_hash) {
             return Err(VaultError::ColdSignatureAlreadySubmitted);
         }
 
-        // Build the proposal hash as the message that was signed off-chain.
-        // We use SHA-256 over the proposal_id (little-endian u64 bytes).
-        let mut proposal_id_bytes = soroban_sdk::Bytes::new(&env);
-        proposal_id_bytes.extend_from_array(&proposal_id.to_le_bytes());
-        let _proposal_hash: BytesN<32> = env.crypto().sha256(&proposal_id_bytes).into();
+        // Build the signed message: proposal id (little-endian u64) followed by
+        // the approval nonce (little-endian u64).
+        let mut message = soroban_sdk::Bytes::new(&env);
+        message.extend_from_array(&proposal_id.to_le_bytes());
+        message.extend_from_array(&approval_nonce.to_le_bytes());
 
         // Ed25519 signature verification
         env.crypto()
-            .ed25519_verify(&public_key, &proposal_id_bytes, &signature);
+            .ed25519_verify(&public_key, &message, &signature);
 
         let signer_address = cold_config
             .cold_signer_addresses
@@ -12902,6 +13287,55 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    /// Per-proposal approval nonce for cold signatures (#2226).
+    ///
+    /// Cold signers call this once per proposal and bind the returned nonce
+    /// into their signed message. The nonce is created on first request and
+    /// never changes, so a signature carrying another proposal's nonce is
+    /// rejected with [`VaultError::ColdSignatureNonceMismatch`].
+    pub fn get_proposal_approval_nonce(env: Env, proposal_id: u64) -> u64 {
+        storage::get_or_create_proposal_nonce(&env, proposal_id)
+    }
+
+    /// Whether the proposal's amount sits at or above the cold-storage
+    /// approval gate (`cold_min_age_amount_threshold > 0` and amount at or
+    /// above it), meaning execution additionally requires cold weight.
+    fn cold_weight_required(
+        cold_config: &types::ColdSignerConfig,
+        proposal: &crate::types::Proposal,
+    ) -> bool {
+        let threshold = cold_config.cold_min_age_amount_threshold;
+        threshold > 0
+            && cold_config.cold_sig_threshold > 0
+            && proposal.amount >= threshold
+    }
+
+    /// Total cold-signature weight recorded for a proposal (#2226).
+    ///
+    /// # Errors
+    /// - [`VaultError::InsufficientColdWeight`] when the proposal's amount is
+    ///   at or above `cold_min_age_amount_threshold` and the valid cold
+    ///   signature count is below `cold_sig_threshold`. This is distinct from
+    ///   the stale (age) and replayed (nonce / used-set) submission errors:
+    ///   it reports that the *aggregate* cold weight is insufficient, not that
+    ///   one submission was malformed.
+    pub fn check_cold_approval_weight(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<u32, VaultError> {
+        let cold_config = storage::get_cold_signer_config(&env);
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        if !Self::cold_weight_required(&cold_config, &proposal) {
+            return Ok(0);
+        }
+        let valid =
+            storage::count_valid_cold_sigs(&env, proposal_id, cold_config.cold_sig_expiry);
+        if valid < cold_config.cold_sig_threshold {
+            return Err(VaultError::InsufficientColdWeight);
+        }
+        Ok(valid)
     }
 
     /// Check whether sufficient valid cold signatures exist for a proposal.
@@ -16933,6 +17367,50 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+        // Issue #2140: milestone amounts must add up to the escrow total.
+        // Backwards compatibility: legacy milestones carry no explicit amounts,
+        // so derive them from their percentages before validating the sum.
+        let mut milestone_amounts = Vec::new(&env);
+        let mut total_milestone_amount: i128 = 0;
+        let mut any_explicit = false;
+        for i in 0..milestones.len() {
+            if let Some(m) = milestones.get(i) {
+                if m.amount < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                if m.amount > 0 {
+                    any_explicit = true;
+                }
+                let allocation = if any_explicit {
+                    m.amount
+                } else {
+                    amount.saturating_mul(m.percentage as i128) / 100
+                };
+                milestone_amounts.push_back(allocation);
+                total_milestone_amount = total_milestone_amount.saturating_add(allocation);
+            }
+        }
+        if total_milestone_amount != amount {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "escrow_milestone_amount_mismatch"),
+                    amount,
+                ),
+                total_milestone_amount,
+            );
+            return Err(VaultError::InvalidAmount);
+        }
+        if any_explicit {
+            for i in 0..milestones.len() {
+                if let Some(mut m) = milestones.get(i) {
+                    if let Some(a) = milestone_amounts.get(i) {
+                        m.amount = a;
+                        milestones.set(i, m);
+                    }
+                }
+            }
+        }
+
         // The designated arbitrator must be neutral: it cannot be the funder
         // or the recipient, otherwise it could trivially rule in its own favor.
         if arbitrator == funder || arbitrator == recipient {
@@ -16971,6 +17449,7 @@ impl VaultDAO {
         storage::set_escrow(&env, &escrow);
         storage::add_funder_escrow(&env, &funder, escrow_id);
         storage::add_recipient_escrow(&env, &recipient, escrow_id);
+        storage::add_escrow_for_arbitrator(&env, &arbitrator, escrow_id);
 
         events::emit_escrow_created(
             &env,
@@ -17452,6 +17931,49 @@ impl VaultDAO {
     /// Get all escrows for a recipient
     pub fn get_recipient_escrows(env: Env, recipient: Address) -> Vec<u64> {
         storage::get_recipient_escrows(&env, &recipient)
+    }
+
+    /// Return all escrow IDs assigned to an arbitrator (Issue #2139).
+    pub fn get_escrows_by_arbitrator(env: Env, arbitrator: Address) -> Vec<u64> {
+        storage::get_escrows_by_arbitrator(&env, &arbitrator)
+    }
+
+    /// Replace an escrow's designated arbitrator (Admin only, Issue #2141).
+    pub fn replace_escrow_arbitrator(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        new_arbitrator: Address,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        if storage::get_role(&env, &caller) != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        if escrow.status.is_terminal() {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if new_arbitrator == escrow.funder
+            || new_arbitrator == escrow.recipient
+            || new_arbitrator == escrow.arbitrator
+        {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let old_arbitrator = escrow.arbitrator.clone();
+        storage::remove_escrow_for_arbitrator(&env, &old_arbitrator, escrow_id);
+        storage::add_escrow_for_arbitrator(&env, &new_arbitrator, escrow_id);
+        escrow.arbitrator = new_arbitrator.clone();
+        storage::set_escrow(&env, &escrow);
+
+        events::emit_escrow_arbitrator_changed(
+            &env,
+            escrow_id,
+            &old_arbitrator,
+            &new_arbitrator,
+        );
+        Ok(())
     }
 
     // ========================================================================
@@ -21836,10 +22358,23 @@ impl VaultDAO {
     // Contract Upgrade Functions
     // ========================================================================
 
+    /// Render a WASM hash as lowercase hex for human-readable proposal metadata.
+    fn wasm_hash_hex(env: &Env, wasm_hash: &BytesN<32>) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let bytes = wasm_hash.to_array();
+        let mut chars = [0u8; 64];
+        for (index, byte) in bytes.iter().enumerate() {
+            chars[index * 2] = HEX[(byte >> 4) as usize];
+            chars[index * 2 + 1] = HEX[(byte & 0x0f) as usize];
+        }
+        String::from_str(env, core::str::from_utf8(&chars).unwrap_or(""))
+    }
+
     /// Propose a contract upgrade with a new WASM hash.
     ///
-    /// Upgrade proposals require all signers to approve and have a mandatory timelock.
-    /// Only one upgrade proposal can be active at a time.
+    /// The hash and the earliest permitted apply ledger are pinned immediately,
+    /// so approval cannot be transferred to different bytecode later. Upgrade
+    /// proposals require all signers to approve and only one may be pending.
     pub fn propose_upgrade(
         env: Env,
         admin: Address,
@@ -21855,21 +22390,23 @@ impl VaultDAO {
             return Err(VaultError::UpgradeUnauthorized);
         }
 
-        // Check if there's already an active upgrade proposal
-        let active_proposals = Self::list_proposal_ids(env.clone(), 0, 1000); // Get all proposals
-        for i in 0..active_proposals.len() {
-            let pid = active_proposals.get(i).unwrap();
-            if let Ok(proposal) = storage::get_proposal(&env, pid) {
-                if proposal.memo == Symbol::new(&env, "upgrade")
-                    && (proposal.status == ProposalStatus::Pending
-                        || proposal.status == ProposalStatus::Approved)
-                {
-                    return Err(VaultError::UpgradeUnauthorized);
-                }
-            }
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
+        // A single pinned record replaces the old linear proposal scan: one
+        // pending upgrade at a time, with no unbounded iteration.
+        if storage::get_pending_upgrade(&env).is_some() {
+            return Err(VaultError::UpgradeUnauthorized);
+        }
+
+        let upgrade_delay = config.upgrade_timelock_delay;
+        if upgrade_delay < MIN_UPGRADE_TIMELOCK {
+            return Err(VaultError::UpgradeTimelockTooShort);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
+        let earliest_apply_ledger = current_ledger.saturating_add(upgrade_delay);
         let proposal_id = storage::increment_proposal_id(&env);
 
         // Create upgrade proposal with special properties
@@ -21884,7 +22421,7 @@ impl VaultDAO {
                 let mut meta = Map::new(&env);
                 meta.set(
                     Symbol::new(&env, "wasm_hash"),
-                    String::from_str(&env, "placeholder"),
+                    Self::wasm_hash_hex(&env, &new_wasm_hash),
                 );
                 meta
             },
@@ -21898,8 +22435,8 @@ impl VaultDAO {
             conditions: Vec::new(&env),
             condition_logic: ConditionLogic::And,
             created_at: current_ledger,
-            expires_at: current_ledger + (config.timelock_delay * 10), // Longer expiry for upgrades
-            unlock_ledger: current_ledger + config.timelock_delay,     // Mandatory timelock
+            expires_at: current_ledger.saturating_add(upgrade_delay.saturating_mul(10)),
+            unlock_ledger: earliest_apply_ledger,
             execution_time: None,
             execution_window_ledgers: 0,
             insurance_amount: 0,
@@ -21922,6 +22459,15 @@ impl VaultDAO {
             rejection_votes: Vec::new(&env),
         };
 
+        storage::set_pending_upgrade(
+            &env,
+            &PendingUpgrade {
+                proposal_id,
+                wasm_hash: new_wasm_hash.clone(),
+                earliest_apply_ledger,
+                proposer: admin.clone(),
+            },
+        );
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
         storage::create_audit_entry(&env, AuditAction::ProposeTransfer, &admin, proposal_id);
@@ -21935,69 +22481,132 @@ impl VaultDAO {
             new_wasm_hash.to_array().len() as i128,
             0,
         );
+        events::emit_upgrade_proposed(
+            &env,
+            proposal_id,
+            &admin,
+            &new_wasm_hash,
+            earliest_apply_ledger,
+        );
 
         Ok(proposal_id)
     }
 
-    /// Execute a contract upgrade proposal.
+    /// Execute a pinned contract upgrade proposal.
     ///
-    /// Requires all signers to have approved and timelock to have expired.
+    /// The caller must supply the same WASM hash that was pinned at proposal
+    /// time. This makes a hash substitution between approval and execution
+    /// impossible: the contract only ever deploys the pinned hash.
     pub fn execute_upgrade(
         env: Env,
         executor: Address,
         proposal_id: u64,
+        expected_wasm_hash: BytesN<32>,
     ) -> Result<(), VaultError> {
         executor.require_auth();
 
-        let config = storage::get_config(&env)?;
-        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
 
-        // Verify this is an upgrade proposal
+        let config = storage::get_config(&env)?;
+        let pending = storage::get_pending_upgrade(&env).ok_or(VaultError::UpgradeNotFound)?;
+        if pending.proposal_id != proposal_id {
+            return Err(VaultError::UpgradeNotFound);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
         if proposal.memo != Symbol::new(&env, "upgrade") {
             return Err(VaultError::ProposalNotFound);
         }
-
-        // Verify proposal is approved
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
 
-        // Check timelock
         let current_ledger = env.ledger().sequence() as u64;
-        if current_ledger < proposal.unlock_ledger {
+        if current_ledger < pending.earliest_apply_ledger
+            || current_ledger < proposal.unlock_ledger
+        {
             return Err(VaultError::UpgradeTimelockActive);
         }
 
-        // Verify all signers have approved (upgrade requires unanimous consent)
         if proposal.approvals.len() != config.signers.len() {
             return Err(VaultError::UpgradeUnauthorized);
         }
 
-        // Extract WASM hash from metadata
-        // For this implementation, we'll use the proposal amount field to store a reference
-        // In a production system, you'd want a more robust storage mechanism
-        let wasm_hash_key = Symbol::new(&env, "wasm_hash");
-        let _wasm_hash_str: String = proposal
-            .metadata
-            .get(wasm_hash_key)
-            .ok_or(VaultError::ProposalNotFound)?;
+        if expected_wasm_hash != pending.wasm_hash {
+            return Err(VaultError::UpgradeHashMismatch);
+        }
 
-        // For now, create a dummy WASM hash - in production this would be properly stored
-        let wasm_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+        // Deploy exactly the hash signers approved. No placeholder or dummy hash.
+        env.deployer()
+            .update_current_contract_wasm(pending.wasm_hash.clone());
 
-        // Perform the upgrade
-        env.deployer().update_current_contract_wasm(wasm_hash);
-
-        // Mark proposal as executed
         proposal.status = ProposalStatus::Executed;
         storage::pending_expiry_index_remove(&env, proposal_id);
         storage::set_proposal(&env, &proposal);
+        storage::clear_pending_upgrade(&env);
         storage::create_audit_entry(&env, AuditAction::ExecuteProposal, &executor, proposal_id);
 
-        // Re-emit initialized event to signal new contract version
+        events::emit_upgrade_applied(
+            &env,
+            proposal_id,
+            &pending.wasm_hash,
+            current_ledger,
+        );
         events::emit_initialized(&env, &executor, config.threshold);
 
         Ok(())
+    }
+
+    /// Cancel a pinned upgrade before it is applied (Issue #2063).
+    ///
+    /// Only an Admin may cancel. The proposal is marked `Cancelled` and the
+    /// pinned hash/ledger record is removed, so `execute_upgrade` can no longer
+    /// succeed for that proposal.
+    pub fn cancel_upgrade(
+        env: Env,
+        admin: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::UpgradeUnauthorized);
+        }
+
+        let pending = storage::get_pending_upgrade(&env).ok_or(VaultError::UpgradeNotFound)?;
+        if pending.proposal_id != proposal_id {
+            return Err(VaultError::UpgradeNotFound);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Pending
+            && proposal.status != ProposalStatus::Approved
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        proposal.status = ProposalStatus::Cancelled;
+        storage::pending_expiry_index_remove(&env, proposal_id);
+        storage::set_proposal(&env, &proposal);
+        storage::remove_from_priority_queue(
+            &env,
+            proposal.priority.clone() as u32,
+            proposal_id,
+        );
+        storage::clear_pending_upgrade(&env);
+        storage::create_audit_entry(&env, AuditAction::CancelProposal, &admin, proposal_id);
+
+        events::emit_upgrade_cancelled(&env, proposal_id, &admin, &pending.wasm_hash);
+
+        Ok(())
+    }
+
+    /// Read the currently pinned upgrade, if one is awaiting execution.
+    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        storage::get_pending_upgrade(&env)
     }
 
     /// Migrate stored data after a contract upgrade (issue #1748).
@@ -24701,6 +25310,53 @@ impl VaultDAO {
 
         events::emit_vault_paused(&env, &caller, &cause);
         Ok(())
+    }
+
+    /// Emergency entrypoint: pause every active stream (Issue #2138).
+    ///
+    /// Requires an emergency signer or an Admin. Returns the number of
+    /// streams that were paused and records the reason in the event stream.
+    pub fn pause_all_streams(env: Env, caller: Address) -> Result<u32, VaultError> {
+        caller.require_auth();
+
+        let is_emergency_signer = storage::get_emergency_signers(&env).contains(&caller);
+        let is_admin = storage::get_role(&env, &caller) == Role::Admin;
+        if !is_emergency_signer && !is_admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let reason = Symbol::new(&env, "emergency_pause");
+        let now = env.ledger().timestamp();
+        let mut paused = 0u32;
+
+        for stream_id in 1..storage::get_next_stream_id(&env) {
+            let Ok(mut stream) = storage::get_streaming_payment(&env, stream_id) else {
+                continue;
+            };
+            if stream.status != StreamStatus::Active {
+                continue;
+            }
+
+            let effective_now = if now > stream.end_timestamp {
+                stream.end_timestamp
+            } else {
+                now
+            };
+            stream.accumulated_seconds += effective_now.saturating_sub(stream.last_update_timestamp);
+            stream.last_update_timestamp = now;
+            stream.status = StreamStatus::Paused;
+            storage::set_streaming_payment(&env, &stream);
+            events::emit_stream_status_updated(
+                &env,
+                stream_id,
+                StreamStatus::Paused as u32,
+                &caller,
+            );
+            paused += 1;
+        }
+
+        events::emit_all_streams_paused(&env, paused, &reason, &caller);
+        Ok(paused)
     }
 
     /// Unpause the vault (emergency signers only)

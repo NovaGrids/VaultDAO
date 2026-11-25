@@ -321,6 +321,20 @@ impl From<ConfigV1> for Config {
     }
 }
 
+/// A pinned upgrade awaiting its earliest permitted apply ledger (Issue #2063).
+///
+/// Stored as a singleton so a proposal cannot be swapped for different code
+/// after signers approve it. `earliest_apply_ledger` is fixed at proposal time
+/// from `Config::upgrade_timelock_delay`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingUpgrade {
+    pub proposal_id: u64,
+    pub wasm_hash: BytesN<32>,
+    pub earliest_apply_ledger: u64,
+    pub proposer: Address,
+}
+
 /// Signer participation scoring thresholds (Issue #1093).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -922,6 +936,21 @@ pub enum HolidayBehavior {
 pub enum RetryBackoffStrategy {
     Linear = 0,
     Exponential = 1,
+}
+
+/// Policy applied when one or more recurring cycles were missed (Issue #2225).
+///
+/// - `Skip`: discard missed cycles and execute only the current cycle.
+/// - `PayOne`: execute exactly one cycle for the whole catch-up window.
+/// - `PayUpToBudget`: execute as many whole cycles as the per-period catch-up
+///   budget and the vault spending limits allow.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MissedCyclePolicy {
+    Skip = 0,
+    PayOne = 1,
+    PayUpToBudget = 2,
 }
 
 /// Sorted list of administratively maintained holiday ledgers.
@@ -2183,6 +2212,8 @@ impl EscrowStatus {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Milestone {
+    /// Amount released when this milestone completes; must sum to the escrow total
+    pub amount: i128,
     /// Unique milestone ID
     pub id: u64,
     /// Percentage of total escrow amount (0-100)
@@ -2924,6 +2955,74 @@ pub struct MultiPhaseProposal {
 }
 
 // ============================================================================
+// Issue #2224: Phased disbursement schedules with dependency gates
+// ============================================================================
+
+/// Status of a single disbursement tranche.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TrancheStatus {
+    Pending = 0,
+    Executed = 1,
+    Blocked = 2,
+    Failed = 3,
+    Cancelled = 4,
+}
+
+/// What to do when a tranche fails and later tranches remain.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum PartialFailPolicy {
+    /// Abort the remaining schedule and release its reservation.
+    Abort = 0,
+    /// Mark the failed tranche and let independent tranches continue.
+    Continue = 1,
+}
+
+/// One tranche of a phased disbursement schedule.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisbursementTranche {
+    pub id: u32,
+    pub amount: i128,
+    pub unlock_ledger: u64,
+    /// Proposal that must be `Executed` before this tranche can pay.
+    pub depends_on_proposal: Option<u64>,
+    /// Escrow that must be `Released` before this tranche can pay.
+    pub depends_on_escrow: Option<u64>,
+    pub status: TrancheStatus,
+}
+
+/// A budgeted, dependency-gated disbursement schedule.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisbursementSchedule {
+    pub id: u64,
+    pub proposer: Address,
+    pub recipient: Address,
+    pub token: Address,
+    pub tranches: Vec<DisbursementTranche>,
+    pub policy: PartialFailPolicy,
+    /// Total amount reserved at creation; released exactly once on
+    /// completion, abort, or cancellation.
+    pub reserved_amount: i128,
+    pub reservation_released: bool,
+    pub cancelled: bool,
+}
+
+/// Structured failure emitted when a tranche cannot execute.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisbursementFailure {
+    pub schedule_id: u64,
+    pub tranche_id: u32,
+    pub code: u32,
+    pub reason: Symbol,
+}
+
+// ============================================================================
 // Issue #1097: Cross-Contract Capability Tokens
 // ============================================================================
 
@@ -3218,6 +3317,20 @@ pub struct ColdSignerConfig {
     /// signed. A value of `0` disables the check, preserving the previous
     /// behaviour for vaults that have not opted in.
     pub max_cold_sig_age_ledgers: u64,
+    /// Minimum age, in ledgers, a cold signature must have when the proposal
+    /// it approves moves an amount at or above
+    /// `cold_min_age_amount_threshold` (#2226).
+    ///
+    /// Large outflows mix hot approvals with cold storage; a too-fresh cold
+    /// signature on a large transfer suggests the offline device was used in
+    /// the same session the outflow was prepared, which is exactly the
+    /// pattern an age window exists to break. `0` disables the minimum-age
+    /// gate, preserving the previous behaviour for vaults that have not
+    /// opted in.
+    pub min_cold_sig_age_ledgers: u64,
+    /// Amount (in the proposal's token, smallest unit) at or above which the
+    /// minimum cold-signature age gate applies. `0` disables the gate.
+    pub cold_min_age_amount_threshold: i128,
 }
 
 impl ColdSignerConfig {
@@ -3228,6 +3341,10 @@ impl ColdSignerConfig {
             cold_sig_threshold: 0,
             cold_sig_expiry: 17280,            // ~1 day at 5 s/ledger
             max_cold_sig_age_ledgers: 120_960, // ~7 days at 5 s/ledger
+            // Opt-in: below-threshold (default) vaults keep the exact
+            // previous approval path until an admin configures the gate.
+            min_cold_sig_age_ledgers: 0,
+            cold_min_age_amount_threshold: 0,
         }
     }
 }

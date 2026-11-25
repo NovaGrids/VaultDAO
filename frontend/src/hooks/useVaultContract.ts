@@ -486,8 +486,47 @@ export const useVaultContract = () => {
         const simulation = await server.simulateTransaction(tx);
         if (SorobanRpc.Api.isSimulationError(simulation)) throwSimulationError(simulation.error, "Simulation failed");
         const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
-        const signedXdr = await signTransaction(preparedTx.toXDR(), { network: env.stellarNetwork });
-        const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, env.networkPassphrase));
+        const signedXdrEnvelope = await signTransaction(preparedTx.toXDR(), { network: env.stellarNetwork });
+
+        // Persist the signed XDR before attempting submission so that a
+        // connectivity loss between signing and sending does not silently
+        // drop the transaction.  The entry is removed on confirmation.
+        let queueEntryId: string | null = null;
+        try {
+            const { enqueueSignedTransaction } = await import('../utils/offlineQueue');
+            // Map the Soroban function name to a typed OfflineActionType
+            const actionTypeMap: Record<string, import('../utils/offlineQueue').OfflineActionType> = {
+                approve_proposal: 'approve_proposal',
+                execute_proposal: 'execute_proposal',
+                reject_proposal:  'reject_proposal',
+                propose_transfer: 'propose_transfer',
+            };
+            const actionType = actionTypeMap[functionName] ?? 'propose_transfer';
+            queueEntryId = await enqueueSignedTransaction(
+                _addr,
+                actionType,
+                { functionName },
+                signedXdrEnvelope as string,
+            );
+        } catch {
+            // Queue persistence is best-effort — a failure must not block submission
+        }
+
+        const response = await server.sendTransaction(
+            TransactionBuilder.fromXDR(signedXdrEnvelope as string, env.networkPassphrase),
+        );
+
+        // Confirm and remove the queue entry now that the network accepted it
+        if (queueEntryId) {
+            try {
+                const { updateActionStatus, removeQueuedAction } = await import('../utils/offlineQueue');
+                await updateActionStatus(queueEntryId, 'confirmed', response.hash);
+                await removeQueuedAction(queueEntryId);
+            } catch {
+                // Best-effort cleanup
+            }
+        }
+
         return response.hash;
     };
 
@@ -1756,6 +1795,17 @@ const exportSignatures = useCallback(async (proposalId: number) => {
         updateSpendingLimits,
         getProposals,
         assertReady,
+        /**
+         * Submit a pre-signed XDR envelope to the Soroban RPC.
+         * Used by the offline queue replay path so transactions can be
+         * resubmitted without re-signing.
+         */
+        submitSignedXdr: async (signedXdrEnvelope: string): Promise<string> => {
+            const response = await server.sendTransaction(
+                TransactionBuilder.fromXDR(signedXdrEnvelope, env.networkPassphrase),
+            );
+            return response.hash;
+        },
         /**
          * Most recent ledger sequence observed by the subscription, or null
          * before the first one arrives. Consumers can key on it to re-render

@@ -1,9 +1,9 @@
-import type { Database } from 'better-sqlite3';
+import type { DatabaseSync } from "node:sqlite";
 
 export interface Migration {
   id: string;
-  up: (db: Database) => void;
-  down: (db: Database) => void;
+  up: (db: DatabaseSync) => void;
+  down: (db: DatabaseSync) => void;
 }
 
 /**
@@ -13,7 +13,7 @@ export interface Migration {
 export const migrations: Migration[] = [
   {
     id: '001_initial_schema',
-    up: (db: Database) => {
+    up: (db: DatabaseSync) => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS events (
           id TEXT PRIMARY KEY,
@@ -26,7 +26,7 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_events_created_at ON events (created_at);
       `);
     },
-    down: (db: Database) => {
+    down: (db: DatabaseSync) => {
       db.exec(`
         DROP INDEX IF EXISTS idx_events_created_at;
         DROP INDEX IF EXISTS idx_events_type;
@@ -38,7 +38,7 @@ export const migrations: Migration[] = [
 
 const MIGRATIONS_TABLE = 'schema_migrations';
 
-function ensureMigrationsTable(db: Database): void {
+function ensureMigrationsTable(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
       id TEXT PRIMARY KEY,
@@ -47,7 +47,7 @@ function ensureMigrationsTable(db: Database): void {
   `);
 }
 
-function getAppliedMigrationIds(db: Database): Set<string> {
+function getAppliedMigrationIds(db: DatabaseSync): Set<string> {
   const rows = db
     .prepare(`SELECT id FROM ${MIGRATIONS_TABLE} ORDER BY id ASC`)
     .all() as Array<{ id: string }>;
@@ -59,7 +59,12 @@ function getAppliedMigrationIds(db: Database): Set<string> {
  * transaction and recorded in the `schema_migrations` table. Already-applied
  * migrations are skipped.
  */
-export function runMigrations(db: Database): void {
+export interface MigrationResult {
+  applied: string[];
+  currentVersion: string | null;
+}
+
+export function runMigrations(db: DatabaseSync): MigrationResult {
   ensureMigrationsTable(db);
 
   const applied = getAppliedMigrationIds(db);
@@ -67,25 +72,38 @@ export function runMigrations(db: Database): void {
     `INSERT INTO ${MIGRATIONS_TABLE} (id, applied_at) VALUES (?, ?)`,
   );
 
+  const appliedNow: string[] = [];
   for (const migration of migrations) {
     if (applied.has(migration.id)) {
       continue;
     }
 
-    const apply = db.transaction(() => {
+    // node:sqlite has no transaction helper; wrap the migration body in an
+    // explicit transaction so a failed `up` cannot leave a half-applied
+    // schema with its record still unwritten.
+    db.exec("BEGIN");
+    try {
       migration.up(db);
       recordMigration.run(migration.id, Date.now());
-    });
-
-    apply();
+      db.exec("COMMIT");
+      appliedNow.push(migration.id);
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
+
+  return {
+    applied: appliedNow,
+    currentVersion: appliedNow.at(-1) ?? [...applied].at(-1) ?? null,
+  };
 }
 
 /**
  * Rolls back the most recently applied migration. Returns the id of the
  * rolled-back migration, or `null` if there are no applied migrations.
  */
-export function rollbackLastMigration(db: Database): string | null {
+export function rollbackLastMigration(db: DatabaseSync): string | null {
   ensureMigrationsTable(db);
 
   const last = db
@@ -105,11 +123,14 @@ export function rollbackLastMigration(db: Database): string | null {
     );
   }
 
-  const rollback = db.transaction(() => {
+  db.exec("BEGIN");
+  try {
     migration.down(db);
     db.prepare(`DELETE FROM ${MIGRATIONS_TABLE} WHERE id = ?`).run(last.id);
-  });
-
-  rollback();
+    db.exec("COMMIT");
+  } catch (rollbackError) {
+    db.exec("ROLLBACK");
+    throw rollbackError;
+  }
   return last.id;
 }
