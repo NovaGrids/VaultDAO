@@ -688,6 +688,8 @@ mod test_stream_pause_ttl;
 #[cfg(test)]
 mod test_pause_all_streams_2138;
 #[cfg(test)]
+mod test_escrows_by_arbitrator_2139;
+#[cfg(test)]
 mod test_stream_invariants_2055;
 #[cfg(test)]
 mod test_swap_twap_2057;
@@ -16960,6 +16962,7 @@ impl VaultDAO {
         storage::set_escrow(&env, &escrow);
         storage::add_funder_escrow(&env, &funder, escrow_id);
         storage::add_recipient_escrow(&env, &recipient, escrow_id);
+        storage::add_escrow_for_arbitrator(&env, &arbitrator, escrow_id);
 
         events::emit_escrow_created(
             &env,
@@ -17441,6 +17444,11 @@ impl VaultDAO {
     /// Get all escrows for a recipient
     pub fn get_recipient_escrows(env: Env, recipient: Address) -> Vec<u64> {
         storage::get_recipient_escrows(&env, &recipient)
+    }
+
+    /// Return all escrow IDs assigned to an arbitrator (Issue #2139).
+    pub fn get_escrows_by_arbitrator(env: Env, arbitrator: Address) -> Vec<u64> {
+        storage::get_escrows_by_arbitrator(&env, &arbitrator)
     }
 
     // ========================================================================
