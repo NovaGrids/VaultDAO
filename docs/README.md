@@ -61,6 +61,7 @@ Hands-on how-tos for building and operating features.
 - [Backend deployment](guides/backend/DEPLOYMENT.md)
 - [Backend roadmap](guides/backend/ROADMAP.md)
 - [Backend integration tests](guides/backend/INTEGRATION_TESTS.md)
+- [Encrypted notification channels](guides/backend/ENCRYPTED_NOTIFICATION_CHANNELS.md)
 - [Contract testnet integration](guides/contracts/TESTNET_INTEGRATION.md)
 
 ## Reference
