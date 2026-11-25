@@ -1194,6 +1194,92 @@ simply narrow the accepted method names.
 
 ---
 
+## Multi-Vault Sessions, Caching & Retry Budget
+
+Dashboards and bots frequently read several vaults on several networks. `VaultSessionManager`
+keeps each `network + contractId` pair isolated, caches read footprints for a bounded TTL,
+and routes every retryable call through one backoff budget.
+
+```typescript
+import {
+  buildOptions,
+  getVaultMetrics,
+  proposeTransfer,
+  RetryBudgetExhaustedError,
+  VaultSessionManager,
+} from "@vaultdao/sdk";
+
+const sessions = new VaultSessionManager({
+  ttlMs: 15_000,               // cached read footprint lifetime
+  maxRetries: 3,               // retries after the initial attempt
+  baseDelayMs: 100,            // exponential backoff base
+  maxDelayMs: 2_000,
+  retryBudgetMs: 10_000,       // total wall-clock budget, including waits
+  onRetry: ({ method, retry, delayMs }) =>
+    console.warn(`${method}: retry ${retry} in ${delayMs}ms`),
+  onCacheHit: ({ method, source }) =>
+    console.debug(`${method}: served from ${source}`),
+});
+
+const treasury = sessions.getSession("testnet", "CXXXX...");
+const opts = buildOptions("testnet", "CXXXX...");
+
+const metrics = await treasury.read(
+  { method: "get_vault_metrics", params: [], footprint: ["metrics"] },
+  () => getVaultMetrics(opts)
+);
+
+await treasury.write(
+  {
+    method: "propose_transfer",
+    params: [recipient, amount],
+    idempotent: true,          // only when replay is safe
+    idempotencyKey: "transfer-42",
+    invalidates: ["metrics"],  // footprint keys to drop on success
+  },
+  () => proposeTransfer(recipient, amount, caller, opts)
+);
+```
+
+| API | Purpose |
+| --- | --- |
+| `getSession(network, contractId)` / `session(...)` | Get an isolated `VaultSession`; equal keys share one cache. |
+| `session.read(request, loader)` | Read through the TTL cache; coalesces concurrent loads and emits `onCacheHit`. |
+| `session.write(request, operation)` | Execute through the shared retry budget, then invalidate affected footprints. |
+| `session.invalidate({ method?, params?, footprint? })` | Drop selected cached reads. |
+| `session.stats()` / `manager.stats()` | Cache hits, misses, writes, retries, evictions and session count. |
+| `makeSessionKey(network, contractId)` | Stable `network:contractId` key. |
+
+### Idempotent-write guidance
+
+A retryable transport failure on a write is **not** replayed by default. If the write is not
+marked `idempotent`, the manager throws a typed `RetryBudgetExhaustedError` with
+`reason === "non-idempotent-write"` and guidance to reconcile on-chain state before replaying.
+Reads are always safe to retry. Writes such as `set_*`, `update_*`, `cancel_*` and `pause_*`
+are detected as idempotent heuristically, but an explicit `idempotent` flag is preferred when
+replay semantics are known.
+
+```typescript
+import { RetryBudgetExhaustedError } from "@vaultdao/sdk";
+
+try {
+  await treasury.write({ method: "propose_transfer" }, () => submit());
+} catch (error) {
+  if (error instanceof RetryBudgetExhaustedError) {
+    console.error(error.reason, error.guidance);
+    // Verify whether the transaction landed before offering a retry.
+  }
+}
+```
+
+`onRetry` fires once per scheduled backoff and receives the session key, attempt number,
+delay, elapsed time and remaining budget. Telemetry callbacks that throw are ignored so they
+cannot change retry behaviour. Both clock and sleep are injectable (`now`, `sleep`, `random`),
+which makes TTL and backoff logic deterministic in tests. See
+[`examples/session-manager.ts`](./examples/session-manager.ts) for a runnable walkthrough.
+
+---
+
 ## Error Handling
 
 The SDK provides structured error handling through `VaultError` and `parseError()`.
@@ -1465,6 +1551,7 @@ Working example scripts are in the [`examples/`](./examples/) directory:
 | [`lock-tokens.ts`](./examples/lock-tokens.ts) | Lock, extend and unlock tokens for voting power |
 | [`create-escrow.ts`](./examples/create-escrow.ts) | Milestone escrow: fund, complete, release, dispute |
 | [`funding-round.ts`](./examples/funding-round.ts) | Funding round lifecycle: propose, approve, verify, release |
+| [`session-manager.ts`](./examples/session-manager.ts) | Multi-vault sessions: cached reads, shared retries, typed exhaustion |
 
 Run any example:
 

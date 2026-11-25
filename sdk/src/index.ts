@@ -342,3 +342,38 @@ export type {
   CacheStats,
   CacheMetrics,
 } from "./cache";
+
+// Multi-vault sessions: cached read footprints + shared retry budget (#2065)
+export type {
+  SessionKey,
+  SessionIdentity,
+  ReadFootprint,
+  ReadResult,
+  SessionRequest,
+  ReadRequest,
+  WriteRequest,
+  BoundReadRequest,
+  BoundWriteRequest,
+  SessionEventBase,
+  CacheHitEvent,
+  RetryDecisionContext,
+  RetryEvent,
+  RetryExhaustionReason,
+  RetryBudgetExhaustedErrorInit,
+  SessionManagerOptions,
+  SessionStats,
+  SessionManagerStats,
+  SessionSummary,
+  ReadLoader,
+} from "./session-manager";
+export {
+  VaultSession,
+  VaultSessionManager,
+  SessionManager,
+  RetryBudgetExhaustedError,
+  RetryExhaustedError,
+  makeSessionKey,
+  sessionKey,
+  isIdempotentMethod,
+  isRetryableError,
+} from "./session-manager";

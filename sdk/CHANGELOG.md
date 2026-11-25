@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-vault session manager (#2065):** `VaultSessionManager` isolates state
+  by network + contract id, caches read footprints with a TTL, coalesces
+  in-flight reads, and applies one bounded exponential-backoff budget to all
+  reads and writes. `onRetry`/`onCacheHit` callbacks, injectable clock/sleep,
+  `RetryBudgetExhaustedError`, idempotent-write guidance, documentation and an
+  example are included.
+
 - **Full governance surface (#2064):** public bindings for vote variants
   (`abstainProposal`, `changeVote`, `vetoProposal`, `cancelProposal`, `amendProposal`),
   emergency pause/unpause, insurance claims, staking, recipient whitelist, batch
