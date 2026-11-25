@@ -54,6 +54,31 @@ pub(crate) const REP_EXEC_APPROVER: u32 = 5;
 pub(crate) const REP_REJECTION_PENALTY: u32 = 20;
 pub(crate) const REP_APPROVAL_BONUS: u32 = 2;
 
+/// Deterministic jitter offset shared by schedule creation and keeper tooling
+/// (Issue #2225). `sha256(id || creation_ledger)` gives a stable value that
+/// any keeper can recompute from public schedule state, and `window` is
+/// already capped at 10% of the interval by `schedule_payment`.
+pub(crate) fn deterministic_jitter_offset(
+    env: &Env,
+    payment_id: u64,
+    creation_ledger: u64,
+    window: u32,
+) -> u32 {
+    if window == 0 {
+        return 0;
+    }
+    let mut hash_input = soroban_sdk::Bytes::new(env);
+    hash_input.append(&soroban_sdk::Bytes::from_array(env, &payment_id.to_le_bytes()));
+    hash_input.append(&soroban_sdk::Bytes::from_array(
+        env,
+        &creation_ledger.to_le_bytes(),
+    ));
+    let digest = env.crypto().sha256(&hash_input);
+    let bytes = digest.to_array();
+    let raw = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    raw % window
+}
+
 /// Compute which registered addresses have `NotificationPrefs` that match
 /// `event_type` and `amount`, taking quiet hours into account.
 ///

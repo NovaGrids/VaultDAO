@@ -31,6 +31,7 @@ import {
 } from "../../health/metrics.registry.js";
 import type { BackoffOptions } from "../../recurring/backoff.js";
 import type { SqliteLeasedJobQueue } from "../leased-queue.js";
+import { KeeperFence } from "./keeper-fence.js";
 
 const logger = createLogger("due-payments-job");
 
@@ -107,6 +108,10 @@ export function createDuePaymentsScheduledJob(
     backoffOptions?: BackoffOptions;
     queue?: SqliteLeasedJobQueue;
     vaultId?: string;
+    /** Shared fence store; when supplied, only one keeper can trigger a due payment. */
+    fence?: KeeperFence;
+    keeperId?: string;
+    fenceTtlMs?: number;
   } = {},
 ): ScheduledJob {
   const jitterWindowMax = options.jitterWindowMax ?? 10;
@@ -153,6 +158,23 @@ export function createDuePaymentsScheduledJob(
       metricsRegistry?.setGauge(DUE_PAYMENT_BATCH_SIZE_GAUGE, toProcess.length);
 
       for (const { payment, trigger_reason } of toProcess) {
+        const fenceKey = `${options.vaultId ?? "vault"}:${payment.paymentId}:${payment.nextPaymentLedger}`;
+        const lease = options.fence
+          ? options.fence.tryAcquire(
+              fenceKey,
+              options.keeperId ?? "keeper",
+              options.fenceTtlMs ?? 60_000,
+            )
+          : null;
+        if (options.fence && !lease) {
+          logger.debug("fenced out of due payment", {
+            paymentId: payment.paymentId,
+            keeperId: options.keeperId ?? "keeper",
+            fenceKey,
+          });
+          continue;
+        }
+
         // Mark as triggered before publishing to prevent re-trigger on partial failures
         idempotencySet.add(payment.paymentId);
 
@@ -223,12 +245,23 @@ export function createDuePaymentsScheduledJob(
           };
         }
 
+        if (
+          lease &&
+          !options.fence?.validate(fenceKey, lease.token)
+        ) {
+          logger.debug("keeper lost fence before publishing", {
+            paymentId: payment.paymentId,
+            fenceKey,
+          });
+          continue;
+        }
+
         const event = {
           id: randomUUID(),
           topic: "notification:events",
           source: "jobs.due-payments",
           createdAt: new Date().toISOString(),
-          payload,
+          payload: { ...payload, fenceToken: lease?.token ?? null },
         };
         if (options.queue) {
           if (!options.vaultId) {

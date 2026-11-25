@@ -922,6 +922,21 @@ pub enum RetryBackoffStrategy {
     Exponential = 1,
 }
 
+/// Policy applied when one or more recurring cycles were missed (Issue #2225).
+///
+/// - `Skip`: discard missed cycles and execute only the current cycle.
+/// - `PayOne`: execute exactly one cycle for the whole catch-up window.
+/// - `PayUpToBudget`: execute as many whole cycles as the per-period catch-up
+///   budget and the vault spending limits allow.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MissedCyclePolicy {
+    Skip = 0,
+    PayOne = 1,
+    PayUpToBudget = 2,
+}
+
 /// Sorted list of administratively maintained holiday ledgers.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -517,6 +517,8 @@ mod test_stream_create_validation;
 mod test_stream_pause_extension;
 #[cfg(test)]
 mod test_recurring_catchup_budget;
+mod test_recurring_catchup_policy;
+mod test_disbursement_schedules;
 #[cfg(test)]
 mod test_trigger_stream_payment_accrual;
 #[cfg(test)]
@@ -7229,24 +7231,11 @@ impl VaultDAO {
         let max_jitter = (interval / 10) as u32;
         let effective_jitter_window = jitter_window.min(max_jitter);
 
-        // Compute deterministic jitter offset: sha256(id || creation_ledger) % jitter_window
-        // No jitter for the first payment (offset is stored but next_payment_ledger is unshifted
-        // so first execution happens promptly at creation_ledger + interval).
-        let jitter_offset = if effective_jitter_window > 0 {
-            let mut hash_input = soroban_sdk::Bytes::new(&env);
-            hash_input.append(&soroban_sdk::Bytes::from_array(&env, &id.to_le_bytes()));
-            hash_input.append(&soroban_sdk::Bytes::from_array(
-                &env,
-                &current_ledger.to_le_bytes(),
-            ));
-            let digest = env.crypto().sha256(&hash_input);
-            // Take the first 4 bytes of the hash as a u32 for modulo
-            let b = digest.to_array();
-            let raw = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            raw % effective_jitter_window
-        } else {
-            0
-        };
+        // Deterministic jitter (Issue #2225): sha256(id || creation_ledger) % window.
+        // Keepers recompute the same offset with the public helper and the stored
+        // jitter_window; the first cycle is never shifted.
+        let jitter_offset =
+            deterministic_jitter_offset(&env, id, current_ledger, effective_jitter_window);
 
         let payment = crate::RecurringPayment {
             id,
@@ -7276,6 +7265,50 @@ impl VaultDAO {
         storage::set_recurring_payment(&env, &payment);
 
         Ok(id)
+    }
+
+    /// Configure catch-up controls for a recurring payment (Issue #2225).
+    ///
+    /// `budget` is the maximum amount that may be paid by a single execution,
+    /// including catch-up cycles. It is always additionally bounded by the
+    /// vault's daily/weekly and per-token spending limits. Only a Treasurer
+    /// may change it.
+    pub fn set_recurring_catch_up_controls(
+        env: Env,
+        proposer: Address,
+        payment_id: u64,
+        budget: i128,
+        policy: crate::types::MissedCyclePolicy,
+    ) -> Result<(), VaultError> {
+        proposer.require_auth();
+        if !Role::role_satisfies(
+            Role::Treasurer,
+            storage::get_role(&env, &proposer),
+        ) {
+            return Err(VaultError::InsufficientRole);
+        }
+        if budget <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        storage::get_recurring_payment(&env, payment_id)?;
+        storage::set_recurring_catch_up_budget(&env, payment_id, budget);
+        storage::set_recurring_missed_cycle_policy(&env, payment_id, policy);
+        Ok(())
+    }
+
+    /// Read the effective catch-up controls. A payment without explicit
+    /// configuration defaults to the daily spending limit and `PayUpToBudget`.
+    pub fn get_recurring_catch_up_controls(
+        env: Env,
+        payment_id: u64,
+    ) -> Result<(i128, crate::types::MissedCyclePolicy), VaultError> {
+        storage::get_recurring_payment(&env, payment_id)?;
+        let config = storage::get_config(&env)?;
+        Ok((
+            storage::get_recurring_catch_up_budget(&env, payment_id)
+                .unwrap_or(config.daily_limit),
+            storage::get_recurring_missed_cycle_policy(&env, payment_id),
+        ))
     }
 
     // ========================================================================
@@ -8442,6 +8475,13 @@ impl VaultDAO {
         // Check spending limits for total amount
         let config = storage::get_config(&env)?;
 
+        // Issue #2225: catch-up is policy driven and capped per period. The
+        // configured budget can never lift the global spending limits.
+        let catch_up_budget = storage::get_recurring_catch_up_budget(&env, payment_id)
+            .unwrap_or(config.daily_limit)
+            .min(config.daily_limit);
+        let policy = storage::get_recurring_missed_cycle_policy(&env, payment_id);
+
         let today = storage::get_day_number(&env);
         let spent_today = storage::get_daily_spent(&env, today);
         let week = storage::get_week_number(&env);
@@ -8458,12 +8498,20 @@ impl VaultDAO {
             ));
         }
 
-        // Bounded catch-up (#1916): a long outage must not wedge the schedule
-        // with a lump sum over the budgets. Pay as many whole periods as fit
-        // within the remaining daily/weekly/token budgets instead.
-        let mut payable = total_payments;
-        if payment.amount > 0 {
-            let mut fit = total_payments;
+        // Bounded catch-up (#1916, #2225): a long outage must not wedge the
+        // schedule with a lump sum over the budgets. `Skip`/`PayOne` collapse
+        // the window to a single cycle; `PayUpToBudget` pays whole cycles up
+        // to the per-period catch-up budget, then to the spending limits.
+        let mut payable = match policy {
+            crate::types::MissedCyclePolicy::Skip
+            | crate::types::MissedCyclePolicy::PayOne => 1u64,
+            crate::types::MissedCyclePolicy::PayUpToBudget => total_payments,
+        };
+        if payable > 0 && payment.amount > 0 {
+            let mut fit = payable;
+            if policy == crate::types::MissedCyclePolicy::PayUpToBudget {
+                fit = fit.min((catch_up_budget / payment.amount).max(0) as u64);
+            }
             fit = fit.min(
                 ((config.daily_limit.saturating_sub(spent_today)) / payment.amount).max(0) as u64,
             );
@@ -8499,6 +8547,15 @@ impl VaultDAO {
             return Err(VaultError::ExceedsDailyLimit);
         }
         let total_amount = payment.amount * payable as i128;
+        if payable < total_payments {
+            crate::events::emit_recurring_catch_up_budgeted(
+                &env,
+                payment_id,
+                total_payments.min(u32::MAX as u64) as u32,
+                payable.min(u32::MAX as u64) as u32,
+                catch_up_budget,
+            );
+        }
 
         // Revalidate recipient against current whitelist/blacklist policies.
         Self::validate_recipient(&env, &payment.recipient)?;
@@ -8545,7 +8602,13 @@ impl VaultDAO {
         // Update payment schedule.
         // After the first payment (payment_count was 0), apply jitter to all subsequent cycles.
         let was_first_payment = payment.payment_count == 0;
-        let nominal_next_ledger = payment.next_payment_ledger + payable * payment.interval;
+        // Skip/PayOne deliberately discard the rest of the outage window so a
+        // later keeper call cannot replay the same burst from old ledgers.
+        let nominal_next_ledger = if policy == crate::types::MissedCyclePolicy::PayUpToBudget {
+            payment.next_payment_ledger + payable * payment.interval
+        } else {
+            current_ledger + payment.interval
+        };
         payment.next_payment_ledger = nominal_next_ledger;
         if !was_first_payment && payment.jitter_window > 0 {
             payment.next_payment_ledger = payment
