@@ -101,6 +101,7 @@ fn test_create_escrow_with_multiple_milestones() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 50,
         release_ledger: 0,
@@ -108,6 +109,7 @@ fn test_create_escrow_with_multiple_milestones() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 50,
         release_ledger: 0,
@@ -145,6 +147,7 @@ fn test_milestone_has_percentage() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 25,
         release_ledger: 0,
@@ -152,6 +155,7 @@ fn test_milestone_has_percentage() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 25,
         release_ledger: 0,
@@ -159,6 +163,7 @@ fn test_milestone_has_percentage() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 3,
         percentage: 25,
         release_ledger: 0,
@@ -166,6 +171,7 @@ fn test_milestone_has_percentage() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 4,
         percentage: 25,
         release_ledger: 0,
@@ -206,6 +212,7 @@ fn test_partial_completion_does_not_release() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 50,
         release_ledger: 0,
@@ -213,6 +220,7 @@ fn test_partial_completion_does_not_release() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 50,
         release_ledger: 0,
@@ -259,6 +267,7 @@ fn test_verify_milestones_in_arbitrary_order() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 33,
         release_ledger: 0,
@@ -266,6 +275,7 @@ fn test_verify_milestones_in_arbitrary_order() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 33,
         release_ledger: 0,
@@ -273,6 +283,7 @@ fn test_verify_milestones_in_arbitrary_order() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 3,
         percentage: 34,
         release_ledger: 0,
@@ -312,6 +323,7 @@ fn test_cannot_complete_milestone_twice() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -352,6 +364,7 @@ fn test_cannot_release_before_milestone_verified() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -390,6 +403,7 @@ fn test_cannot_release_more_than_total() {
     let total = 5_000i128;
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -430,6 +444,7 @@ fn test_multiple_verification_orders_work() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 30,
         release_ledger: 0,
@@ -437,6 +452,7 @@ fn test_multiple_verification_orders_work() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 40,
         release_ledger: 0,
@@ -444,6 +460,7 @@ fn test_multiple_verification_orders_work() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 3,
         percentage: 30,
         release_ledger: 0,
@@ -490,6 +507,7 @@ fn test_milestone_structure_supports_various_percentages() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 10,
         release_ledger: 0,
@@ -497,6 +515,7 @@ fn test_milestone_structure_supports_various_percentages() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 20,
         release_ledger: 0,
@@ -504,6 +523,7 @@ fn test_milestone_structure_supports_various_percentages() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 3,
         percentage: 70,
         release_ledger: 0,
@@ -541,6 +561,7 @@ fn test_accumulated_releases_match_total() {
     let total = 10_000i128;
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 25,
         release_ledger: 0,
@@ -548,6 +569,7 @@ fn test_accumulated_releases_match_total() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 25,
         release_ledger: 0,
@@ -555,6 +577,7 @@ fn test_accumulated_releases_match_total() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 3,
         percentage: 25,
         release_ledger: 0,
@@ -562,6 +585,7 @@ fn test_accumulated_releases_match_total() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 4,
         percentage: 25,
         release_ledger: 0,
@@ -606,6 +630,7 @@ fn test_milestone_completion_emits_event() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -647,6 +672,7 @@ fn test_partial_release_prevents_double_counting() {
     let total = 1_000i128;
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 50,
         release_ledger: 0,
@@ -654,6 +680,7 @@ fn test_partial_release_prevents_double_counting() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 50,
         release_ledger: 0,

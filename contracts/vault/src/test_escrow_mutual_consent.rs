@@ -17,6 +17,7 @@ use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, E
 fn single_milestone(env: &Env) -> Vec<Milestone> {
     let mut milestones = Vec::new(env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

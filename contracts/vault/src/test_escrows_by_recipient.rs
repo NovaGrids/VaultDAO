@@ -70,6 +70,7 @@ fn setup_with_escrows(env: &Env) -> (VaultDAOClient<'_>, Address, Address, Addre
 fn one_milestone(env: &Env) -> Vec<Milestone> {
     let mut milestones = Vec::new(env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

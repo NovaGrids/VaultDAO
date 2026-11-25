@@ -16876,6 +16876,50 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+        // Issue #2140: milestone amounts must add up to the escrow total.
+        // Backwards compatibility: legacy milestones carry no explicit amounts,
+        // so derive them from their percentages before validating the sum.
+        let mut milestone_amounts = Vec::new(&env);
+        let mut total_milestone_amount: i128 = 0;
+        let mut any_explicit = false;
+        for i in 0..milestones.len() {
+            if let Some(m) = milestones.get(i) {
+                if m.amount < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                if m.amount > 0 {
+                    any_explicit = true;
+                }
+                let allocation = if any_explicit {
+                    m.amount
+                } else {
+                    amount.saturating_mul(m.percentage as i128) / 100
+                };
+                milestone_amounts.push_back(allocation);
+                total_milestone_amount = total_milestone_amount.saturating_add(allocation);
+            }
+        }
+        if total_milestone_amount != amount {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "escrow_milestone_amount_mismatch"),
+                    amount,
+                ),
+                total_milestone_amount,
+            );
+            return Err(VaultError::InvalidAmount);
+        }
+        if any_explicit {
+            for i in 0..milestones.len() {
+                if let Some(mut m) = milestones.get(i) {
+                    if let Some(a) = milestone_amounts.get(i) {
+                        m.amount = a;
+                        milestones.set(i, m);
+                    }
+                }
+            }
+        }
+
         // The designated arbitrator must be neutral: it cannot be the funder
         // or the recipient, otherwise it could trivially rule in its own favor.
         if arbitrator == funder || arbitrator == recipient {

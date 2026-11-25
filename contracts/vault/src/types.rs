@@ -2181,6 +2181,8 @@ impl EscrowStatus {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Milestone {
+    /// Amount released when this milestone completes; must sum to the escrow total
+    pub amount: i128,
     /// Unique milestone ID
     pub id: u64,
     /// Percentage of total escrow amount (0-100)
