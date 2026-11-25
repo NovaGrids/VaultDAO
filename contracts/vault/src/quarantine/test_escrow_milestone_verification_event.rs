@@ -97,6 +97,7 @@ fn test_milestone_verification_emits_event() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -148,6 +149,7 @@ fn test_milestone_event_contains_escrow_id() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -192,6 +194,7 @@ fn test_milestone_event_contains_milestone_index() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 50,
         release_ledger: 0,
@@ -199,6 +202,7 @@ fn test_milestone_event_contains_milestone_index() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 50,
         release_ledger: 0,
@@ -247,6 +251,7 @@ fn test_milestone_event_contains_verifier_address() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -290,6 +295,7 @@ fn test_milestone_event_contains_completion_timestamp() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -340,6 +346,7 @@ fn test_multiple_milestone_events_tracked() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 25,
         release_ledger: 0,
@@ -347,6 +354,7 @@ fn test_multiple_milestone_events_tracked() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 25,
         release_ledger: 0,
@@ -354,6 +362,7 @@ fn test_multiple_milestone_events_tracked() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 3,
         percentage: 25,
         release_ledger: 0,
@@ -361,6 +370,7 @@ fn test_multiple_milestone_events_tracked() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 4,
         percentage: 25,
         release_ledger: 0,
@@ -412,6 +422,7 @@ fn test_milestone_event_payload_structure_consistent() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 50,
         release_ledger: 0,
@@ -419,6 +430,7 @@ fn test_milestone_event_payload_structure_consistent() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 50,
         release_ledger: 0,
@@ -473,6 +485,7 @@ fn test_milestone_events_emitted_for_partial_releases() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 40,
         release_ledger: 0,
@@ -480,6 +493,7 @@ fn test_milestone_events_emitted_for_partial_releases() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 60,
         release_ledger: 0,
@@ -540,6 +554,7 @@ fn test_event_emitted_on_last_milestone_completion() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -585,6 +600,7 @@ fn test_non_verifiers_cannot_trigger_verification_events() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

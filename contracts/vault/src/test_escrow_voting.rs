@@ -85,6 +85,7 @@ fn create_escrow(
     let recipient = Address::generate(env);
     let mut milestones = Vec::new(env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

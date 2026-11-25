@@ -97,6 +97,7 @@ fn test_escrow_has_dispute_deadline_ledger_field() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -138,6 +139,7 @@ fn test_dispute_deadline_set_at_creation() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -183,6 +185,7 @@ fn test_disputes_can_be_filed_before_deadline() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -225,6 +228,7 @@ fn test_disputes_rejected_after_deadline() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -270,6 +274,7 @@ fn test_deadline_respects_ledger_progression() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -314,6 +319,7 @@ fn test_multiple_parties_cannot_file_after_deadline() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -362,6 +368,7 @@ fn test_disputes_at_exact_deadline_boundary_rejected() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -407,6 +414,7 @@ fn test_get_escrow_info_includes_deadline_field() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -453,6 +461,7 @@ fn test_deadline_prevents_indefinite_disputes() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -503,6 +512,7 @@ fn test_deadline_window_closure_prevents_finality_issues() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

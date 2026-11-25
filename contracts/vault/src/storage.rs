@@ -380,6 +380,8 @@ pub enum FeatureKey {
     FunderEscrows(Address),
     /// Escrow IDs by recipient address -> Vec<u64>
     RecipientEscrows(Address),
+    /// Escrow IDs by arbitrator address -> Vec<u64> (Issue #2139)
+    EscrowsByArbitrator(Address),
     /// Insurance pool accumulated slashed funds (Token Address) -> i128
     InsurancePool(Address),
     /// Token lock by owner address -> TokenLock
@@ -4239,6 +4241,44 @@ pub fn add_recipient_escrow(env: &Env, recipient: &Address, escrow_id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_escrows_by_arbitrator(env: &Env, arbitrator: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::EscrowsByArbitrator(arbitrator.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_escrow_for_arbitrator(env: &Env, arbitrator: &Address, escrow_id: u64) {
+    let key = DataKey::EscrowsByArbitrator(arbitrator.clone());
+    let mut escrows = get_escrows_by_arbitrator(env, arbitrator);
+    if !escrows.contains(escrow_id) {
+        escrows.push_back(escrow_id);
+    }
+    env.storage().persistent().set(&key, &escrows);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn remove_escrow_for_arbitrator(env: &Env, arbitrator: &Address, escrow_id: u64) {
+    let key = DataKey::EscrowsByArbitrator(arbitrator.clone());
+    let escrows = get_escrows_by_arbitrator(env, arbitrator);
+    let mut remaining = Vec::new(env);
+    for id in escrows {
+        if id != escrow_id {
+            remaining.push_back(id);
+        }
+    }
+    if remaining.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &remaining);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL);
+    }
 }
 
 // ============================================================================

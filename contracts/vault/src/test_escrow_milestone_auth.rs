@@ -88,6 +88,7 @@ fn create_escrow_with_arbitrator(
 ) -> u64 {
     let mut milestones = Vec::new(env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,
@@ -189,6 +190,7 @@ fn test_duplicate_milestone_completion_rejected() {
     // the duplicate of milestone 1 must then hit the per-milestone guard.
     let mut milestones = Vec::new(&env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 50,
         release_ledger: 0,
@@ -196,6 +198,7 @@ fn test_duplicate_milestone_completion_rejected() {
         completion_ledger: 0,
     });
     milestones.push_back(Milestone {
+        amount: 0,
         id: 2,
         percentage: 50,
         release_ledger: 0,

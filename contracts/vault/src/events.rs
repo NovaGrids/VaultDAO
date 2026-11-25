@@ -1239,6 +1239,20 @@ pub fn emit_milestone_completed(env: &Env, escrow_id: u64, milestone_id: u64, co
 }
 
 /// Emit when escrow funds are released
+/// Emitted when an escrow's designated arbitrator is replaced.
+/// Topics: ("escrow_arbitrator_changed", escrow_id); data: (old, new).
+pub fn emit_escrow_arbitrator_changed(
+    env: &Env,
+    escrow_id: u64,
+    old_arbitrator: &Address,
+    new_arbitrator: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_arbitrator_changed"), escrow_id),
+        (old_arbitrator.clone(), new_arbitrator.clone()),
+    );
+}
+
 pub fn emit_escrow_released(
     env: &Env,
     escrow_id: u64,
@@ -1678,6 +1692,15 @@ pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, update
     env.events().publish(
         (Symbol::new(env, "stream_status"), stream_id),
         (status, updated_by.clone()),
+    );
+}
+
+/// Emitted when an emergency signer or admin pauses all active streams.
+/// Topics: ("all_streams_paused", paused_count); data: (reason, caller).
+pub fn emit_all_streams_paused(env: &Env, paused_count: u32, reason: &Symbol, caller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "all_streams_paused"), paused_count),
+        (reason.clone(), caller.clone()),
     );
 }
 

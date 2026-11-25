@@ -6252,6 +6252,7 @@ fn test_escrow_basic_flow() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back(crate::types::Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

@@ -111,6 +111,7 @@ fn create_escrow(env: &Env, ctx: &Ctx, amount: i128) -> u64 {
     StellarAssetClient::new(env, &ctx.token).mint(&funder, &amount);
     let mut milestones = Vec::new(env);
     milestones.push_back(Milestone {
+        amount: 0,
         id: 1,
         percentage: 100,
         release_ledger: 0,

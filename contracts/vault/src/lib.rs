@@ -688,6 +688,12 @@ mod test_stream_clawback;
 #[cfg(test)]
 mod test_stream_pause_ttl;
 #[cfg(test)]
+mod test_pause_all_streams_2138;
+#[cfg(test)]
+mod test_escrows_by_arbitrator_2139;
+#[cfg(test)]
+mod test_escrow_arbitrator_changed_2141;
+#[cfg(test)]
 mod test_stream_invariants_2055;
 #[cfg(test)]
 mod test_swap_twap_2057;
@@ -17196,6 +17202,50 @@ impl VaultDAO {
             return Err(VaultError::InvalidAmount);
         }
 
+        // Issue #2140: milestone amounts must add up to the escrow total.
+        // Backwards compatibility: legacy milestones carry no explicit amounts,
+        // so derive them from their percentages before validating the sum.
+        let mut milestone_amounts = Vec::new(&env);
+        let mut total_milestone_amount: i128 = 0;
+        let mut any_explicit = false;
+        for i in 0..milestones.len() {
+            if let Some(m) = milestones.get(i) {
+                if m.amount < 0 {
+                    return Err(VaultError::InvalidAmount);
+                }
+                if m.amount > 0 {
+                    any_explicit = true;
+                }
+                let allocation = if any_explicit {
+                    m.amount
+                } else {
+                    amount.saturating_mul(m.percentage as i128) / 100
+                };
+                milestone_amounts.push_back(allocation);
+                total_milestone_amount = total_milestone_amount.saturating_add(allocation);
+            }
+        }
+        if total_milestone_amount != amount {
+            env.events().publish(
+                (
+                    Symbol::new(&env, "escrow_milestone_amount_mismatch"),
+                    amount,
+                ),
+                total_milestone_amount,
+            );
+            return Err(VaultError::InvalidAmount);
+        }
+        if any_explicit {
+            for i in 0..milestones.len() {
+                if let Some(mut m) = milestones.get(i) {
+                    if let Some(a) = milestone_amounts.get(i) {
+                        m.amount = a;
+                        milestones.set(i, m);
+                    }
+                }
+            }
+        }
+
         // The designated arbitrator must be neutral: it cannot be the funder
         // or the recipient, otherwise it could trivially rule in its own favor.
         if arbitrator == funder || arbitrator == recipient {
@@ -17234,6 +17284,7 @@ impl VaultDAO {
         storage::set_escrow(&env, &escrow);
         storage::add_funder_escrow(&env, &funder, escrow_id);
         storage::add_recipient_escrow(&env, &recipient, escrow_id);
+        storage::add_escrow_for_arbitrator(&env, &arbitrator, escrow_id);
 
         events::emit_escrow_created(
             &env,
@@ -17715,6 +17766,49 @@ impl VaultDAO {
     /// Get all escrows for a recipient
     pub fn get_recipient_escrows(env: Env, recipient: Address) -> Vec<u64> {
         storage::get_recipient_escrows(&env, &recipient)
+    }
+
+    /// Return all escrow IDs assigned to an arbitrator (Issue #2139).
+    pub fn get_escrows_by_arbitrator(env: Env, arbitrator: Address) -> Vec<u64> {
+        storage::get_escrows_by_arbitrator(&env, &arbitrator)
+    }
+
+    /// Replace an escrow's designated arbitrator (Admin only, Issue #2141).
+    pub fn replace_escrow_arbitrator(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        new_arbitrator: Address,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        if storage::get_role(&env, &caller) != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let mut escrow = storage::get_escrow(&env, escrow_id)?;
+        if escrow.status.is_terminal() {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if new_arbitrator == escrow.funder
+            || new_arbitrator == escrow.recipient
+            || new_arbitrator == escrow.arbitrator
+        {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let old_arbitrator = escrow.arbitrator.clone();
+        storage::remove_escrow_for_arbitrator(&env, &old_arbitrator, escrow_id);
+        storage::add_escrow_for_arbitrator(&env, &new_arbitrator, escrow_id);
+        escrow.arbitrator = new_arbitrator.clone();
+        storage::set_escrow(&env, &escrow);
+
+        events::emit_escrow_arbitrator_changed(
+            &env,
+            escrow_id,
+            &old_arbitrator,
+            &new_arbitrator,
+        );
+        Ok(())
     }
 
     // ========================================================================
@@ -24964,6 +25058,53 @@ impl VaultDAO {
 
         events::emit_vault_paused(&env, &caller, &cause);
         Ok(())
+    }
+
+    /// Emergency entrypoint: pause every active stream (Issue #2138).
+    ///
+    /// Requires an emergency signer or an Admin. Returns the number of
+    /// streams that were paused and records the reason in the event stream.
+    pub fn pause_all_streams(env: Env, caller: Address) -> Result<u32, VaultError> {
+        caller.require_auth();
+
+        let is_emergency_signer = storage::get_emergency_signers(&env).contains(&caller);
+        let is_admin = storage::get_role(&env, &caller) == Role::Admin;
+        if !is_emergency_signer && !is_admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let reason = Symbol::new(&env, "emergency_pause");
+        let now = env.ledger().timestamp();
+        let mut paused = 0u32;
+
+        for stream_id in 1..storage::get_next_stream_id(&env) {
+            let Ok(mut stream) = storage::get_streaming_payment(&env, stream_id) else {
+                continue;
+            };
+            if stream.status != StreamStatus::Active {
+                continue;
+            }
+
+            let effective_now = if now > stream.end_timestamp {
+                stream.end_timestamp
+            } else {
+                now
+            };
+            stream.accumulated_seconds += effective_now.saturating_sub(stream.last_update_timestamp);
+            stream.last_update_timestamp = now;
+            stream.status = StreamStatus::Paused;
+            storage::set_streaming_payment(&env, &stream);
+            events::emit_stream_status_updated(
+                &env,
+                stream_id,
+                StreamStatus::Paused as u32,
+                &caller,
+            );
+            paused += 1;
+        }
+
+        events::emit_all_streams_paused(&env, paused, &reason, &caller);
+        Ok(paused)
     }
 
     /// Unpause the vault (emergency signers only)
