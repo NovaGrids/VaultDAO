@@ -56,10 +56,12 @@ const Toast: React.FC<ToastProps> = ({
     warning: "bg-yellow-100",
   };
 
+  const isError = type === "error";
+
   return (
     <div
-      role="alert"
-      aria-live="polite"
+      role={isError ? "alert" : "status"}
+      aria-live={isError ? "assertive" : "polite"}
       aria-atomic="true"
       className={`
         flex items-center p-4 rounded-lg border-l-4 shadow-lg
