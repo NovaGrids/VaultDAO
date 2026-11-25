@@ -10,6 +10,21 @@ export function isValidWidgetId(id: unknown): id is string {
   return typeof id === 'string' && WIDGET_ID_PATTERN.test(id);
 }
 
+/**
+ * Content Security Policy applied to every sandbox document via <meta>.
+ * Fail closed: nothing loads or connects unless listed. The sandbox needs
+ * inline script/style only; all host data arrives through postMessage.
+ */
+export const WIDGET_SANDBOX_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  'img-src data:',
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+].join('; ');
+
 /** Encode a widget id as a JS string literal that cannot close the surrounding <script> element. */
 function encodeWidgetIdForScript(id: string): string {
   return JSON.stringify(id).replace(/</g, '\\u003c');
@@ -30,6 +45,7 @@ export function buildWidgetSandboxHtml(widgetId: string): string {
       <html>
         <head>
           <meta charset="UTF-8">
+          <meta http-equiv="Content-Security-Policy" content="${WIDGET_SANDBOX_CSP}">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <style>
             body {

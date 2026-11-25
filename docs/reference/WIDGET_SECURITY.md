@@ -83,6 +83,25 @@ The absence of `allow-same-origin` is the most important constraint. Even though
 
 Widget content is injected as an inline `blob:` URL built from a static HTML template inside `loadWidget()`. In production, the template wraps the widget's declared `entryPoint` with a script-module import. Because the blob is constructed server-side (at render time), there is no external URL fetch that could be MITMed to swap content.
 
+### Sandbox document CSP
+
+Every sandbox document starts with a `<meta http-equiv="Content-Security-Policy">` built from `WIDGET_SANDBOX_CSP` (`src/utils/widgetSandbox.ts`):
+
+```
+default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;
+connect-src 'none'; form-action 'none'; base-uri 'none'
+```
+
+This closes the outbound `fetch()` exfiltration path described in the threat model: the iframe cannot connect anywhere, and all host data flows through the permission-checked `postMessage` broker. The only inline script is the host-authored template; the widget id is validated against `^[a-z0-9-]{1,64}$` and embedded as an escaped JSON literal, and invalid ids throw instead of producing markup (fixtures in `widgetSandbox.test.ts`).
+
+### Permission broker
+
+Data and action requests are mapped to a required permission (`getDataActionPermission`). A permission is granted only when the widget's manifest sets it to exactly `true` (`hasPermission`); otherwise the host replies with a typed `permission_denied` payload and never calls the data API. `requestPermission` only prompts for permissions the widget declared and caches the user's decision per widget.
+
+### Event delivery
+
+`proposalCreated` is emitted only for proposals whose id is higher than the highest id seen so far, so refetches and reorderings do not produce duplicate events.
+
 > **Note:** the Content Security Policy (CSP) for the host page should include `frame-src blob:` to allow this pattern, and should restrict `frame-src` to `blob:` only so that iframes cannot load arbitrary external URLs.
 
 ---
@@ -212,13 +231,13 @@ These are the capabilities the bridge exposes. Anything not listed here is not a
 |---|---|---|
 | `showToast(msg, type)` | Displays a toast notification | `notifications` |
 | `sendNotification(msg)` | Sends a notification via host | `notifications` |
-| `navigate(path)` | Calls React Router `navigate()` | None (any widget) |
+| `navigate(path)` | Calls React Router `navigate()` only for exact allowlisted routes (`WIDGET_NAVIGATION_ALLOWLIST` in `widgetPermissions.ts`); absolute URLs, query strings, fragments and traversal are rejected with `invalid_path` | `navigation` |
 
 ### Configuration
 
 | API | Effect | Notes |
 |---|---|---|
-| `setConfig(config)` | Logs updated settings (persistence not yet wired) | Does not write on-chain |
+| `setConfig(config)` | Validates (plain JSON object, max 64 KiB) and persists settings into the installed-widgets store, so they survive reloads (`widgetSettingsStorage.ts`) | Does not write on-chain; settings are never interpolated into the sandbox HTML |
 
 ### Events
 
@@ -352,11 +371,11 @@ Widgets that have passed review and are hosted on infrastructure controlled by t
 
 **Mitigations in place:**
 - The iframe runs as null-origin. `fetch()` calls from inside will include a null `Origin` header. Most servers reject null-origin CORS requests.
-- The host's own CSP can add `connect-src` restrictions to the host page, but this does not restrict the iframe's own fetch calls.
+- The sandbox document's own CSP sets `connect-src 'none'`, so `fetch()`, XHR and WebSocket connections from inside the iframe are blocked by the browser.
 
-**Residual risk:** A malicious widget CAN make outbound fetch calls to a server configured to accept null-origin requests. Proposal and vault config data would be exposed.
+**Residual risk:** Widgets can still leak data through channels CSP does not cover (for example navigation of the top frame is blocked by the sandbox flags, but covert timing or user-visible rendering remains). Browsers that ignore `<meta>` CSP in `blob:` documents would fall back to the null-origin protections above.
 
-**Recommended hardening:** Add a host-level CSP `frame-src blob:` policy combined with iframe-level CSP headers on the blob response (not yet feasible with blob URLs, but achievable by switching to a dedicated sandboxed subdomain).
+**Recommended hardening:** Add a host-level CSP `frame-src blob:` policy and, longer term, serve widgets from a dedicated sandboxed subdomain with CSP delivered as a response header.
 
 ---
 

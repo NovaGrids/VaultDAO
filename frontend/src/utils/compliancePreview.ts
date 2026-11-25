@@ -90,6 +90,12 @@ export function buildPdfPreviewHtml(data: ComplianceExportPreviewData): string {
       return `<tr><td style="padding:6px 10px;border-bottom:1px solid #333">${escapeHtml(r.label)}</td><td style="padding:6px 10px;border-bottom:1px solid #333;text-align:center">${r.evaluated}</td><td style="padding:6px 10px;border-bottom:1px solid #333;text-align:center">${r.violations}</td><td style="padding:6px 10px;border-bottom:1px solid #333;color:${statusColor};font-weight:600">${escapeHtml(RULE_STATUS_LABEL[r.status])}</td></tr>`;
     })
     .join('');
+  const evidenceRows = data.rules
+    .flatMap((r) => (r.evidence ?? []).map((e) => `<li style="margin-bottom:4px"><strong>${escapeHtml(r.label)}</strong>: ${escapeHtml(e.note)} <code style="font-size:10px">(${escapeHtml(e.action)}, ${escapeHtml(e.entryId)})</code></li>`))
+    .join('');
+  const evidenceHtml = evidenceRows
+    ? `<h4 style="margin:16px 0 6px">Evidence</h4><ul style="font-size:12px;padding-left:18px">${evidenceRows}</ul>`
+    : '';
   return `
         <div style="padding:20px;font-family:Arial,sans-serif;background:#1a1a1a;color:#fff">
           <div style="background:#581c87;padding:14px 20px;border-radius:8px;margin-bottom:16px">
@@ -103,6 +109,7 @@ export function buildPdfPreviewHtml(data: ComplianceExportPreviewData): string {
             <thead><tr style="background:#2a2a2a"><th style="padding:8px 10px;text-align:left">Rule</th><th style="padding:8px 10px">Events Evaluated</th><th style="padding:8px 10px">Violations</th><th style="padding:8px 10px">Status</th></tr></thead>
             <tbody>${previewRows}</tbody>
           </table>
+          ${evidenceHtml}
           <p style="color:#999;font-size:11px;margin-top:16px">This is a preview. Only the rules listed are evaluated; a rule with no matching audit events is reported as not evaluated. Click "Download PDF" to save the full formatted report.</p>
         </div>`;
 }
