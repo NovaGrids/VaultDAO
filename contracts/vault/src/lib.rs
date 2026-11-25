@@ -686,6 +686,8 @@ mod test_stream_clawback;
 #[cfg(test)]
 mod test_stream_pause_ttl;
 #[cfg(test)]
+mod test_pause_all_streams_2138;
+#[cfg(test)]
 mod test_stream_invariants_2055;
 #[cfg(test)]
 mod test_swap_twap_2057;
@@ -24688,6 +24690,53 @@ impl VaultDAO {
 
         events::emit_vault_paused(&env, &caller, &cause);
         Ok(())
+    }
+
+    /// Emergency entrypoint: pause every active stream (Issue #2138).
+    ///
+    /// Requires an emergency signer or an Admin. Returns the number of
+    /// streams that were paused and records the reason in the event stream.
+    pub fn pause_all_streams(env: Env, caller: Address) -> Result<u32, VaultError> {
+        caller.require_auth();
+
+        let is_emergency_signer = storage::get_emergency_signers(&env).contains(&caller);
+        let is_admin = storage::get_role(&env, &caller) == Role::Admin;
+        if !is_emergency_signer && !is_admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let reason = Symbol::new(&env, "emergency_pause");
+        let now = env.ledger().timestamp();
+        let mut paused = 0u32;
+
+        for stream_id in 1..storage::get_next_stream_id(&env) {
+            let Ok(mut stream) = storage::get_streaming_payment(&env, stream_id) else {
+                continue;
+            };
+            if stream.status != StreamStatus::Active {
+                continue;
+            }
+
+            let effective_now = if now > stream.end_timestamp {
+                stream.end_timestamp
+            } else {
+                now
+            };
+            stream.accumulated_seconds += effective_now.saturating_sub(stream.last_update_timestamp);
+            stream.last_update_timestamp = now;
+            stream.status = StreamStatus::Paused;
+            storage::set_streaming_payment(&env, &stream);
+            events::emit_stream_status_updated(
+                &env,
+                stream_id,
+                StreamStatus::Paused as u32,
+                &caller,
+            );
+            paused += 1;
+        }
+
+        events::emit_all_streams_paused(&env, paused, &reason, &caller);
+        Ok(paused)
     }
 
     /// Unpause the vault (emergency signers only)

@@ -1681,6 +1681,15 @@ pub fn emit_stream_status_updated(env: &Env, stream_id: u64, status: u32, update
     );
 }
 
+/// Emitted when an emergency signer or admin pauses all active streams.
+/// Topics: ("all_streams_paused", paused_count); data: (reason, caller).
+pub fn emit_all_streams_paused(env: &Env, paused_count: u32, reason: &Symbol, caller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "all_streams_paused"), paused_count),
+        (reason.clone(), caller.clone()),
+    );
+}
+
 /// Emit when an approved clawback recalls unvested funds from a stream (Issue #1910).
 ///
 /// Topics: ("stream_clawback_executed", stream_id); data: (amount, executed_by).
