@@ -37,3 +37,13 @@ The SDK test environment exposes deterministic host CPU and memory budget counte
 The `Contract Benchmarks` workflow runs for pull requests, pushes to `main`, weekly on Monday, and manual dispatch. Pull requests and subsequent main runs compare their results with the latest successful main-branch benchmark artifact. A result fails CI when median CPU cost, median memory cost, or release WASM size grows by more than 5%; changes to the benchmark scenario set also fail for review. Wall-clock changes are shown but do not fail CI because shared runners are noisy.
 
 Each run publishes `benchmark-results.json` as a GitHub Actions artifact retained for 90 days. The workflow summary renders a per-scenario comparison table, while the JSON artifact contains the commit and Unix timestamp for historical analysis or plotting. The first successful run has no baseline and seeds the history; later runs enforce regression checks.
+
+## Fuzzing & Resource Budget Notes
+
+The `cargo-fuzz` harness in `contracts/vault/fuzz/fuzz_targets/fuzz_execute_proposal.rs` exercises `approve_proposal`, `reject_proposal`, `veto_proposal`, `cancel_proposal`, and `execute_proposal` under Soroban's per-transaction resource caps:
+
+- **CPU instruction cap**: `100_000_000` instructions (`env.cost_estimate().budget().cpu_instruction_cost()`)
+- **Memory cap**: `41_943_040` bytes / 40 MiB (`env.cost_estimate().budget().memory_bytes_cost()`)
+- **Strengthened invariant**: Re-executing an already-executed proposal (`execute_twice`) is asserted to never succeed (`Ok(Ok(()))`), ensuring idempotent/replay-safe rejection even across randomized ledger sequence and timestamp jumps.
+
+Smoke fuzzing runs on `main` and PRs via `.github/workflows/fuzz-smoke.yml` (`-max_total_time=30`), with extended nightly runs (`-max_total_time=600`) on `schedule`.

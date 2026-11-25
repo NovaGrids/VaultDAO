@@ -43,12 +43,20 @@ const PROPOSAL_TOPICS = new Set([
   "quorum_reached",
 ]);
 
+export interface VaultPollingHealth {
+  readonly contractId: string;
+  readonly lastLedger: number;
+  readonly lag: number;
+  readonly consecutiveErrors: number;
+  readonly lastErrorClass: string | null;
+}
+
 /**
  * EventPollingService
  *
  * A background service that polls the Soroban RPC for contract events.
- * Now supports cursor persistence to resume safely across restarts.
- * Includes event deduplication to handle overlapping poll windows.
+ * Supports per-contract cursor persistence to resume safely across restarts,
+ * bounded-concurrency multi-vault polling, and per-vault lag/error reporting.
  */
 export class EventPollingService {
   private readonly logger = createLogger("events-service");
@@ -60,6 +68,7 @@ export class EventPollingService {
   private readonly MAX_PROCESSED_IDS = 1000;
   private readonly rpcClient: SorobanRpcClient;
   private readonly cachingNormalizer: CachingEventNormalizer;
+  private readonly perVaultStates: Map<string, VaultPollingHealth> = new Map();
 
   private readonly circuitBreaker: CircuitBreaker;
 
@@ -465,5 +474,163 @@ export class EventPollingService {
    */
   public getCircuitBreaker(): CircuitBreaker | undefined {
     return this.circuitBreaker;
+  }
+
+  /**
+   * Returns the configured list of vault contract IDs to index.
+   */
+  public getTargetContractIds(): string[] {
+    if (this.env.contractIds && this.env.contractIds.length > 0) {
+      return this.env.contractIds;
+    }
+    return this.env.contractId ? [this.env.contractId] : [];
+  }
+
+  /**
+   * Returns per-vault polling health (lastLedger, lag, consecutiveErrors, lastErrorClass).
+   */
+  public getPerVaultStates(): Record<string, VaultPollingHealth> {
+    const out: Record<string, VaultPollingHealth> = {};
+    for (const [id, state] of this.perVaultStates.entries()) {
+      out[id] = state;
+    }
+    return out;
+  }
+
+  private classifyError(error: unknown): string {
+    if (error instanceof TimeoutError) return "timeout";
+    const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (msg.includes("circuit")) return "circuit_open";
+    if (msg.includes("timeout")) return "timeout";
+    if (msg.includes("rpc") || msg.includes("fetch") || msg.includes("network")) return "rpc_error";
+    return "unknown";
+  }
+
+  /**
+   * Polls all configured vault contracts with bounded concurrency (`indexingParallelism`).
+   * One vault's RPC outage/timeout does not stall other vaults, and cursors fail closed
+   * on partial page failures.
+   */
+  public async pollAllContracts(): Promise<void> {
+    const targets = this.getTargetContractIds();
+    const concurrency = Math.max(1, this.env.indexingParallelism || 1);
+
+    for (let i = 0; i < targets.length; i += concurrency) {
+      const batch = targets.slice(i, i + concurrency);
+      await Promise.allSettled(batch.map((contractId) => this.pollContract(contractId)));
+    }
+  }
+
+  /**
+   * Polls a single vault contract using its own isolated cursor.
+   * Fails closed: if any page fails, the cursor is not advanced.
+   */
+  public async pollContract(contractId: string): Promise<void> {
+    const prev = this.perVaultStates.get(contractId) ?? {
+      contractId,
+      lastLedger: 0,
+      lag: 0,
+      consecutiveErrors: 0,
+      lastErrorClass: null,
+    };
+
+    try {
+      const existingCursor = this.storage.getCursorForContract
+        ? await this.storage.getCursorForContract(contractId)
+        : await this.storage.getCursor();
+
+      let lastLedger = existingCursor?.lastLedger ?? prev.lastLedger;
+
+      if (lastLedger === 0) {
+        const headResult = await this.circuitBreaker.execute(() =>
+          this.rpcClient.getLatestLedger(),
+        );
+        if (!headResult.success || headResult.data === undefined) {
+          throw headResult.error ?? new Error("getLatestLedger returned no ledger");
+        }
+        lastLedger = headResult.data;
+        const cursorObj = { lastLedger, updatedAt: new Date().toISOString() };
+        if (this.storage.saveCursorForContract) {
+          await this.storage.saveCursorForContract(contractId, cursorObj);
+        } else {
+          await this.storage.saveCursor(cursorObj);
+        }
+        this.perVaultStates.set(contractId, {
+          contractId,
+          lastLedger,
+          lag: 0,
+          consecutiveErrors: 0,
+          lastErrorClass: null,
+        });
+        return;
+      }
+
+      const startLedger = lastLedger + 1;
+      const allEvents: ContractEvent[] = [];
+      let cursor: string | undefined;
+      let latestLedger = lastLedger;
+
+      do {
+        const result = await this.circuitBreaker.execute(() =>
+          this.rpcClient.getEventsPage({
+            startLedger,
+            filters: [{ type: "contract", contractIds: [contractId] }],
+            pagination: {
+              limit: EVENTS_PAGE_LIMIT,
+              ...(cursor !== undefined ? { cursor } : {}),
+            },
+          }),
+        );
+        if (!result.success || !result.data) {
+          throw result.error ?? new Error("getEventsPage failed");
+        }
+
+        latestLedger = result.data.latestLedger;
+        allEvents.push(
+          ...result.data.events.map((raw) => ({
+            id: raw.id,
+            contractId: raw.contractId,
+            topic: raw.topic,
+            value: raw.value,
+            ledger: raw.ledger,
+            ledgerClosedAt: raw.ledgerClosedAt,
+          })),
+        );
+
+        cursor =
+          result.data.events.length === EVENTS_PAGE_LIMIT
+            ? result.data.events[result.data.events.length - 1].pagingToken
+            : undefined;
+      } while (cursor !== undefined);
+
+      if (allEvents.length > 0) {
+        await this.handleBatch(allEvents);
+      }
+
+      const nextCursor = { lastLedger: latestLedger, updatedAt: new Date().toISOString() };
+      if (this.storage.saveCursorForContract) {
+        await this.storage.saveCursorForContract(contractId, nextCursor);
+      } else {
+        await this.storage.saveCursor(nextCursor);
+      }
+
+      const lag = Math.max(0, latestLedger - lastLedger);
+      this.perVaultStates.set(contractId, {
+        contractId,
+        lastLedger: latestLedger,
+        lag,
+        consecutiveErrors: 0,
+        lastErrorClass: null,
+      });
+    } catch (error) {
+      this.perVaultStates.set(contractId, {
+        contractId,
+        lastLedger: prev.lastLedger,
+        lag: prev.lag,
+        consecutiveErrors: prev.consecutiveErrors + 1,
+        lastErrorClass: this.classifyError(error),
+      });
+      throw error;
+    }
   }
 }

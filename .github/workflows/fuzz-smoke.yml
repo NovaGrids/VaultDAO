@@ -1,0 +1,52 @@
+name: Fuzzing (Smoke & Nightly)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "contracts/vault/**"
+      - ".github/workflows/fuzz-smoke.yml"
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC nightly
+  workflow_dispatch:
+
+jobs:
+  smoke-fuzz:
+    name: Smoke Fuzz (cargo-fuzz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: contracts/vault
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Run smoke fuzz on fuzz_execute_proposal
+        run: |
+          cargo +nightly fuzz run fuzz_execute_proposal -- -max_total_time=30
+
+  nightly-fuzz:
+    name: Nightly Extended Fuzz (cargo-fuzz)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: contracts/vault
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Run extended fuzz on fuzz_execute_proposal
+        run: |
+          cargo +nightly fuzz run fuzz_execute_proposal -- -max_total_time=600
+      - name: Run extended fuzz on fuzz_create_proposal
+        run: |
+          cargo +nightly fuzz run fuzz_create_proposal -- -max_total_time=300

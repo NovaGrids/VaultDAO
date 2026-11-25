@@ -1551,4 +1551,5 @@ Response (200):
 - `status`: `healthy` | `degraded` | `unhealthy`
 - `syncLag`: `max(0, currentLedger - cursorLedger)` (Soroban latest ledger vs events cursor)
 - `queueDepth`: pending notification queue size
+- `vaults` (optional): Per-contract indexer health map keyed by `contractId`, containing `{ contractId, lastLedger, lag, consecutiveErrors, lastErrorClass }`.
 - Unhealthy DB (or overall `unhealthy`) returns HTTP 503 with the same payload under `details`.
