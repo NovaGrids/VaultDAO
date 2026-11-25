@@ -35,9 +35,11 @@ Key properties of the current implementation:
 |---|---|
 | Who can propose | `Role::Admin` only |
 | Approval requirement | **Every registered signer** must approve (`approvals.len() == signers.len()`) |
-| Timelock | Mandatory; `unlock_ledger = created_at + config.timelock_delay` |
-| Expiry | `created_at + (config.timelock_delay * 10)` (10× the normal timelock) |
-| Concurrent upgrades | One active upgrade proposal at a time (blocked by `UpgradeUnauthorized` if a Pending/Approved upgrade already exists) |
+| Timelock | Mandatory; `earliest_apply_ledger = created_at + config.upgrade_timelock_delay`, with `config.upgrade_timelock_delay >= 17_280` ledgers |
+| Hash pinning | `PendingUpgrade` stores the exact `wasm_hash`, proposal ID, proposer and earliest apply ledger; execution deploys only that hash |
+| Expiry | `created_at + (config.upgrade_timelock_delay * 10)` (10× the upgrade timelock) |
+| Concurrent upgrades | One pinned upgrade at a time (blocked by `UpgradeUnauthorized` if another upgrade is pending) |
+| Cancellation | An Admin may call `cancel_upgrade` before execution; this clears the pin and emits `upgrade_cancelled` |
 | Priority | `Critical` |
 | Voting deadline | None enforced (0) |
 
@@ -104,7 +106,7 @@ For an upgrade that will be reviewed by all signers, every reviewer must be able
 
 ## 4. Step 2 — Compute and Verify the WASM Hash
 
-The `execute_upgrade` function calls `env.deployer().update_current_contract_wasm(wasm_hash)` with a `BytesN<32>` hash. You must compute this hash off-chain and supply it to `propose_upgrade`.
+The `execute_upgrade` function calls `env.deployer().update_current_contract_wasm(wasm_hash)` with a `BytesN<32>` hash. You must compute this hash off-chain, supply it to `propose_upgrade`, and supply the same value again to `execute_upgrade`. The contract pins the hash at proposal time and rejects any execution that presents a different value.
 
 ### 4.1 Compute the SHA-256 hash
 
@@ -174,19 +176,29 @@ stellar contract invoke \
 
 1. Requires `admin.require_auth()`.
 2. Verifies the caller holds `Role::Admin`.
-3. Scans all existing proposals to confirm no `upgrade` proposal is currently `Pending` or `Approved`.
-4. Creates a `Proposal` with:
+3. Verifies no upgrade is already pinned (`get_pending_upgrade()` returns `None`).
+4. Requires `config.upgrade_timelock_delay >= 17_280` ledgers and computes `earliest_apply_ledger = current_ledger + config.upgrade_timelock_delay`.
+5. Creates a `Proposal` with:
    - `memo = Symbol("upgrade")`
    - `priority = Priority::Critical`
-   - `unlock_ledger = current_ledger + config.timelock_delay`
-   - `expires_at = current_ledger + (config.timelock_delay * 10)`
+   - `unlock_ledger = earliest_apply_ledger`
+   - `expires_at = current_ledger + (config.upgrade_timelock_delay * 10)`
+   - `metadata["wasm_hash"]` = lowercase hex of the supplied hash
    - `snapshot_signers` = all current signers at the moment of creation
-5. Emits a `proposal_created` event.
-6. Returns the new `proposal_id`.
+6. Stores a `PendingUpgrade` record containing the proposal ID, exact `wasm_hash`, proposer, and `earliest_apply_ledger`. If an upgrade is cancelled or executed this record is cleared; until then a second proposal is rejected with `UpgradeUnauthorized`.
+7. Emits `proposal_created` and `upgrade_proposed` events.
+8. Returns the new `proposal_id`.
 
 ### Record the proposal ID
 
-Save the returned `proposal_id`. All signers need it to approve, and you will need it for `execute_upgrade`.
+Save the returned `proposal_id`. All signers need it to approve, and you will need it for `execute_upgrade` or `cancel_upgrade`. You can inspect the pin at any time:
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --network testnet \
+  -- get_pending_upgrade
+```
 
 ---
 
@@ -243,26 +255,48 @@ stellar contract invoke \
   --network testnet \
   -- execute_upgrade \
   --executor <EXECUTOR_ADDRESS> \
-  --proposal_id <PROPOSAL_ID>
+  --proposal_id <PROPOSAL_ID> \
+  --expected_wasm_hash <WASM_HASH_HEX>
 ```
+
+`expected_wasm_hash` must match the value passed to `propose_upgrade`. The contract deploys the pinned hash, not the caller-supplied value; the argument exists so a mismatched transaction fails before the host call.
 
 ### What the contract checks before executing
 
 | Check | Error if failed |
 |---|---|
+| The vault is not paused | `VaultPaused` (1020) |
+| A `PendingUpgrade` exists for this proposal ID | `UpgradeNotFound` (923) |
 | `proposal.memo == Symbol("upgrade")` | `ProposalNotFound` (20) |
 | `proposal.status == ProposalStatus::Approved` | `ProposalNotApproved` (22) |
-| `current_ledger >= proposal.unlock_ledger` | `UpgradeTimelockActive` (921) |
+| `current_ledger >= pending.earliest_apply_ledger` and `>= proposal.unlock_ledger` | `UpgradeTimelockActive` (921) |
 | `proposal.approvals.len() == config.signers.len()` | `UpgradeUnauthorized` (920) |
+| `expected_wasm_hash == pending.wasm_hash` | `UpgradeHashMismatch` (924) |
 
 ### What happens on success
 
-1. `env.deployer().update_current_contract_wasm(wasm_hash)` is called — this is the Soroban host call that atomically replaces the contract bytecode.
-2. `proposal.status` is set to `ProposalStatus::Executed`.
+1. `env.deployer().update_current_contract_wasm(pending.wasm_hash)` is called — this is the Soroban host call that atomically replaces the contract bytecode with the exact hash signers approved.
+2. `proposal.status` is set to `ProposalStatus::Executed` and the `PendingUpgrade` record is cleared.
 3. An audit entry `AuditAction::ExecuteProposal` is written.
-4. An `initialized` event is emitted with the executor's address and the current threshold, signalling the new contract version to indexers.
+4. `upgrade_applied` and `initialized` events are emitted with the proposal ID, pinned hash, apply ledger, and current threshold, signalling the new contract version to indexers.
 
 > **Important:** After `update_current_contract_wasm` returns, all subsequent invocations of the contract will run the new WASM. The storage layout, instance data, and persistent records are preserved exactly as-is — only the code changes.
+
+### Cancelling a pending upgrade
+
+If the release must be halted before the timelock expires, any Admin can cancel the pin. Cancellation marks the proposal `Cancelled`, removes the `PendingUpgrade` record (so a replacement proposal can be created), and emits `upgrade_cancelled`.
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source <ADMIN_KEY> \
+  --network testnet \
+  -- cancel_upgrade \
+  --admin <ADMIN_ADDRESS> \
+  --proposal_id <PROPOSAL_ID>
+```
+
+After cancellation, `execute_upgrade` for that proposal returns `UpgradeNotFound`. Signers must approve a fresh proposal with the replacement hash.
 
 ---
 
@@ -335,7 +369,7 @@ stellar contract invoke \
 
 ### 8.5 Check backend indexer
 
-The backend emits a `proposal_executed` event for the upgrade proposal and an `initialized` event for the new version. Confirm the backend's event stream shows both without gaps.
+The backend emits `upgrade_proposed` at proposal time, `upgrade_applied` when the pin is applied, plus `proposal_executed` and `initialized` for the new version. Confirm the backend's event stream shows these without gaps and that the pinned hash in `upgrade_proposed` matches `upgrade_applied`.
 
 ---
 
@@ -365,7 +399,7 @@ The correct rollback is to perform a second upgrade that re-deploys the previous
 
 3. **Propose, approve, and execute** a new upgrade proposal with the previous WASM hash, following Steps 3–7 above.
 
-> Note: The `timelock_delay` applies to the rollback upgrade as well. If the defect is critical, the timelock can be reduced via `propose_vault_config_change` (which itself requires M-of-N approval), or the Admin can activate the emergency pause first to halt fund movements while the rollback is assembled.
+> Note: The `upgrade_timelock_delay` (minimum 17,280 ledgers) applies to the rollback upgrade as well, so it cannot be reduced below 24 hours. If the defect is critical, the Admin can activate the emergency pause first to halt fund movements while the rollback is assembled and approved.
 
 ### 9.2 Emergency pause while rollback is in flight
 
@@ -430,18 +464,20 @@ Use this checklist before every production upgrade.
 
 - [ ] `propose_upgrade` has been called by an Admin.
 - [ ] The returned `proposal_id` has been shared with all signers.
-- [ ] The proposal's `unlock_ledger` has been noted (timelock expiry).
+- [ ] `get_pending_upgrade()` shows the expected hash, proposer, and `earliest_apply_ledger`.
+- [ ] The proposal's `unlock_ledger` and `metadata["wasm_hash"]` match the pin (timelock expiry and hash).
 
 ### Approval window
 
 - [ ] All N signers have approved the upgrade proposal.
 - [ ] `get_proposal(proposal_id).approvals.len() == config.signers.len()`.
-- [ ] The timelock has expired (`current_ledger >= unlock_ledger`).
+- [ ] The timelock has expired (`current_ledger >= get_pending_upgrade().earliest_apply_ledger`).
 
 ### Execution
 
-- [ ] `execute_upgrade` has been called and confirmed.
+- [ ] `execute_upgrade` has been called with the same hash that was proposed and confirmed.
 - [ ] `get_proposal(proposal_id).status == Executed`.
+- [ ] `get_pending_upgrade()` returns no value.
 
 ### Schema migration (issue #1748)
 
@@ -460,7 +496,7 @@ the pending-proposal and active-stream recipient indexes for existing vaults.
 - [ ] `get_config()` returns expected, unchanged settings.
 - [ ] Audit trail shows `AuditAction::ExecuteProposal` for the upgrade proposal.
 - [ ] A smoke-test proposal has been created and approved successfully.
-- [ ] Backend event indexer shows both `proposal_executed` and `initialized` events without gaps.
+- [ ] Backend event indexer shows `upgrade_proposed`, `upgrade_applied`, `proposal_executed`, and `initialized` events without gaps, with matching hashes.
 
 ---
 

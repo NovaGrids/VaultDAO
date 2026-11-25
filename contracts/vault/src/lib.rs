@@ -33,8 +33,8 @@ use soroban_sdk::{
 };
 use types::{
     AmendmentDiff, AuditAction, AuditEntry, BatchExecutionResult, BatchStatus, BatchTransaction,
-    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus, ColdSignerRotation, Comment, Condition,
-    BridgeConfig, CancellationRecord, Capability, EscrowConsent, CapabilityToken, ClawbackRequest, ClawbackStatus, Comment, Condition,
+    BridgeConfig, CancellationRecord, Capability, CapabilityToken, ClawbackRequest, ClawbackStatus,
+    ColdSignerRotation, Comment, Condition, EscrowConsent,
     ConditionLogic, Config, ConfigParam, CrossChainAsset, CrossChainProposal, CrossVaultConfig,
     CrossVaultProposal, CrossVaultStatus, DeadLetterRecord, Delegation, DelegationHistory,
     DexConfig, Dispute, DisputeResolution, DisputeStatus, Escrow, EscrowStatus,
@@ -44,7 +44,7 @@ use types::{
     HookRegistration, ImpactScore, InitConfig, InsuranceClaim, InsuranceClaimStatus,
     InsuranceConfig, ListMode, Milestone, MultiPhaseProposal, NotificationPreferences,
     NotificationPreferencesV2, NotificationPrefs, OptionalProposalOperation,
-    OptionalVaultOracleConfig, ParticipationConfig, PauseCooldownConfig,
+    OptionalVaultOracleConfig, ParticipationConfig, PauseCooldownConfig, PendingUpgrade,
     Priority, Proposal, ProposalAmendment, ProposalOperation, ProposalPhase,
     ProposalPhaseStatus, ProposalStatus, ProposalTemplate, RecoveryConfig,
     RecoveryConfigChangeProposal, RecoveryProposal, RecoveryStatus, RecurringPayment,
@@ -545,6 +545,8 @@ mod test_threshold_min_init;
 mod test_threshold_unilateral_reduction;
 #[cfg(test)]
 mod test_timelock_ready_queue;
+#[cfg(test)]
+mod test_upgrade_timelock_hash;
 #[cfg(test)]
 mod test_upgrade_timelock_min;
 #[cfg(test)]
@@ -6728,6 +6730,7 @@ impl VaultDAO {
         }
         if config.high_impact_threshold > 100 {
             return Err(VaultError::InvalidThresholdConfig);
+        }
         // Issue #2137: per-token interval overrides may only tighten the global bound.
         for (_token, interval) in config.min_interval_per_token.iter() {
             if interval < MIN_RECURRING_INTERVAL {
@@ -21779,10 +21782,23 @@ impl VaultDAO {
     // Contract Upgrade Functions
     // ========================================================================
 
+    /// Render a WASM hash as lowercase hex for human-readable proposal metadata.
+    fn wasm_hash_hex(env: &Env, wasm_hash: &BytesN<32>) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let bytes = wasm_hash.to_array();
+        let mut chars = [0u8; 64];
+        for (index, byte) in bytes.iter().enumerate() {
+            chars[index * 2] = HEX[(byte >> 4) as usize];
+            chars[index * 2 + 1] = HEX[(byte & 0x0f) as usize];
+        }
+        String::from_str(env, core::str::from_utf8(&chars).unwrap_or(""))
+    }
+
     /// Propose a contract upgrade with a new WASM hash.
     ///
-    /// Upgrade proposals require all signers to approve and have a mandatory timelock.
-    /// Only one upgrade proposal can be active at a time.
+    /// The hash and the earliest permitted apply ledger are pinned immediately,
+    /// so approval cannot be transferred to different bytecode later. Upgrade
+    /// proposals require all signers to approve and only one may be pending.
     pub fn propose_upgrade(
         env: Env,
         admin: Address,
@@ -21798,21 +21814,23 @@ impl VaultDAO {
             return Err(VaultError::UpgradeUnauthorized);
         }
 
-        // Check if there's already an active upgrade proposal
-        let active_proposals = Self::list_proposal_ids(env.clone(), 0, 1000); // Get all proposals
-        for i in 0..active_proposals.len() {
-            let pid = active_proposals.get(i).unwrap();
-            if let Ok(proposal) = storage::get_proposal(&env, pid) {
-                if proposal.memo == Symbol::new(&env, "upgrade")
-                    && (proposal.status == ProposalStatus::Pending
-                        || proposal.status == ProposalStatus::Approved)
-                {
-                    return Err(VaultError::UpgradeUnauthorized);
-                }
-            }
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
+
+        // A single pinned record replaces the old linear proposal scan: one
+        // pending upgrade at a time, with no unbounded iteration.
+        if storage::get_pending_upgrade(&env).is_some() {
+            return Err(VaultError::UpgradeUnauthorized);
+        }
+
+        let upgrade_delay = config.upgrade_timelock_delay;
+        if upgrade_delay < MIN_UPGRADE_TIMELOCK {
+            return Err(VaultError::UpgradeTimelockTooShort);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
+        let earliest_apply_ledger = current_ledger.saturating_add(upgrade_delay);
         let proposal_id = storage::increment_proposal_id(&env);
 
         // Create upgrade proposal with special properties
@@ -21827,7 +21845,7 @@ impl VaultDAO {
                 let mut meta = Map::new(&env);
                 meta.set(
                     Symbol::new(&env, "wasm_hash"),
-                    String::from_str(&env, "placeholder"),
+                    Self::wasm_hash_hex(&env, &new_wasm_hash),
                 );
                 meta
             },
@@ -21841,8 +21859,8 @@ impl VaultDAO {
             conditions: Vec::new(&env),
             condition_logic: ConditionLogic::And,
             created_at: current_ledger,
-            expires_at: current_ledger + (config.timelock_delay * 10), // Longer expiry for upgrades
-            unlock_ledger: current_ledger + config.timelock_delay,     // Mandatory timelock
+            expires_at: current_ledger.saturating_add(upgrade_delay.saturating_mul(10)),
+            unlock_ledger: earliest_apply_ledger,
             execution_time: None,
             execution_window_ledgers: 0,
             insurance_amount: 0,
@@ -21865,6 +21883,15 @@ impl VaultDAO {
             rejection_votes: Vec::new(&env),
         };
 
+        storage::set_pending_upgrade(
+            &env,
+            &PendingUpgrade {
+                proposal_id,
+                wasm_hash: new_wasm_hash.clone(),
+                earliest_apply_ledger,
+                proposer: admin.clone(),
+            },
+        );
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
         storage::create_audit_entry(&env, AuditAction::ProposeTransfer, &admin, proposal_id);
@@ -21878,69 +21905,132 @@ impl VaultDAO {
             new_wasm_hash.to_array().len() as i128,
             0,
         );
+        events::emit_upgrade_proposed(
+            &env,
+            proposal_id,
+            &admin,
+            &new_wasm_hash,
+            earliest_apply_ledger,
+        );
 
         Ok(proposal_id)
     }
 
-    /// Execute a contract upgrade proposal.
+    /// Execute a pinned contract upgrade proposal.
     ///
-    /// Requires all signers to have approved and timelock to have expired.
+    /// The caller must supply the same WASM hash that was pinned at proposal
+    /// time. This makes a hash substitution between approval and execution
+    /// impossible: the contract only ever deploys the pinned hash.
     pub fn execute_upgrade(
         env: Env,
         executor: Address,
         proposal_id: u64,
+        expected_wasm_hash: BytesN<32>,
     ) -> Result<(), VaultError> {
         executor.require_auth();
 
-        let config = storage::get_config(&env)?;
-        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if storage::get_pause_state(&env).is_paused {
+            return Err(VaultError::VaultPaused);
+        }
 
-        // Verify this is an upgrade proposal
+        let config = storage::get_config(&env)?;
+        let pending = storage::get_pending_upgrade(&env).ok_or(VaultError::UpgradeNotFound)?;
+        if pending.proposal_id != proposal_id {
+            return Err(VaultError::UpgradeNotFound);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
         if proposal.memo != Symbol::new(&env, "upgrade") {
             return Err(VaultError::ProposalNotFound);
         }
-
-        // Verify proposal is approved
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
 
-        // Check timelock
         let current_ledger = env.ledger().sequence() as u64;
-        if current_ledger < proposal.unlock_ledger {
+        if current_ledger < pending.earliest_apply_ledger
+            || current_ledger < proposal.unlock_ledger
+        {
             return Err(VaultError::UpgradeTimelockActive);
         }
 
-        // Verify all signers have approved (upgrade requires unanimous consent)
         if proposal.approvals.len() != config.signers.len() {
             return Err(VaultError::UpgradeUnauthorized);
         }
 
-        // Extract WASM hash from metadata
-        // For this implementation, we'll use the proposal amount field to store a reference
-        // In a production system, you'd want a more robust storage mechanism
-        let wasm_hash_key = Symbol::new(&env, "wasm_hash");
-        let _wasm_hash_str: String = proposal
-            .metadata
-            .get(wasm_hash_key)
-            .ok_or(VaultError::ProposalNotFound)?;
+        if expected_wasm_hash != pending.wasm_hash {
+            return Err(VaultError::UpgradeHashMismatch);
+        }
 
-        // For now, create a dummy WASM hash - in production this would be properly stored
-        let wasm_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+        // Deploy exactly the hash signers approved. No placeholder or dummy hash.
+        env.deployer()
+            .update_current_contract_wasm(pending.wasm_hash.clone());
 
-        // Perform the upgrade
-        env.deployer().update_current_contract_wasm(wasm_hash);
-
-        // Mark proposal as executed
         proposal.status = ProposalStatus::Executed;
         storage::pending_expiry_index_remove(&env, proposal_id);
         storage::set_proposal(&env, &proposal);
+        storage::clear_pending_upgrade(&env);
         storage::create_audit_entry(&env, AuditAction::ExecuteProposal, &executor, proposal_id);
 
-        // Re-emit initialized event to signal new contract version
+        events::emit_upgrade_applied(
+            &env,
+            proposal_id,
+            &pending.wasm_hash,
+            current_ledger,
+        );
         events::emit_initialized(&env, &executor, config.threshold);
 
         Ok(())
+    }
+
+    /// Cancel a pinned upgrade before it is applied (Issue #2063).
+    ///
+    /// Only an Admin may cancel. The proposal is marked `Cancelled` and the
+    /// pinned hash/ledger record is removed, so `execute_upgrade` can no longer
+    /// succeed for that proposal.
+    pub fn cancel_upgrade(
+        env: Env,
+        admin: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::UpgradeUnauthorized);
+        }
+
+        let pending = storage::get_pending_upgrade(&env).ok_or(VaultError::UpgradeNotFound)?;
+        if pending.proposal_id != proposal_id {
+            return Err(VaultError::UpgradeNotFound);
+        }
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Pending
+            && proposal.status != ProposalStatus::Approved
+        {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        proposal.status = ProposalStatus::Cancelled;
+        storage::pending_expiry_index_remove(&env, proposal_id);
+        storage::set_proposal(&env, &proposal);
+        storage::remove_from_priority_queue(
+            &env,
+            proposal.priority.clone() as u32,
+            proposal_id,
+        );
+        storage::clear_pending_upgrade(&env);
+        storage::create_audit_entry(&env, AuditAction::CancelProposal, &admin, proposal_id);
+
+        events::emit_upgrade_cancelled(&env, proposal_id, &admin, &pending.wasm_hash);
+
+        Ok(())
+    }
+
+    /// Read the currently pinned upgrade, if one is awaiting execution.
+    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        storage::get_pending_upgrade(&env)
     }
 
     /// Migrate stored data after a contract upgrade (issue #1748).

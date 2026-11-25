@@ -472,6 +472,8 @@ pub enum FeatureKey {
     MetricsBucketBaseline,
     /// Pending config change proposal ID -> u64
     PendingConfig,
+    /// Pinned upgrade awaiting its apply ledger -> PendingUpgrade (#2063)
+    PendingUpgrade,
     /// Ledger sequence of the last successful `update_threshold` call -> u64 (#2146 cooldown)
     LastThresholdChangeLedger,
     /// On-chain whitelist entry -> WhitelistEntry (issue #1094)
@@ -6298,6 +6300,31 @@ pub fn set_pending_config_proposal(env: &Env, proposal_id: u64) {
 
 pub fn clear_pending_config_proposal(env: &Env) {
     env.storage().instance().remove(&FeatureKey::PendingConfig);
+}
+
+// ============================================================================
+// Pinned Contract Upgrade (Issue #2063)
+// ============================================================================
+
+/// The single upgrade proposal currently pinned for execution, if any.
+pub fn get_pending_upgrade(env: &Env) -> Option<crate::types::PendingUpgrade> {
+    env.storage().instance().get(&FeatureKey::PendingUpgrade)
+}
+
+/// Pin an upgrade proposal. Callers must ensure no other upgrade is pending.
+pub fn set_pending_upgrade(env: &Env, pending: &crate::types::PendingUpgrade) {
+    env.storage()
+        .instance()
+        .set(&FeatureKey::PendingUpgrade, pending);
+    extend_instance_ttl(env);
+}
+
+/// Remove the pending upgrade after a successful apply or an explicit cancel.
+pub fn clear_pending_upgrade(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&FeatureKey::PendingUpgrade);
+    extend_instance_ttl(env);
 }
 
 /// Ledger of the last successful `update_threshold` call (Issue #2146).
