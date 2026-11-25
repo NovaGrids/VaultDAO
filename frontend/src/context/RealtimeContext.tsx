@@ -23,7 +23,7 @@ export interface RealtimeUpdate {
   userId?: string;
 }
 
-interface RealtimeContextValue {
+export interface RealtimeContextValue {
   isConnected: boolean;
   connectionStatus: WebSocketStatus;
   onlineUsers: UserPresence[];
@@ -34,7 +34,8 @@ interface RealtimeContextValue {
   trackEvent: (id: string) => boolean;
 }
 
-const RealtimeContext = createContext<RealtimeContextValue | null>(null);
+/** Exported for consumers that must tolerate a missing provider (e.g. the war room). */
+export const RealtimeContext = createContext<RealtimeContextValue | null>(null);
 
 export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);

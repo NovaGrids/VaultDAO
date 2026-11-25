@@ -19,6 +19,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-vault session manager (#2065):** `VaultSessionManager` isolates state
+  by network + contract id, caches read footprints with a TTL, coalesces
+  in-flight reads, and applies one bounded exponential-backoff budget to all
+  reads and writes. `onRetry`/`onCacheHit` callbacks, injectable clock/sleep,
+  `RetryBudgetExhaustedError`, idempotent-write guidance, documentation and an
+  example are included.
+
+- **Full governance surface (#2064):** public bindings for vote variants
+  (`abstainProposal`, `changeVote`, `vetoProposal`, `cancelProposal`, `amendProposal`),
+  emergency pause/unpause, insurance claims, staking, recipient whitelist, batch
+  execution and swaps, all documented by family in the SDK README.
+- **Typed contract errors (#2064):** `parseError()` now returns family-specific
+  classes (`ProposalError`, `PauseError`, `InsuranceError`, `WhitelistError`,
+  `BatchError`, `SwapError`, …) for both on-chain and legacy error codes, with
+  `ContractErrorCode`, `createContractError()` and `toTypedVaultError()` helpers.
+- **Simulation helpers (#2064):** `simulateContractCall()` plus `simulateVote`,
+  `simulatePause`, `simulateInsurance`, `simulateStaking`, `simulateWhitelist`,
+  `simulateBatch` and `simulateSwap` return decoded results with resource
+  estimates (CPU, memory, minimum fee, ledger) and state diffs.
+- Shared RPC client helpers `getRpcServer`, `resolveAllowHttp` and
+  `isLocalhostUrl` are now part of the public API (#2064).
 - **Automated release notes:** pushing a `v*` tag now triggers
   `.github/workflows/release.yml`, which drafts a changelog from merged PRs since the last tag
   (grouped by label: enhancement, bug, security, documentation) and publishes it as a draft

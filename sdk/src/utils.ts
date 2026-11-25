@@ -17,8 +17,8 @@ import {
   scValToNative,
 } from "@stellar/stellar-sdk";
 import type { SdkOptions, Network, SdkLogger, StateDiff, StateChangeValue, StateChangeEntry } from "./types";
-import { VaultError, VaultErrorCode, noopLogger } from "./types";
-import { getErrorDescription } from "./errors";
+import { VaultError, noopLogger } from "./types";
+import { toTypedVaultError } from "./typed-errors";
 import { getRpcServer } from "./rpc";
 import { validateContractId } from "./validation";
 
@@ -347,21 +347,7 @@ export async function signAndSubmit(
  * }
  */
 export function parseError(err: unknown): VaultError | Error {
-  if (err instanceof VaultError) return err;
-
-  const message = err instanceof Error ? err.message : String(err);
-
-  // Soroban contract errors surface as "Error(Contract, X)" in simulations
-  const match = message.match(/Error\(Contract,\s*(\d+)\)/);
-  if (match) {
-    const code = parseInt(match[1], 10) as VaultErrorCode;
-    if (code in VaultErrorCode) {
-      const description = getErrorDescription(code);
-      return new VaultError(code, description);
-    }
-  }
-
-  return err instanceof Error ? err : new Error(message);
+  return toTypedVaultError(err);
 }
 
 function parseSimulationError(errorMessage: string): Error {

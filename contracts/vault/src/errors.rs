@@ -135,6 +135,10 @@ pub enum VaultError {
     UpgradeTimelockActive = 921,
     /// Upgrade timelock duration is below the minimum allowed (MIN_UPGRADE_TIMELOCK)
     UpgradeTimelockTooShort = 922,
+    /// No pinned upgrade exists (or it belongs to a different proposal)
+    UpgradeNotFound = 923,
+    /// The hash supplied to `execute_upgrade` differs from the pinned proposal hash
+    UpgradeHashMismatch = 924,
     /// Veto window has closed
     VetoWindowClosed = 930,
     /// Proposal status transition is not valid

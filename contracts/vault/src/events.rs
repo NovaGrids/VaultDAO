@@ -3,7 +3,7 @@
 //! Standardized events for proposal lifecycle and admin actions.
 
 use crate::types::{FundingRoundConfig, ProposalAmendment, SignerTier};
-use soroban_sdk::{Address, Env, String, Symbol, Vec};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol, Vec};
 
 /// Emit when contract is initialized
 pub fn emit_initialized(env: &Env, admin: &Address, threshold: u32) {
@@ -18,6 +18,46 @@ pub fn emit_migrated(env: &Env, from_version: u32, to_version: u32) {
     env.events().publish(
         (Symbol::new(env, "migrated"),),
         (from_version, to_version),
+    );
+}
+
+/// Emit when an upgrade is proposed and its WASM hash is pinned (Issue #2063).
+pub fn emit_upgrade_proposed(
+    env: &Env,
+    proposal_id: u64,
+    proposer: &Address,
+    wasm_hash: &BytesN<32>,
+    earliest_apply_ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "upgrade_proposed"), proposal_id),
+        (proposer.clone(), wasm_hash.clone(), earliest_apply_ledger),
+    );
+}
+
+/// Emit when a pending upgrade is cancelled before it is applied (Issue #2063).
+pub fn emit_upgrade_cancelled(
+    env: &Env,
+    proposal_id: u64,
+    canceller: &Address,
+    wasm_hash: &BytesN<32>,
+) {
+    env.events().publish(
+        (Symbol::new(env, "upgrade_cancelled"), proposal_id),
+        (canceller.clone(), wasm_hash.clone()),
+    );
+}
+
+/// Emit when a pinned upgrade is successfully applied (Issue #2063).
+pub fn emit_upgrade_applied(
+    env: &Env,
+    proposal_id: u64,
+    wasm_hash: &BytesN<32>,
+    ledger: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "upgrade_applied"), proposal_id),
+        (wasm_hash.clone(), ledger),
     );
 }
 

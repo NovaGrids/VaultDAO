@@ -319,6 +319,20 @@ impl From<ConfigV1> for Config {
     }
 }
 
+/// A pinned upgrade awaiting its earliest permitted apply ledger (Issue #2063).
+///
+/// Stored as a singleton so a proposal cannot be swapped for different code
+/// after signers approve it. `earliest_apply_ledger` is fixed at proposal time
+/// from `Config::upgrade_timelock_delay`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingUpgrade {
+    pub proposal_id: u64,
+    pub wasm_hash: BytesN<32>,
+    pub earliest_apply_ledger: u64,
+    pub proposer: Address,
+}
+
 /// Signer participation scoring thresholds (Issue #1093).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
