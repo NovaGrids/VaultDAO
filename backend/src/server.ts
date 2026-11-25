@@ -10,6 +10,7 @@ import {
 import {
   MetricsRegistry,
   registerProposalThroughputMetrics,
+  registerObservabilityMetrics,
 } from "./modules/health/metrics.registry.js";
 import {
   RecurringIndexerService,
@@ -202,6 +203,7 @@ export async function startServer(
     "counter",
   );
   registerProposalThroughputMetrics(metricsRegistry);
+  registerObservabilityMetrics(metricsRegistry);
   const leasedJobQueueDb = new DatabaseSync(env.databasePath ?? ":memory:");
   configureWalMode(leasedJobQueueDb);
   const leasedJobQueue = new SqliteLeasedJobQueue(leasedJobQueueDb, metricsRegistry);
