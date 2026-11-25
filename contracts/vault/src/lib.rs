@@ -517,6 +517,8 @@ mod test_stream_create_validation;
 mod test_stream_pause_extension;
 #[cfg(test)]
 mod test_recurring_catchup_budget;
+mod test_recurring_catchup_policy;
+mod test_disbursement_schedules;
 #[cfg(test)]
 mod test_trigger_stream_payment_accrual;
 #[cfg(test)]
@@ -4218,6 +4220,263 @@ impl VaultDAO {
             .ok_or(VaultError::MultiPhaseProposalNotFound)
     }
 
+    // ========================================================================
+    // Issue #2224: Phased disbursement schedules with dependency gates
+    // ========================================================================
+
+    /// Create a phased disbursement schedule.
+    ///
+    /// The full schedule is reserved up front: creation is rejected if the sum
+    /// of tranches exceeds the spending limit or the currently spendable
+    /// treasury balance. Gates (`unlock_ledger`, dependency proposal/escrow IDs)
+    /// are checked again when each tranche executes.
+    pub fn create_disbursement_schedule(
+        env: Env,
+        proposer: Address,
+        recipient: Address,
+        token: Address,
+        tranches: Vec<crate::types::DisbursementTranche>,
+        policy: crate::types::PartialFailPolicy,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+        if !Role::role_satisfies(Role::Treasurer, storage::get_role(&env, &proposer)) {
+            return Err(VaultError::InsufficientRole);
+        }
+        if tranches.is_empty() || tranches.len() > 5 {
+            return Err(VaultError::TooManyPhases);
+        }
+        Self::validate_recipient(&env, &recipient)?;
+
+        let config = storage::get_config(&env)?;
+        let mut total: i128 = 0;
+        let mut prepared: Vec<crate::types::DisbursementTranche> = Vec::new(&env);
+        for i in 0..tranches.len() {
+            let t = tranches.get(i).unwrap();
+            if t.amount <= 0 {
+                return Err(VaultError::InvalidAmount);
+            }
+            total = total.saturating_add(t.amount);
+            prepared.push_back(crate::types::DisbursementTranche {
+                id: t.id,
+                amount: t.amount,
+                unlock_ledger: t.unlock_ledger,
+                depends_on_proposal: t.depends_on_proposal,
+                depends_on_escrow: t.depends_on_escrow,
+                status: crate::types::TrancheStatus::Pending,
+            });
+        }
+        if total > config.spending_limit || Self::available_balance(&env, &token) < total {
+            return Err(VaultError::ScheduleOverCommitted);
+        }
+
+        let id = storage::increment_disbursement_schedule_id(&env);
+        let schedule = crate::types::DisbursementSchedule {
+            id,
+            proposer: proposer.clone(),
+            recipient,
+            token,
+            tranches: prepared,
+            policy,
+            reserved_amount: total,
+            reservation_released: false,
+            cancelled: false,
+        };
+        storage::set_disbursement_schedule(&env, &schedule);
+        Ok(id)
+    }
+
+    /// Read a disbursement schedule including tranche statuses.
+    pub fn get_disbursement_schedule(
+        env: Env,
+        schedule_id: u64,
+    ) -> Result<crate::types::DisbursementSchedule, VaultError> {
+        storage::get_disbursement_schedule(&env, schedule_id)
+    }
+
+    /// Execute one tranche. Gate failures are emitted as structured events;
+    /// with `PartialFailPolicy::Abort` the remaining schedule is cancelled and
+    /// the reservation released, while `Continue` only marks that tranche failed.
+    pub fn execute_disbursement_tranche(
+        env: Env,
+        caller: Address,
+        schedule_id: u64,
+        tranche_id: u32,
+    ) -> Result<(), VaultError> {
+        caller.require_auth();
+        if !Role::role_satisfies(Role::Treasurer, storage::get_role(&env, &caller)) {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut schedule = storage::get_disbursement_schedule(&env, schedule_id)?;
+        if schedule.cancelled {
+            return Err(VaultError::ScheduleAlreadyCancelled);
+        }
+        let index = schedule
+            .tranches
+            .iter()
+            .position(|t| t.id == tranche_id)
+            .ok_or(VaultError::ScheduleTrancheNotFound)?;
+        if schedule.tranches.get(index).unwrap().status
+            != crate::types::TrancheStatus::Pending
+        {
+            return Err(VaultError::ScheduleTrancheNotFound);
+        }
+
+        let tranche = schedule.tranches.get(index).unwrap();
+        let current_ledger = env.ledger().sequence();
+        if tranche.unlock_ledger > current_ledger {
+            Self::fail_disbursement_tranche(
+                &env,
+                &mut schedule,
+                index,
+                VaultError::ScheduleGateNotCleared as u32,
+                Symbol::new(&env, "ledger"),
+            );
+            return Ok(());
+        }
+        if let Some(dep_id) = tranche.depends_on_proposal {
+            match storage::get_proposal(&env, dep_id) {
+                Ok(dep) if dep.status == ProposalStatus::Executed => {}
+                _ => {
+                    Self::fail_disbursement_tranche(
+                        &env,
+                        &mut schedule,
+                        index,
+                        VaultError::ScheduleGateNotCleared as u32,
+                        Symbol::new(&env, "proposal"),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        if let Some(escrow_id) = tranche.depends_on_escrow {
+            match storage::get_escrow(&env, escrow_id) {
+                Ok(escrow) if escrow.status == crate::types::EscrowStatus::Released => {}
+                _ => {
+                    Self::fail_disbursement_tranche(
+                        &env,
+                        &mut schedule,
+                        index,
+                        VaultError::ScheduleGateNotCleared as u32,
+                        Symbol::new(&env, "escrow"),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        Self::validate_recipient(&env, &schedule.recipient)?;
+        if token::try_transfer(&env, &schedule.token, &schedule.recipient, tranche.amount).is_err()
+        {
+            Self::fail_disbursement_tranche(
+                &env,
+                &mut schedule,
+                index,
+                VaultError::InsufficientBalance as u32,
+                Symbol::new(&env, "transfer"),
+            );
+            return Ok(());
+        }
+
+        let mut executed = schedule.tranches.get(index).unwrap();
+        executed.status = crate::types::TrancheStatus::Executed;
+        schedule.tranches.set(index, executed);
+        storage::set_disbursement_schedule(&env, &schedule);
+        env.events().publish(
+            (
+                Symbol::new(&env, "disbursement_tranche_executed"),
+                schedule_id,
+            ),
+            tranche_id,
+        );
+
+        if schedule
+            .tranches
+            .iter()
+            .all(|t| t.status == crate::types::TrancheStatus::Executed)
+        {
+            Self::release_disbursement_reservation(&env, &mut schedule);
+            storage::set_disbursement_schedule(&env, &schedule);
+        }
+        Ok(())
+    }
+
+    /// Cancel a schedule and release its reservation exactly once.
+    pub fn cancel_disbursement_schedule(
+        env: Env,
+        proposer: Address,
+        schedule_id: u64,
+    ) -> Result<(), VaultError> {
+        proposer.require_auth();
+        if !Role::role_satisfies(
+            Role::Treasurer,
+            storage::get_role(&env, &proposer),
+        ) {
+            return Err(VaultError::InsufficientRole);
+        }
+        let mut schedule = storage::get_disbursement_schedule(&env, schedule_id)?;
+        if schedule.cancelled {
+            return Err(VaultError::ScheduleAlreadyCancelled);
+        }
+        schedule.cancelled = true;
+        for i in 0..schedule.tranches.len() {
+            let mut t = schedule.tranches.get(i).unwrap();
+            if t.status != crate::types::TrancheStatus::Executed {
+                t.status = crate::types::TrancheStatus::Cancelled;
+                schedule.tranches.set(i, t);
+            }
+        }
+        Self::release_disbursement_reservation(&env, &mut schedule);
+        storage::set_disbursement_schedule(&env, &schedule);
+        Ok(())
+    }
+
+    fn fail_disbursement_tranche(
+        env: &Env,
+        schedule: &mut crate::types::DisbursementSchedule,
+        index: u32,
+        code: u32,
+        reason: Symbol,
+    ) {
+        let failure = crate::types::DisbursementFailure {
+            schedule_id: schedule.id,
+            tranche_id: schedule.tranches.get(index).unwrap().id,
+            code,
+            reason: reason.clone(),
+        };
+        crate::events::emit_disbursement_tranche_failed(env, &failure);
+
+        if schedule.policy == crate::types::PartialFailPolicy::Abort {
+            for i in 0..schedule.tranches.len() {
+                let mut t = schedule.tranches.get(i).unwrap();
+                if t.status == crate::types::TrancheStatus::Pending {
+                    t.status = crate::types::TrancheStatus::Blocked;
+                    schedule.tranches.set(i, t);
+                }
+            }
+            schedule.cancelled = true;
+            Self::release_disbursement_reservation(env, schedule);
+        } else {
+            let mut t = schedule.tranches.get(index).unwrap();
+            t.status = crate::types::TrancheStatus::Failed;
+            schedule.tranches.set(index, t);
+        }
+        storage::set_disbursement_schedule(env, schedule);
+    }
+
+    fn release_disbursement_reservation(
+        env: &Env,
+        schedule: &mut crate::types::DisbursementSchedule,
+    ) {
+        if schedule.reservation_released {
+            return;
+        }
+        schedule.reservation_released = true;
+        crate::events::emit_disbursement_reservation_released(
+            env,
+            schedule.id,
+            schedule.reserved_amount,
+        );
+    }
+
     /// Amend a pending proposal and require fresh re-approval.
     ///
     /// Only the original proposer can amend. Approvals and abstentions are reset,
@@ -7229,24 +7488,11 @@ impl VaultDAO {
         let max_jitter = (interval / 10) as u32;
         let effective_jitter_window = jitter_window.min(max_jitter);
 
-        // Compute deterministic jitter offset: sha256(id || creation_ledger) % jitter_window
-        // No jitter for the first payment (offset is stored but next_payment_ledger is unshifted
-        // so first execution happens promptly at creation_ledger + interval).
-        let jitter_offset = if effective_jitter_window > 0 {
-            let mut hash_input = soroban_sdk::Bytes::new(&env);
-            hash_input.append(&soroban_sdk::Bytes::from_array(&env, &id.to_le_bytes()));
-            hash_input.append(&soroban_sdk::Bytes::from_array(
-                &env,
-                &current_ledger.to_le_bytes(),
-            ));
-            let digest = env.crypto().sha256(&hash_input);
-            // Take the first 4 bytes of the hash as a u32 for modulo
-            let b = digest.to_array();
-            let raw = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            raw % effective_jitter_window
-        } else {
-            0
-        };
+        // Deterministic jitter (Issue #2225): sha256(id || creation_ledger) % window.
+        // Keepers recompute the same offset with the public helper and the stored
+        // jitter_window; the first cycle is never shifted.
+        let jitter_offset =
+            deterministic_jitter_offset(&env, id, current_ledger, effective_jitter_window);
 
         let payment = crate::RecurringPayment {
             id,
@@ -7276,6 +7522,50 @@ impl VaultDAO {
         storage::set_recurring_payment(&env, &payment);
 
         Ok(id)
+    }
+
+    /// Configure catch-up controls for a recurring payment (Issue #2225).
+    ///
+    /// `budget` is the maximum amount that may be paid by a single execution,
+    /// including catch-up cycles. It is always additionally bounded by the
+    /// vault's daily/weekly and per-token spending limits. Only a Treasurer
+    /// may change it.
+    pub fn set_recurring_catch_up_controls(
+        env: Env,
+        proposer: Address,
+        payment_id: u64,
+        budget: i128,
+        policy: crate::types::MissedCyclePolicy,
+    ) -> Result<(), VaultError> {
+        proposer.require_auth();
+        if !Role::role_satisfies(
+            Role::Treasurer,
+            storage::get_role(&env, &proposer),
+        ) {
+            return Err(VaultError::InsufficientRole);
+        }
+        if budget <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        storage::get_recurring_payment(&env, payment_id)?;
+        storage::set_recurring_catch_up_budget(&env, payment_id, budget);
+        storage::set_recurring_missed_cycle_policy(&env, payment_id, policy);
+        Ok(())
+    }
+
+    /// Read the effective catch-up controls. A payment without explicit
+    /// configuration defaults to the daily spending limit and `PayUpToBudget`.
+    pub fn get_recurring_catch_up_controls(
+        env: Env,
+        payment_id: u64,
+    ) -> Result<(i128, crate::types::MissedCyclePolicy), VaultError> {
+        storage::get_recurring_payment(&env, payment_id)?;
+        let config = storage::get_config(&env)?;
+        Ok((
+            storage::get_recurring_catch_up_budget(&env, payment_id)
+                .unwrap_or(config.daily_limit),
+            storage::get_recurring_missed_cycle_policy(&env, payment_id),
+        ))
     }
 
     // ========================================================================
@@ -8442,6 +8732,13 @@ impl VaultDAO {
         // Check spending limits for total amount
         let config = storage::get_config(&env)?;
 
+        // Issue #2225: catch-up is policy driven and capped per period. The
+        // configured budget can never lift the global spending limits.
+        let catch_up_budget = storage::get_recurring_catch_up_budget(&env, payment_id)
+            .unwrap_or(config.daily_limit)
+            .min(config.daily_limit);
+        let policy = storage::get_recurring_missed_cycle_policy(&env, payment_id);
+
         let today = storage::get_day_number(&env);
         let spent_today = storage::get_daily_spent(&env, today);
         let week = storage::get_week_number(&env);
@@ -8458,12 +8755,20 @@ impl VaultDAO {
             ));
         }
 
-        // Bounded catch-up (#1916): a long outage must not wedge the schedule
-        // with a lump sum over the budgets. Pay as many whole periods as fit
-        // within the remaining daily/weekly/token budgets instead.
-        let mut payable = total_payments;
-        if payment.amount > 0 {
-            let mut fit = total_payments;
+        // Bounded catch-up (#1916, #2225): a long outage must not wedge the
+        // schedule with a lump sum over the budgets. `Skip`/`PayOne` collapse
+        // the window to a single cycle; `PayUpToBudget` pays whole cycles up
+        // to the per-period catch-up budget, then to the spending limits.
+        let mut payable = match policy {
+            crate::types::MissedCyclePolicy::Skip
+            | crate::types::MissedCyclePolicy::PayOne => 1u64,
+            crate::types::MissedCyclePolicy::PayUpToBudget => total_payments,
+        };
+        if payable > 0 && payment.amount > 0 {
+            let mut fit = payable;
+            if policy == crate::types::MissedCyclePolicy::PayUpToBudget {
+                fit = fit.min((catch_up_budget / payment.amount).max(0) as u64);
+            }
             fit = fit.min(
                 ((config.daily_limit.saturating_sub(spent_today)) / payment.amount).max(0) as u64,
             );
@@ -8499,6 +8804,15 @@ impl VaultDAO {
             return Err(VaultError::ExceedsDailyLimit);
         }
         let total_amount = payment.amount * payable as i128;
+        if payable < total_payments {
+            crate::events::emit_recurring_catch_up_budgeted(
+                &env,
+                payment_id,
+                total_payments.min(u32::MAX as u64) as u32,
+                payable.min(u32::MAX as u64) as u32,
+                catch_up_budget,
+            );
+        }
 
         // Revalidate recipient against current whitelist/blacklist policies.
         Self::validate_recipient(&env, &payment.recipient)?;
@@ -8545,7 +8859,13 @@ impl VaultDAO {
         // Update payment schedule.
         // After the first payment (payment_count was 0), apply jitter to all subsequent cycles.
         let was_first_payment = payment.payment_count == 0;
-        let nominal_next_ledger = payment.next_payment_ledger + payable * payment.interval;
+        // Skip/PayOne deliberately discard the rest of the outage window so a
+        // later keeper call cannot replay the same burst from old ledgers.
+        let nominal_next_ledger = if policy == crate::types::MissedCyclePolicy::PayUpToBudget {
+            payment.next_payment_ledger + payable * payment.interval
+        } else {
+            current_ledger + payment.interval
+        };
         payment.next_payment_ledger = nominal_next_ledger;
         if !was_first_payment && payment.jitter_window > 0 {
             payment.next_payment_ledger = payment

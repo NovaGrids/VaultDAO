@@ -164,7 +164,62 @@ Other errors:
 
 ---
 
-## 5. Snapshot notes
+## 5. Dependency-gated schedules (Issue #2224)
+
+For milestone programmes that must pay tranches only after earlier gates
+clear, use the schedule API instead of a single multi-phase proposal:
+
+```rust
+let tranches = vec![
+    &env,
+    DisbursementTranche {
+        id: 1,
+        amount: 5_000_0000000,
+        unlock_ledger: 100_000,
+        depends_on_proposal: None,
+        depends_on_escrow: None,
+        status: TrancheStatus::Pending,
+    },
+    DisbursementTranche {
+        id: 2,
+        amount: 7_500_0000000,
+        unlock_ledger: 110_000,
+        depends_on_proposal: Some(milestone_proposal_id),
+        depends_on_escrow: Some(escrow_id),
+        status: TrancheStatus::Pending,
+    },
+];
+let schedule_id = vault.create_disbursement_schedule(
+    &treasurer, &recipient, &usdc, &tranches,
+    PartialFailPolicy::Abort,
+);
+vault.execute_disbursement_tranche(&treasurer, &schedule_id, &1);
+vault.execute_disbursement_tranche(&treasurer, &schedule_id, &2);
+```
+
+Rules:
+
+- A tranche executes only when `unlock_ledger <= current_ledger`, every
+  `depends_on_proposal` is `Executed`, and every `depends_on_escrow` is
+  `Released`. Otherwise a structured `disbursement_tranche_failed` event is
+  emitted with the failing gate (`ledger`, `proposal`, `escrow`, `transfer`).
+- `PartialFailPolicy::Abort` blocks all remaining tranches, marks the schedule
+  cancelled, and releases the reservation; `Continue` marks only the failed
+  tranche so independent tranches can still execute.
+- `create_disbursement_schedule` reserves the full amount and rejects
+  over-commitment (`ScheduleOverCommitted`, 625) when the sum exceeds the
+  spending limit or the spendable treasury balance.
+- `cancel_disbursement_schedule` releases the reservation once
+  (`reservation_released` flag plus a `disbursement_reservation_released`
+  event); cancelling twice returns `ScheduleAlreadyCancelled` (628).
+- `get_disbursement_schedule` exposes tranche statuses for indexers and
+  operators.
+
+Regression tests: `contracts/vault/src/test_disbursement_schedules.rs`.
+
+---
+
+## 6. Snapshot notes
 
 - Up to **90** snapshots are retained; the oldest is dropped first.
 - `get_snapshot_at(ledger)` returns the newest snapshot at or before `ledger`,
@@ -179,7 +234,7 @@ Other errors:
 
 ---
 
-## 6. Related guides
+## 7. Related guides
 
 - [Funding rounds](./FUNDING_ROUNDS.md) — milestone-gated payouts held in
   escrow, released tranche-by-tranche. Use funding rounds when a payout depends

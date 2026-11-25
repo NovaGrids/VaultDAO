@@ -70,6 +70,14 @@ pub enum DataKey {
     Recurring(u64),
     /// Next recurring payment ID counter -> u64
     NextRecurringId,
+    /// Phased disbursement schedule (Issue #2224) -> DisbursementSchedule
+    DisbursementSchedule(u64),
+    /// Next disbursement schedule ID -> u64
+    NextDisbursementScheduleId,
+    /// Per-payment catch-up budget in stroops (Issue #2225) -> i128
+    RecurringCatchUpBudget(u64),
+    /// Per-payment missed-cycle policy (Issue #2225) -> MissedCyclePolicy
+    RecurringMissedCyclePolicy(u64),
     /// Proposer transfer timestamps for velocity checking (Address) -> Vec<u64>
     VelocityHistory(Address),
     /// Recipient list mode
@@ -1901,6 +1909,43 @@ pub fn get_recurring_payment(
         .persistent()
         .get(&DataKey::Recurring(id))
         .ok_or(VaultError::ProposalNotFound)
+}
+
+// Issue #2225: per-payment catch-up budget and missed-cycle policy.
+pub fn set_recurring_catch_up_budget(env: &Env, payment_id: u64, budget: i128) {
+    let key = DataKey::RecurringCatchUpBudget(payment_id);
+    env.storage().persistent().set(&key, &budget);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_recurring_catch_up_budget(env: &Env, payment_id: u64) -> Option<i128> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecurringCatchUpBudget(payment_id))
+}
+
+pub fn set_recurring_missed_cycle_policy(
+    env: &Env,
+    payment_id: u64,
+    policy: crate::types::MissedCyclePolicy,
+) {
+    let key = DataKey::RecurringMissedCyclePolicy(payment_id);
+    env.storage().persistent().set(&key, &policy);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+pub fn get_recurring_missed_cycle_policy(
+    env: &Env,
+    payment_id: u64,
+) -> crate::types::MissedCyclePolicy {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecurringMissedCyclePolicy(payment_id))
+        .unwrap_or(crate::types::MissedCyclePolicy::PayUpToBudget)
 }
 
 // ============================================================================
@@ -5208,6 +5253,43 @@ pub fn get_multi_phase_proposal(env: &Env, proposal_id: u64) -> Option<MultiPhas
 pub fn set_multi_phase_proposal(env: &Env, mp: &MultiPhaseProposal) {
     let key = FeatureKey::MultiPhaseProposal(mp.proposal_id);
     env.storage().persistent().set(&key, mp);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);
+}
+
+// ============================================================================
+// Issue #2224: Phased disbursement schedules
+// ============================================================================
+
+pub fn get_next_disbursement_schedule_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextDisbursementScheduleId)
+        .unwrap_or(1)
+}
+
+pub fn increment_disbursement_schedule_id(env: &Env) -> u64 {
+    let id = get_next_disbursement_schedule_id(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextDisbursementScheduleId, &(id + 1));
+    id
+}
+
+pub fn get_disbursement_schedule(
+    env: &Env,
+    id: u64,
+) -> Result<crate::types::DisbursementSchedule, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DisbursementSchedule(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn set_disbursement_schedule(env: &Env, schedule: &crate::types::DisbursementSchedule) {
+    let key = DataKey::DisbursementSchedule(schedule.id);
+    env.storage().persistent().set(&key, schedule);
     env.storage()
         .persistent()
         .extend_ttl(&key, PROPOSAL_TTL / 2, PERSISTENT_TTL);

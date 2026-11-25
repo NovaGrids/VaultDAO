@@ -2191,6 +2191,21 @@ pub fn emit_recurring_payment_jittered(
     );
 }
 
+/// Emit when catch-up is capped by the per-period budget or missed-cycle
+/// policy (Issue #2225). Topics: `("recurring_catch_up_budgeted", payment_id)`.
+pub fn emit_recurring_catch_up_budgeted(
+    env: &Env,
+    payment_id: u64,
+    due_periods: u32,
+    paid_periods: u32,
+    budget: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "recurring_catch_up_budgeted"), payment_id),
+        (due_periods, paid_periods, budget),
+    );
+}
+
 /// Emit when a cache tag is invalidated by admin (#1459)
 pub fn emit_cache_invalidated(env: &Env, tag: Symbol, admin: &Address) {
     env.events()
@@ -2773,6 +2788,33 @@ pub fn emit_phase_rolled_back(env: &Env, proposal_id: u64, phase_index: u32, exe
     env.events().publish(
         (Symbol::new(env, "phase_rolled_back"), proposal_id),
         (phase_index, executor.clone()),
+    );
+}
+
+/// Structured failure for a gated disbursement tranche (Issue #2224).
+/// Topics: `("disbursement_tranche_failed", schedule_id)`.
+pub fn emit_disbursement_tranche_failed(
+    env: &Env,
+    failure: &crate::types::DisbursementFailure,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "disbursement_tranche_failed"),
+            failure.schedule_id,
+        ),
+        (failure.tranche_id, failure.code, failure.reason.clone()),
+    );
+}
+
+/// Emitted once when a schedule's reservation is released (Issue #2224).
+/// Topics: `("disbursement_reservation_released", schedule_id)`.
+pub fn emit_disbursement_reservation_released(env: &Env, schedule_id: u64, amount: i128) {
+    env.events().publish(
+        (
+            Symbol::new(env, "disbursement_reservation_released"),
+            schedule_id,
+        ),
+        amount,
     );
 }
 
