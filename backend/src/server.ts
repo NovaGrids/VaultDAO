@@ -29,6 +29,8 @@ import {
   ProposalActivityAggregator,
   createMemoryPersistence,
 } from "./modules/proposals/index.js";
+import { TxTruthService } from "./modules/transactions/tx-truth.service.js";
+import { fetchHorizonRawTransaction } from "./modules/transactions/horizon-fetcher.js";
 import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
 import { EventSseBroadcaster } from "./modules/events/sse/sse.broadcaster.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
@@ -74,6 +76,8 @@ export interface BackendRuntime {
     typeof createMemoryPersistence
   >;
   readonly transactionsService: TransactionsService;
+  /** Dual-source transaction truth (#2227): Horizon ops vs Soroban events. */
+  readonly txTruthService: TxTruthService;
   readonly jobManager: JobManager;
   readonly scheduledJobRunner: ScheduledJobRunner;
   readonly leasedJobQueue?: SqliteLeasedJobQueue;
@@ -291,6 +295,55 @@ export async function startServer(
     proposalActivityPersistence,
   );
 
+  // Dual-source transaction truth (Horizon ops vs Soroban events, #2227).
+  const txTruthService = new TxTruthService(metricsRegistry);
+
+  // ── Soroban ingest path (#2227) ──────────────────────────────────────────
+  // Executed-proposal activities are emitted by the contract event pipeline
+  // and carry the on-chain transaction hash, so they are the natural raw
+  // Soroban-event source for the canonical model.
+  proposalActivityConsumer.registerBatchConsumer((records) => {
+    for (const record of records) {
+      if (record.type !== "PROPOSAL_EXECUTED") continue;
+      const data = record.data as {
+        recipient?: string;
+        token?: string;
+        amount?: string;
+      };
+      txTruthService.ingestSoroban({
+        transactionHash: record.metadata.transactionHash,
+        ledger: record.metadata.ledger,
+        timestamp: record.metadata.ledgerClosedAt,
+        contractId: record.metadata.contractId,
+        to: data.recipient,
+        amount: data.amount,
+        successful: true,
+        proposalId: record.proposalId,
+      });
+    }
+  });
+
+  // ── Horizon ingest path (#2227) ──────────────────────────────────────────
+  // Drains the hashes the Soroban path has seen, fetching each from Horizon
+  // so both sources are reconciled on the same transaction hash.
+  let txTruthHorizonTimer: ReturnType<typeof setInterval> | null = null;
+  let txTruthHorizonDraining = false;
+  const drainHorizonQueue = async (): Promise<void> => {
+    if (txTruthHorizonDraining) return;
+    txTruthHorizonDraining = true;
+    try {
+      for (const hash of txTruthService.getHorizonPendingHashes(20)) {
+        const raw = await fetchHorizonRawTransaction(env.horizonUrl, hash);
+        if (raw) txTruthService.ingestHorizon(raw);
+      }
+    } catch {
+      // Horizon hiccups are retried on the next tick; conflicts are detected
+      // when the fetch eventually succeeds.
+    } finally {
+      txTruthHorizonDraining = false;
+    }
+  };
+
   const runtime: any = {
     startedAt: new Date().toISOString(),
     recurringIndexerService,
@@ -300,6 +353,7 @@ export async function startServer(
     proposalActivityConsumer,
     proposalActivityPersistence,
     transactionsService,
+    txTruthService,
     jobManager,
     scheduledJobRunner,
     leasedJobQueue,
@@ -549,6 +603,29 @@ export async function startServer(
       isRunning: () => recurringIndexerService.getStatus().isIndexing,
     },
     { replace: true },
+  );
+
+  // Dual-source Horizon ingest (#2227): reconciles every Soroban-observed
+  // transaction against its Horizon counterpart.
+  jobManager.registerJob(
+    {
+      name: "tx-truth-horizon",
+      start: () => {
+        if (txTruthHorizonTimer) return;
+        txTruthHorizonTimer = setInterval(() => {
+          void drainHorizonQueue();
+        }, env.eventPollingIntervalMs);
+        void drainHorizonQueue();
+      },
+      stop: () => {
+        if (txTruthHorizonTimer) {
+          clearInterval(txTruthHorizonTimer);
+          txTruthHorizonTimer = null;
+        }
+      },
+      isRunning: () => txTruthHorizonTimer !== null,
+    },
+    { replace: true, dependencies: ["event-polling"] },
   );
 
   // ── Governance Snapshot Job (Issue #1173) ─────────────────────────────────

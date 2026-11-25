@@ -189,6 +189,8 @@ pub enum DataKey {
     ColdSigIndex(u64),
     /// Replay-prevention set: signature hash -> bool
     ColdSigUsed(soroban_sdk::BytesN<32>),
+    /// Per-proposal approval nonce (issue #2226) -> u64
+    ColdSigApprovalNonce(u64),
     // ---- Issue #1083: Variable Template Storage ----
     /// Variable-substitution template by ID -> VarTemplate
     VarTemplate(u64),
@@ -6012,6 +6014,35 @@ pub fn mark_cold_sig_used(env: &Env, sig_hash: &BytesN<32>) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+/// Issue #2226: per-proposal approval nonce.
+///
+/// Every proposal gets exactly one nonce, derived from the proposal id and
+/// the ledger at which the nonce was first requested, and it is immutable
+/// afterwards. A cold signer binds the nonce into the signed message, so a
+/// signature minted for one proposal can never be submitted against another
+/// (the nonce check fails), while a signature reused on the same proposal is
+/// stopped by the `ColdSigUsed` set.
+pub fn get_or_create_proposal_nonce(env: &Env, proposal_id: u64) -> u64 {
+    let key = DataKey::ColdSigApprovalNonce(proposal_id);
+    if let Some(nonce) = env.storage().persistent().get::<u64>(&key) {
+        return nonce;
+    }
+    let mut material = soroban_sdk::Bytes::new(env);
+    material.extend_from_array(&proposal_id.to_le_bytes());
+    material.extend_from_array(&env.ledger().sequence().to_le_bytes());
+    let digest: BytesN<32> = env.crypto().sha256(&material).into();
+    let bytes = digest.to_array();
+    let nonce = u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+    env.storage().persistent().set(&key, &nonce);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+    nonce
 }
 
 /// Count valid (non-expired) cold signatures for a proposal.

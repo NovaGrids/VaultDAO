@@ -2,7 +2,6 @@ import type { RequestHandler } from "express";
 import { success, error } from "../../shared/http/response.js";
 import { ErrorCode } from "../../shared/http/errorCodes.js";
 import { validatePagination } from "../../shared/http/validateQuery.js";
-import { validateCursorPagination } from "../../shared/pagination.js";
 import { createLogger } from "../../shared/logging/logger.js";
 import type { AuditService } from "./audit.service.js";
 import { AuditRpcError, verifyAuditChain, streamAuditCsv } from "./audit.service.js";
@@ -68,7 +67,6 @@ function parseAuditCursorQuery(
 
   return { after, limit };
 }
-=======
 
 /**
  * Warns when a request uses the legacy `offset`/`page` pagination params so

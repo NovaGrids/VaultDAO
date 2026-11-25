@@ -265,6 +265,24 @@ pub enum VaultError {
     /// honest and would otherwise sidestep the maximum-age check.
     ColdSignatureFutureDated = 1111,
 
+    /// Cold signature is too fresh for an above-threshold amount: the
+    /// proposal's amount is at or above
+    /// `ColdSignerConfig::cold_min_age_amount_threshold` and the signature is
+    /// younger than `min_cold_sig_age_ledgers` (#2226).
+    ColdSignatureTooFresh = 1112,
+
+    /// The approval nonce bound into the cold signature does not match the
+    /// nonce issued for this proposal, so the signature was minted for a
+    /// different proposal and is being replayed across proposals (#2226).
+    ColdSignatureNonceMismatch = 1113,
+
+    /// A proposal whose amount is at or above
+    /// `ColdSignerConfig::cold_min_age_amount_threshold` cannot be executed
+    /// until enough valid cold signatures are on record. Distinct from the
+    /// age and nonce errors, which reject a single submission: this reports
+    /// that the *total* cold weight is below `cold_sig_threshold` (#2226).
+    InsufficientColdWeight = 1114,
+
     // =========================================================
     // Dependency graph errors (Issue #1066)
     // =========================================================

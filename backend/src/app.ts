@@ -24,6 +24,7 @@ import { getAdminAuditLogController } from "./modules/admin-audit/admin-audit.co
 import { createProposalsRouter } from "./modules/proposals/proposals.routes.js";
 import { createRecurringRouter } from "./modules/recurring/recurring.routes.js";
 import { createTransactionsRouter } from "./modules/transactions/transactions.routes.js";
+import { createTxTruthAdminRouter } from "./modules/transactions/tx-truth.routes.js";
 import { createAuditRouter } from "./modules/audit/audit.routes.js";
 import { createErrorsRouter } from "./modules/errors/errors.routes.js";
 import { ErrorsService } from "./modules/errors/errors.service.js";
@@ -364,6 +365,19 @@ export async function createApp(env: BackendEnv, runtime: BackendRuntime) {
 
   v1Router.post("/admin/cursor/migrate", adminAuthMiddleware, hmacMiddleware, triggerCursorMigrationController(runtime.dbCursorAdapter));
   v1Router.post("/admin/cursor/rollback", adminAuthMiddleware, hmacMiddleware, rollbackCursorMigrationController(runtime.dbCursorAdapter));
+
+  // Dual-source transaction truth admin API (#2227): conflict listing,
+  // resolution, ingest injection and conflict-rate stats. Guarded by the
+  // admin API key plus HMAC, like every other /admin route.
+  if (runtime.txTruthService) {
+    v1Router.use(
+      "/admin/tx-truth",
+      adminAuthMiddleware,
+      hmacMiddleware,
+      createTxTruthAdminRouter(runtime.txTruthService),
+    );
+  }
+
 
   v1Router.use("/status", createStatusRouter(env, runtime));
   v1Router.use("/metrics", createMetricsRouter(runtime, adminAuthMiddleware));

@@ -133,6 +133,8 @@ fn register_cold_guardian(s: &Setup<'_>, key: &SigningKey, max_age: u64) {
             cold_sig_threshold: 1,
             cold_sig_expiry: 17_280,
             max_cold_sig_age_ledgers: max_age,
+            min_cold_sig_age_ledgers: 0,
+            cold_min_age_amount_threshold: 0,
         },
         &proofs,
     );

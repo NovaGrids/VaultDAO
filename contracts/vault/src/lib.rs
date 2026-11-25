@@ -2782,6 +2782,12 @@ impl VaultDAO {
             return Err(VaultError::ProposalNotApproved);
         }
 
+        // Cold-storage approval gate (#2226): proposals whose amount is at or
+        // above `cold_min_age_amount_threshold` cannot execute until the
+        // cold-signature weight meets `cold_sig_threshold`. Below-threshold
+        // proposals are untouched — the gate returns Ok immediately.
+        Self::check_cold_approval_weight(env.clone(), proposal_id)?;
+
         // Check expiration (even approved proposals can expire)
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger > proposal.expires_at {
@@ -13100,25 +13106,51 @@ impl VaultDAO {
     /// Verifies the signature over the proposal hash using `soroban_sdk::crypto::ed25519_verify`.
     /// Prevents replay by recording a hash of the raw signature bytes.
     ///
-    /// # Signature age
+    /// # Approval nonce (#2226)
+    /// The signed message is `SHA-256(proposal_id_le || approval_nonce_le)`,
+    /// where `approval_nonce` is the per-proposal nonce issued by
+    /// [`Self::get_proposal_approval_nonce`]. Because each proposal owns a
+    /// distinct immutable nonce, a signature minted for one proposal fails
+    /// with [`VaultError::ColdSignatureNonceMismatch`] when submitted against
+    /// any other proposal — the replay is rejected across proposals, not only
+    /// twice on the same one.
+    ///
+    /// # Signature age window
     /// `created_at_ledger` is the ledger the signature was produced against.
-    /// It is checked against `ColdSignerConfig::max_cold_sig_age_ledgers`:
-    /// replay prevention alone only stops a signature being used *twice*, it
-    /// does not stop one produced offline long ago from being used once, far
-    /// in the future, to approve a proposal that did not exist when it was
-    /// signed. Set `max_cold_sig_age_ledgers` to `0` to disable the check.
+    /// It is checked against `ColdSignerConfig::max_cold_sig_age_ledgers`
+    /// (upper bound, [`VaultError::ColdSignatureTooOld`]) and, when the
+    /// proposal's amount is at or above
+    /// `ColdSignerConfig::cold_min_age_amount_threshold`, against
+    /// `min_cold_sig_age_ledgers` (lower bound,
+    /// [`VaultError::ColdSignatureTooFresh`]). Replay prevention alone only
+    /// stops a signature being used *twice*, it does not stop one produced
+    /// offline long ago from being used once, far in the future, to approve a
+    /// proposal that did not exist when it was signed; the minimum age keeps
+    /// large outflows from being pushed through with a cold signature minted
+    /// in the same session the outflow was prepared. Either bound can be
+    /// disabled by setting its config field to `0`.
     ///
     /// # Errors
     /// - [`VaultError::ColdSignatureTooOld`] if the signature is older than
-    ///   the configured maximum age.
-    /// - [`VaultError::ColdSignatureFutureDated`] if `created_at_ledger` is
-    ///   ahead of the current ledger.
+    ///   the configured maximum age (stale).
+    /// - [`VaultError::ColdSignatureTooFresh`] if an above-threshold proposal
+    ///   is being approved with a signature younger than the configured
+    ///   minimum age.
+    /// - [`VaultError::ColdSignatureNonceMismatch`] if the approval nonce does
+    ///   not match the one issued for this proposal (replayed across
+    ///   proposals).
+    /// - [`VaultError::ColdSignatureAlreadySubmitted`] if this exact signature
+    ///   was already consumed (replayed on the same proposal).
+    /// - [`VaultError::InsufficientColdWeight`] is *not* raised here — it is
+    ///   reported by [`Self::check_cold_approval_weight`] when a proposal is
+    ///   executed without enough total cold weight.
     pub fn submit_cold_signature(
         env: Env,
         proposal_id: u64,
         signature: BytesN<64>,
         public_key: BytesN<32>,
         created_at_ledger: u32,
+        approval_nonce: u64,
     ) -> Result<(), VaultError> {
         let cold_config = storage::get_cold_signer_config(&env);
 
@@ -13126,9 +13158,25 @@ impl VaultDAO {
             return Err(VaultError::ColdSignerConfigNotSet);
         }
 
-        // Age check runs before signature verification so a stale signature is
-        // rejected on the cheapest possible path.
+        // Age checks run before signature verification so a stale or too-fresh
+        // signature is rejected on the cheapest possible path.
         Self::assert_cold_signature_age(&env, &cold_config, created_at_ledger)?;
+
+        // Minimum-age window for above-threshold amounts (#2226). A proposal
+        // that does not exist cannot be above any threshold, so the lookup
+        // simply disables the gate rather than blocking the path below.
+        let min_age = cold_config.min_cold_sig_age_ledgers;
+        let amount_threshold = cold_config.cold_min_age_amount_threshold;
+        if min_age > 0 && amount_threshold > 0 {
+            if let Ok(proposal) = storage::get_proposal(&env, proposal_id) {
+                if proposal.amount >= amount_threshold {
+                    let age_ledgers = (env.ledger().sequence() - created_at_ledger) as u64;
+                    if age_ledgers < min_age {
+                        return Err(VaultError::ColdSignatureTooFresh);
+                    }
+                }
+            }
+        }
 
         let mut signer_idx: Option<u32> = None;
         for (i, pk) in cold_config.cold_signers.iter().enumerate() {
@@ -13139,21 +13187,29 @@ impl VaultDAO {
         }
         let signer_idx = signer_idx.ok_or(VaultError::NotAColdSigner)?;
 
+        // Per-proposal approval nonce (#2226): binding the nonce into the
+        // signed message rejects any attempt to submit a signature that was
+        // minted for a different proposal.
+        let expected_nonce = storage::get_or_create_proposal_nonce(&env, proposal_id);
+        if approval_nonce != expected_nonce {
+            return Err(VaultError::ColdSignatureNonceMismatch);
+        }
+
         // Replay prevention: hash the raw signature bytes and check uniqueness
         let sig_hash: BytesN<32> = env.crypto().sha256(&signature.clone().to_xdr(&env)).into();
         if storage::is_cold_sig_used(&env, &sig_hash) {
             return Err(VaultError::ColdSignatureAlreadySubmitted);
         }
 
-        // Build the proposal hash as the message that was signed off-chain.
-        // We use SHA-256 over the proposal_id (little-endian u64 bytes).
-        let mut proposal_id_bytes = soroban_sdk::Bytes::new(&env);
-        proposal_id_bytes.extend_from_array(&proposal_id.to_le_bytes());
-        let _proposal_hash: BytesN<32> = env.crypto().sha256(&proposal_id_bytes).into();
+        // Build the signed message: proposal id (little-endian u64) followed by
+        // the approval nonce (little-endian u64).
+        let mut message = soroban_sdk::Bytes::new(&env);
+        message.extend_from_array(&proposal_id.to_le_bytes());
+        message.extend_from_array(&approval_nonce.to_le_bytes());
 
         // Ed25519 signature verification
         env.crypto()
-            .ed25519_verify(&public_key, &proposal_id_bytes, &signature);
+            .ed25519_verify(&public_key, &message, &signature);
 
         let signer_address = cold_config
             .cold_signer_addresses
@@ -13174,6 +13230,55 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    /// Per-proposal approval nonce for cold signatures (#2226).
+    ///
+    /// Cold signers call this once per proposal and bind the returned nonce
+    /// into their signed message. The nonce is created on first request and
+    /// never changes, so a signature carrying another proposal's nonce is
+    /// rejected with [`VaultError::ColdSignatureNonceMismatch`].
+    pub fn get_proposal_approval_nonce(env: Env, proposal_id: u64) -> u64 {
+        storage::get_or_create_proposal_nonce(&env, proposal_id)
+    }
+
+    /// Whether the proposal's amount sits at or above the cold-storage
+    /// approval gate (`cold_min_age_amount_threshold > 0` and amount at or
+    /// above it), meaning execution additionally requires cold weight.
+    fn cold_weight_required(
+        cold_config: &types::ColdSignerConfig,
+        proposal: &crate::types::Proposal,
+    ) -> bool {
+        let threshold = cold_config.cold_min_age_amount_threshold;
+        threshold > 0
+            && cold_config.cold_sig_threshold > 0
+            && proposal.amount >= threshold
+    }
+
+    /// Total cold-signature weight recorded for a proposal (#2226).
+    ///
+    /// # Errors
+    /// - [`VaultError::InsufficientColdWeight`] when the proposal's amount is
+    ///   at or above `cold_min_age_amount_threshold` and the valid cold
+    ///   signature count is below `cold_sig_threshold`. This is distinct from
+    ///   the stale (age) and replayed (nonce / used-set) submission errors:
+    ///   it reports that the *aggregate* cold weight is insufficient, not that
+    ///   one submission was malformed.
+    pub fn check_cold_approval_weight(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<u32, VaultError> {
+        let cold_config = storage::get_cold_signer_config(&env);
+        let proposal = storage::get_proposal(&env, proposal_id)?;
+        if !Self::cold_weight_required(&cold_config, &proposal) {
+            return Ok(0);
+        }
+        let valid =
+            storage::count_valid_cold_sigs(&env, proposal_id, cold_config.cold_sig_expiry);
+        if valid < cold_config.cold_sig_threshold {
+            return Err(VaultError::InsufficientColdWeight);
+        }
+        Ok(valid)
     }
 
     /// Check whether sufficient valid cold signatures exist for a proposal.

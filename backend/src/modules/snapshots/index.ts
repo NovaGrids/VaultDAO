@@ -25,7 +25,7 @@ export {
 export type { FailureDisposition } from "./errors.js";
 export { MemorySnapshotAdapter, SqliteSnapshotAdapter } from "./adapters/index.js";
 export { computeSnapshotRoot } from "./adapters/memory.adapter.js";
-export { RedisLockBackend, SnapshotRebuildLockManager } from "./rebuild-lock.manager.js";
+export { RedisLockBackend, SqliteLockBackend, SnapshotRebuildLockManager } from "./rebuild-lock.manager.js";
 export { SnapshotDiffService, InMemorySnapshotDiffAdapter } from "./snapshot-diff.service.js";
 
 export type {

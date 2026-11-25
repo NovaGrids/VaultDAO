@@ -109,6 +109,8 @@ fn config_for(env: &Env, keys: &[(&SigningKey, &Address)]) -> ColdSignerConfig {
         cold_sig_threshold: 1,
         cold_sig_expiry: 17_280,
         max_cold_sig_age_ledgers: 0,
+        min_cold_sig_age_ledgers: 0,
+        cold_min_age_amount_threshold: 0,
     }
 }
 
