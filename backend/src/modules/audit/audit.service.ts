@@ -1,3 +1,4 @@
+import { csvRecords } from "../../shared/utils/csv.js";
 import { createHash } from "node:crypto";
 import type { Response as ExpressResponse } from "express";
 import { decodeCursor, buildCursorWindow, type CursorDirection } from "../../shared/pagination.js";
@@ -96,43 +97,30 @@ export function verifyAuditChain(
 
 /**
  * Streams audit entries as CSV to the response.
- * Avoids buffering all rows in memory.
+ * Every cell goes through the shared serializer (RFC 4180 quoting and formula
+ * neutralization), and rows are yielded lazily so nothing is buffered.
  */
 export function streamAuditCsv(
   res: ExpressResponse,
   entries: AuditEntry[],
   verificationResult?: AuditVerificationResult,
 ): void {
-  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="audit-log.csv"');
 
-  res.write("id,action,actor,target,timestamp,hash,verified\n");
+  const brokenAt = verificationResult?.brokenAtEntry ?? null;
 
-  const verifiedMap = new Map<string, boolean>();
-  if (verificationResult) {
-    const brokenAt = verificationResult.brokenAtEntry;
-    entries.forEach((e, idx) => {
-      verifiedMap.set(e.id, brokenAt === null || idx < brokenAt);
-    });
+  function* records(): Generator<unknown[]> {
+    yield ["id", "action", "actor", "target", "timestamp", "hash", "verified"];
+    for (let idx = 0; idx < entries.length; idx++) {
+      const entry = entries[idx]!;
+      const verified =
+        verificationResult !== undefined ? brokenAt === null || idx < brokenAt : "";
+      yield [entry.id, entry.action, entry.actor, entry.target, entry.timestamp, entry.hash, verified];
+    }
   }
 
-  for (const entry of entries) {
-    const verified =
-      verificationResult !== undefined
-        ? (verifiedMap.get(entry.id) ?? false)
-        : "";
-    const row = [
-      entry.id,
-      entry.action,
-      `"${entry.actor}"`,
-      entry.target,
-      `"${entry.timestamp}"`,
-      entry.hash,
-      verified,
-    ].join(",");
-    res.write(row + "\n");
-  }
-
+  for (const chunk of csvRecords(records(), "\n")) res.write(chunk);
   res.end();
 }
 

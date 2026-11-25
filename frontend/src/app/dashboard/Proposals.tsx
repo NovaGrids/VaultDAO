@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ArrowUpRight, Clock, SearchX, Check, Loader2, GitCompare, FileText, Plus, Activity } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { NewProposalFormData } from '../../components/modals/NewProposalModal';
 import NewProposalModal from '../../components/modals/NewProposalModal';
 import ProposalDetailModal from '../../components/modals/ProposalDetailModal';
@@ -538,6 +538,9 @@ const Proposals: React.FC = () => {
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold">Proposals</h1>
           <div className="flex items-center gap-3">
+            <Link to="/dashboard/proposals/graph" className="text-sm underline">
+              View graph
+            </Link>
             {selectedForComparison.size > 0 && (
               <button
                 onClick={() => setShowComparison(true)}

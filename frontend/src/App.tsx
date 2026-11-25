@@ -9,6 +9,7 @@ import { useDirection } from './hooks/useDirection';
 
 const Overview = lazy(() => import('./app/dashboard/Overview'));
 const Proposals = lazy(() => import('./app/dashboard/Proposals'));
+const ProposalGraph = lazy(() => import('./app/dashboard/ProposalGraph'));
 const Activity = lazy(() => import('./app/dashboard/Activity'));
 const Analytics = lazy(() => import('./app/dashboard/Analytics'));
 const Settings = lazy(() => import('./app/dashboard/Settings'));
@@ -37,6 +38,7 @@ function App() {
             <Route path="/dashboard" element={<DashboardLayout />}>
               <Route index element={<Overview />} />
               <Route path="proposals" element={<Proposals />} />
+              <Route path="proposals/graph" element={<ProposalGraph />} />
               <Route path="activity" element={<Activity />} />
               <Route path="templates" element={<Templates />} />
               <Route path="analytics" element={<Analytics />} />
