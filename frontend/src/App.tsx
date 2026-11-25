@@ -17,6 +17,7 @@ const RecurringPayments = lazy(() => import('./app/dashboard/RecurringPayments')
 const EscrowPage = lazy(() => import('./app/dashboard/Escrow'));
 const GovernancePage = lazy(() => import('./app/dashboard/Governance'));
 const ErrorDashboard = lazy(() => import('./components/ErrorDashboard'));
+const IncidentWarRoom = lazy(() => import('./components/IncidentWarRoom'));
 
 const PageFallback = () => (
   <div className="flex items-center justify-center h-64">
@@ -45,6 +46,7 @@ function App() {
               <Route path="governance" element={<GovernancePage />} />
               <Route path="settings" element={<Settings />} />
               <Route path="errors" element={<ErrorDashboard />} />
+              <Route path="incident-war-room" element={<IncidentWarRoom />} />
             </Route>
           </Routes>
         </Suspense>

@@ -145,6 +145,7 @@ const DashboardLayout: React.FC = () => {
     { label: t('nav.templates'), path: '/dashboard/templates', icon: Files, id: 'templates-nav' },
     { label: t('nav.analytics'), path: '/dashboard/analytics', icon: BarChart3, id: 'analytics-nav' },
     { label: t('nav.errorAnalytics'), path: '/dashboard/errors', icon: AlertCircle, id: 'errors-nav' },
+    { label: 'Incident War Room', path: '/dashboard/incident-war-room', icon: ShieldAlert, id: 'incident-war-room-nav' },
     { label: t('nav.settings'), path: '/dashboard/settings', icon: Settings, id: 'settings-nav' },
   ];
 

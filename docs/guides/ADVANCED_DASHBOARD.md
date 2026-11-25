@@ -54,6 +54,80 @@ The Advanced Dashboard feature provides a fully customizable, interactive data v
 2. Dashboard captures current view
 3. File downloads automatically
 
+## Incident War Room
+
+The Incident War Room is a focused operational view (Issue #2066) for the
+minutes after a circuit breaker trips or a vault pause is detected. Open it
+from the sidebar or directly at `/dashboard/incident-war-room`.
+
+### What it shows
+
+- **Overall status** — `NORMAL`, `TRIPPED` or `PAUSED`. A vault pause outranks a
+  tripped breaker, which outranks normal operation.
+- **Pause banner** — when the vault is paused, the cause, timestamp and actor
+  from the latest `vault_paused` state are displayed.
+- **Per-token outflow vs circuit-breaker limit** — a semantic table with token,
+  observed outflow, token limit, a utilisation meter, breaker state and a link
+  to the recovery proposal. Amounts are base-unit strings, so stroop/i128
+  precision is preserved; only the meter converts them to a number.
+- **Pending reservations** — approved-but-unexecuted proposals still holding
+  funds, with their token, reserved amount, creation time and recovery link.
+
+Recovery links are same-app deep links of the form
+`/dashboard/proposals?search=<proposalId>`. Only numeric proposal ids are
+linked, so a hostile payload cannot turn a link into an external or
+`javascript:` URL. All token symbols, addresses, causes and memos are rendered
+as React text; the view never uses `dangerouslySetInnerHTML`.
+
+### Data and realtime
+
+The initial snapshot is loaded over the existing GraphQL transport when
+`VITE_GRAPHQL_URL` is set (otherwise `VITE_API_BASE_URL/graphql` is used). The
+expected query is `IncidentWarRoom($contractId: String!)` returning an
+`incidentWarRoom` object with `pause`, `tokens` and `reservations`; the
+normalizer also accepts `vault`/`incident` aliases and flexible field names.
+
+Live changes arrive through `RealtimeContext` (the shared WebSocket), using
+the contract event names `vault_paused`, `vault_unpaused`,
+`token_breaker_tripped`, `token_breaker_reset`, `reservation_created` and
+`reservation_released`. Subscriptions are registered in an effect and every
+unsubscribe function is called on cleanup. If no `RealtimeProvider` is mounted,
+the socket is disconnected, or the GraphQL endpoint is unreachable, the view
+keeps the last known snapshot and reports "Live updates unavailable" instead
+of throwing.
+
+### Acknowledge and export
+
+- **Acknowledge** is a keyboard-accessible button. It emits
+  `incident_acknowledged` over the WebSocket (when available), calls the
+  optional `onAcknowledge` callback and disables itself for the current
+  incident/status. It is an operator acknowledgement only; it does not reset a
+  breaker or unpause the vault.
+- **Export CSV** serialises both tables with the shared
+  `frontend/src/utils/csv.ts` helpers. `neutralizeFormula` prefixes values
+  beginning with `=`, `+`, `-`, `@`, tab or carriage return with a single quote,
+  so spreadsheet formulas supplied in a token symbol or memo cannot execute.
+
+### Accessibility
+
+- Token and reservation data use real `<table>`/`<th scope>` markup with
+  captions, and every action is a native `<button>` or `<a>`.
+- Status, connection and acknowledgement messages are exposed through a
+  visible `role="status"` / `aria-live="polite"` region.
+- All interactive controls have visible focus rings and at least 44px touch
+  targets; state colours pair light text with dark backgrounds for contrast.
+
+### Code and tests
+
+```
+frontend/src/types/incident.ts                       # View-model types
+frontend/src/utils/incidentWarRoom.ts                # CSV, status, event merge, GraphQL
+frontend/src/hooks/useIncidentWarRoom.ts             # WebSocket + GraphQL subscription hook
+frontend/src/components/IncidentWarRoom.tsx          # View
+frontend/src/components/__tests__/IncidentWarRoom.test.tsx
+frontend/src/utils/__tests__/incidentWarRoom.test.ts
+```
+
 ## Mobile Support
 
 - **Touch Gestures**: Long-press and drag to move widgets
@@ -81,6 +155,7 @@ The Advanced Dashboard feature provides a fully customizable, interactive data v
 frontend/src/
 ├── components/
 │   ├── DashboardBuilder.tsx       # Main dashboard component
+│   ├── IncidentWarRoom.tsx        # Incident war-room view
 │   ├── WidgetLibrary.tsx          # Widget selection panel
 │   └── widgets/
 │       ├── LineChartWidget.tsx
